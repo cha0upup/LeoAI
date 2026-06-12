@@ -1,0 +1,33 @@
+{
+  "fingerprintId": "smtp_any",
+  "name": "smtp",
+  "protocol": "tcp",
+  "tags": ["protocol", "mail"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后读取 SMTP 220 服务就绪 Banner，识别 Postfix、Exim、Sendmail、Exchange 等 MTA。",
+    "vulnerabilities": [
+      {
+        "title": "SMTP Open Relay（开放中继）",
+        "severity": "high",
+        "description": "若 SMTP 服务未限制中继，攻击者可利用该服务器转发任意邮件，用于垃圾邮件或钓鱼攻击。"
+      },
+      {
+        "title": "SMTP VRFY/EXPN 用户枚举",
+        "severity": "medium",
+        "description": "VRFY 和 EXPN 命令可在未经认证的情况下枚举有效邮件用户，为进一步攻击提供信息。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 512
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('220') >= 0 && (b.indexOf('ESMTP') >= 0 || b.toUpperCase().indexOf('SMTP') >= 0 || b.indexOf('Postfix') >= 0 || b.indexOf('Exim') >= 0 || b.indexOf('Sendmail') >= 0 || b.indexOf('Exchange') >= 0)"
+  }
+}

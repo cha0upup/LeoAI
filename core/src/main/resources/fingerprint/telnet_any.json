@@ -1,0 +1,33 @@
+{
+  "fingerprintId": "telnet_any",
+  "name": "telnet",
+  "protocol": "tcp",
+  "tags": ["protocol", "remote"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后读取 Telnet 协商字节（IAC = 0xFF），使用 ISO-8859-1 编码将字节 1:1 映射为字符后检测 IAC 标志（U+00FF）。",
+    "vulnerabilities": [
+      {
+        "title": "Telnet 明文传输凭证",
+        "severity": "critical",
+        "description": "Telnet 协议不加密，用户名和密码以明文在网络中传输，可被中间人直接嗅探。强烈建议以 SSH 替代。"
+      },
+      {
+        "title": "Telnet 弱口令 / 无认证",
+        "severity": "critical",
+        "description": "IoT 设备、路由器等嵌入式系统经常开放 Telnet 且使用出厂默认凭证（如 admin/admin），是攻击者初始访问的高频入口。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "ISO-8859-1",
+        "maxBodyBytes": 512
+      }
+    ],
+    "script": "var b = String(raw || ''); bodyLength > 0 && (b.indexOf('ÿý') >= 0 || b.indexOf('ÿû') >= 0 || b.indexOf('ÿü') >= 0)"
+  }
+}

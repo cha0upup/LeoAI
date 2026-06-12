@@ -1,0 +1,47 @@
+{
+  "fingerprintId": "shiro_1_x",
+  "name": "shiro",
+  "protocol": "http",
+  "tags": ["middleware", "java", "auth"],
+  "info": {
+    "version": "1.x",
+    "author": "leo-seed",
+    "description": "通过 RememberMe Cookie 触发 Set-Cookie: rememberMe=deleteMe 行为识别 Apache Shiro 1.x 系列。",
+    "vulnerabilities": [
+      {
+        "title": "RememberMe Cookie 反序列化 RCE",
+        "cve": "CVE-2016-4437",
+        "severity": "critical",
+        "description": "Shiro 1.2.4 之前默认 RememberMe 加密 Key 可被预测,构造恶意 cookie 即可触发反序列化命令执行。",
+        "exploitSkill": "exploit-shiro-post",
+        "references": [
+          "https://nvd.nist.gov/vuln/detail/CVE-2016-4437"
+        ]
+      },
+      {
+        "title": "Shiro 权限绕过 (路径穿越)",
+        "cve": "CVE-2020-1957",
+        "severity": "high",
+        "description": "Shiro 与 Spring 集成时,使用 /xxx/..;/admin/yyy 等路径可绕过权限校验访问受限接口。",
+        "references": [
+          "https://nvd.nist.gov/vuln/detail/CVE-2020-1957"
+        ]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "headers": {
+          "Cookie": "rememberMe=1"
+        },
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var headerStr = String(headers || '').toLowerCase(); headerStr.indexOf('remembermedeleteme') >= 0 || headerStr.indexOf('remember-me=delete') >= 0"
+  }
+}

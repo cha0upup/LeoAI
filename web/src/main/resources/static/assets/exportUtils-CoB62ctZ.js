@@ -1,0 +1,3 @@
+function b(e,s,o){if(!e||e.length===0)return;let r,t;if(o&&o.length>0)r=o.map(n=>n.label).join("	"),t=e.map(n=>o.map(c=>{const a=typeof c.key=="function"?c.key(n):n[c.key]??"";return l(a)}).join("	"));else{const n=new Set;e.forEach(a=>Object.keys(a).forEach(i=>n.add(i)));const c=[...n];r=c.join("	"),t=e.map(a=>c.map(i=>l(a[i]??"")).join("	"))}const p=r+`
+`+t.join(`
+`);f(p,s)}function l(e){return String(e).replace(/[\t\n\r]/g," ")}function f(e,s){const o=new Blob([e],{type:"text/tab-separated-values;charset=utf-8"}),r=URL.createObjectURL(o),t=document.createElement("a");t.href=r,t.download=s.endsWith(".tsv")?s:`${s}.tsv`,t.click(),URL.revokeObjectURL(r)}export{b as e};

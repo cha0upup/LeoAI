@@ -1,0 +1,30 @@
+{
+  "fingerprintId": "druid-monitor_any",
+  "name": "druid-monitor",
+  "protocol": "http",
+  "tags": ["middleware", "java", "database", "alibaba"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 /druid/index.html 页面特征识别 Alibaba Druid 连接池监控页面（Druid Monitor）。",
+    "vulnerabilities": [
+      {
+        "title": "未授权访问（数据库凭证泄露）",
+        "severity": "high",
+        "description": "Druid Monitor 默认无需认证即可访问，攻击者可查看数据库连接配置（含明文密码）、慢查询、SQL 记录及 Session 信息，是渗透内网数据库的重要信息收集点。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/druid/index.html",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); status == 200 && (b.indexOf('druid') >= 0 && (b.indexOf('datasource') >= 0 || b.indexOf('monitor') >= 0))"
+  }
+}

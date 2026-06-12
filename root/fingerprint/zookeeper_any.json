@@ -1,0 +1,29 @@
+{
+  "fingerprintId": "zookeeper_any",
+  "name": "zookeeper",
+  "protocol": "tcp",
+  "tags": ["middleware", "distributed", "java"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "发送四字命令 ruok，通过 imok 响应识别 Apache ZooKeeper（端口 2181）。",
+    "vulnerabilities": [
+      {
+        "title": "ZooKeeper 未授权访问",
+        "severity": "critical",
+        "description": "ZooKeeper 默认不开启 ACL 认证，任何客户端均可读取或修改所有 ZNode 数据，包括 Kafka 集群配置、Dubbo 服务注册信息等，可进一步用于内网横向移动。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "body": "ruok",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 64
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('imok') >= 0"
+  }
+}

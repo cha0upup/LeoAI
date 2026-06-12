@@ -1,0 +1,35 @@
+{
+  "fingerprintId": "mysql_any",
+  "name": "mysql",
+  "protocol": "tcp",
+  "tags": ["database", "mysql", "mariadb"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后读取 MySQL/MariaDB 握手包，通过其中的认证插件名称字段识别 MySQL 实例（端口 3306）。握手包以二进制格式返回，但认证插件字符串（mysql_native_password / caching_sha2_password）以明文嵌入其中。使用 ISO-8859-1 编码确保字节 1:1 解码。",
+    "vulnerabilities": [
+      {
+        "title": "MySQL 未授权访问 / 弱口令",
+        "severity": "critical",
+        "description": "MySQL 若绑定公网且 root 账户使用弱口令或空密码，攻击者可登录并通过 INTO OUTFILE 写入 WebShell 或读取系统文件（LOAD DATA LOCAL INFILE）实现 RCE。"
+      },
+      {
+        "title": "MySQL CVE-2012-2122 认证绕过",
+        "cve": "CVE-2012-2122",
+        "severity": "critical",
+        "description": "特定版本 MySQL 在比较认证 Token 时存在内存比较缺陷，重复尝试约 256 次可在不知道密码的情况下以任意用户身份登录。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2012-2122"]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "ISO-8859-1",
+        "maxBodyBytes": 512
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('mysql_native_password') >= 0 || b.indexOf('caching_sha2_password') >= 0 || b.indexOf('mysql_old_password') >= 0"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "fingerprintId": "tomcat_any",
+  "name": "tomcat",
+  "protocol": "http",
+  "tags": ["web", "server", "java", "middleware", "apache"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 Server/X-Powered-By 响应头或 Tomcat 默认错误页识别 Apache Tomcat。",
+    "vulnerabilities": [
+      {
+        "title": "AJP 文件包含（Ghostcat）",
+        "cve": "CVE-2020-1938",
+        "severity": "critical",
+        "description": "Tomcat AJP Connector 默认监听 8009 端口，攻击者可通过构造 AJP 请求读取任意 webapp 文件；若应用允许上传则可触发 RCE。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2020-1938"]
+      },
+      {
+        "title": "Partial PUT 反序列化 RCE",
+        "cve": "CVE-2025-24813",
+        "severity": "critical",
+        "description": "启用 partial PUT 的 Tomcat 版本对上传内容处理不当，可触发反序列化导致 RCE。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2025-24813"]
+      },
+      {
+        "title": "Manager 控制台弱口令 RCE",
+        "severity": "high",
+        "description": "/manager/html 若对外开放且存在弱口令，可直接部署恶意 WAR 包实现 RCE。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('apache-coyote') >= 0 || h.indexOf('apache tomcat') >= 0 || b.indexOf('apache tomcat') >= 0 || b.indexOf('tomcat/') >= 0"
+  }
+}

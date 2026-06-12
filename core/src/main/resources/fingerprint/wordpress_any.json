@@ -1,0 +1,23 @@
+{
+  "fingerprintId": "wordpress_any",
+  "name": "wordpress",
+  "protocol": "http",
+  "tags": ["cms", "php", "blog"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 /wp-login.php 路径特征或 X-Pingback 响应头识别 WordPress CMS。"
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/wp-login.php",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); b.indexOf('wordpress') >= 0 || b.indexOf('wp-login') >= 0 || h.indexOf('x-pingback') >= 0"
+  }
+}

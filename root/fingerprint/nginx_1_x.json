@@ -1,0 +1,23 @@
+{
+  "fingerprintId": "nginx_1_x",
+  "name": "nginx",
+  "protocol": "http",
+  "tags": ["web", "server", "proxy"],
+  "info": {
+    "version": "1.x",
+    "author": "leo-seed",
+    "description": "通过 Server 响应头或默认欢迎页特征识别 Nginx 1.x。仅为产品识别,不携带漏洞情报。"
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "timeout": 3000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); h.indexOf('nginx') >= 0 || b.indexOf('welcome to nginx') >= 0"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "fingerprintId": "apache-httpd_2_x",
+  "name": "apache-httpd",
+  "protocol": "http",
+  "tags": ["web", "server", "apache"],
+  "info": {
+    "version": "2.x",
+    "author": "leo-seed",
+    "description": "通过 Server 响应头或默认欢迎页识别 Apache HTTP Server 2.x。",
+    "vulnerabilities": [
+      {
+        "title": "mod_proxy SSRF",
+        "cve": "CVE-2021-40438",
+        "severity": "critical",
+        "description": "mod_proxy 在处理特定 uri-path 时存在 SSRF，攻击者可让服务器向内网地址发起请求。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-40438"]
+      },
+      {
+        "title": "路径穿越 / RCE（mod_cgi）",
+        "cve": "CVE-2021-41773",
+        "severity": "critical",
+        "description": "Apache 2.4.49 路径规范化缺陷，在 require all denied 未配置时可路径穿越读取文件，若启用 mod_cgi 可 RCE。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-41773"]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "timeout": 3000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('server: apache') >= 0 || (b.indexOf('it works') >= 0 && b.indexOf('apache') >= 0) || b.indexOf('apache http server') >= 0"
+  }
+}

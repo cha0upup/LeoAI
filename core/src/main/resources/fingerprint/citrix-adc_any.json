@@ -1,0 +1,39 @@
+{
+  "fingerprintId": "citrix-adc_any",
+  "name": "citrix-adc",
+  "protocol": "http",
+  "tags": ["network", "vpn", "loadbalancer", "citrix"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 NSC_ Cookie 或 /vpn/index.html 页面特征识别 Citrix ADC（原 NetScaler）设备。",
+    "vulnerabilities": [
+      {
+        "title": "目录穿越任意代码执行",
+        "cve": "CVE-2019-19781",
+        "severity": "critical",
+        "description": "Citrix ADC 和 Gateway 存在路径穿越漏洞，未经认证的攻击者可在管理接口执行任意代码。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-19781"]
+      },
+      {
+        "title": "Citrix Bleed 会话 Token 泄露",
+        "cve": "CVE-2023-4966",
+        "severity": "critical",
+        "description": "NetScaler ADC 和 Gateway 存在缓冲区溢出，可泄露会话 Token 实现会话劫持，已被勒索软件团伙大规模利用。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-4966"]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/vpn/index.html",
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('nsc_') >= 0 || b.indexOf('ns_csrf_token') >= 0 || (b.indexOf('citrix') >= 0 && (b.indexOf('netscaler') >= 0 || b.indexOf('gateway') >= 0))"
+  }
+}

@@ -1,0 +1,44 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone and build frontend
+        run: |
+          git clone https://github.com/chaodovvn/LeoVueAI.git ../LeoVueAI
+          cd ../LeoVueAI
+          npm ci
+          npm run build
+          cp -r dist/* $GITHUB_WORKSPACE/web/src/main/resources/static/
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B package -DskipTests
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeoAi-jar
+          path: web/target/*.jar
+          retention-days: 30

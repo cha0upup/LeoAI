@@ -1,0 +1,35 @@
+{
+  "fingerprintId": "ftp_any",
+  "name": "ftp",
+  "protocol": "tcp",
+  "tags": ["protocol", "file-transfer"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后读取 FTP 220 欢迎 Banner，识别 vsftpd、ProFTPD、Pure-FTPd 等实现。",
+    "vulnerabilities": [
+      {
+        "title": "FTP 匿名登录",
+        "severity": "high",
+        "description": "若 FTP 服务允许匿名登录（用户名 anonymous），攻击者可在无需凭证的情况下下载甚至上传文件。"
+      },
+      {
+        "title": "ProFTPD 任意文件复制 RCE",
+        "cve": "CVE-2015-3306",
+        "severity": "critical",
+        "description": "ProFTPD 1.3.5 的 mod_copy 模块允许未认证用户复制任意文件到 Web 可访问目录，进而实现 RCE。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2015-3306"]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 512
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('220') >= 0 && (b.toUpperCase().indexOf('FTP') >= 0 || b.indexOf('vsftpd') >= 0 || b.indexOf('ProFTPD') >= 0 || b.indexOf('Pure-FTPd') >= 0 || b.indexOf('FileZilla') >= 0)"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "fingerprintId": "solr_any",
+  "name": "solr",
+  "protocol": "http",
+  "tags": ["database", "search", "apache"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 /solr/admin/info/system 接口或管理界面特征识别 Apache Solr 搜索平台。",
+    "vulnerabilities": [
+      {
+        "title": "DataImportHandler SSRF / RCE",
+        "cve": "CVE-2019-0193",
+        "severity": "critical",
+        "description": "Solr DataImportHandler 对 dataConfig 参数未充分校验，可注入恶意配置触发 SSRF 或服务端脚本执行（RCE）。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-0193"]
+      },
+      {
+        "title": "未授权访问",
+        "severity": "high",
+        "description": "Solr 默认无需认证，攻击者可查询所有索引数据、修改配置，并利用 SSRF 探测内网服务。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/solr/admin/info/system",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); b.indexOf('solr') >= 0 && (b.indexOf('lucene') >= 0 || b.indexOf('jvm') >= 0 || status == 200)"
+  }
+}

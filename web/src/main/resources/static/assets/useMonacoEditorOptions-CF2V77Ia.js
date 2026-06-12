@@ -1,0 +1,1 @@
+function f(e={}){const{value:a="",language:n="plaintext",theme:o="vs",readOnly:t=!1,automaticLayout:i=!0,scrollBeyondLastLine:r=!1,minimapEnabled:l=!1,fontSize:s=14,lineNumbers:u="on",wordWrap:c="off",...d}=e;return{value:a,language:n,theme:o,readOnly:t,automaticLayout:i,scrollBeyondLastLine:r,minimap:{enabled:l},fontSize:s,lineNumbers:u,wordWrap:c,...d}}export{f as c};

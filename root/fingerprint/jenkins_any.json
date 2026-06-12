@@ -1,0 +1,37 @@
+{
+  "fingerprintId": "jenkins_any",
+  "name": "jenkins",
+  "protocol": "http",
+  "tags": ["cicd", "devops", "java"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 X-Jenkins 响应头或 Jenkins 特征页识别 Jenkins CI/CD 服务器。",
+    "vulnerabilities": [
+      {
+        "title": "CLI 任意文件读取 / RCE",
+        "cve": "CVE-2024-23897",
+        "severity": "critical",
+        "description": "Jenkins CLI 命令参数通过 args4j 读取文件内容，配合反序列化链可在无认证情况下执行任意代码。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2024-23897"]
+      },
+      {
+        "title": "Script Console 未授权 RCE",
+        "severity": "critical",
+        "description": "Jenkins 若未启用认证或存在弱口令，攻击者可通过 /script 路径执行任意 Groovy 脚本，实现操作系统命令执行。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('x-jenkins') >= 0 || h.indexOf('x-hudson') >= 0 || (b.indexOf('jenkins') >= 0 && (b.indexOf('dashboard') >= 0 || b.indexOf('build') >= 0 || b.indexOf('hudson') >= 0))"
+  }
+}

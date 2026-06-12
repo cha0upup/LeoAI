@@ -1,0 +1,28 @@
+{
+  "fingerprintId": "rsync_any",
+  "name": "rsync",
+  "protocol": "tcp",
+  "tags": ["protocol", "file-transfer"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后读取 rsync @RSYNCD 协议版本 Banner（端口 873），识别 rsync 守护进程。",
+    "vulnerabilities": [
+      {
+        "title": "rsync 未授权文件读写",
+        "severity": "critical",
+        "description": "rsync 守护进程若未配置认证且 module 对外开放，攻击者可读取服务器上的任意文件，甚至写入文件（如 authorized_keys）实现权限维持。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 256
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('@RSYNCD:') >= 0"
+  }
+}

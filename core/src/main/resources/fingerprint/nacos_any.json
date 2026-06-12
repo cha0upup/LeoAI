@@ -1,0 +1,35 @@
+{
+  "fingerprintId": "nacos_any",
+  "name": "nacos",
+  "protocol": "http",
+  "tags": ["middleware", "java", "alibaba", "microservice"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 /nacos/ 路径特征识别阿里巴巴 Nacos 服务发现与配置管理平台。",
+    "vulnerabilities": [
+      {
+        "title": "未授权访问（配置 / 服务信息泄露）",
+        "severity": "critical",
+        "description": "Nacos 早期版本默认不开启鉴权，攻击者可读取所有配置（含数据库密码、密钥）及服务注册信息，并修改配置实现进一步渗透。"
+      },
+      {
+        "title": "JWT 硬编码密钥认证绕过",
+        "severity": "high",
+        "description": "Nacos 默认 JWT Secret 为 SecretKey012345678901234567890123456789012345678901234567890123456789，可伪造 Token 绕过认证。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/nacos/",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); b.indexOf('nacos') >= 0 || (status == 200 && b.indexOf('console') >= 0 && b.indexOf('alibaba') >= 0)"
+  }
+}

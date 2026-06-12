@@ -1,0 +1,39 @@
+{
+  "fingerprintId": "struts2_any",
+  "name": "struts2",
+  "protocol": "http",
+  "tags": ["framework", "java", "mvc", "apache"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 .action 路径响应特征或 Struts2 错误页识别 Apache Struts2 MVC 框架。",
+    "vulnerabilities": [
+      {
+        "title": "Content-Type OGNL 注入 RCE（S2-045）",
+        "cve": "CVE-2017-5638",
+        "severity": "critical",
+        "description": "通过 Content-Type 头注入恶意 OGNL 表达式，可在目标服务器无认证执行任意命令，已被用于多起大规模攻击（Equifax 事件）。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2017-5638"]
+      },
+      {
+        "title": "强制 OGNL 双重评估 RCE（S2-061）",
+        "cve": "CVE-2020-17530",
+        "severity": "critical",
+        "description": "通过强制 OGNL 双重评估，可绕过沙箱限制执行任意代码。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2020-17530"]
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/index.action",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('struts') >= 0 || b.indexOf('struts') >= 0 || (b.indexOf('ognl') >= 0 && b.indexOf('exception') >= 0)"
+  }
+}

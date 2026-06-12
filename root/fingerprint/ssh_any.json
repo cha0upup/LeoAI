@@ -1,0 +1,35 @@
+{
+  "fingerprintId": "ssh_any",
+  "name": "ssh",
+  "protocol": "tcp",
+  "tags": ["protocol", "remote", "auth"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "连接后直接读取 SSH 协议版本 Banner（SSH-2.0-OpenSSH_x.x 等），无需发送数据。",
+    "vulnerabilities": [
+      {
+        "title": "OpenSSH 用户名枚举",
+        "cve": "CVE-2018-15473",
+        "severity": "medium",
+        "description": "OpenSSH 7.7 之前版本在公钥认证阶段对有效/无效用户名的响应时序存在差异，可被用于枚举有效用户名。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2018-15473"]
+      },
+      {
+        "title": "SSH 弱密码 / 暴力破解",
+        "severity": "high",
+        "description": "若 SSH 未禁用密码认证且未限制登录尝试次数，攻击者可进行字典或暴力破解攻击。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 256
+      }
+    ],
+    "script": "var b = String(raw || ''); b.indexOf('SSH-') >= 0"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "fingerprintId": "phpmyadmin_any",
+  "name": "phpmyadmin",
+  "protocol": "http",
+  "tags": ["database", "php", "web"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过登录页特征或 Set-Cookie: phpMyAdmin= 识别 phpMyAdmin 数据库管理工具。",
+    "vulnerabilities": [
+      {
+        "title": "认证后 RCE（SQL 导入 / 文件写入）",
+        "cve": "CVE-2016-5734",
+        "severity": "critical",
+        "description": "phpMyAdmin 4.6.2 之前版本 preg_replace /e 修饰符可被用于执行任意 PHP 代码（需要数据库登录权限）。",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2016-5734"]
+      },
+      {
+        "title": "弱口令 / MySQL root 空密码",
+        "severity": "high",
+        "description": "phpMyAdmin 对外暴露时，MySQL root 账户若使用弱密码或空密码，可直接登录并通过 OUTFILE 写入 WebShell。"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/phpmyadmin/index.php",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); b.indexOf('phpmyadmin') >= 0 || h.indexOf('phpmyadmin') >= 0"
+  }
+}

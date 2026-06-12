@@ -1,0 +1,49 @@
+{
+  "fingerprintId": "spring-boot-actuator_any",
+  "name": "spring-boot-actuator",
+  "protocol": "http",
+  "tags": ["middleware", "java", "spring", "management"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过访问 /actuator 路径返回的 _links 对象识别开放的 Spring Boot Actuator 端点。",
+    "vulnerabilities": [
+      {
+        "title": "Actuator heapdump 内存泄露",
+        "severity": "high",
+        "description": "/actuator/heapdump 未授权访问可下载完整堆转储,从中可提取数据库密码、Session、API Key 等敏感信息。",
+        "exploitSkill": "exploit-spring-actuator",
+        "references": [
+          "https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html"
+        ]
+      },
+      {
+        "title": "Actuator env 配置泄露",
+        "severity": "medium",
+        "description": "/actuator/env 暴露环境变量与配置属性,可能包含数据源连接串、加密 Key 等敏感配置。需结合 jolokia / refresh 等端点进一步利用。"
+      },
+      {
+        "title": "Jolokia 反序列化触发",
+        "cve": "CVE-2018-1000130",
+        "severity": "high",
+        "description": "若 Actuator 同时启用了 /actuator/jolokia,可通过 MBean 调用触发 JNDI 注入或反序列化链。",
+        "exploitSkill": "exploit-spring-actuator"
+      }
+    ]
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/actuator",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "script": "var b = String(body || ''); var h = String(headers || '').toLowerCase(); (status == 200 || status == 401) && (b.indexOf('_links') >= 0 && b.indexOf('actuator') >= 0 || h.indexOf('application/vnd.spring-boot.actuator') >= 0)"
+  }
+}
