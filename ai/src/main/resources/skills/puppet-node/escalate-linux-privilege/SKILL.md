@@ -1,6 +1,7 @@
 ---
 name: escalate-linux-privilege
 description: 在 Linux 目标上系统性地检测权限提升路径，包括 SUID/SGID 文件、sudo 配置、可写的 cron 脚本、内核版本漏洞、NFS 错误配置、PATH 劫持等。当任务涉及 Linux 提权、SUID、sudo 滥用、内核漏洞时使用。
+enabled: true
 ---
 
 # Linux 权限提升路径检测
@@ -283,8 +284,8 @@ showmount -e localhost 2>/dev/null
 
 完成后必须：
 
-1. `appendReconSummary` — 提权向量检测结果摘要
-2. `appendReconSummary` — 机器可读字段
+1. `manage_recon_summary(action="append")` — 提权向量检测结果摘要
+2. `manage_recon_summary(action="append")` — 机器可读字段
 
 结构化 patch 示例：
 

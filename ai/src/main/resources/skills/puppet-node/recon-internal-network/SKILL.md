@@ -1,6 +1,7 @@
 ---
 name: recon-internal-network
 description: 对目标机器所在内网进行系统性探测，包括网段枚举、存活主机扫描、开放端口探测和 HTTP 服务指纹识别。当任务涉及内网探测、横向移动准备、网段扫描、C段扫描时使用。
+enabled: true
 ---
 
 # 内网探测
@@ -202,8 +203,8 @@ curl -sI --connect-timeout 3 -m 5 http://<host>:<port>/
 
 完成后必须：
 
-1. `appendReconSummary` — 网段、存活主机、开放端口和重点目标
-2. `appendReconSummary` — 机器可读字段
+1. `manage_recon_summary(action="append")` — 网段、存活主机、开放端口和重点目标
+2. `manage_recon_summary(action="append")` — 机器可读字段
 
 结构化 patch 示例：
 

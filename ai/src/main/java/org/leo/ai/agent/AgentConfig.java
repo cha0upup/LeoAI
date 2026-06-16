@@ -10,6 +10,7 @@ import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.AutoReconAppendService;
+import org.leo.ai.service.SkillRegistryService;
 import org.leo.ai.tools.platform.*;
 import org.leo.ai.tools.puppetnode.*;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -223,6 +224,18 @@ public class AgentConfig {
         }
     }
 
+    // ── Skill 工具 Bean ───────────────────────────────────────────────────────
+
+    @Bean
+    public SkillActivationTools puppetNodeSkillActivationTools(SkillRegistryService skillRegistry) {
+        return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PUPPET_NODE);
+    }
+
+    @Bean
+    public SkillActivationTools platformSkillActivationTools(SkillRegistryService skillRegistry) {
+        return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PLATFORM);
+    }
+
     // ── 主 Agent ──────────────────────────────────────────────────────────────
 
     /**
@@ -244,6 +257,7 @@ public class AgentConfig {
             FileTools fileTools,
             SessionTools sessionTools,
             PlanTools planTools,
+            @Qualifier("puppetNodeSkillActivationTools") SkillActivationTools skillActivationTools,
             SubAgentDispatchTools subAgentDispatchTools,
             AutoReconAppendService autoReconAppendService,
             ExecutorService aiToolExecutor) {
@@ -272,7 +286,7 @@ public class AgentConfig {
                 .tools(commandTools, basicInfoTools, processTools,
                         networkInfoTools, reverseTunnelTools,
                         utilTools, fileTools, sessionTools,
-                        planTools,
+                        planTools, skillActivationTools,
                         subAgentDispatchTools)
                 .build();
     }
@@ -293,12 +307,10 @@ public class AgentConfig {
      * 即便如此仍捕获所有异常，确保旁路分析的任何故障都不会影响主对话流程。
      */
     private static final java.util.Set<String> AUTO_RECON_APPEND_SKIPPED_TOOLS = java.util.Set.of(
-            "setReconSummary",
-            "appendReconSummary",
-            "getReconSummary",
-            "organizeReconSummary",
+            "manage_recon_summary",
             "createPlan", "updatePlan", "getPlan", "deletePlan",
-            "dispatchSubtask"
+            "dispatchSubtask",
+            "activate_skill"
     );
 
     private static void triggerAutoReconAppend(dev.langchain4j.service.tool.ToolExecution execution,
@@ -441,6 +453,7 @@ public class AgentConfig {
             FingerprintTools fingerprintTools,
             DisguiseTools disguiseTools,
             ShellGeneratorTools shellGeneratorTools,
+            @Qualifier("platformSkillActivationTools") SkillActivationTools skillActivationTools,
             ExecutorService aiToolExecutor) {
 
         return AiServices.builder(PlatformAgent.class)
@@ -450,7 +463,7 @@ public class AgentConfig {
                 .executeToolsConcurrently(aiToolExecutor)
                 .tools(puppetTools, userTools, teamTools,
                         pluginTools, fingerprintTools, disguiseTools,
-                        shellGeneratorTools)
+                        shellGeneratorTools, skillActivationTools)
                 .build();
     }
 }

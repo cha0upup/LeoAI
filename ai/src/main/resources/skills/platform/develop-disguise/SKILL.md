@@ -1,6 +1,7 @@
 ---
 name: develop-disguise
 description: 当用户希望在平台侧开发、测试、创建或更新 Disguise 时使用。该 skill 用于生成符合平台约束的 encodeBody、decodeBody、headersJson、description 和规范名称，并优先调用 testDisguise 验证 encode/decode 是否可互逆，再创建或更新 Disguise。
+enabled: true
 ---
 
 # 开发平台侧 Disguise

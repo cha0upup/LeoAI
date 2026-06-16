@@ -37,7 +37,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -94,10 +93,9 @@ public class PuppetNodeAiThreadService {
         thread.markExecuting(Thread.currentThread());
         String memoryId = session.getSessionId() + ":" + threadId;
         String runId = null;
-        List<AiSseEvent> eventLog = new CopyOnWriteArrayList<>();
-        StringBuilder replyBuffer = new StringBuilder();
-        StringBuilder deltaBuffer = new StringBuilder();
-        StringBuilder thinkingBuffer = new StringBuilder();
+        AiTimelineRecorder recorder = new AiTimelineRecorder(
+                (name, data) -> sendRecordedEventSafely(thread, emitter, name, data));
+        List<AiSseEvent> eventLog = recorder.eventLog();
         thread.getSseEventQueue().clear();
         QueueDrainHandle queueDrain = startQueueDrain(thread, emitter, eventLog);
 
@@ -117,49 +115,45 @@ public class PuppetNodeAiThreadService {
 
             stream
                 .onPartialThinking(thinking -> {
-                    if (thinkingBuffer.length() == 0) {
+                    if (!recorder.hasPendingThinking()) {
                         logger.info("[Thinking] 开始接收思考内容, memoryId={}", memoryId);
                     }
-                    thinkingBuffer.append(thinking.text());
+                    recorder.appendThinking(thinking.text());
                 })
                 .onPartialResponseWithContext((partial, ctx) -> {
                     handleRef.compareAndSet(null, ctx.streamingHandle());
                     // 收到正文 token 意味着思考阶段结束，flush thinking buffer
-                    flushThinkingBuffer(thinkingBuffer, thread, emitter, eventLog);
-                    appendVisibleDelta(partial.text(), replyBuffer, deltaBuffer);
-                    flushDeltaBuffer(deltaBuffer, thread, emitter);
+                    recorder.appendVisibleDelta(partial.text());
+                    recorder.flushDelta();
                 })
                 .onPartialToolCall(partial -> {
-                    flushDeltaBuffer(deltaBuffer, thread, emitter);
-                    flushThinkingBuffer(thinkingBuffer, thread, emitter, eventLog);
+                    recorder.onBoundary();
                     Map<String, Object> toolData = AiToolEventFactory.buildToolDeltaEventData(partial);
                     sendRecordedEventSafely(thread, emitter, "tool_delta", toolData);
                 })
                 .beforeToolExecution(execution -> {
-                    flushDeltaBuffer(deltaBuffer, thread, emitter);
-                    flushThinkingBuffer(thinkingBuffer, thread, emitter, eventLog);
+                    recorder.onBoundary();
                     Map<String, Object> toolData = AiToolEventFactory.buildToolStartEventData(execution);
                     sendRecordedEventSafely(thread, emitter, "node", toolData);
-                    eventLog.add(new AiSseEvent("node", toolData));
+                    recorder.recordExternal("node", toolData);
                     // 高影响工具确认拦截（检查会话授权、计划预批准，不满足时阻塞等待用户确认）
                     new AiToolConfirmationCallback(thread).accept(execution);
                 })
                 .onToolExecuted(execution -> {
                     try {
                         // 工具执行完毕意味着一轮思考结束，flush thinking buffer
-                        flushThinkingBuffer(thinkingBuffer, thread, emitter, eventLog);
+                        recorder.flushThinking();
                         Map<String, Object> toolData = AiToolEventFactory.buildToolEventData(execution);
                         sendRecordedEventSafely(thread, emitter, "patch", toolData);
-                        eventLog.add(new AiSseEvent("patch", toolData));
+                        recorder.recordExternal("patch", toolData);
                     } catch (Exception e) {
                         logger.warn("构建工具事件失败: {}", e.getMessage());
                     }
                 })
                 .onCompleteResponse(response -> {
-                    // 最终响应前 flush 残余 thinking
-                    flushThinkingBuffer(thinkingBuffer, thread, emitter, eventLog);
-                    flushDeltaBuffer(deltaBuffer, thread, emitter);
-                    String output = replyBuffer.toString();
+                    // 最终响应前 flush 残余 thinking + 闭合最后一段可见文本
+                    recorder.onBoundary();
+                    String output = recorder.reply();
                     // turnHolder[0] 在 try 块中构建，在 finally 中发送（跨块共享）
                     Object[] turnHolder = { null };
                     try {
@@ -200,7 +194,7 @@ public class PuppetNodeAiThreadService {
                 })
                 .onError(error -> {
                     try {
-                        flushDeltaBuffer(deltaBuffer, thread, emitter);
+                        recorder.flushDelta();
                         stopAndFlushQueuedEvents(thread, emitter, eventLog, queueDrain);
                         if (thread.isStopRequested()) {
                             thread.markCancelled();
@@ -404,50 +398,6 @@ public class PuppetNodeAiThreadService {
         } catch (Exception e) {
             // 客户端已断开连接，忽略
         }
-    }
-
-    private void appendVisibleDelta(String text, StringBuilder replyBuffer,
-                                    StringBuilder deltaBuffer) {
-        if (text == null || text.isEmpty()) return;
-        replyBuffer.append(text);
-        deltaBuffer.append(text);
-    }
-
-    private void flushDeltaBuffer(StringBuilder deltaBuffer, AiThread thread, SseEmitter emitter) {
-        if (deltaBuffer.length() == 0) return;
-        String delta = deltaBuffer.toString();
-        deltaBuffer.setLength(0);
-        sendRecordedEventSafely(thread, emitter, "delta", delta);
-    }
-
-    /**
-     * 将累积的 thinking token 作为一个完整的 thinking 事件发送，然后清空 buffer。
-     * 在工具调用开始或最终回复开始时调用，确保前端收到的是完整的思考块而非碎片。
-     */
-    private void flushThinkingBuffer(StringBuilder thinkingBuffer, AiThread thread,
-                                     SseEmitter emitter, List<AiSseEvent> eventLog) {
-        if (thinkingBuffer.length() == 0) return;
-        String content = thinkingBuffer.toString();
-        thinkingBuffer.setLength(0);
-        logger.info("[Thinking] flush 思考块, 长度={} chars", content.length());
-
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "thinking");
-        entry.put("content", content);
-        entry.put("timestamp", System.currentTimeMillis());
-        sendRecordedEventSafely(thread, emitter, "node", entry);
-        eventLog.add(new AiSseEvent("node", entry));
-    }
-
-    private void emitThinking(String content, AiThread thread,
-                              SseEmitter emitter, List<AiSseEvent> eventLog) {
-        if (content == null || content.isBlank()) return;
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "thinking");
-        entry.put("content", content);
-        entry.put("timestamp", System.currentTimeMillis());
-        sendRecordedEventSafely(thread, emitter, "node", entry);
-        eventLog.add(new AiSseEvent("node", entry));
     }
 
     private Map<String, Object> buildUsageEvent(dev.langchain4j.model.chat.response.ChatResponse response) {
@@ -855,11 +805,12 @@ public class PuppetNodeAiThreadService {
                 AiSseEvent event = eventLog.get(i);
                 String name = event.name();
                 String kind = kindOf(event.data());
-                // 收集所有节点相关事件（thinking / plan / subtask）到统一列表，
+                // 收集所有节点相关事件（thinking / text / plan / subtask）到统一列表，
                 // 排除 node(kind=tool) 起始事件，只保留 patch(kind=tool) 完成事件，
                 // 按 eventLog 位置注入 seq，确保历史恢复时时间线顺序与直播一致。
                 if ("thinking".equals(name)
                         || ("node".equals(name) && ("thinking".equals(kind)
+                                || "text".equals(kind)
                                 || "plan".equals(kind) || "subtask".equals(kind)))
                         || ("patch".equals(name) && "tool".equals(kind))) {
                     long seq = event.seq() > 0 ? event.seq() : (i + 1L);

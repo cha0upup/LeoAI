@@ -1,6 +1,7 @@
 ---
 name: analyze-logs-intelligence
 description: 从目标主机日志中提取运维情报：access.log 中的内网系统、auth.log 中的来源 IP、应用日志中的连接串和报错信息。当需要从日志中发现新目标或运维模式时使用。
+enabled: true
 ---
 
 # 日志情报分析

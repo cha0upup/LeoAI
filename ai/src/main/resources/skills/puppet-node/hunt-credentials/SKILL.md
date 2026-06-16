@@ -1,6 +1,7 @@
 ---
 name: hunt-credentials
 description: 在目标主机的环境变量、进程启动参数、配置文件和常见凭据存放路径中猎取账号密码、Token、密钥等敏感信息。覆盖 JDBC 数据库、Redis、Nacos、Shiro Key、SSH、云凭据等所有场景。当任务涉及凭据搜集、密钥提取、数据库密码、Redis 密码、Nacos 配置、Shiro Key、API Token、云凭据或服务账号时使用。
+enabled: true
 ---
 
 # 凭据猎取
@@ -93,7 +94,7 @@ exec("grep -rnI --include='*.properties' --include='*.yml' --include='*.yaml' --
 
 ### 第四步：汇总 + 写入摘要
 
-分析所有结果，调用 `appendReconSummary` 和 `appendReconSummary`，然后 `completePlan`。
+分析所有结果，调用 `manage_recon_summary(action="append")` 和 `manage_recon_summary(action="append")`，然后 `completePlan`。
 
 ## 工具优先级
 
@@ -165,8 +166,8 @@ exec("grep -rnI --include='*.properties' --include='*.yml' --include='*.yaml' --
 
 完成后必须：
 
-1. 调用 `appendReconSummary` 保存凭据线索分类、来源和风险等级。
-2. 调用 `appendReconSummary` 合并机器可读字段。结构化摘要默认保存原始凭据值；只有来源本身脱敏时才记录脱敏值并标注来源已脱敏。
+1. 调用 `manage_recon_summary(action="append")` 保存凭据线索分类、来源和风险等级。
+2. 调用 `manage_recon_summary(action="append")` 合并机器可读字段。结构化摘要默认保存原始凭据值；只有来源本身脱敏时才记录脱敏值并标注来源已脱敏。
 
 结构化 patch 示例：
 

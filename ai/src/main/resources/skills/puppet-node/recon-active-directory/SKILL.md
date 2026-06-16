@@ -1,6 +1,7 @@
 ---
 name: recon-active-directory
 description: Windows Active Directory 域环境侦察：域控定位、域用户/组枚举、GPP 密码、SPN 发现、域信任关系、ACL 分析。当目标处于 Windows 域环境且需要了解域拓扑和攻击面时使用。
+enabled: true
 ---
 
 # Active Directory 域侦察

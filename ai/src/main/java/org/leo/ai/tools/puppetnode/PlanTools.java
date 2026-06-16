@@ -37,13 +37,13 @@ public class PlanTools {
             @P("任务目标") String goal,
             @P("步骤列表（对象数组）") List<Map<String, Object>> steps) {
         AiThread thread = resolveThread();
-        Map<String, Object> result = new LinkedHashMap<>();
         if (thread == null) {
-            return fail(result, "会话或线程不存在，无法创建计划");
+            throw new IllegalStateException("会话或线程不存在，无法创建计划");
         }
         AiPlan plan = new AiPlan(title, goal, normalizeSteps(steps));
         thread.addPlan(plan);
         emitPlan(thread, plan, true);
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("plan", plan);
         return result;
@@ -60,13 +60,12 @@ public class PlanTools {
             @P("操作：start | complete | fail | skip") String action,
             @P("结果摘要或原因（complete/fail/skip 时填写，start 时可留空）") String resultText) {
         AiThread thread = resolveThread();
-        Map<String, Object> result = new LinkedHashMap<>();
         if (thread == null) {
-            return fail(result, "会话或线程不存在，无法更新计划");
+            throw new IllegalStateException("会话或线程不存在，无法更新计划");
         }
         AiPlan plan = thread.getCurrentPlan();
         if (plan == null) {
-            return fail(result, "当前没有可更新的计划");
+            throw new IllegalStateException("当前没有可更新的计划");
         }
 
         boolean ok;
@@ -76,17 +75,18 @@ public class PlanTools {
             case "complete" -> ok = plan.completeStep(stepIndex, text);
             case "fail"     -> ok = plan.failStep(stepIndex, text);
             case "skip"     -> ok = plan.skipStep(stepIndex, text);
-            default         -> { return fail(result, "无效的 action：" + action + "，可选值：start | complete | fail | skip"); }
+            default         -> { throw new IllegalArgumentException("无效的 action：" + action + "，可选值：start | complete | fail | skip"); }
         }
         if (!ok) {
             if ("start".equals(action) && plan.getSteps().stream().anyMatch(s -> s.getIndex() == stepIndex)) {
-                return fail(result, "步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动。请先完成依赖步骤。");
+                throw new IllegalStateException("步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动。请先完成依赖步骤。");
             }
-            return fail(result, "未找到指定步骤: " + stepIndex);
+            throw new IllegalStateException("未找到指定步骤: " + stepIndex);
         }
 
         emitPlanStep(thread, plan, stepIndex, action, text);
         emitPlan(thread, plan, false);
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("plan", plan);
         return result;
@@ -96,16 +96,16 @@ public class PlanTools {
     public Map<String, Object> completePlan(
             @P("最终结论") String finalSummary) {
         AiThread thread = resolveThread();
-        Map<String, Object> result = new LinkedHashMap<>();
         if (thread == null) {
-            return fail(result, "会话或线程不存在，无法完成计划");
+            throw new IllegalStateException("会话或线程不存在，无法完成计划");
         }
         AiPlan plan = thread.getCurrentPlan();
         if (plan == null) {
-            return fail(result, "当前没有可完成的计划");
+            throw new IllegalStateException("当前没有可完成的计划");
         }
         plan.complete(finalSummary);
         emitPlan(thread, plan, false);
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("plan", plan);
         return result;

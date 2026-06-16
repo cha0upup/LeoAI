@@ -73,12 +73,10 @@ public class ReverseTunnelTools {
         String sessionId = AiToolContext.requireSessionId();
         JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
         Socks5ProxyStatistics.StatisticsSnapshot snapshot = puppet.getReverseTunnelStatistics(listenId);
-        Map<String, Object> result = new HashMap<>();
         if (snapshot == null) {
-            result.put("success", false);
-            result.put("message", "反向隧道未启动或不存在: " + listenId);
-            return result;
+            throw new IllegalStateException("反向隧道未启动或不存在: " + listenId);
         }
+        Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("port", snapshot.port);
         result.put("activeConnections", snapshot.activeConnections);

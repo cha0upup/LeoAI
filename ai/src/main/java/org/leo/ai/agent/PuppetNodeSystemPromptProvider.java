@@ -1,6 +1,9 @@
 package org.leo.ai.agent;
 
+import dev.langchain4j.skills.Skills;
+import org.leo.ai.service.LeoSkillsProvider;
 import org.leo.ai.service.ReconSummaryDigestService;
+import org.leo.ai.service.SkillRegistryService;
 import org.springframework.stereotype.Component;
 
 /**
@@ -11,23 +14,30 @@ import org.springframework.stereotype.Component;
  *
  * <p>通过 {@code AgentConfig} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
  * 以方法引用形式注册到 AiServices。
+ *
+ * <p>Skills 列表通过 {@link LeoSkillsProvider#getSkills(String)} 动态读取，
+ * 并使用 {@link Skills#formatAvailableSkills()} 标准格式化，符合 Agent Skills 规范。
  */
 @Component
 public class PuppetNodeSystemPromptProvider {
 
     private final ReconSummaryDigestService reconService;
+    private final LeoSkillsProvider skillsProvider;
 
-    public PuppetNodeSystemPromptProvider(ReconSummaryDigestService reconService) {
-        this.reconService = reconService;
+    public PuppetNodeSystemPromptProvider(ReconSummaryDigestService reconService,
+                                          LeoSkillsProvider skillsProvider) {
+        this.reconService   = reconService;
+        this.skillsProvider = skillsProvider;
     }
 
     public String getSystemMessage(Object memoryId) {
-        String key = String.valueOf(memoryId);
+        String key       = String.valueOf(memoryId);
         String sessionId = key.contains(":") ? key.substring(0, key.indexOf(':')) : key;
         String reconDigest = reconService.getDigest(sessionId);
 
         StringBuilder sb = new StringBuilder();
-        sb.append(REFERENCE_MANUAL).append("\n");
+        sb.append(buildSkillsSection());
+        sb.append("\n");
         sb.append(INSTRUCTION_TEMPLATE.formatted(sessionId));
         if (reconDigest != null && !reconDigest.isBlank()) {
             sb.append("\n\n════════════════════════════════════════\n");
@@ -38,82 +48,45 @@ public class PuppetNodeSystemPromptProvider {
         return sb.toString();
     }
 
-    private static final String REFERENCE_MANUAL = """
-            ════════════════════════════════════════
-            【Skills 优先】
-            ════════════════════════════════════════
+    // ── 动态 Skills 区块 ──────────────────────────────────────────────────────
 
-            面对典型场景优先使用 skill，而不是手工拼装子 Agent 调用。
-            Skills 已内置合理参数和顺序，能减少重复调度被拦截的风险。
-
-            ▸ 侦察类：
-            - recon-basic-info — 进入新目标后的第一步：OS、用户、网络、进程、容器、业务角色
-            - recon-internal-network — 内网网段枚举、存活主机扫描、端口探测、HTTP 指纹
-            - analyze-logs-intelligence — 日志情报分析：access.log 内网系统、auth.log 来源 IP、应用日志连接串和凭据
-            - discover-web-apps — 发现目标上部署的 Web 应用、Web 容器、部署路径
-
-            ▸ 凭据收集类：
-            - hunt-credentials — 全量凭据猎取：环境变量、进程参数、配置文件、SSH 密钥、云凭据、JDBC/Redis/Nacos/Shiro Key（一站式）
-            - collect-cloud-metadata — 云平台 IMDS 元数据、IAM 角色凭据
-            - collect-spring-boot-config — Spring Boot 多来源配置收集（profile、fat jar、配置中心）
-            - collect-kubernetes-secrets — K8s Secret/ConfigMap 凭据收集
-
-            ▸ 利用类：
-            - exploit-spring-actuator — Spring Boot Actuator 端点枚举与利用
-            - exploit-database-post — 数据库后利用
-            - exploit-redis-post — Redis 后利用
-            - exploit-nacos-post — Nacos 后利用
-            - detect-container-escape — 容器逃逸检测
-
-            ▸ 提权类：
-            - escalate-linux-privilege — Linux 提权路径检测
-            - escalate-windows-privilege — Windows 提权路径检测
-
-            ▸ 横向移动类：
-            - lateral-move-ssh — SSH 横向移动
-
-            ▸ 持久化类：
-            - persistence-linux — Linux 持久化
-            - persistence-windows — Windows 持久化
-
-            ▸ 计划编排类：
-            - createPlan — 开始复杂任务前先创建执行计划，步骤不超过 5 步
-            - updatePlanStep — 更新指定步骤状态（action: start | complete | fail | skip）
-            - completePlan — 任务结束后收尾并写入最终结论
-
-            选择原则：先看有无现成 skill 覆盖当前场景，再决定是否自行编排。
-            完成一个 skill 后，检查其推荐的下一步 skill 和未解决问题，主动向用户建议衔接操作。
-
-            ════════════════════════════════════════
-            【边界认知】
-            ════════════════════════════════════════
-
-            1. puppet 侧 = 目标服务器，命令、文件、进程、网络、classpath、容器都在此。
-            2. 平台侧 = Leo 系统所在主机，保存 VFS、skills、uploads、用户空间、已加载 Java 插件。
-            3. 上传 = 平台 → puppet；下载 = puppet → 平台。不要混用两侧路径。
-
-            ════════════════════════════════════════
-            【工具选择与子 Agent 调度】
-            ════════════════════════════════════════
-
-            你拥有核心工具（命令执行、文件操作、进程管理、网络信息、会话摘要）可直接使用。
-            专项任务通过 dispatchSubtask(task, category) 分发给子 Agent：
-
-            ▸ category="recon" — 侦察/信息收集：
-              端口扫描、存活主机发现、浏览器数据提取、凭据采集、剪贴板操作
-
-            ▸ category="persistence" — 持久化/服务管理：
-              计划任务(创建/删除/查询)、系统服务管理、事件日志操作、Tomcat 内存马注入/卸载、Java 插件
-
-            ▸ category="exploit" — 攻击/利用：
-              HTTP 请求/Fuzz、脚本执行(PS/Bash/Python)、SQL 执行、应用资源读取(Spring配置/class字节码)
-
-            调度原则：
-            - 简单查询（OS 信息、列进程、查网络连接、执行单条命令）→ 直接用核心工具
-            - 多个独立只读检查 → 一次 exec 用 && 合并，或并行多工具调用
-            - 需要专项能力时 → dispatchSubtask，task 写清楚具体操作和目标，category 选对应类别
-            - 子 Agent 返回结果后，由你汇总分析并决定下一步
-            """;
+    private String buildSkillsSection() {
+        Skills skills = skillsProvider.getSkills(SkillRegistryService.SCOPE_PUPPET_NODE);
+        StringBuilder sb = new StringBuilder();
+        sb.append("════════════════════════════════════════\n");
+        sb.append("【Skills 优先】\n");
+        sb.append("════════════════════════════════════════\n\n");
+        sb.append("面对典型场景优先使用 skill，而不是手工拼装子 Agent 调用。\n");
+        sb.append("执行前先调用 activate_skill 获取完整指令；Skills 已内置合理参数和顺序，能减少重复调度被拦截的风险。\n\n");
+        String formatted = skills.formatAvailableSkills();
+        if (formatted == null || formatted.isBlank()) {
+            sb.append("（当前暂无可用 skill）\n");
+        } else {
+            sb.append(formatted).append("\n");
+        }
+        sb.append("\n选择原则：先看有无现成 skill 覆盖当前场景，再决定是否自行编排。\n");
+        sb.append("完成一个 skill 后，检查其推荐的下一步 skill 和未解决问题，主动向用户建议衔接操作。\n\n");
+        sb.append("════════════════════════════════════════\n");
+        sb.append("【边界认知】\n");
+        sb.append("════════════════════════════════════════\n\n");
+        sb.append("1. puppet 侧 = 目标服务器，命令、文件、进程、网络、classpath、容器都在此。\n");
+        sb.append("2. 平台侧 = Leo 系统所在主机，保存 VFS、skills、uploads、用户空间、已加载 Java 插件。\n");
+        sb.append("3. 上传 = 平台 → puppet；下载 = puppet → 平台。不要混用两侧路径。\n\n");
+        sb.append("════════════════════════════════════════\n");
+        sb.append("【工具选择与子 Agent 调度】\n");
+        sb.append("════════════════════════════════════════\n\n");
+        sb.append("你拥有核心工具（命令执行、文件操作、进程管理、网络信息、会话摘要）可直接使用。\n");
+        sb.append("专项任务通过 dispatchSubtask(task, category) 分发给子 Agent：\n\n");
+        sb.append("▸ category=\"recon\" — 侦察/信息收集：端口扫描、存活主机发现、浏览器数据提取、凭据采集、剪贴板操作\n");
+        sb.append("▸ category=\"persistence\" — 持久化/服务管理：计划任务、系统服务、事件日志、Tomcat 内存马、Java 插件\n");
+        sb.append("▸ category=\"exploit\" — 攻击/利用：HTTP 请求/Fuzz、脚本执行、SQL 执行、应用资源读取\n\n");
+        sb.append("调度原则：\n");
+        sb.append("- 简单查询 → 直接用核心工具\n");
+        sb.append("- 多个独立只读检查 → 一次 exec 合并或并行工具调用\n");
+        sb.append("- 需要专项能力时 → dispatchSubtask，task 写清楚具体操作和目标\n");
+        sb.append("- 子 Agent 返回结果后，由你汇总分析并决定下一步\n");
+        return sb.toString();
+    }
 
     private static final String INSTRUCTION_TEMPLATE = """
             你是 Leo 系统里的后渗透任务执行智能体，辅助渗透测试工程师在获取 WebShell 权限后进行信息收集、凭据搜集、内网探测、权限提升和持久化维持。
@@ -169,7 +142,7 @@ public class PuppetNodeSystemPromptProvider {
             ════════════════════════════════════════
 
             侦察过程中发现的稳定情报应即时写入会话级摘要：
-            - appendReconSummary（追加）
+            - manage_recon_summary(action="append", content="...")
             - 何时写：发现凭据、关键路径、监听服务、版本信息时立即调用
 
             ════════════════════════════════════════

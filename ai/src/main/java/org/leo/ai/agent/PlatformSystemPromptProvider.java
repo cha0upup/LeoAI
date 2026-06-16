@@ -1,5 +1,8 @@
 package org.leo.ai.agent;
 
+import dev.langchain4j.skills.Skills;
+import org.leo.ai.service.LeoSkillsProvider;
+import org.leo.ai.service.SkillRegistryService;
 import org.springframework.stereotype.Component;
 
 /**
@@ -7,15 +10,26 @@ import org.springframework.stereotype.Component;
  *
  * <p>通过 {@code AgentConfig} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
  * 以方法引用形式注册到 AiServices。
+ *
+ * <p>Skills 列表通过 {@link LeoSkillsProvider#getSkills(String)} 动态读取，
+ * 并使用 {@link Skills#formatAvailableSkills()} 标准格式化，符合 Agent Skills 规范。
  */
 @Component
 public class PlatformSystemPromptProvider {
 
-    public String getSystemMessage(Object memoryId) {
-        return INSTRUCTION;
+    private final LeoSkillsProvider skillsProvider;
+
+    public PlatformSystemPromptProvider(LeoSkillsProvider skillsProvider) {
+        this.skillsProvider = skillsProvider;
     }
 
-    private static final String INSTRUCTION = """
+    public String getSystemMessage(Object memoryId) {
+        return HEADER + buildSkillsSection() + FOOTER;
+    }
+
+    // ── 静态部分 ──────────────────────────────────────────────────────────────
+
+    private static final String HEADER = """
             你是一名专业的 WebShell 管理平台AI，服务对象是渗透测试工程师或安全研究人员。
 
             你的职责是管理平台侧资源，包括用户、团队、Puppet、Disguise、插件和指纹。
@@ -40,22 +54,11 @@ public class PlatformSystemPromptProvider {
 
             执行过程由系统根据模型原生流式思考和工具调用自动展示，不要输出 XML/JSON 过程标记。
 
-            ════════════════════════════════════════
-            【可用 Skills】
-            ════════════════════════════════════════
+            """;
 
-            ▸ 指纹开发类：
-            - develop-fingerprint — 编写/修改/检查/保存平台侧 HTTP/TCP 指纹规则。
+    private static final String FOOTER = """
 
-            ▸ Disguise 开发类：
-            - develop-disguise — 编写/测试/保存平台侧请求伪装编解码。
-
-            ▸ 漏洞建议类：
-            - exploit-suggest — 基于命中的 fingerprintId 列表读取 info.vulnerabilities 元数据，
-              输出按风险等级排序的利用建议、关联 CVE 与可调用的 exploit-* skill。
-              **本 skill 只读不写，且不直接执行利用**。
-
-            遇到对应场景时主动套用相应 skill 的工作流程，不要凭空生成方案。
+            遇到对应场景时主动套用相应 skill 的工作流程，执行前先调用 activate_skill 获取完整指令，不要凭空生成方案。
 
             ════════════════════════════════════════
             【最终输出格式】
@@ -66,4 +69,21 @@ public class PlatformSystemPromptProvider {
             **已执行**：简要说明实际执行了哪些步骤。
             **下一步建议**：1~2 条具体的后续建议。
             """;
+
+    // ── 动态部分 ──────────────────────────────────────────────────────────────
+
+    private String buildSkillsSection() {
+        Skills skills = skillsProvider.getSkills(SkillRegistryService.SCOPE_PLATFORM);
+        StringBuilder sb = new StringBuilder();
+        sb.append("════════════════════════════════════════\n");
+        sb.append("【可用 Skills】\n");
+        sb.append("════════════════════════════════════════\n\n");
+        String formatted = skills.formatAvailableSkills();
+        if (formatted == null || formatted.isBlank()) {
+            sb.append("（当前暂无可用 skill）\n");
+        } else {
+            sb.append(formatted).append("\n");
+        }
+        return sb.toString();
+    }
 }

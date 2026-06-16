@@ -1,6 +1,7 @@
 ---
 name: lateral-move-ssh
 description: 利用已收集的 SSH 私钥或密码凭据，尝试横向移动到内网其他主机。当发现 SSH 私钥、SSH 密码或内网存活主机开放 22 端口时使用。
+enabled: true
 ---
 
 # SSH 横向移动
@@ -272,8 +273,8 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
 
 完成后必须：
 
-1. `appendReconSummary` — 记录成功/失败的目标、使用的凭据类型、新立足点关键信息
-2. `appendReconSummary` — 合并机器可读字段
+1. `manage_recon_summary(action="append")` — 记录成功/失败的目标、使用的凭据类型、新立足点关键信息
+2. `manage_recon_summary(action="append")` — 合并机器可读字段
 
 结构化 patch 示例：
 

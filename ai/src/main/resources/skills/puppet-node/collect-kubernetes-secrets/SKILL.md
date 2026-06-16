@@ -1,6 +1,7 @@
 ---
 name: collect-kubernetes-secrets
 description: Kubernetes 集群敏感信息收集：ServiceAccount Token、Secret 对象、ConfigMap、RBAC 权限、Pod 环境变量中的凭据。当发现目标运行在 K8s 环境或获取到 kubeconfig/SA Token 时使用。
+enabled: true
 ---
 
 # Kubernetes Secrets 收集

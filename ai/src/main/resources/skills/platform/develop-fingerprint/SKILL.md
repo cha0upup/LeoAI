@@ -1,6 +1,7 @@
 ---
 name: develop-fingerprint
 description: 当用户希望在平台侧编写、生成、完善、检查、保存、更新或删除指纹规则时使用。该 skill 用于生成符合 FingerprintComponent 约束的 HTTP/TCP 指纹 rule.requests 与 rule.script，并要求通过平台 FingerprintTools 查询已有指纹、读取详情、保存和删除，不直接读写 VFS 指纹文件。
+enabled: true
 ---
 
 # 开发平台侧指纹

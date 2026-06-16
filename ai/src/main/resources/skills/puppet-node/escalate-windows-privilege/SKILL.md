@@ -1,6 +1,7 @@
 ---
 name: escalate-windows-privilege
 description: 在 Windows 目标上系统性地检测权限提升路径，包括未打补丁的内核/组件 CVE、服务配置错误、AlwaysInstallElevated、令牌滥用、UAC 绕过等。当任务涉及 Windows 提权、补丁缺失、服务劫持、令牌操作时使用。
+enabled: true
 ---
 
 # Windows 权限提升路径检测
@@ -303,8 +304,8 @@ Zerologon（CVE-2020-1472）要求目标为域控且未安装 2020-08 补丁。
 
 完成后必须：
 
-1. `appendReconSummary` — 提权向量检测结果摘要
-2. `appendReconSummary` — 机器可读字段
+1. `manage_recon_summary(action="append")` — 提权向量检测结果摘要
+2. `manage_recon_summary(action="append")` — 机器可读字段
 
 结构化 patch 示例：
 

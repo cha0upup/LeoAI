@@ -1,6 +1,7 @@
 ---
 name: detect-container-escape
 description: 检测目标机器是否运行在容器（Docker/LXC/Kubernetes Pod）中，以及是否存在容器逃逸向量（特权容器、docker.sock 挂载、capabilities 滥用、宿主机路径挂载等）。当任务涉及容器逃逸、Docker 安全、K8s Pod 逃逸、特权容器检测时使用。
+enabled: true
 ---
 
 # 容器逃逸检测
@@ -279,8 +280,8 @@ uname -r
 
 完成后必须：
 
-1. `appendReconSummary` — 容器类型、隔离边界、逃逸向量和最高风险
-2. `appendReconSummary` — 机器可读字段（只记录检测证据和风险，不记录逃逸命令链）
+1. `manage_recon_summary(action="append")` — 容器类型、隔离边界、逃逸向量和最高风险
+2. `manage_recon_summary(action="append")` — 机器可读字段（只记录检测证据和风险，不记录逃逸命令链）
 
 结构化 patch 示例：
 

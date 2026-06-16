@@ -27,6 +27,11 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-skills</artifactId>
+            <version>${langchain4j.skills.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.leo</groupId>
             <artifactId>core</artifactId>
             <version>0.0.2-SNAPSHOT</version>

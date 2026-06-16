@@ -38,65 +38,53 @@ public class SessionTools {
         this.reconSummaryOrganizeService = reconSummaryOrganizeService;
     }
 
-    @Tool("""
-            将纯文本侦察摘要写入当前 puppet（覆盖已有内容）。
-            适合在完成一轮完整侦察后调用，将关键情报保存到 puppet 级侦察摘要，后续会话可自动引用。
-            不要主动脱敏凭据、Token、密钥等；如源数据已脱敏则保存原值并注明。
+    @Tool(name = "manage_recon_summary", value = """
+            管理当前 puppet 的侦察摘要（统一入口）。action 必须是以下之一：
+            - get: 读取当前摘要全文（content 参数留空）。任务开始前调用，了解已收集情报。
+            - set: 用 content 完全覆盖现有摘要（仅在完成一轮完整侦察后调用，会丢弃旧内容）。
+            - append: 把 content 追加到摘要末尾（推荐方式，用于增量记录新发现）。
+
+            重要规则：
+            - 不要主动脱敏凭据 / Token / 密钥 / 证书路径，按原文保存
+            - content 应为 Markdown 格式，append 示例: "## 新发现\\n- 凭据 user:pass\\n- 端口 8080 暴露"
+            - 当摘要超过阈值时，append 会自动触发 AI 整理压缩
             """)
-    public Map<String, Object> setReconSummary(
-            @P("【必填】Markdown 格式的完整侦察摘要，应包含目标概览、OS/中间件/Java 版本、已知凭据线索、内网拓扑等关键信息。非空") String reconSummary) {
-        Map<String, Object> result = new HashMap<>();
-        String sessionId = AiToolContext.getSessionId();
-        if (sessionId == null) {
-            result.put("success", false);
-            result.put("message", "调用 setReconSummary 失败：上下文中无 sessionId。");
-            return result;
-        }
-        if (reconSummary == null || reconSummary.isBlank()) {
-            result.put("success", false);
-            result.put("message", "调用 setReconSummary 失败：缺少必填参数 reconSummary。");
-            return result;
-        }
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
-        if (session == null) {
-            result.put("success", false);
-            result.put("message", "会话不存在: " + sessionId);
-            return result;
-        }
-        String normalized = reconSummary.trim();
-        session.setReconSummary(normalized);
-        PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, normalized);
-        triggerDigestIfNeeded(session);
-        result.put("success", true);
-        result.put("message", "侦察摘要已保存到 puppet，长度: " + normalized.length() + " 字符");
-        return result;
+    public Map<String, Object> manageReconSummary(
+            @P("操作类型: get | set | append") String action,
+            @P("Markdown 文本。set/append 必填非空；get 时传空字符串") String content) {
+        String act = action == null ? "" : action.trim().toLowerCase();
+        return switch (act) {
+            case "get"    -> doGetReconSummary();
+            case "set"    -> doSetReconSummary(content);
+            case "append" -> doAppendReconSummary(content);
+            default       -> throw new IllegalArgumentException(
+                    "无效的 action: " + action + "，可选值: get | set | append");
+        };
     }
 
-    @Tool("""
-            向当前 puppet 的侦察摘要末尾追加新发现（增量更新）。
-            不要主动脱敏凭据、Token、密钥等。
-            示例调用：appendReconSummary(content="## 新发现\\n- 凭据 user:pass\\n- 端口 8080 暴露")。
-            """)
-    public Map<String, Object> appendReconSummary(
-            @P("【必填】要追加的 Markdown 文本，非空。示例：\"## 新发现\\n- xxx\"") String content) {
-        Map<String, Object> result = new HashMap<>();
-        String sessionId = AiToolContext.getSessionId();
-        if (sessionId == null) {
-            result.put("success", false);
-            result.put("message", "调用 appendReconSummary 失败：上下文中无 sessionId。");
-            return result;
+    // ── 内部实现（按 action 分发） ────────────────────────────────────────────
+
+    private Map<String, Object> doSetReconSummary(String reconSummary) {
+        if (reconSummary == null || reconSummary.isBlank()) {
+            throw new IllegalArgumentException("set 失败：缺少必填参数 content（侦察摘要内容）");
         }
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
-        if (session == null) {
-            result.put("success", false);
-            result.put("message", "会话不存在: " + sessionId);
-            return result;
-        }
+        PuppetNodeSession session = currentSessionOrThrow();
+        String normalized = reconSummary.trim();
+        session.setReconSummary(normalized);
+        PuppetNodeSessionWorkDirUtil.saveReconSummary(session.getSessionId(), normalized);
+        triggerDigestIfNeeded(session);
+        return Map.of(
+                "success", true,
+                "message", "侦察摘要已保存，长度: " + normalized.length() + " 字符"
+        );
+    }
+
+    private Map<String, Object> doAppendReconSummary(String content) {
         if (content == null || content.isBlank()) {
-            result.put("success", false);
-            result.put("message", "调用 appendReconSummary 失败：缺少必填参数 content。请传入 content=\"要追加的 Markdown 文本\"。");
-            return result;
+            throw new IllegalArgumentException("append 失败：缺少必填参数 content（要追加的 Markdown 文本）");
         }
+        PuppetNodeSession session = currentSessionOrThrow();
+        String sessionId = session.getSessionId();
         String updated = PuppetNodeSessionWorkDirUtil.appendReconSummary(sessionId, content);
         if (updated == null) {
             session.appendReconSummary(content);
@@ -112,38 +100,44 @@ public class SessionTools {
                 log.debug("SessionTools: 摘要已达 {} 字符，自动整理压缩至 {} 字符", summaryLen, organized.length());
                 summaryLen = organized.length();
             } catch (Exception e) {
+                // 整理失败属于旁路逻辑，不应影响 append 主路径，记日志后继续
                 log.warn("SessionTools: 自动整理失败: {}", e.getMessage());
             }
         }
         triggerDigestIfNeeded(session);
-        result.put("success", true);
-        result.put("message", "已追加到 puppet 侦察摘要，当前摘要共 " + summaryLen + " 字符");
-        return result;
+        return Map.of(
+                "success", true,
+                "message", "已追加到侦察摘要，当前共 " + summaryLen + " 字符"
+        );
     }
 
-    @Tool("读取当前 puppet 的侦察摘要。任务开始前调用，了解已收集的目标情报。")
-    public Map<String, Object> getReconSummary() {
-        Map<String, Object> result = new HashMap<>();
-        String sessionId = AiToolContext.getSessionId();
-        if (sessionId == null) {
-            result.put("success", false);
-            result.put("message", "上下文中无 sessionId，无法读取侦察摘要");
-            return result;
-        }
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
-        if (session == null) {
-            result.put("success", false);
-            result.put("message", "会话不存在: " + sessionId);
-            return result;
-        }
-        String persisted = PuppetNodeSessionWorkDirUtil.loadReconSummary(sessionId);
+    private Map<String, Object> doGetReconSummary() {
+        PuppetNodeSession session = currentSessionOrThrow();
+        String persisted = PuppetNodeSessionWorkDirUtil.loadReconSummary(session.getSessionId());
         if (persisted != null) {
             session.setReconSummary(persisted);
         }
+        Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("hasReconSummary", session.hasReconSummary());
         result.put("reconSummary", session.getReconSummary());
         return result;
+    }
+
+    /**
+     * 解析当前 ThreadLocal 上下文中的 puppet 会话；找不到则抛出 {@link IllegalStateException}，
+     * langchain4j 默认错误处理器会把异常 message 作为工具结果回传给 LLM。
+     */
+    private PuppetNodeSession currentSessionOrThrow() {
+        String sessionId = AiToolContext.getSessionId();
+        if (sessionId == null) {
+            throw new IllegalStateException("上下文中无 sessionId（ThreadLocal 未注入），无法定位 puppet 会话");
+        }
+        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
+        if (session == null) {
+            throw new IllegalStateException("会话不存在: " + sessionId);
+        }
+        return session;
     }
 
     private void triggerDigestIfNeeded(PuppetNodeSession session) {

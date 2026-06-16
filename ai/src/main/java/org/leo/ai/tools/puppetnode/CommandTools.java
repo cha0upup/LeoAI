@@ -45,13 +45,13 @@ public class CommandTools {
     // ══════════════════════════════════════════════════════════════════════════════
 
     @Tool("在 puppet 侧执行系统命令。统一入口，自动选择最优执行模式。\n"
-            + "• timeout=0：快速同步，仅适合可以确定在 2 秒内完成的命令\n"
-            + "• timeout>0：带超时同步（1~120秒），根据命令预计耗时自行设置合理值，超时后终止并返回部分输出\n"
+            + "• timeout=0：使用默认超时（30s），适合明确快完成的命令\n"
+            + "• timeout>0：自定义超时（1~120s），到点强制终止并返回已收集的部分输出\n"
             + "• 检测到必然耗时的命令自动转异步，返回 taskId，需用 queryTask 轮询\n"
             + "已知高频命令（env、java进程参数）自动命中会话缓存。不能用于查看平台侧 VFS。")
     public Map<String, Object> exec(
             @P("要执行的命令") String cmd,
-            @P("超时秒数。0=快速同步（默认），>0=带超时同步（1~120）。检测到耗时命令时忽略此参数自动转异步。") int timeout) throws Exception {
+            @P("超时秒数。0=默认 30s；>0=自定义（1~120）。检测到耗时命令时忽略此参数自动转异步。") int timeout) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
 
         // ── 1. 缓存命中检查（已知高频命令） ──
@@ -63,14 +63,9 @@ public class CommandTools {
             return startAsync(sessionId, cmd);
         }
 
-        // ── 3. 根据 timeout 选择执行模式 ──
-        if (timeout <= 0) {
-            // 快速同步
-            return execSync(sessionId, cmd);
-        } else {
-            // 带超时同步
-            return execWithTimeout(sessionId, cmd, Math.min(timeout, 120));
-        }
+        // ── 3. 同步执行（无论 timeout=0 还是 >0 都走子进程，避免 PTY 回显与哨兵歧义） ──
+        int timeoutSec = timeout <= 0 ? 0 : Math.min(timeout, 120);
+        return execSync(sessionId, cmd, timeoutSec);
     }
 
     @Tool("查询异步命令的当前输出。当 exec 返回 taskId 时使用。"
@@ -108,11 +103,12 @@ public class CommandTools {
     // ══════════════════════════════════════════════════════════════════════════════
 
     /**
-     * 快速同步执行（原 execOnce）。
-     * 注意：此模式无超时保护，仅适用于确定快速完成的命令。
-     * AI 应对大多数命令使用 timeout>0 的模式。
+     * 同步执行命令：fork 子进程 → 等待退出 → 收集输出。
+     * <p>无论 timeoutSeconds 是 0（用组件默认 30s）还是 &gt;0（自定义），都走同一条 fork-exec-wait 路径。
+     * 不再使用交互式 PTY shell + 哨兵，避免 PTY 输入回显与第二次 sentinel 误匹配的歧义。
+     * <p>结果统一规整为 {@code {cmd, output, status, exitCode, timedOut}} 形状，与异步路径一致。
      */
-    private Map<String, Object> execSync(String sessionId, String cmd) throws Exception {
+    private Map<String, Object> execSync(String sessionId, String cmd, int timeoutSeconds) throws Exception {
         String cacheKey = SIMPLE_COMMAND_CACHE_PREFIX + cmd;
         Object cachedResult = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cachedResult instanceof Map<?, ?> cachedMap) {
@@ -120,65 +116,63 @@ public class CommandTools {
         }
 
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        Map<String, Object> results = node.execSimpleCommand(cmd);
-        if (results != null && !results.containsKey("error") && !results.containsKey("exception")) {
-            compressOutputField(results);
-            PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
-        }
-        return results;
-    }
+        Map<String, Object> raw = timeoutSeconds > 0
+                ? node.execSimpleCommand(cmd, timeoutSeconds)
+                : node.execSimpleCommand(cmd);
 
-    /** 带超时同步执行（原 execWithTimeout）。 */
-    private Map<String, Object> execWithTimeout(String sessionId, String cmd, int timeoutSeconds) throws Exception {
-        String processId = createTerminal(sessionId);
-
-        // 用唯一哨兵标记命令结束，彻底替代"连续 N 次读空"的时序启发式
-        String sentinel = "__DONE_" + processId.replace("-", "").substring(0, 12) + "__";
-
-        writeToTerminal(sessionId, cmd, processId);
-        writeToTerminal(sessionId, "echo " + sentinel, processId); // 命令执行完毕后输出哨兵
-
-        long deadline = System.currentTimeMillis() + (long) timeoutSeconds * 1000;
-        StringBuilder accumulated = new StringBuilder();
-        boolean sentinelFound = false;
-
-        while (System.currentTimeMillis() < deadline) {
-            Thread.sleep(300);
-            String output = readFromTerminal(sessionId, processId);
-            if (output != null && !output.isEmpty()) {
-                accumulated.append(output);
-                if (accumulated.indexOf(sentinel) >= 0) {
-                    sentinelFound = true;
-                    break;
-                }
-            }
-        }
-
-        stopTerminal(sessionId, processId);
-
-        // 去除哨兵行及其之后的内容
-        String resultOutput = accumulated.toString();
-        int sentinelIdx = resultOutput.indexOf(sentinel);
-        if (sentinelIdx >= 0) {
-            resultOutput = resultOutput.substring(0, sentinelIdx);
-            // 去掉末尾多余空行
-            int end = resultOutput.length();
-            while (end > 0 && (resultOutput.charAt(end - 1) == '\n' || resultOutput.charAt(end - 1) == '\r')) {
-                end--;
-            }
-            resultOutput = resultOutput.substring(0, end);
-        }
-
-        boolean timedOut = !sentinelFound;
-        HashMap<String, Object> result = new HashMap<>();
-        result.put("cmd", cmd);
-        result.put("output", resultOutput);
-        result.put("status", timedOut ? "timeout" : "completed");
+        Map<String, Object> result = normalizeSimpleResult(cmd, raw, timeoutSeconds);
         compressOutputField(result);
-        if (timedOut) {
-            result.put("hint", "命令执行超时（" + timeoutSeconds + "s），已终止。输出可能不完整。可用更大 timeout 重试或改用异步（系统自动判断）。");
+        // 仅成功完成才缓存，避免把 timeout/exception 结果固化下来
+        if (!Boolean.TRUE.equals(result.get("timedOut")) && !result.containsKey("error")) {
+            PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, result);
         }
         return result;
+    }
+
+    /**
+     * 把 ExecCommandSimpleComponent 返回的 {@code {code, data, exitCode, timedOut}} 整形为
+     * AI 工具层统一形状 {@code {cmd, output, status, exitCode, timedOut, hint?}}，
+     * 与异步任务路径（queryTask / stopTask）保持一致。
+     */
+    private static Map<String, Object> normalizeSimpleResult(String cmd, Map<String, Object> raw,
+                                                              int requestedTimeoutSeconds) {
+        HashMap<String, Object> out = new HashMap<>();
+        out.put("cmd", cmd);
+        if (raw == null) {
+            out.put("output", "");
+            out.put("status", "error");
+            out.put("error", "no result from puppet");
+            return out;
+        }
+        // 远端可能直接抛错；在此统一成 error 形状供 AI 识别
+        if (raw.containsKey("error") || raw.containsKey("exception")) {
+            out.put("output", "");
+            out.put("status", "error");
+            Object err = raw.getOrDefault("error", raw.get("exception"));
+            if (err != null) out.put("error", err);
+            return out;
+        }
+        Object data = raw.get("data");
+        String output;
+        if (data instanceof byte[] bytes) {
+            output = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        } else {
+            output = data == null ? "" : data.toString();
+        }
+        out.put("output", output);
+
+        boolean timedOut = Boolean.TRUE.equals(raw.get("timedOut"));
+        out.put("timedOut", Boolean.valueOf(timedOut));
+        out.put("status", timedOut ? "timeout" : "completed");
+        if (raw.get("exitCode") instanceof Number n) {
+            out.put("exitCode", Integer.valueOf(n.intValue()));
+        }
+        if (timedOut) {
+            int sec = requestedTimeoutSeconds > 0 ? requestedTimeoutSeconds : 30;
+            out.put("hint", "命令执行超时（" + sec + "s），已强制终止。输出可能不完整。"
+                    + "可用更大 timeout 重试，或交给系统自动判断改走异步。");
+        }
+        return out;
     }
 
     /** 异步启动（原 startCommand）。 */
@@ -214,8 +208,8 @@ public class CommandTools {
                 return (Map<String, Object>) cachedMap;
             }
             // 未缓存，执行后缓存
-            Map<String, Object> results = execSync(sessionId, cmd);
-            if (results != null && !results.containsKey("error") && !results.containsKey("exception")) {
+            Map<String, Object> results = execSync(sessionId, cmd, 0);
+            if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
                 PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
             }
             return results;
@@ -228,8 +222,8 @@ public class CommandTools {
             if (cached instanceof Map<?, ?> cachedMap) {
                 return (Map<String, Object>) cachedMap;
             }
-            Map<String, Object> results = execSync(sessionId, cmd);
-            if (results != null && !results.containsKey("error") && !results.containsKey("exception")) {
+            Map<String, Object> results = execSync(sessionId, cmd, 0);
+            if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
                 PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
             }
             return results;
@@ -375,7 +369,7 @@ public class CommandTools {
      * <p>
      * 兼容两种输出格式：
      * <ul>
-     *   <li>"output"（String）— execWithTimeout / queryTask / stopTask 构建</li>
+     *   <li>"output"（String）— execSync / queryTask / stopTask 构建</li>
      *   <li>"data"（byte[] 或 String）— execSimpleCommand 远程返回</li>
      * </ul>
      * 如果压缩生效，会额外写入 outputCompressed / originalChars / compressedChars 标记。
@@ -451,12 +445,11 @@ public class CommandTools {
 
         // 3. 惰性探测
         try {
-            Map<String, Object> probe = execSync(sessionId, "uname -s");
+            Map<String, Object> probe = execSync(sessionId, "uname -s", 0);
             if (probe != null) {
-                Object data = probe.get("data");
-                String output = data instanceof byte[] bytes
-                        ? new String(bytes).toLowerCase()
-                        : String.valueOf(data).toLowerCase();
+                // execSync 已统一规整为 {output, status, ...} 形状
+                Object outputObj = probe.get("output");
+                String output = outputObj == null ? "" : outputObj.toString().toLowerCase();
                 if (output.contains("linux") || output.contains("darwin") || output.contains("unix")) {
                     PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "unix");
                     return false;

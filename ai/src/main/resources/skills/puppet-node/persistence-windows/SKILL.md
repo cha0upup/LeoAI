@@ -1,6 +1,7 @@
 ---
 name: persistence-windows
 description: 在 Windows 目标上建立持久化后门，包括注册表 Run 键、计划任务、服务、WMI 事件订阅、启动目录等方式。当任务涉及 Windows 持久化、后门植入、维持访问、注册表后门、计划任务后门时使用。执行前必须获得用户明确确认。
+enabled: true
 ---
 
 # Windows 持久化
@@ -319,8 +320,8 @@ Get-WmiObject -Namespace root\subscription -Class __FilterToConsumerBinding | Re
 
 完成后必须：
 
-1. `appendReconSummary` — 已部署的持久化方式、路径和验证结果
-2. `appendReconSummary` — 机器可读字段
+1. `manage_recon_summary(action="append")` — 已部署的持久化方式、路径和验证结果
+2. `manage_recon_summary(action="append")` — 机器可读字段
 
 结构化 patch 示例：
 

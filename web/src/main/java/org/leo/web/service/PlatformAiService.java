@@ -30,7 +30,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -125,10 +124,9 @@ public class PlatformAiService {
                             AiChatAuditEntry audit,
                             SseEmitter emitter,
                             long startMs) {
-        List<AiSseEvent> eventLog = new CopyOnWriteArrayList<>();
-        StringBuilder replyBuffer = new StringBuilder();
-        StringBuilder deltaBuffer = new StringBuilder();
-        StringBuilder thinkingBuffer = new StringBuilder();
+        AiTimelineRecorder recorder = new AiTimelineRecorder(
+                (name, data) -> sendRecordedEventSafely(state, emitter, name, data));
+        List<AiSseEvent> eventLog = recorder.eventLog();
         String memoryId = state.getStateId();
         String runId = null;
         state.getAiSseEventQueue().clear();
@@ -164,26 +162,23 @@ public class PlatformAiService {
 
             stream
                 .onPartialThinking(thinking -> {
-                    if (thinkingBuffer.length() == 0) {
+                    if (!recorder.hasPendingThinking()) {
                         logger.info("[Thinking] 开始接收思考内容, stateId={}", state.getStateId());
                     }
-                    thinkingBuffer.append(thinking.text());
+                    recorder.appendThinking(thinking.text());
                 })
                 .onPartialResponseWithContext((partial, ctx) -> {
                     handleRef.compareAndSet(null, ctx.streamingHandle());
-                    flushThinkingBuffer(thinkingBuffer, state, emitter, eventLog);
-                    appendVisibleDelta(partial.text(), replyBuffer, deltaBuffer);
-                    flushDeltaBuffer(deltaBuffer, state, emitter);
+                    recorder.appendVisibleDelta(partial.text());
+                    recorder.flushDelta();
                 })
                 .onPartialToolCall(partial -> {
-                    flushDeltaBuffer(deltaBuffer, state, emitter);
-                    flushThinkingBuffer(thinkingBuffer, state, emitter, eventLog);
+                    recorder.onBoundary();
                     Map<String, Object> toolData = AiToolEventFactory.buildToolDeltaEventData(partial);
                     sendRecordedEventSafely(state, emitter, "tool_delta", toolData);
                 })
                 .beforeToolExecution(execution -> {
-                    flushDeltaBuffer(deltaBuffer, state, emitter);
-                    flushThinkingBuffer(thinkingBuffer, state, emitter, eventLog);
+                    recorder.onBoundary();
                     // 工具执行前检查停止标志：若用户已点停止，直接抛出中断异常，
                     // 阻止工具方法进入执行，避免后台任务继续运行。
                     if (state.isStopRequested() || Thread.currentThread().isInterrupted()) {
@@ -192,22 +187,21 @@ public class PlatformAiService {
                     }
                     Map<String, Object> toolData = AiToolEventFactory.buildToolStartEventData(execution);
                     sendRecordedEventSafely(state, emitter, "node", toolData);
-                    eventLog.add(new AiSseEvent("node", toolData));
+                    recorder.recordExternal("node", toolData);
                 })
                 .onToolExecuted(execution -> {
                     try {
-                        flushThinkingBuffer(thinkingBuffer, state, emitter, eventLog);
+                        recorder.flushThinking();
                         Map<String, Object> toolData = AiToolEventFactory.buildToolEventData(execution);
                         sendRecordedEventSafely(state, emitter, "patch", toolData);
-                        eventLog.add(new AiSseEvent("patch", toolData));
+                        recorder.recordExternal("patch", toolData);
                     } catch (Exception e) {
                         // 构建工具事件失败，忽略
                     }
                 })
                 .onCompleteResponse(response -> {
-                    flushThinkingBuffer(thinkingBuffer, state, emitter, eventLog);
-                    flushDeltaBuffer(deltaBuffer, state, emitter);
-                    String output = replyBuffer.toString();
+                    recorder.onBoundary();
+                    String output = recorder.reply();
                     Object[] turnHolder = { null };
                     try {
                         int toolCallCount = countToolCallEvents(eventLog);
@@ -242,7 +236,7 @@ public class PlatformAiService {
                     }
                 })
                 .onError(error -> {
-                    flushDeltaBuffer(deltaBuffer, state, emitter);
+                    recorder.flushDelta();
                     stopAndFlushQueuedEvents(state, emitter, eventLog, queueDrain);
                     if (state.isStopRequested() || Thread.currentThread().isInterrupted()) {
                         String reason = state.getStopReason() != null ? state.getStopReason() : "已停止";
@@ -563,49 +557,6 @@ public class PlatformAiService {
         }
     }
 
-    private void appendVisibleDelta(String text, StringBuilder replyBuffer,
-                                    StringBuilder deltaBuffer) {
-        if (text == null || text.isEmpty()) return;
-        replyBuffer.append(text);
-        deltaBuffer.append(text);
-    }
-
-    private void flushDeltaBuffer(StringBuilder deltaBuffer, PlatformAiState state, SseEmitter emitter) {
-        if (deltaBuffer.length() == 0) return;
-        String delta = deltaBuffer.toString();
-        deltaBuffer.setLength(0);
-        sendRecordedEventSafely(state, emitter, "delta", delta);
-    }
-
-    /**
-     * 将累积的 thinking token 作为一个完整的 thinking 事件发送，然后清空 buffer。
-     */
-    private void flushThinkingBuffer(StringBuilder thinkingBuffer, PlatformAiState state,
-                                     SseEmitter emitter, List<AiSseEvent> eventLog) {
-        if (thinkingBuffer.length() == 0) return;
-        String content = thinkingBuffer.toString();
-        thinkingBuffer.setLength(0);
-        logger.info("[Thinking] flush 思考块, 长度={} chars", content.length());
-
-        LinkedHashMap<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "thinking");
-        entry.put("content", content);
-        entry.put("timestamp", System.currentTimeMillis());
-        sendRecordedEventSafely(state, emitter, "node", entry);
-        eventLog.add(new AiSseEvent("node", entry));
-    }
-
-    private void emitThinking(String content, PlatformAiState state,
-                              SseEmitter emitter, List<AiSseEvent> eventLog) {
-        if (content == null || content.isBlank()) return;
-        LinkedHashMap<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "thinking");
-        entry.put("content", content);
-        entry.put("timestamp", System.currentTimeMillis());
-        sendRecordedEventSafely(state, emitter, "node", entry);
-        eventLog.add(new AiSseEvent("node", entry));
-    }
-
     private Map<String, Object> buildUsageEvent(dev.langchain4j.model.chat.response.ChatResponse response) {
         Map<String, Object> usage = new LinkedHashMap<>();
         if (response == null) return usage;
@@ -690,6 +641,7 @@ public class PlatformAiService {
             // 只保留 patch(kind=tool) 完成事件，避免历史恢复时同一工具调用出现重复节点。
             if ("thinking".equals(name)
                     || ("node".equals(name) && ("thinking".equals(kind)
+                            || "text".equals(kind)
                             || "plan".equals(kind) || "subtask".equals(kind)))
                     || ("patch".equals(name) && "tool".equals(kind))) {
                 long seq = event.seq() > 0 ? event.seq() : (i + 1L);

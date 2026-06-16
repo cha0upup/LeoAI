@@ -1,6 +1,7 @@
 ---
 name: lateral-move-wmi-psexec
 description: 利用已获取的 Windows 凭据（明文密码、NTLM Hash）通过 WMI、PsExec、WinRM 等协议横向移动到内网 Windows 主机。当目标环境为 Windows 域或工作组且已获取有效凭据时使用。
+enabled: true
 ---
 
 # Windows 横向移动（WMI / PsExec / WinRM）
@@ -289,8 +290,8 @@ sc query WinDefend | findstr STATE
 
 完成后必须：
 
-1. `appendReconSummary` — 记录横向结果、协议、权限级别
-2. `appendReconSummary` — 合并机器可读字段
+1. `manage_recon_summary(action="append")` — 记录横向结果、协议、权限级别
+2. `manage_recon_summary(action="append")` — 合并机器可读字段
 
 结构化 patch 示例：
 

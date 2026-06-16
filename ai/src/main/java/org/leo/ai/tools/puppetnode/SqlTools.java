@@ -36,11 +36,7 @@ public class SqlTools {
     public Map<String, Object> querySql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
         String violation = detectSqlViolation(sqlScript);
         if (violation != null) {
-            return Map.of(
-                    "success", false,
-                    "error", violation,
-                    "sql", sqlScript
-            );
+            throw new IllegalArgumentException(violation);
         }
         String sessionId = AiToolContext.requireSessionId();
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);

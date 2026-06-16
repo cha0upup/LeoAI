@@ -9,29 +9,33 @@ import java.util.HashMap;
  * 一次性命令执行组件
  * <p>
  * 与 {@code ExecCommandComponent} 的交互式 shell 不同，本组件为无状态一次性执行：
- * 启动子进程 → 等待退出 → 返回完整输出 + 退出码，适用于短命令（如 id、whoami、ls）。
+ * 启动子进程 → 等待退出 → 返回完整输出 + 退出码，适用于无 session 状态依赖的命令
+ * （如 whoami、id、ls、ps、cat、grep ...）。
  * <p>
  * 入参：
  * <ul>
  *   <li>{@code cmd}（String 或 byte[]）— 要执行的命令字符串</li>
+ *   <li>{@code timeout}（Integer，可选）— 超时秒数；缺省或 &lt;=0 时使用 {@link #DEFAULT_TIMEOUT_MS}</li>
  * </ul>
  * 出参：
  * <ul>
  *   <li>{@code data}（byte[]）— stdout + stderr 合并输出（UTF-8，最多 4 MB）</li>
  *   <li>{@code exitCode}（Integer）— 进程退出码</li>
+ *   <li>{@code timedOut}（Boolean）— true 表示触发超时被强制终止</li>
  *   <li>{@code code}（Integer）— 200 成功 / 400 参数错误 / 500 执行异常</li>
  * </ul>
  * <p>
  * 遵循 COMPONENT_GUIDE.md：Java 1.6 语法，无 lambda/内部类/try-with-resources/diamond。
  *
  * @author LeoSpring
- * @version 1.1
+ * @version 1.2
  */
 public class ExecCommandSimpleComponent implements Runnable {
 
-    private static final int BUFFER_SIZE      = 4096;
-    private static final int MAX_OUTPUT_BYTES = 4 * 1024 * 1024; // 4 MB
-    private static final long EXEC_TIMEOUT_MS = 30000L;           // 30s
+    private static final int  BUFFER_SIZE        = 4096;
+    private static final int  MAX_OUTPUT_BYTES   = 4 * 1024 * 1024; // 4 MB
+    private static final long DEFAULT_TIMEOUT_MS = 30000L;           // 30s
+    private static final long MAX_TIMEOUT_MS     = 300000L;          // 5min 上限，防止入参滥用
 
     private HashMap params;
     private HashMap results;
@@ -42,6 +46,8 @@ public class ExecCommandSimpleComponent implements Runnable {
     private volatile byte[]  workerOutput;
     private volatile int     workerExitCode = 0;
     private volatile String  workerError;
+    /** 由 worker 创建后写入；invoke() 触发超时时调用 destroy() 强制结束。 */
+    private volatile Process workerProcess;
 
     // workerMode=true 时由主线程填写，worker 线程只读
     private String execCmd;
@@ -87,6 +93,7 @@ public class ExecCommandSimpleComponent implements Runnable {
             pb.redirectErrorStream(true); // stderr 合并到 stdout
 
             Process process = pb.start();
+            workerProcess = process; // 让主线程在超时后能 destroy
 
             // 关闭子进程 stdin，防止某些 shell 等待输入而阻塞
             try { process.getOutputStream().close(); } catch (Exception ignored) {}
@@ -135,19 +142,22 @@ public class ExecCommandSimpleComponent implements Runnable {
             return;
         }
 
+        long timeoutMs = parseTimeoutMs();
+
         // 准备 worker 线程状态
-        execCmd     = cmd;
-        workerError = null;
-        workerOutput = null;
-        workerDone  = false;
-        workerMode  = true;  // volatile write：建立 happens-before，execCmd 对 worker 可见
+        execCmd       = cmd;
+        workerError   = null;
+        workerOutput  = null;
+        workerProcess = null;
+        workerDone    = false;
+        workerMode    = true;  // volatile write：建立 happens-before，execCmd 对 worker 可见
 
         Thread worker = new Thread(this);
         worker.setDaemon(true);
         worker.start();
 
-        // 等待 worker 完成，最多 EXEC_TIMEOUT_MS
-        long deadline = System.currentTimeMillis() + EXEC_TIMEOUT_MS;
+        // 等待 worker 完成，最多 timeoutMs
+        long deadline = System.currentTimeMillis() + timeoutMs;
         while (!workerDone && System.currentTimeMillis() < deadline) {
             try { Thread.sleep(50L); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -155,11 +165,31 @@ public class ExecCommandSimpleComponent implements Runnable {
             }
         }
 
+        boolean timedOut = !workerDone;
+        if (timedOut) {
+            // 强制终止子进程；worker 的 read/waitFor 会因 EOF/InterruptedException 退出，
+            // 然后给它一小段时间把已经读到的输出写回 workerOutput。
+            Process p = workerProcess;
+            if (p != null) {
+                try { p.destroy(); } catch (Exception ignored) {}
+            }
+            long graceDeadline = System.currentTimeMillis() + 500L;
+            while (!workerDone && System.currentTimeMillis() < graceDeadline) {
+                try { Thread.sleep(20L); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
         workerMode = false; // 重置，避免下次调用误入 worker 分支
 
-        if (!workerDone) {
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", "command timed out after 30s");
+        if (timedOut) {
+            results.put("code",     Integer.valueOf(200));
+            results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
+            results.put("exitCode", Integer.valueOf(-1));
+            results.put("timedOut", Boolean.TRUE);
+            results.put("msg",      "command timed out after " + (timeoutMs / 1000L) + "s");
             return;
         }
 
@@ -172,6 +202,30 @@ public class ExecCommandSimpleComponent implements Runnable {
         results.put("code",     Integer.valueOf(200));
         results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
         results.put("exitCode", Integer.valueOf(workerExitCode));
+        results.put("timedOut", Boolean.FALSE);
+    }
+
+    /**
+     * 解析 timeout 入参（秒）。缺省、非数字、&lt;=0 时回落到 {@link #DEFAULT_TIMEOUT_MS}；
+     * 超过 {@link #MAX_TIMEOUT_MS} 时截断到上限，避免 AI 误传超大值占住远端 shell 资源。
+     */
+    private long parseTimeoutMs() {
+        Object raw = params.get("timeout");
+        if (raw == null) return DEFAULT_TIMEOUT_MS;
+        long seconds;
+        if (raw instanceof Number) {
+            seconds = ((Number) raw).longValue();
+        } else {
+            try {
+                seconds = Long.parseLong(raw.toString().trim());
+            } catch (NumberFormatException e) {
+                return DEFAULT_TIMEOUT_MS;
+            }
+        }
+        if (seconds <= 0) return DEFAULT_TIMEOUT_MS;
+        long ms = seconds * 1000L;
+        if (ms > MAX_TIMEOUT_MS) return MAX_TIMEOUT_MS;
+        return ms;
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────

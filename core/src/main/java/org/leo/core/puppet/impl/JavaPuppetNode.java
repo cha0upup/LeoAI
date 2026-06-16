@@ -452,6 +452,10 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return commandService.execSimpleCommand(cmd);
     }
 
+    public Map<String, Object> execSimpleCommand(String cmd, int timeoutSeconds) throws Exception {
+        return commandService.execSimpleCommand(cmd, timeoutSeconds);
+    }
+
     public Map<String, Object> execScript(String language, String script) throws Exception {
         return execScriptService.execScript(language, script);
     }

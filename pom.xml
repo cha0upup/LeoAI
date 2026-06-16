@@ -47,7 +47,8 @@
     </scm>
     <properties>
         <java.version>17</java.version>
-        <langchain4j.version>1.15.0</langchain4j.version>
+        <langchain4j.version>1.16.1</langchain4j.version>
+        <langchain4j.skills.version>1.16.1-beta26</langchain4j.skills.version>
     </properties>
     <dependencies>
         <dependency>

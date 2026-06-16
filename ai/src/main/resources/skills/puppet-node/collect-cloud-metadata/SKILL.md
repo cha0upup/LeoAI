@@ -1,6 +1,7 @@
 ---
 name: collect-cloud-metadata
 description: 从目标主机读取云平台实例元数据（IMDSv1/v2），提取 IAM 角色凭据、AK/SK、实例身份信息。支持阿里云、AWS、腾讯云、华为云。当任务涉及云服务器、EC2、ECS、IMDS、元数据服务、AK/SK、InstanceProfileCredentials 时使用。
+enabled: true
 ---
 
 # 读取云平台实例元数据
@@ -247,8 +248,8 @@ UserData 中可能包含初始化脚本、密码、配置信息。
 
 完成后必须：
 
-1. `appendReconSummary` — 云平台、实例身份、角色名、凭据类型和过期时间
-2. `appendReconSummary` — 机器可读字段（保存原始密钥和 Token，不脱敏）
+1. `manage_recon_summary(action="append")` — 云平台、实例身份、角色名、凭据类型和过期时间
+2. `manage_recon_summary(action="append")` — 机器可读字段（保存原始密钥和 Token，不脱敏）
 
 结构化 patch 示例：
 

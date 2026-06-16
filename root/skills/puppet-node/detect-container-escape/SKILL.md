@@ -1,6 +1,8 @@
 ---
 name: detect-container-escape
-description: 检测目标机器是否运行在容器（Docker/LXC/Kubernetes Pod）中，以及是否存在容器逃逸向量（特权容器、docker.sock 挂载、capabilities 滥用、宿主机路径挂载等）。当任务涉及容器逃逸、Docker 安全、K8s Pod 逃逸、特权容器检测时使用。
+description: 检测目标机器是否运行在容器（Docker/LXC/Kubernetes Pod）中，以及是否存在容器逃逸向量（特权容器、docker.sock
+  挂载、capabilities 滥用、宿主机路径挂载等）。当任务涉及容器逃逸、Docker 安全、K8s Pod 逃逸、特权容器检测时使用。
+enabled: false
 ---
 
 # 容器逃逸检测
