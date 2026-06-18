@@ -1,3 +1,5 @@
+[English](README_EN.md) | **中文**
+
 <div align="center">
 
 <img src="docs/images/logo.png" alt="LeoAI Logo" width="120" />
