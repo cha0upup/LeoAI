@@ -187,13 +187,13 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 Download the latest release from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-0.0.3.jar
+LeoAi-0.0.5-SNAPSHOT.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.3.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -337,8 +337,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # For production, change this to a strong random string (16+ characters)
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
-# Pin to a specific JAR version (defaults to V0.0.3)
-# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/V0.0.3/LeoAi-0.0.3.jar
+# Pin to a specific JAR version (defaults to v0.0.5)
+# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.5/LeoAi-0.0.5-SNAPSHOT.jar
 ```
 
 After editing `.env`, run `docker compose up -d` to apply changes. **Note**: changing `JAR_URL` requires `--build` to re-fetch the JAR.
@@ -373,7 +373,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.3.jar --server.port=9090
+  LeoAi-0.0.5-SNAPSHOT.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -382,7 +382,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.3.jar \
+  LeoAi-0.0.5-SNAPSHOT.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -403,7 +403,7 @@ LeoAI's AI features require an LLM endpoint. Two configuration methods are avail
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.3.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
 ```
 
 ### Supported AI Models
@@ -560,7 +560,7 @@ The console's skill quick-launch panel provides 21 pre-configured puppet-node Sk
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.3.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
 ```
 
 ---
