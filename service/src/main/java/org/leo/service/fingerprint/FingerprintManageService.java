@@ -4,14 +4,24 @@ import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 @Service
 public class FingerprintManageService {
@@ -309,5 +319,219 @@ public class FingerprintManageService {
         public FingerprintNotFoundException(String message) {
             super(message);
         }
+    }
+
+    // ── 导出 ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 单条导出：将指纹 JSON 写入输出流（Content-Disposition 由 Controller 设置）。
+     */
+    public byte[] exportFingerprint(String fingerprintId) throws Exception {
+        HashMap<String, Object> detail = getFingerprintById(fingerprintId);
+        return JsonUtil.toJsonString(detail).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 批量导出：将多条指纹打包为 zip，每条对应 zip 内一个 <fingerprintId>.json。
+     */
+    public byte[] exportFingerprintsZip(List<String> fingerprintIds) throws Exception {
+        if (fingerprintIds == null || fingerprintIds.isEmpty()) {
+            throw new IllegalArgumentException("fingerprintIds 不能为空");
+        }
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(buf))) {
+            for (String id : fingerprintIds) {
+                if (id == null || id.isBlank()) continue;
+                try {
+                    HashMap<String, Object> detail = getFingerprintById(id.trim());
+                    String entryName = (detail.get("fingerprintId") != null
+                            ? String.valueOf(detail.get("fingerprintId")) : id.trim()) + ".json";
+                    byte[] data = JsonUtil.toJsonString(detail).getBytes(StandardCharsets.UTF_8);
+                    ZipEntry entry = new ZipEntry(entryName);
+                    entry.setSize(data.length);
+                    zos.putNextEntry(entry);
+                    zos.write(data);
+                    zos.closeEntry();
+                } catch (FingerprintNotFoundException ignored) {
+                    // 跳过不存在的条目，不中断整体导出
+                }
+            }
+        }
+        return buf.toByteArray();
+    }
+
+    // ── 导入 ──────────────────────────────────────────────────────────────────
+
+    public enum ConflictPolicy {
+        SKIP, OVERWRITE, RENAME;
+
+        public static ConflictPolicy parse(String s) {
+            if (s == null) return SKIP;
+            return switch (s.toLowerCase()) {
+                case "overwrite" -> OVERWRITE;
+                case "rename"    -> RENAME;
+                default          -> SKIP;
+            };
+        }
+    }
+
+    public record ImportResult(String name, String fingerprintId, String status, String message) {
+        public Map<String, Object> toMap() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", name);
+            m.put("fingerprintId", fingerprintId);
+            m.put("status", status);
+            if (message != null && !message.isBlank()) m.put("message", message);
+            return m;
+        }
+    }
+
+    /**
+     * 导入指纹。支持：
+     * <ul>
+     *   <li>单条 .json（对象 {} 或数组 [{}...]）</li>
+     *   <li>.zip（内含若干 .json，格式同上）</li>
+     * </ul>
+     */
+    public List<ImportResult> importFingerprints(MultipartFile file,
+                                                  ConflictPolicy policy,
+                                                  User user) throws Exception {
+        ensureLoggedIn(user);
+        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
+        List<Map<String, Object>> records = new ArrayList<>();
+
+        if (filename.endsWith(".zip")) {
+            records = parseZip(file.getInputStream());
+        } else if (filename.endsWith(".json")) {
+            records = parseJson(file.getBytes());
+        } else {
+            throw new IllegalArgumentException("仅支持 .json 或 .zip 文件");
+        }
+
+        // 获取现有 ID 集合用于冲突检测
+        java.util.Set<String> existingIds = new java.util.HashSet<>();
+        for (Map<String, Object> item : listFingerprints()) {
+            Object id = item.get("fingerprintId");
+            if (id != null) existingIds.add(String.valueOf(id));
+        }
+
+        List<ImportResult> results = new ArrayList<>();
+        for (Map<String, Object> rec : records) {
+            results.add(importOneRecord(rec, existingIds, policy));
+        }
+        return results;
+    }
+
+    private ImportResult importOneRecord(Map<String, Object> rec,
+                                          java.util.Set<String> existingIds,
+                                          ConflictPolicy policy) {
+        // 基本校验
+        String name = rec.get("name") != null ? String.valueOf(rec.get("name")).trim() : null;
+        if (name == null || name.isBlank()) {
+            return new ImportResult(null, null, "failed", "缺少 name");
+        }
+        if (rec.get("rule") == null) {
+            return new ImportResult(name, null, "failed", "缺少 rule");
+        }
+        String version = extractVersion(rec);
+        if (version == null || version.isBlank()) {
+            return new ImportResult(name, null, "failed", "缺少 version");
+        }
+
+        String fingerprintId = generateFingerprintId(name, version);
+        boolean conflict = existingIds.contains(fingerprintId);
+
+        if (conflict) {
+            switch (policy) {
+                case SKIP:
+                    return new ImportResult(name, fingerprintId, "skipped", "已存在，跳过");
+                case RENAME: {
+                    String ts = String.valueOf(System.currentTimeMillis());
+                    version = version + "_imported_" + ts;
+                    fingerprintId = generateFingerprintId(name, version);
+                    // 更新 rec 中的版本
+                    rec = new HashMap<>(rec);
+                    rec.put("version", version);
+                    if (rec.get("info") instanceof Map<?, ?> info) {
+                        HashMap<String, Object> newInfo = new HashMap<>();
+                        info.forEach((k, v) -> newInfo.put(String.valueOf(k), v));
+                        newInfo.put("version", version);
+                        rec.put("info", newInfo);
+                    }
+                    break;
+                }
+                case OVERWRITE:
+                    break; // 直接覆盖
+            }
+        }
+
+        try {
+            HashMap<String, Object> params = new HashMap<>(rec);
+            params.put("version", version);
+            saveFingerprintContent(
+                    name,
+                    rec.get("rule"),
+                    rec.get("info"),
+                    rec.get("protocol"),
+                    rec.get("tags"),
+                    version
+            );
+            existingIds.add(fingerprintId);
+            String status = conflict
+                    ? (policy == ConflictPolicy.OVERWRITE ? "overwritten" : "renamed")
+                    : "imported";
+            return new ImportResult(name, fingerprintId, status, null);
+        } catch (Exception e) {
+            return new ImportResult(name, fingerprintId, "failed", e.getMessage());
+        }
+    }
+
+    private String extractVersion(Map<String, Object> rec) {
+        Object info = rec.get("info");
+        if (info instanceof Map<?, ?> infoMap) {
+            Object v = infoMap.get("version");
+            if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
+        }
+        Object v = rec.get("version");
+        return v != null ? String.valueOf(v).trim() : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseJson(byte[] bytes) throws Exception {
+        String text = new String(bytes, StandardCharsets.UTF_8).trim();
+        Object parsed = JsonUtil.fromJsonString(text, Object.class);
+        if (parsed instanceof List<?> list) {
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> m) {
+                    result.add((Map<String, Object>) m);
+                }
+            }
+            return result;
+        } else if (parsed instanceof Map<?, ?> m) {
+            return List.of((Map<String, Object>) m);
+        }
+        throw new IllegalArgumentException("JSON 格式无效：必须是对象或数组");
+    }
+
+    private List<Map<String, Object>> parseZip(InputStream inputStream) throws Exception {
+        List<Map<String, Object>> records = new ArrayList<>();
+        try (ZipInputStream zis = new ZipInputStream(inputStream)) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.isDirectory() || !entry.getName().toLowerCase().endsWith(".json")) {
+                    zis.closeEntry();
+                    continue;
+                }
+                byte[] data = zis.readAllBytes();
+                try {
+                    records.addAll(parseJson(data));
+                } catch (Exception ignored) {
+                    // 单个文件解析失败不中断整体
+                }
+                zis.closeEntry();
+            }
+        }
+        return records;
     }
 }

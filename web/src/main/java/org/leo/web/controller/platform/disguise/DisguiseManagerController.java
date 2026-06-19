@@ -4,10 +4,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.User;
 import org.leo.service.disguise.DisguiseService;
+import org.leo.service.disguise.DisguiseService.ConflictPolicy;
+import org.leo.service.disguise.DisguiseService.ImportResult;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -15,8 +20,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 @RestController
 @RequestMapping("/platform/disguise-manager")
@@ -177,6 +185,104 @@ public class DisguiseManagerController {
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    // ── 导出 ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 单条导出：GET /disguises/export?disguiseId=xxx
+     * 返回加密的 .disguise 文件，内置伪装通过内存序列化导出。
+     */
+    @RequestMapping(value = "/disguises/export", method = RequestMethod.GET)
+    public ResponseEntity<byte[]> exportDisguise(@RequestParam("disguiseId") String disguiseId) {
+        if (disguiseId == null || disguiseId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body("disguiseId 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        try {
+            byte[] data = disguiseService.exportDisguise(disguiseId.trim());
+            String filename = disguiseId.trim() + ".disguise";
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .body(data);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body(e.getMessage().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(("导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * 批量导出：POST /disguises/export/batch
+     * 请求体：{ "disguiseIds": ["id1", "id2"] }
+     * 返回 disguises_<date>.zip。
+     */
+    @RequestMapping(value = "/disguises/export/batch", method = RequestMethod.POST)
+    public ResponseEntity<byte[]> exportDisguisesBatch(@RequestBody HashMap<String, Object> params) {
+        Object idsObj = params == null ? null : params.get("disguiseIds");
+        if (!(idsObj instanceof List<?> rawList) || rawList.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body("disguiseIds 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        List<String> ids = rawList.stream()
+                .filter(o -> o instanceof String s && !s.isBlank())
+                .map(o -> ((String) o).trim())
+                .toList();
+        if (ids.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body("disguiseIds 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        try {
+            byte[] zip = disguiseService.exportDisguisesZip(ids);
+            String filename = "disguises_" + LocalDate.now() + ".zip";
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, "application/zip")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .body(zip);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(("批量导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * 导入伪装：POST /disguises/import（multipart/form-data）
+     * 参数：file（.disguise 或 .zip）、conflictPolicy（skip/overwrite/rename，默认 skip）
+     * 响应：{ results: [{disguiseId, disguiseName, status, message}] }
+     */
+    @RequestMapping(value = "/disguises/import", method = RequestMethod.POST)
+    public HashMap<String, Object> importDisguises(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy,
+            HttpServletRequest request) {
+        if (file == null || file.isEmpty()) {
+            return ApiResponse.badRequest("file 不能为空");
+        }
+        try {
+            ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
+            List<ImportResult> results = disguiseService.importDisguises(file, policy, getCurrentUser(request));
+            HashMap<String, Object> data = new HashMap<>();
+            data.put("results", results.stream().map(ImportResult::toMap).toList());
+            return ApiResponse.success(data);
+        } catch (IllegalArgumentException e) {
+            return toValidationResponse(e);
+        } catch (Exception e) {
+            return ApiResponse.error("导入失败: " + e.getMessage());
+        }
+    }
+
+    /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头。 */
+    private static String buildAttachment(String filename) {
+        String encoded;
+        try {
+            encoded = java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+        } catch (Exception e) {
+            encoded = filename;
+        }
+        return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
     }
 
     private User getCurrentUser(HttpServletRequest request) {

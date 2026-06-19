@@ -13,7 +13,7 @@ import java.nio.file.StandardCopyOption;
 
 /**
  * 启动时将 classpath:fingerprint/*.json 下的内置指纹规则拷贝到 VFS 指纹目录。
- * 已存在的同名文件不覆盖,允许用户后续修改。
+ * 已存在的同名文件不覆盖，允许用户后续修改。
  */
 @Component
 public class FingerprintSeedInitializer implements CommandLineRunner {
@@ -41,9 +41,7 @@ public class FingerprintSeedInitializer implements CommandLineRunner {
         int skipped = 0;
         for (Resource seed : seeds) {
             String filename = seed.getFilename();
-            if (filename == null || filename.isBlank()) {
-                continue;
-            }
+            if (filename == null || filename.isBlank()) continue;
             File destFile = new File(targetDir, filename);
             if (destFile.exists()) {
                 skipped++;
@@ -56,6 +54,9 @@ public class FingerprintSeedInitializer implements CommandLineRunner {
                 System.err.println("[FingerprintSeed] 拷贝失败: " + filename + " — " + e.getMessage());
             }
         }
-        System.out.println("[FingerprintSeed] 内置指纹同步完成: 新增 " + copied + " 条, 跳过 " + skipped + " 条 (已存在)");
+
+        System.out.println("[FingerprintSeed] 内置指纹同步完成: 新增 " + copied
+                + " 条, 跳过 " + skipped + " 条 (已存在)");
     }
 }
+

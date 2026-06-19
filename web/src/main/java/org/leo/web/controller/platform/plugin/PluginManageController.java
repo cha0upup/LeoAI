@@ -8,21 +8,34 @@ import org.leo.core.manager.PluginManager;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
+import org.leo.core.util.aes.AesUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
-import org.leo.core.util.aes.AesUtil;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * 插件管理控制器
@@ -337,6 +350,214 @@ public class PluginManageController {
         HashMap<String, Object> data = new HashMap<String, Object>();
         data.put(RESULT_JAVA_CODE, decompiledCode);
         return ApiResponse.success(data);
+    }
+
+    // ── 导出 ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 单条导出：GET /plugins/export?pluginId=xxx
+     * 直接返回 VFS 中加密的 .plugin 文件，无需解密/重加密。
+     */
+    @RequestMapping(value = "/plugins/export", method = RequestMethod.GET)
+    public ResponseEntity<byte[]> exportPlugin(@RequestParam("pluginId") String pluginId) {
+        if (pluginId == null || pluginId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body("pluginId 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        try {
+            String safeFileName = getSafeFileName(pluginId.trim());
+            File pluginFile = new File(new File(LeoConfig.getVfsPath(), PLUGIN_DIR_NAME), safeFileName);
+            if (!pluginFile.exists()) {
+                return ResponseEntity.notFound().build();
+            }
+            byte[] data = Files.readAllBytes(pluginFile.toPath());
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(safeFileName))
+                    .body(data);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body(e.getMessage().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(("导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * 批量导出：POST /plugins/export/batch
+     * 请求体：{ "pluginIds": ["A_1.0.plugin", "B_1.0.plugin"] }
+     * 返回 plugins_<date>.zip。
+     */
+    @RequestMapping(value = "/plugins/export/batch", method = RequestMethod.POST)
+    public ResponseEntity<byte[]> exportPluginsBatch(@RequestBody HashMap<String, Object> params) {
+        Object idsObj = params == null ? null : params.get("pluginIds");
+        if (!(idsObj instanceof List<?> rawList) || rawList.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body("pluginIds 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        List<String> ids = rawList.stream()
+                .filter(o -> o instanceof String s && !s.isBlank())
+                .map(o -> ((String) o).trim())
+                .toList();
+        if (ids.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body("pluginIds 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+        try {
+            File pluginDir = new File(LeoConfig.getVfsPath(), PLUGIN_DIR_NAME);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+                for (String pluginId : ids) {
+                    String safeFileName;
+                    try {
+                        safeFileName = getSafeFileName(pluginId);
+                    } catch (IllegalArgumentException e) {
+                        continue;
+                    }
+                    File f = new File(pluginDir, safeFileName);
+                    if (!f.exists()) continue;
+                    zos.putNextEntry(new ZipEntry(safeFileName));
+                    zos.write(Files.readAllBytes(f.toPath()));
+                    zos.closeEntry();
+                }
+            }
+            String filename = "plugins_" + LocalDate.now() + ".zip";
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, "application/zip")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .body(baos.toByteArray());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(("批量导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * 导入插件：POST /plugins/import（multipart/form-data）
+     * 参数：file（.plugin 或 .zip）、conflictPolicy（skip/overwrite，默认 skip）
+     * 响应：{ results: [{pluginId, pluginName, status, message}] }
+     */
+    @RequestMapping(value = "/plugins/import", method = RequestMethod.POST)
+    public HashMap<String, Object> importPlugins(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "conflictPolicy", required = false, defaultValue = "skip") String conflictPolicy,
+            HttpServletRequest request) {
+        if (file == null || file.isEmpty()) {
+            return ApiResponse.badRequest("file 不能为空");
+        }
+        User user = getUserFromSession(request);
+        if (user == null || user.getUserId() == null) {
+            return ApiResponse.unauthorized("用户未登录");
+        }
+        boolean overwrite = "overwrite".equalsIgnoreCase(conflictPolicy);
+        String originalFilename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
+        try {
+            List<Map<String, Object>> results;
+            byte[] fileBytes = file.getBytes();
+            if (originalFilename.endsWith(".zip")) {
+                results = importFromZip(fileBytes, overwrite, user);
+            } else if (originalFilename.endsWith(PLUGIN_FILE_EXTENSION)) {
+                results = new ArrayList<>();
+                results.add(importOnePluginFile(fileBytes, overwrite, user));
+            } else {
+                return ApiResponse.badRequest("不支持的文件类型，仅支持 .plugin 或 .zip");
+            }
+            HashMap<String, Object> data = new HashMap<>();
+            data.put("results", results);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("导入失败: " + e.getMessage());
+        }
+    }
+
+    // ── 导入私有辅助方法 ──────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> importFromZip(byte[] zipBytes, boolean overwrite, User user) throws IOException {
+        List<Map<String, Object>> results = new ArrayList<>();
+        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (entry.isDirectory() || !name.toLowerCase().endsWith(PLUGIN_FILE_EXTENSION)) {
+                    zis.closeEntry();
+                    continue;
+                }
+                byte[] entryBytes = zis.readAllBytes();
+                results.add(importOnePluginFile(entryBytes, overwrite, user));
+                zis.closeEntry();
+            }
+        }
+        return results;
+    }
+
+    private Map<String, Object> importOnePluginFile(byte[] pluginBytes, boolean overwrite, User user) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        Plugin plugin;
+        try {
+            String decrypted = AesUtil.decrypt(new String(pluginBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
+            plugin = (Plugin) JsonUtil.fromJsonString(decrypted, Plugin.class);
+        } catch (Exception e) {
+            result.put("pluginId", null);
+            result.put("pluginName", null);
+            result.put("status", "failed");
+            result.put("message", "文件解析失败: " + e.getMessage());
+            return result;
+        }
+        if (plugin.getBytecode() == null || plugin.getBytecode().length == 0) {
+            result.put("pluginId", plugin.getPluginId());
+            result.put("pluginName", plugin.getPluginName());
+            result.put("status", "failed");
+            result.put("message", "插件字节码为空");
+            return result;
+        }
+        // 重新派生 pluginId，确保一致性
+        try {
+            String className = DecompilerUtil.extractClassName(plugin.getBytecode());
+            plugin.setPluginId(generatePluginId(className, plugin.getVersion()));
+        } catch (Exception e) {
+            result.put("pluginId", plugin.getPluginId());
+            result.put("pluginName", plugin.getPluginName());
+            result.put("status", "failed");
+            result.put("message", "字节码验证失败: " + e.getMessage());
+            return result;
+        }
+        String pluginId = plugin.getPluginId();
+        boolean exists = pluginManager.getPluginById(pluginId) != null;
+        if (exists && !overwrite) {
+            result.put("pluginId", pluginId);
+            result.put("pluginName", plugin.getPluginName());
+            result.put("status", "skipped");
+            result.put("message", "已存在，已跳过");
+            return result;
+        }
+        try {
+            plugin.setCreateUserId(user.getUserId());
+            plugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
+            pluginManager.inStallPlugin(plugin);
+            savePlugin(plugin);
+            result.put("pluginId", pluginId);
+            result.put("pluginName", plugin.getPluginName());
+            result.put("status", exists ? "overwritten" : "imported");
+            result.put("message", exists ? "已覆盖" : "导入成功");
+        } catch (Exception e) {
+            result.put("pluginId", pluginId);
+            result.put("pluginName", plugin.getPluginName());
+            result.put("status", "failed");
+            result.put("message", "保存失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头。 */
+    private static String buildAttachment(String filename) {
+        String encoded;
+        try {
+            encoded = java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+        } catch (Exception e) {
+            encoded = filename;
+        }
+        return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
     }
     
     /**
