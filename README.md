@@ -6,7 +6,7 @@
 
 # LeoAI
 
-**AI 驱动的后渗透综合管理平台**
+**AI 驱动的后渗透综合管理平台** 
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
