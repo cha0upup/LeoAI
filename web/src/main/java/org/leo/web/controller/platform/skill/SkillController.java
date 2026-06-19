@@ -1,21 +1,35 @@
 package org.leo.web.controller.platform.skill;
 
 import org.leo.ai.service.LeoSkillsProvider;
+import org.leo.ai.service.SkillExportService;
+import org.leo.ai.service.SkillExportService.ConflictPolicy;
+import org.leo.ai.service.SkillExportService.ImportResult;
+import org.leo.ai.service.SkillExportService.NamedSkill;
+import org.leo.ai.service.SkillExportService.SkillImportException;
+import org.leo.ai.service.SkillFileService;
+import org.leo.ai.service.SkillFileService.SkillFileException;
 import org.leo.ai.service.SkillMeta;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.util.ApiResponse;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +57,8 @@ public class SkillController {
 
     private final SkillRegistryService skillRegistry;
     private final LeoSkillsProvider leoSkillsProvider;
+    private final SkillFileService skillFileService;
+    private final SkillExportService skillExportService;
 
     /**
      * 每个 (scope, name) 一把锁，串行化 save / delete / toggle 的 read-modify-write，
@@ -52,9 +68,13 @@ public class SkillController {
     private final ConcurrentHashMap<String, ReentrantLock> skillLocks = new ConcurrentHashMap<>();
 
     public SkillController(SkillRegistryService skillRegistry,
-                           LeoSkillsProvider leoSkillsProvider) {
-        this.skillRegistry    = skillRegistry;
-        this.leoSkillsProvider = leoSkillsProvider;
+                           LeoSkillsProvider leoSkillsProvider,
+                           SkillFileService skillFileService,
+                           SkillExportService skillExportService) {
+        this.skillRegistry      = skillRegistry;
+        this.leoSkillsProvider   = leoSkillsProvider;
+        this.skillFileService    = skillFileService;
+        this.skillExportService  = skillExportService;
     }
 
     private ReentrantLock lockFor(String scope, String name) {
@@ -285,6 +305,309 @@ public class SkillController {
         } finally {
             lock.unlock();
         }
+    }
+
+    // ── 文件树 / 文件级操作 ───────────────────────────────────────────────────
+
+    /**
+     * 列出 skill 目录下的所有文件（含子目录），用于前端构建文件树。
+     */
+    @RequestMapping(value = "/files", method = RequestMethod.GET)
+    public HashMap<String, Object> listFiles(
+            @RequestParam(PARAM_SCOPE) String scope,
+            @RequestParam(PARAM_NAME) String name) {
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
+        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在：" + scope + "/" + name);
+
+        try {
+            return ApiResponse.success(skillFileService.listFiles(skillDir));
+        } catch (IOException e) {
+            return ApiResponse.error("列出文件失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 读取 skill 目录下单个文件。
+     *
+     * <p>响应：{path, size, encoding: "text"|"base64", content}
+     */
+    @RequestMapping(value = "/file", method = RequestMethod.GET)
+    public HashMap<String, Object> getFile(
+            @RequestParam(PARAM_SCOPE) String scope,
+            @RequestParam(PARAM_NAME) String name,
+            @RequestParam("path") String relativePath) {
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
+        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
+
+        try {
+            return ApiResponse.success(skillFileService.readFile(skillDir, relativePath));
+        } catch (SkillFileException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("读取文件失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 保存 skill 目录下单个文件（创建或覆盖）。
+     *
+     * <p>请求体：{scope, name, path, content, encoding: "text"|"base64"}
+     */
+    @RequestMapping(value = "/file/save", method = RequestMethod.POST)
+    public HashMap<String, Object> saveFile(@RequestBody HashMap<String, Object> params) {
+        if (params == null) return ApiResponse.badRequest("请求体不能为空");
+
+        String scope    = (String) params.get(PARAM_SCOPE);
+        String name     = (String) params.get(PARAM_NAME);
+        String relPath  = (String) params.get("path");
+        String content  = (String) params.get(PARAM_CONTENT);
+        String encoding = (String) params.getOrDefault("encoding", "text");
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
+        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
+        if (relPath == null || relPath.isBlank()) return ApiResponse.badRequest("path 不能为空");
+
+        ReentrantLock lock = lockFor(scope.trim(), name.trim());
+        lock.lock();
+        try {
+            skillFileService.writeFile(skillDir, relPath, content, encoding);
+            // SKILL.md 内容变化要刷新 registry 缓存（其他文件不影响 listSkills，但保险起见统一失效）
+            skillRegistry.invalidate();
+            leoSkillsProvider.invalidate();
+            return ApiResponse.success("文件已保存");
+        } catch (SkillFileException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("保存失败：" + e.getMessage());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 删除 skill 目录下单个文件或子目录。SKILL.md 不可删除。
+     *
+     * <p>请求体：{scope, name, path}
+     */
+    @RequestMapping(value = "/file/delete", method = RequestMethod.POST)
+    public HashMap<String, Object> deleteFile(@RequestBody HashMap<String, Object> params) {
+        if (params == null) return ApiResponse.badRequest("请求体不能为空");
+
+        String scope   = (String) params.get(PARAM_SCOPE);
+        String name    = (String) params.get(PARAM_NAME);
+        String relPath = (String) params.get("path");
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
+        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
+        if (relPath == null || relPath.isBlank()) return ApiResponse.badRequest("path 不能为空");
+
+        ReentrantLock lock = lockFor(scope.trim(), name.trim());
+        lock.lock();
+        try {
+            skillFileService.deleteFile(skillDir, relPath);
+            return ApiResponse.success("已删除");
+        } catch (SkillFileException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("删除失败：" + e.getMessage());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 重命名/移动 skill 目录下文件。SKILL.md 不可重命名。
+     *
+     * <p>请求体：{scope, name, from, to}
+     */
+    @RequestMapping(value = "/file/move", method = RequestMethod.POST)
+    public HashMap<String, Object> moveFile(@RequestBody HashMap<String, Object> params) {
+        if (params == null) return ApiResponse.badRequest("请求体不能为空");
+
+        String scope = (String) params.get(PARAM_SCOPE);
+        String name  = (String) params.get(PARAM_NAME);
+        String from  = (String) params.get("from");
+        String to    = (String) params.get("to");
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
+        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            return ApiResponse.badRequest("from/to 不能为空");
+        }
+
+        ReentrantLock lock = lockFor(scope.trim(), name.trim());
+        lock.lock();
+        try {
+            skillFileService.moveFile(skillDir, from, to);
+            return ApiResponse.success("已重命名");
+        } catch (SkillFileException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("重命名失败：" + e.getMessage());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 解析并校验 (scope, name) 对应的 skill 根目录。
+     * 路径越界或参数非法时返回 null（调用方按 badRequest 处理）。
+     */
+    private Path resolveSkillDir(String scope, String name) {
+        if (scope == null || scope.isBlank()) return null;
+        if (name  == null || name.isBlank())  return null;
+        if (!isSafeName(name)) return null;
+        try {
+            Path skillsRoot = skillRegistry.getSkillsRoot(scope.trim());
+            Path skillDir = skillsRoot.resolve(name.trim()).normalize();
+            if (!skillDir.startsWith(skillsRoot)) return null;
+            return skillDir;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    // ── 导出 / 导入 ───────────────────────────────────────────────────────────
+
+    /**
+     * 导出单个 skill 为 .skill 文件（zip 格式，内容为 skill 目录下所有文件）。
+     */
+    @RequestMapping(value = "/export", method = RequestMethod.GET)
+    public ResponseEntity<byte[]> exportSkill(
+            @RequestParam(PARAM_SCOPE) String scope,
+            @RequestParam(PARAM_NAME) String name) {
+
+        Path skillDir = resolveSkillDir(scope, name);
+        if (skillDir == null) return ResponseEntity.badRequest().body(("scope/name 非法").getBytes(StandardCharsets.UTF_8));
+        if (!Files.exists(skillDir)) return ResponseEntity.notFound().build();
+
+        ReentrantLock lock = lockFor(scope.trim(), name.trim());
+        lock.lock();
+        try {
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            skillExportService.exportSkill(skillDir, buf);
+            byte[] bytes = buf.toByteArray();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("application/zip"));
+            headers.setContentDisposition(buildAttachmentDisposition(name.trim() + ".skill"));
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 批量导出。请求体：{scope, names: [...]}，返回 zip，内含 {name}.skill 多个 entry，
+     * 整体再用一个外层 zip 包装。
+     *
+     * <p>简化做法：直接用 SkillExportService 的批量模式，每个 skill 的文件以 {name}/ 为前缀
+     * 打入同一个 zip。下载文件名为 skills_{scope}_{date}.zip。
+     */
+    @RequestMapping(value = "/export/batch", method = RequestMethod.POST)
+    public ResponseEntity<byte[]> exportSkillsBatch(@RequestBody HashMap<String, Object> params) {
+        if (params == null) return ResponseEntity.badRequest().body("请求体不能为空".getBytes(StandardCharsets.UTF_8));
+
+        String scope = (String) params.get(PARAM_SCOPE);
+        Object namesObj = params.get("names");
+        if (scope == null || scope.isBlank()) return ResponseEntity.badRequest().body("scope 不能为空".getBytes(StandardCharsets.UTF_8));
+        if (!(namesObj instanceof List<?> rawNames) || rawNames.isEmpty()) {
+            return ResponseEntity.badRequest().body("names 不能为空".getBytes(StandardCharsets.UTF_8));
+        }
+
+        // 收集所有目标目录，全部加锁
+        List<NamedSkill> namedSkills = new ArrayList<>();
+        List<ReentrantLock> heldLocks = new ArrayList<>();
+        try {
+            for (Object o : rawNames) {
+                if (!(o instanceof String n) || n.isBlank()) continue;
+                Path dir = resolveSkillDir(scope, n);
+                if (dir == null || !Files.exists(dir)) continue;
+                ReentrantLock lock = lockFor(scope.trim(), n.trim());
+                lock.lock();
+                heldLocks.add(lock);
+                namedSkills.add(new NamedSkill(n.trim(), dir));
+            }
+            if (namedSkills.isEmpty()) {
+                return ResponseEntity.badRequest().body("没有可导出的 skill".getBytes(StandardCharsets.UTF_8));
+            }
+
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            skillExportService.exportSkills(namedSkills, buf);
+            byte[] bytes = buf.toByteArray();
+
+            String filename = "skills_" + scope.trim() + "_" + LocalDate.now() + ".zip";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("application/zip"));
+            headers.setContentDisposition(buildAttachmentDisposition(filename));
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+        } finally {
+            for (ReentrantLock l : heldLocks) l.unlock();
+        }
+    }
+
+    /**
+     * 导入 .skill 或 zip 文件。
+     *
+     * <p>请求：multipart/form-data，参数：
+     * <ul>
+     *   <li>file: .skill 或 .zip 文件</li>
+     *   <li>scope: 目标 scope</li>
+     *   <li>defaultName: 当 zip 是单 skill（根有 SKILL.md）时使用的目标名；批量导入时可省略</li>
+     *   <li>conflictPolicy: skip / overwrite / rename，默认 rename</li>
+     * </ul>
+     *
+     * <p>响应：{results: [{originalName, finalName, status, message}]}
+     */
+    @RequestMapping(value = "/import", method = RequestMethod.POST)
+    public HashMap<String, Object> importSkills(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(PARAM_SCOPE) String scope,
+            @RequestParam(value = "defaultName", required = false) String defaultName,
+            @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy) {
+
+        if (file == null || file.isEmpty()) return ApiResponse.badRequest("file 不能为空");
+        if (scope == null || scope.isBlank()) return ApiResponse.badRequest("scope 不能为空");
+
+        Path scopeRoot;
+        try {
+            scopeRoot = skillRegistry.getSkillsRoot(scope.trim());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+
+        ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
+
+        try {
+            List<ImportResult> results = skillExportService.importSkills(file, scopeRoot, defaultName, policy);
+            skillRegistry.invalidate();
+            leoSkillsProvider.invalidate();
+            HashMap<String, Object> data = new HashMap<>();
+            data.put("results", results.stream().map(ImportResult::toMap).toList());
+            return ApiResponse.success(data);
+        } catch (SkillImportException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("导入失败：" + e.getMessage());
+        }
+    }
+
+    /** 构造 RFC 5987 兼容的 attachment Content-Disposition，处理中文/特殊字符。 */
+    private static org.springframework.http.ContentDisposition buildAttachmentDisposition(String filename) {
+        return org.springframework.http.ContentDisposition.attachment()
+                .filename(filename, StandardCharsets.UTF_8)
+                .build();
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────

@@ -166,12 +166,29 @@ public class SkillRegistryService {
                     // 默认启用；只有明确写 enabled: false 时才禁用
                     boolean enabled = !Boolean.FALSE.equals(enabledVal);
                     List<String> tags = fm != null ? extractTags(fm.get("tags")) : Collections.emptyList();
-                    result.add(new SkillMeta(scope, skillName, description, enabled, tags));
+                    int fileCount = countSkillFiles(skillDir);
+                    result.add(new SkillMeta(scope, skillName, description, enabled, tags, fileCount));
                 });
         } catch (IOException e) {
             log.warn("[SkillRegistry] 扫描 scope 失败: scope={}, err={}", scope, e.getMessage());
         }
         return Collections.unmodifiableList(result);
+    }
+
+    /**
+     * 统计 skill 目录下文件数（递归，跳过隐藏文件和符号链接）。
+     * 用于 UI 展示"多文件 skill"标记，对内容加载性能不敏感。
+     */
+    private static int countSkillFiles(Path skillDir) {
+        if (!Files.isDirectory(skillDir)) return 0;
+        try (Stream<Path> stream = Files.walk(skillDir)) {
+            return (int) stream
+                    .filter(Files::isRegularFile)
+                    .filter(p -> !p.getFileName().toString().startsWith("."))
+                    .count();
+        } catch (IOException e) {
+            return 1;
+        }
     }
 
     private static String asString(Object value) {

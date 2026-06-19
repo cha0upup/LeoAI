@@ -1,9 +1,11 @@
 ---
 name: collect-cloud-metadata
-description: 从目标主机读取云平台实例元数据（IMDSv1/v2），提取 IAM 角色凭据、AK/SK、实例身份信息。支持阿里云、AWS、腾讯云、华为云。当任务涉及云服务器、EC2、ECS、IMDS、元数据服务、AK/SK、InstanceProfileCredentials 时使用。
+description: 从目标主机读取云平台实例元数据（IMDSv1/v2），提取 IAM 角色凭据、AK/SK、实例身份信息。支持阿里云、AWS、腾讯云、华为云。当任务涉及云服务器、EC2、ECS、IMDS、元数据服务、AK/SK、InstanceProfileCredentials
+  时使用。
 tags:
-  - credential
-  - cloud
+- credential
+- cloud
+enabled: true
 ---
 
 # 读取云平台实例元数据

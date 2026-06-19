@@ -17,19 +17,26 @@ public class SkillMeta {
     private final String       description;
     private final boolean      enabled;
     private final List<String> tags;
+    private final int          fileCount;
 
     public SkillMeta(String scope, String name, String description, boolean enabled) {
-        this(scope, name, description, enabled, Collections.emptyList());
+        this(scope, name, description, enabled, Collections.emptyList(), 1);
     }
 
     public SkillMeta(String scope, String name, String description, boolean enabled,
                      List<String> tags) {
+        this(scope, name, description, enabled, tags, 1);
+    }
+
+    public SkillMeta(String scope, String name, String description, boolean enabled,
+                     List<String> tags, int fileCount) {
         this.scope       = scope;
         this.name        = name;
         this.description = description;
         this.enabled     = enabled;
         this.tags        = tags == null ? Collections.emptyList()
                 : Collections.unmodifiableList(tags);
+        this.fileCount   = Math.max(fileCount, 1);
     }
 
     public String       getScope()       { return scope; }
@@ -37,11 +44,12 @@ public class SkillMeta {
     public String       getDescription() { return description; }
     public boolean      isEnabled()      { return enabled; }
     public List<String> getTags()        { return tags; }
+    public int          getFileCount()   { return fileCount; }
 
     @Override
     public String toString() {
         return "SkillMeta{scope='" + scope + "', name='" + name
                 + "', description='" + description + "', enabled=" + enabled
-                + ", tags=" + tags + '}';
+                + ", tags=" + tags + ", fileCount=" + fileCount + '}';
     }
 }
