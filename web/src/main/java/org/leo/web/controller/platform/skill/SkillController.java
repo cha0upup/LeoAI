@@ -21,7 +21,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -647,9 +649,10 @@ public class SkillController {
                 : "";
 
         // 解析 → 修改 → 序列化
+        // 注：load 用 SafeConstructor 防止 YAML 反序列化任意类；dump 不受影响。
         DumperOptions opts = new DumperOptions();
         opts.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
-        Yaml yaml = new Yaml(opts);
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()), new org.yaml.snakeyaml.representer.Representer(opts), opts);
 
         Map<String, Object> raw = yaml.load(fmYaml);
         // 用 LinkedHashMap 包装，dump 时按插入顺序输出，保留 name/description 在前

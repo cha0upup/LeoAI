@@ -1,1 +1,0 @@
-import{u as o}from"./vendor-misc-2HUgZNfo.js";function i(n){function r(){return typeof n=="function"?n():o(n)}function t(u={}){return{sessionId:r(),...u}}return{withSession:t,sessionId:r}}export{i as u};

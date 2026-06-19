@@ -4,6 +4,7 @@ import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.User;
 import org.leo.core.manager.DisguiseManager;
+import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.core.util.json.JsonUtil;
@@ -23,7 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 @Service
@@ -76,6 +76,11 @@ public class DisguiseService {
         installAndPersist(disguise);
     }
 
+    public void updateDisguise(HashMap<String, Object> params, User user) throws Exception {
+        ensureLoggedIn(user);
+        updateDisguise(params);
+    }
+
     public void updateDisguise(HashMap<String, Object> params) throws Exception {
         String disguiseId = requireString(params, "disguiseId");
         Disguise existingDisguise = disguiseManager.getDisguiseById(disguiseId);
@@ -108,6 +113,11 @@ public class DisguiseService {
         ensureDisguiseLogic(existingDisguise.getEncodeBody(), existingDisguise.getDecodeBody());
         existingDisguise.setUpdateTime(String.valueOf(System.currentTimeMillis()));
         installAndPersist(existingDisguise);
+    }
+
+    public void deleteDisguise(String disguiseId, User user) {
+        ensureLoggedIn(user);
+        deleteDisguise(disguiseId);
     }
 
     public void deleteDisguise(String disguiseId) {
@@ -272,19 +282,12 @@ public class DisguiseService {
 
     private List<ImportResult> importFromZip(byte[] zipBytes, ConflictPolicy policy, User user) throws Exception {
         List<ImportResult> results = new ArrayList<>();
-        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                String name = entry.getName().toLowerCase();
-                if (entry.isDirectory() || !name.endsWith(FILE_SUFFIX)) {
-                    zis.closeEntry();
-                    continue;
-                }
-                byte[] entryBytes = zis.readAllBytes();
-                results.add(importOneDisguiseBytes(entryBytes, policy, user));
-                zis.closeEntry();
-            }
-        }
+        SafeZipReader.forEach(
+                new ByteArrayInputStream(zipBytes),
+                name -> name.toLowerCase().endsWith(FILE_SUFFIX),
+                SafeZipReader.Limits.DEFAULT,
+                (name, bytes) -> results.add(importOneDisguiseBytes(bytes, policy, user))
+        );
         return results;
     }
 

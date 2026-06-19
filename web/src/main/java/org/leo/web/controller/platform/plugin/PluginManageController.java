@@ -5,6 +5,7 @@ import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.Plugin;
 import org.leo.core.entity.User;
 import org.leo.core.manager.PluginManager;
+import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
@@ -34,7 +35,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 /**
@@ -441,7 +441,7 @@ public class PluginManageController {
     @RequestMapping(value = "/plugins/import", method = RequestMethod.POST)
     public HashMap<String, Object> importPlugins(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "conflictPolicy", required = false, defaultValue = "skip") String conflictPolicy,
+            @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy,
             HttpServletRequest request) {
         if (file == null || file.isEmpty()) {
             return ApiResponse.badRequest("file 不能为空");
@@ -450,16 +450,16 @@ public class PluginManageController {
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
-        boolean overwrite = "overwrite".equalsIgnoreCase(conflictPolicy);
+        ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
         String originalFilename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
         try {
             List<Map<String, Object>> results;
             byte[] fileBytes = file.getBytes();
             if (originalFilename.endsWith(".zip")) {
-                results = importFromZip(fileBytes, overwrite, user);
+                results = importFromZip(fileBytes, policy, user);
             } else if (originalFilename.endsWith(PLUGIN_FILE_EXTENSION)) {
                 results = new ArrayList<>();
-                results.add(importOnePluginFile(fileBytes, overwrite, user));
+                results.add(importOnePluginFile(fileBytes, policy, user));
             } else {
                 return ApiResponse.badRequest("不支持的文件类型，仅支持 .plugin 或 .zip");
             }
@@ -473,25 +473,18 @@ public class PluginManageController {
 
     // ── 导入私有辅助方法 ──────────────────────────────────────────────────────
 
-    private List<Map<String, Object>> importFromZip(byte[] zipBytes, boolean overwrite, User user) throws IOException {
+    private List<Map<String, Object>> importFromZip(byte[] zipBytes, ConflictPolicy policy, User user) throws IOException {
         List<Map<String, Object>> results = new ArrayList<>();
-        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                String name = entry.getName();
-                if (entry.isDirectory() || !name.toLowerCase().endsWith(PLUGIN_FILE_EXTENSION)) {
-                    zis.closeEntry();
-                    continue;
-                }
-                byte[] entryBytes = zis.readAllBytes();
-                results.add(importOnePluginFile(entryBytes, overwrite, user));
-                zis.closeEntry();
-            }
-        }
+        SafeZipReader.forEach(
+                new ByteArrayInputStream(zipBytes),
+                name -> name.toLowerCase().endsWith(PLUGIN_FILE_EXTENSION),
+                SafeZipReader.Limits.DEFAULT,
+                (name, bytes) -> results.add(importOnePluginFile(bytes, policy, user))
+        );
         return results;
     }
 
-    private Map<String, Object> importOnePluginFile(byte[] pluginBytes, boolean overwrite, User user) {
+    private Map<String, Object> importOnePluginFile(byte[] pluginBytes, ConflictPolicy policy, User user) {
         Map<String, Object> result = new LinkedHashMap<>();
         Plugin plugin;
         try {
@@ -524,7 +517,7 @@ public class PluginManageController {
         }
         String pluginId = plugin.getPluginId();
         boolean exists = pluginManager.getPluginById(pluginId) != null;
-        if (exists && !overwrite) {
+        if (exists && policy == ConflictPolicy.SKIP) {
             result.put("pluginId", pluginId);
             result.put("pluginName", plugin.getPluginName());
             result.put("status", "skipped");
@@ -547,6 +540,22 @@ public class PluginManageController {
             result.put("message", "保存失败: " + e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * 导入冲突策略。当前 Plugin 模块仅支持 SKIP / OVERWRITE；
+     * RENAME 暂未实现（pluginId 由字节码派生，重命名语义不直观）。
+     */
+    public enum ConflictPolicy {
+        SKIP, OVERWRITE;
+
+        public static ConflictPolicy parse(String value) {
+            if (value == null) return SKIP;
+            return switch (value.toLowerCase()) {
+                case "overwrite" -> OVERWRITE;
+                default          -> SKIP;
+            };
+        }
     }
 
     /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头。 */

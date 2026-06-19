@@ -52,9 +52,9 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/del-disguise", method = RequestMethod.POST)
-    public HashMap<String, Object> delDisguise(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> delDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            disguiseService.deleteDisguise(ControllerUtil.getRequiredStringParam(params, "disguiseId"));
+            disguiseService.deleteDisguise(ControllerUtil.getRequiredStringParam(params, "disguiseId"), getCurrentUser(request));
             return ApiResponse.success();
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -70,9 +70,9 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/update-disguises", method = RequestMethod.POST)
-    public HashMap<String, Object> updateDisguise(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> updateDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            disguiseService.updateDisguise(params);
+            disguiseService.updateDisguise(params, getCurrentUser(request));
             return ApiResponse.success("disguise更新成功");
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -104,7 +104,10 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/test-disguises", method = RequestMethod.POST)
-    public HashMap<String, Object> testDisguise(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> testDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
+        if (getCurrentUser(request) == null) {
+            return ApiResponse.unauthorized("用户未登录");
+        }
         try {
             String encodeBody = ControllerUtil.getRequiredStringParam(params, "encodeBody");
             String decodeBody = ControllerUtil.getRequiredStringParam(params, "decodeBody");
@@ -121,9 +124,15 @@ public class DisguiseManagerController {
      * 实时预览：编译 encodeBody/decodeBody，用给定的 params 执行 encode，
      * 返回编码后的字节（Base64 与可打印 ASCII），以及 decode 逆向结果。
      * 用于编辑器实时预览，无副作用。
+     *
+     * 注意：该接口会动态编译并执行任意 Java 代码，必须验证用户已登录，
+     * 防止未授权用户利用编译/执行能力。
      */
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
-    public HashMap<String, Object> previewDisguise(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> previewDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
+        if (getCurrentUser(request) == null) {
+            return ApiResponse.unauthorized("用户未登录");
+        }
         try {
             String encodeBody = ControllerUtil.getRequiredStringParam(params, "encodeBody");
             String decodeBody = ControllerUtil.getRequiredStringParam(params, "decodeBody");

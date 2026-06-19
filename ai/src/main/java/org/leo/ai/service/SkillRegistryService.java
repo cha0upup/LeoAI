@@ -4,7 +4,9 @@ import org.leo.core.config.LeoConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -151,7 +153,9 @@ public class SkillRegistryService {
         Path scopeDir = getSkillsRoot(scope);
         if (!Files.isDirectory(scopeDir)) return Collections.emptyList();
 
-        Yaml yaml = new Yaml();
+        // 用 SafeConstructor 防止 YAML 反序列化任意类（!!java.lang.* 标签）。
+        // frontmatter 只需要 Map/List/标量，没有自定义类型需求。
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         List<SkillMeta> result = new ArrayList<>();
         try (Stream<Path> dirs = Files.list(scopeDir)) {
             dirs.filter(Files::isDirectory)

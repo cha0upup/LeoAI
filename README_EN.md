@@ -48,7 +48,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 | **Multi-Model Support** | Compatible with OpenAI, Anthropic, Qwen, DeepSeek, and any OpenAI-compatible API |
 | **175 AI Tools** | Atomic capabilities callable by the AI Agent — covering files, processes, networking, credentials, scanning, HTTP requests, and more |
 | **24 Built-in AI Skills** | Pre-configured scenario-based task prompts for launching complete attack chains with one click (see Skills list below) |
-| **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search — changes take effect immediately without restarting |
+| **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
 | **Context Accumulation** | Reconnaissance summaries accumulate automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
 
@@ -128,12 +128,14 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 - **Built-in Rule Library**: 38 pre-configured HTTP/TCP fingerprint rules for common services (Nginx, Tomcat, Jenkins, Nacos, Redis, MySQL, Elasticsearch, GitLab, etc.)
 - **Custom Rules**: Add, edit, enable/disable fingerprint rules via the "Identification Rules" page
 - **Rule Tags**: Supports protocol filtering and tag grouping for selective use during scanning
+- **Import/Export**: Export individual rules or batch-export as `.json` / `.zip`; import with conflict policies (skip/overwrite/rename) to easily share rule libraries across teams
 
 ### Plugin System
 
 - **Hot-loading Java Plugins**: Dynamically load and execute custom Java plugins
 - **Built-in Plugins**: Script execution, command execution, WebLogic password retrieval, heap dump analysis
 - **Extensible**: Supports developing and integrating custom functionality plugins
+- **Import/Export**: Export individual plugins or batch-export as `.plugin` / `.zip`; import with conflict policies (skip/overwrite)
 
 ### Management Features
 
@@ -489,6 +491,7 @@ Navigate to **Skills** in the main sidebar to visually manage all Skills under b
 - **Enable / Disable**: Disabled Skills are completely hidden from the AI's system prompt — the AI has no awareness of them; disable unused Skills to save tokens
 - **Full-Text Search**: Fuzzy search by name, description, or body content
 - **Create / Delete**: Create custom Skills with a name and description, then write the prompt in the editor
+- **Import/Export**: Export individual Skills as `.skill` files or batch-export selected Skills as `.zip`; import with conflict policies (skip/overwrite/rename) to migrate custom Skills across instances
 
 Skill files are stored in the VFS directory as standard Markdown with YAML frontmatter:
 
@@ -539,6 +542,8 @@ The console's skill quick-launch panel provides 21 pre-configured puppet-node Sk
 2. Click **Add New**, write custom `encodeBody` / `decodeBody` logic, verify mutual reversibility with the **Test** function, and save
 3. Select the same disguise when generating a shell to ensure both ends use identical codec implementations
 4. In the node configuration, point the "Request Disguise" and "Response Disguise" to the corresponding template
+
+**Import/Export**: Export individual disguises as encrypted `.disguise` files or batch-export as `.zip`; import with three conflict policies (skip/overwrite/rename) to migrate disguise configurations across environments or team members.
 
 ### Team Collaboration
 

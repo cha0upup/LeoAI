@@ -2,6 +2,7 @@ package org.leo.service.fingerprint;
 
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
+import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -20,7 +21,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 @Service
@@ -516,22 +516,18 @@ public class FingerprintManageService {
 
     private List<Map<String, Object>> parseZip(InputStream inputStream) throws Exception {
         List<Map<String, Object>> records = new ArrayList<>();
-        try (ZipInputStream zis = new ZipInputStream(inputStream)) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory() || !entry.getName().toLowerCase().endsWith(".json")) {
-                    zis.closeEntry();
-                    continue;
+        SafeZipReader.forEach(
+                inputStream,
+                name -> name.toLowerCase().endsWith(".json"),
+                SafeZipReader.Limits.DEFAULT,
+                (name, bytes) -> {
+                    try {
+                        records.addAll(parseJson(bytes));
+                    } catch (Exception ignored) {
+                        // 单个文件解析失败不中断整体
+                    }
                 }
-                byte[] data = zis.readAllBytes();
-                try {
-                    records.addAll(parseJson(data));
-                } catch (Exception ignored) {
-                    // 单个文件解析失败不中断整体
-                }
-                zis.closeEntry();
-            }
-        }
+        );
         return records;
     }
 }
