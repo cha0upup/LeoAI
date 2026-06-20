@@ -7,15 +7,14 @@ import java.lang.reflect.Method;
 import java.util.*;
 
 public class TomcatCatalinaManageComponent implements Runnable {
-    private static HashSet contexts = null;
+    // 注意：曾经这里有个 `private static HashSet contexts` 缓存，
+    // 第一次扫描如果命中失败就把空集合缓存住，之后永远返回空。
+    // 现在每次都重新扫描线程列表。
     private HashMap params;
     private HashMap results;
 
     private static HashSet getContexts() {
-        if (contexts == null) {
-            contexts = getContext();
-        }
-        return contexts;
+        return getContext();
     }
 
     private static HashMap valveMap=new HashMap();
@@ -28,38 +27,121 @@ public class TomcatCatalinaManageComponent implements Runnable {
             Thread[] threads = (Thread[]) invokeMethod(Thread.class, "getThreads");
             Object context = null;
             for (Thread thread : threads) {
-                // 适配 v5/v6/7/8
-                if (thread.getName().contains("ContainerBackgroundProcessor") && context == null) {
-                    HashMap childrenMap = (HashMap) getFV(getFV(getFV(thread, "target"), "this$0"), "children");
-                    // 原: map.get("localhost")
-                    // 之前没有对 StandardHost 进行遍历，只考虑了 localhost 的情况，如果目标自定义了 host,则会获取不到对应的 context，导致注入失败
-                    for (Object key : childrenMap.keySet()) {
-                        HashMap children = (HashMap) getFV(childrenMap.get(key), "children");
-                        // 原: context = children.get("");
-                        // 之前没有对context map进行遍历，只考虑了 ROOT context 存在的情况，如果目标tomcat不存在 ROOT context，则会注入失败
-                        for (Object key1 : children.keySet()) {
-                            context = children.get(key1);
-                            if (context != null && context.getClass().getName().contains("StandardContext"))
-                                contexts.add(context);
-                            // 兼容 spring boot 2.x embedded tomcat
-                            if (context != null && context.getClass().getName().contains("TomcatEmbeddedContext"))
-                                contexts.add(context);
+                if (thread == null) continue;
+                String threadName = thread.getName();
+                ClassLoader ctxCl = thread.getContextClassLoader();
+                String clName = ctxCl == null ? "" : ctxCl.getClass().getName();
+
+                // 适配 v5/v6/7/8：BackgroundProcessor 持有 Engine 引用，能拿到 host->context 全局 map
+                if (threadName != null && threadName.contains("ContainerBackgroundProcessor") && context == null) {
+                    try {
+                        HashMap childrenMap = (HashMap) getFV(getFV(getFV(thread, "target"), "this$0"), "children");
+                        // 遍历所有 host（不止 localhost）
+                        for (Object key : childrenMap.keySet()) {
+                            HashMap children = (HashMap) getFV(childrenMap.get(key), "children");
+                            // 遍历所有 context（不止 ROOT）
+                            for (Object key1 : children.keySet()) {
+                                context = children.get(key1);
+                                if (context != null && context.getClass().getName().contains("StandardContext")) {
+                                    contexts.add(context);
+                                }
+                                // 兼容 spring boot 2.x embedded tomcat
+                                if (context != null && context.getClass().getName().contains("TomcatEmbeddedContext")) {
+                                    contexts.add(context);
+                                }
+                            }
                         }
+                    } catch (Throwable ignored) {
+                        // 字段结构在不同 Tomcat 版本可能不一致，吞掉继续走下一种规则
                     }
                 }
-                // 适配 tomcat v9
-                else if (thread.getContextClassLoader() != null && (thread.getContextClassLoader().getClass().toString().contains("ParallelWebappClassLoader") || thread.getContextClassLoader().getClass().toString().contains("TomcatEmbeddedWebappClassLoader"))) {
-                    context = getFV(getFV(thread.getContextClassLoader(), "resources"), "context");
-                    if (context != null && context.getClass().getName().contains("StandardContext"))
-                        contexts.add(context);
-                    if (context != null && context.getClass().getName().contains("TomcatEmbeddedContext"))
-                        contexts.add(context);
+
+                // 适配 tomcat v9+/Spring Boot embedded：从请求处理线程的 contextClassLoader 反推 context
+                // 旧代码只识别 ParallelWebappClassLoader / TomcatEmbeddedWebappClassLoader，
+                // 这里放宽到所有 WebappClassLoader 变种（WebappClassLoaderBase 是它们的基类）
+                if (ctxCl != null && (
+                        clName.contains("ParallelWebappClassLoader")
+                        || clName.contains("TomcatEmbeddedWebappClassLoader")
+                        || clName.contains("WebappClassLoaderBase")
+                        || clName.contains("WebappClassLoader"))) {
+                    try {
+                        Object resources = getFV(ctxCl, "resources");
+                        if (resources != null) {
+                            Object ctxFromCl = getFV(resources, "context");
+                            if (ctxFromCl != null) {
+                                String cls = ctxFromCl.getClass().getName();
+                                if (cls.contains("StandardContext") || cls.contains("TomcatEmbeddedContext")) {
+                                    contexts.add(ctxFromCl);
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // resources 字段在某些 Tomcat 版本里在父类，已用 getFV 递归找了；这里防御 null 等异常
+                    }
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            // 线程扫描本身失败也不能阻断 JMX 兜底
+        }
+
+        // 兜底路径：从 PlatformMBeanServer 查 Catalina:j2eeType=WebModule,*
+        // 这条路对独立 Tomcat（puppet 通过 common.loader 加载、webapp 处于 idle）极其有效，
+        // 因为前两条路径都依赖于「能撞上活跃的请求线程或 BackgroundProcessor 线程」，
+        // 在没有请求活动的环境下会拿不到任何 context。
+        if (contexts.isEmpty()) {
+            try {
+                addContextsFromJmx(contexts);
+            } catch (Throwable ignored) {
+                // JMX 不可用（极少见，比如 -Dcom.sun.management.jmxremote 被禁），保持空集合
+            }
         }
         return contexts;
+    }
+
+    /**
+     * 通过 JMX MBean Server 查询所有 WebModule，从 MBean 持有的 container 字段反推 StandardContext。
+     * Tomcat 把每个 StandardContext 注册成 ObjectName 形如 Catalina:j2eeType=WebModule,name=//host/path 的 MBean，
+     * MBean 自己持有对应的 StandardContext 实例。
+     */
+    private static void addContextsFromJmx(HashSet contexts) throws Exception {
+        Class managementFactory = Class.forName("java.lang.management.ManagementFactory");
+        Object mbs = managementFactory.getMethod("getPlatformMBeanServer").invoke(null);
+
+        Class objectNameClass = Class.forName("javax.management.ObjectName");
+        Object pattern = objectNameClass.getConstructor(String.class)
+                .newInstance("Catalina:j2eeType=WebModule,*");
+
+        Method queryNames = mbs.getClass().getMethod("queryNames", objectNameClass,
+                Class.forName("javax.management.QueryExp"));
+        Set names = (Set) queryNames.invoke(mbs, pattern, null);
+        if (names == null) return;
+
+        // MBeanServer.getAttribute(name, "managedResource") 在 Tomcat 里能拿到 StandardContext 实例
+        // 但有些版本是私有 attribute；getObjectInstance(name) 拿到 ObjectInstance 后从内部字段反推也行
+        Method getAttribute = mbs.getClass().getMethod("getAttribute", objectNameClass, String.class);
+        for (Object on : names) {
+            Object ctx = null;
+            // 优先用 ContainerBase.managedResource（Tomcat 5+ 都有）
+            try {
+                ctx = getAttribute.invoke(mbs, on, "managedResource");
+            } catch (Throwable t1) {
+                // 老 Tomcat 没有 managedResource attribute，退化到走 MBeanRegistration 内部字段
+                try {
+                    Object instance = mbs.getClass().getMethod("getObjectInstance", objectNameClass)
+                            .invoke(mbs, on);
+                    // ObjectInstance 自身不持有 StandardContext，需要从 MBean Server 的 repository 拿
+                    // 这条退化路径在主流 Tomcat 上很少触发，留个空指针保护
+                    ctx = getFV(instance, "context");
+                } catch (Throwable ignored) {
+                }
+            }
+            if (ctx != null) {
+                String cls = ctx.getClass().getName();
+                if (cls.contains("StandardContext") || cls.contains("TomcatEmbeddedContext")) {
+                    contexts.add(ctx);
+                }
+            }
+        }
     }
 
     public static void setFieldValue(Object obj, String fieldName, Object value) throws Exception {
@@ -367,22 +449,87 @@ public class TomcatCatalinaManageComponent implements Runnable {
 
     public Boolean unLoadFilter(String contextName, String filterName) throws Exception {
         for (Object standardContext : getContexts()) {
-            if (getFV(standardContext, "name").equals(contextName)) {
-                ArrayList arrayList = new ArrayList();
-                Object[] filterMaps = (Object[]) this.invokeMethod(standardContext, "findFilterMaps");
-                if (filterMaps.length >= 1) {
-                    for (int i = 0; i < filterMaps.length; ++i) {
-                        Object filterMap = filterMaps[i];
-                        if (!filterName.equals(getFV(filterMap, "filterName"))) {
-                            arrayList.add(filterMap);
-                        }
+            if (!getFV(standardContext, "name").equals(contextName)) continue;
+
+            // 1) 收集要删的 FilterMap 实例（按 filterName 匹配，支持同名多映射）
+            Object[] filterMaps = (Object[]) this.invokeMethod(standardContext, "findFilterMaps");
+            ArrayList toRemove = new ArrayList();
+            ArrayList kept = new ArrayList();
+            for (int i = 0; i < filterMaps.length; i++) {
+                Object fm = filterMaps[i];
+                if (filterName.equals(getFV(fm, "filterName"))) {
+                    toRemove.add(fm);
+                } else {
+                    kept.add(fm);
+                }
+            }
+
+            // 2) 优先走公开 API removeFilterMap(FilterMap)，能同步刷掉内部 filterMaps + filterMapsArray 缓存
+            boolean publicApiUsed = false;
+            try {
+                Class fmClass = Class.forName("org.apache.tomcat.util.descriptor.web.FilterMap",
+                        false, standardContext.getClass().getClassLoader());
+                Method removeFilterMap = standardContext.getClass().getMethod("removeFilterMap", fmClass);
+                for (int i = 0; i < toRemove.size(); i++) {
+                    removeFilterMap.invoke(standardContext, toRemove.get(i));
+                }
+                publicApiUsed = true;
+            } catch (Throwable t1) {
+                // 老版本 Tomcat（< 8.5）FilterMap 在 org.apache.catalina.deploy 包
+                try {
+                    Class fmClass = Class.forName("org.apache.catalina.deploy.FilterMap",
+                            false, standardContext.getClass().getClassLoader());
+                    Method removeFilterMap = standardContext.getClass().getMethod("removeFilterMap", fmClass);
+                    for (int i = 0; i < toRemove.size(); i++) {
+                        removeFilterMap.invoke(standardContext, toRemove.get(i));
                     }
-                    try {
-                        setFieldValue(standardContext, "filterMaps", arrayList.toArray((Object[]) Array.newInstance(filterMaps.getClass().getComponentType(), 0)));
-                    } catch (Exception var7) {
-                        setFieldValue(getFV(standardContext, "filterMaps"), "array", arrayList.toArray((Object[]) Array.newInstance(filterMaps.getClass().getComponentType(), 0)));
+                    publicApiUsed = true;
+                } catch (Throwable t2) {
+                    // 公开 API 都拿不到，退化到字段直写
+                }
+            }
+
+            // 3) 公开 API 走不通时，回退到改 filterMaps 字段（兼容老 Tomcat 6/7）
+            if (!publicApiUsed) {
+                Object[] newArr = (Object[]) Array.newInstance(filterMaps.getClass().getComponentType(), 0);
+                try {
+                    setFieldValue(standardContext, "filterMaps", kept.toArray(newArr));
+                } catch (Exception ignored) {
+                    // Tomcat 8.5.50+ 改用了内部 FilterMap.Array 包装
+                    setFieldValue(getFV(standardContext, "filterMaps"), "array", kept.toArray(newArr));
+                }
+            }
+
+            // 4) 删 FilterDef（防止下次 filterStart 时被重新挂上）
+            try {
+                Object filterDef = invokeMethod(standardContext, "findFilterDef",
+                        new Class[]{String.class}, new Object[]{filterName});
+                if (filterDef != null) {
+                    Class fdClass = filterDef.getClass();
+                    Method removeFilterDef = standardContext.getClass().getMethod("removeFilterDef", fdClass);
+                    removeFilterDef.invoke(standardContext, filterDef);
+                }
+            } catch (Throwable ignored) {
+                // 老版本可能没有 removeFilterDef，直接改 filterDefs 字段
+                try {
+                    HashMap filterDefs = (HashMap) getFV(standardContext, "filterDefs");
+                    if (filterDefs != null) filterDefs.remove(filterName);
+                } catch (Throwable ignored2) {
+                }
+            }
+
+            // 5) 清空 filterConfigs 缓存——这是 Tomcat 实际的 filter chain 来源
+            //    清掉后下一次请求会通过 filterStart()/createFilterConfig() 重建，确保即时生效
+            try {
+                HashMap filterConfigs = (HashMap) getFV(standardContext, "filterConfigs");
+                if (filterConfigs != null) {
+                    Object cfg = filterConfigs.remove(filterName);
+                    // ApplicationFilterConfig 持有 filter 实例，调它的 release() 触发 filter.destroy()
+                    if (cfg != null) {
+                        try { invokeMethod(cfg, "release"); } catch (Throwable ignored) {}
                     }
                 }
+            } catch (Throwable ignored) {
             }
         }
         return true;
@@ -422,54 +569,68 @@ public class TomcatCatalinaManageComponent implements Runnable {
         String className = targetListener.getClass().getName();
         boolean totallyRemoved = false;
 
+        // Tomcat 在不同版本里运行时 listener 列表字段名不一致：
+        //   - Tomcat 8.5/9/10/11：applicationEventListenersList（CopyOnWriteArrayList）
+        //   - Tomcat 7.0.x：applicationEventListenersObjects（Object[]）
+        //   - Tomcat 6：applicationEventListeners（Object[]）
+        // 依次尝试，找到哪个字段对就操作哪个
+        String[] candidateFields = new String[]{
+                "applicationEventListenersList",
+                "applicationEventListenersObjects",
+                "applicationEventListeners"
+        };
+
         Iterator contextIt = getContexts().iterator();
         while (contextIt.hasNext()) {
             Object standardContext = contextIt.next();
-            // 获取该 Context 的实例列表
-            Object listObj = getFV(standardContext, "applicationEventListenersList");
 
-            if (listObj instanceof List) {
-                List list = (List) listObj;
-                // JDK 5 遍历移除逻辑
-                Iterator it = list.iterator();
-                while (it.hasNext()) {
-                    Object l = it.next();
-                    if (l == targetListener) { // 精确匹配内存引用
-                        // 注意：如果 Tomcat 使用的是 CopyOnWriteArrayList，直接 it.remove() 可能会报错
-                        // 此时建议通过 list.remove(l)
-                        list.remove(l);
+            for (int fi = 0; fi < candidateFields.length && !totallyRemoved; fi++) {
+                String fieldName = candidateFields[fi];
+                Object listObj;
+                try {
+                    listObj = getFV(standardContext, fieldName);
+                } catch (NoSuchFieldException nf) {
+                    continue;  // 这个 Tomcat 版本没有这个字段
+                }
+                if (listObj == null) continue;
+
+                if (listObj instanceof List) {
+                    List list = (List) listObj;
+                    // CopyOnWriteArrayList 不允许 iterator.remove()，用 list.remove(Object) 才安全
+                    for (Iterator it = list.iterator(); it.hasNext();) {
+                        Object l = it.next();
+                        if (l == targetListener) {
+                            list.remove(l);
+                            totallyRemoved = true;
+                            break;
+                        }
+                    }
+                } else if (listObj.getClass().isArray()) {
+                    int length = Array.getLength(listObj);
+                    ArrayList newList = new ArrayList();
+                    boolean found = false;
+                    for (int i = 0; i < length; i++) {
+                        Object l = Array.get(listObj, i);
+                        if (l == targetListener) {
+                            found = true;
+                            continue;
+                        }
+                        newList.add(l);
+                    }
+                    if (found) {
+                        setFieldValue(standardContext, fieldName, newList.toArray());
                         totallyRemoved = true;
-                        break;
                     }
-                }
-            }
-            // 兼容极老版本 Tomcat 使用 Object 数组的情况
-            else if (listObj != null && listObj.getClass().isArray()) {
-                int length = Array.getLength(listObj);
-                ArrayList newList = new ArrayList();
-                boolean found = false;
-                for (int i = 0; i < length; i++) {
-                    Object l = Array.get(listObj, i);
-                    if (l == targetListener) {
-                        found = true;
-                        continue;
-                    }
-                    newList.add(l);
-                }
-                if (found) {
-                    setFieldValue(standardContext, "applicationEventListenersList", newList.toArray());
-                    totallyRemoved = true;
                 }
             }
 
             if (totallyRemoved) {
-                // 3. 同时尝试从配置定义中移除该类名（防止重启复活）
+                // 同时尝试从配置定义中移除该类名（防止重启复活）
                 try {
-                    // 加载对应的类以匹配方法签名
                     invokeMethod(standardContext, "removeApplicationListener",
                             new Class[]{String.class}, new Object[]{className});
                 } catch (Exception e) {
-                    // 忽略找不到配置定义的情况
+                    // 老版本可能没有这个方法，忽略
                 }
 
                 listenerMap.remove(listenerId);

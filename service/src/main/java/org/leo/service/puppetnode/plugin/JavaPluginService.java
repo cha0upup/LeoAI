@@ -6,12 +6,16 @@ import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
 @Service
 public class JavaPluginService {
+
+    /** 字节码插件类型：bytecode 是 JVM .class 字节码，发给 PluginComponent 加载执行。 */
+    public static final String PLUGIN_TYPE_JAVA = "java";
 
     private static final String COMPONENT_PLUGIN = "PluginComponent";
     private static final String RESULT_PLUGIN_PARAM = "pluginParam";
@@ -22,8 +26,25 @@ public class JavaPluginService {
             throw new IllegalArgumentException("puppetNode不能为空");
         }
         Plugin plugin = getRequiredPlugin(pluginId);
-        Map<String, Object> payload = buildInvokePayload(plugin, pluginParamJson);
-        Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_PLUGIN, payload);
+        String type = plugin.getPluginType();
+
+        Map<String, Object> results;
+        if (type == null || PLUGIN_TYPE_JAVA.equalsIgnoreCase(type)) {
+            // Java 字节码插件：发 bytecode + 业务参数给 PluginComponent
+            Map<String, Object> payload = buildInvokePayload(plugin, pluginParamJson);
+            results = javaPuppetNode.invokeComponent(COMPONENT_PLUGIN, payload);
+        } else {
+            // 脚本插件：bytecode 字段保存 UTF-8 脚本文本，走 node.execScript()
+            // 与 AI 工具 ScriptTools.execScript() 完全相同的路径，复用 ExecScriptService
+            // 实例与组件加载缓存，避免组件未加载导致响应解码为空。
+            // 注：当前 ExecScriptComponent 不支持参数注入，pluginParamJson 暂不使用。
+            byte[] bytecode = plugin.getBytecode();
+            if (bytecode == null || bytecode.length == 0) {
+                throw new IllegalArgumentException("脚本内容为空: " + plugin.getPluginId());
+            }
+            String script = new String(bytecode, StandardCharsets.UTF_8);
+            results = javaPuppetNode.execScript(type, script);
+        }
         if (results == null) {
             throw new IllegalStateException("组件调用返回结果为空");
         }

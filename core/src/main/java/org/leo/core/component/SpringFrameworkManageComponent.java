@@ -9,7 +9,8 @@ public class SpringFrameworkManageComponent implements Runnable {
 
     private HashMap params;
     private HashMap results;
-    private static Object context;
+    // 注意：曾经这里有 `private static Object context` 缓存，第一次 idle 拿不到就永远空。
+    // 现在每次 invoke 都重新解析。
     private static HashMap interceptorMap=new HashMap();
 
 
@@ -29,11 +30,17 @@ public class SpringFrameworkManageComponent implements Runnable {
         }
     }
 
+    /**
+     * 每次执行操作前现取 Spring ApplicationContext。
+     * 跨方法调用之间不缓存：避免首次 idle 拿不到就永久卡死，
+     * 也防止 contextRefreshed 后引用旧的过期 context。
+     */
+    private Object context;
+
 
     public void invoke() throws Exception {
-        if (context==null){
-            context=getContext();
-        }
+        // 每次现取，不缓存——idle 环境下首次失败也不会污染后续调用
+        context = getContext();
         String methodName = (String) params.get("methodName");
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
@@ -165,6 +172,9 @@ public class SpringFrameworkManageComponent implements Runnable {
     public static Object getContext() {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         Object context = null;
+
+        // 路径 1：从当前请求线程绑定的 RequestAttributes 直接拿 ServletContext
+        // 只在请求线程里有效（puppet 在请求线程上执行时才走得通），idle 时返回 null
         try {
             Object requestAttributes = invokeMethod(classLoader.loadClass("org.springframework.web.context.request.RequestContextHolder"), "getRequestAttributes");
             Object httprequest = invokeMethod(requestAttributes, "getRequest");
@@ -173,6 +183,9 @@ public class SpringFrameworkManageComponent implements Runnable {
             context = invokeMethod(classLoader.loadClass("org.springframework.web.context.support.WebApplicationContextUtils"), "getWebApplicationContext", new Class[]{classLoader.loadClass("javax.servlet.ServletContext")}, new Object[]{servletContext});
         } catch (Exception e) {
         }
+
+        // 路径 2（Spring 5.x）：LiveBeansView.applicationContexts
+        // Spring 5.3 起 @Deprecated，6+ 移除；保留作为老版本兜底
         if (context == null) {
             try {
                 LinkedHashSet applicationContexts = (LinkedHashSet) getFV(classLoader.loadClass("org.springframework.context.support.LiveBeansView").newInstance(), "applicationContexts");
@@ -183,7 +196,81 @@ public class SpringFrameworkManageComponent implements Runnable {
             } catch (Exception ignored) {
             }
         }
+
+        // 路径 3：从 Tomcat StandardContext 反推 ServletContext → WebApplicationContext
+        // 解决 idle Tomcat + 全局 CL 注入场景（路径 1/2 都失效时的最终兜底）
+        if (context == null) {
+            try {
+                context = getContextFromTomcat(classLoader);
+            } catch (Throwable ignored) {
+            }
+        }
+
         return context;
+    }
+
+    /**
+     * 复用 TomcatCatalinaManageComponent 的扫描逻辑拿到所有 StandardContext，
+     * 再从每个 context 的 servletContext 走 WebApplicationContextUtils.getWebApplicationContext()。
+     *
+     * 故意走反射而不是直接 import，避免 puppet 端没有 TomcatCatalinaManageComponent 时编译失败。
+     */
+    private static Object getContextFromTomcat(ClassLoader cl) throws Throwable {
+        Class tomcatComp;
+        try {
+            tomcatComp = cl.loadClass("org.leo.core.component.TomcatCatalinaManageComponent");
+        } catch (Throwable t) {
+            // TomcatCatalinaManageComponent 还没被 puppet 端加载，自己扫一遍 MBean
+            return getContextFromTomcatMbean(cl);
+        }
+        Method getCtx = tomcatComp.getDeclaredMethod("getContext");
+        getCtx.setAccessible(true);
+        HashSet standardContexts = (HashSet) getCtx.invoke(null);
+        return resolveWebAppContext(standardContexts, cl);
+    }
+
+    /** TomcatCatalinaManageComponent 没加载时，自己走 PlatformMBeanServer 查 WebModule。 */
+    private static Object getContextFromTomcatMbean(ClassLoader cl) throws Throwable {
+        Class mfClass = Class.forName("java.lang.management.ManagementFactory");
+        Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
+        Class onClass = Class.forName("javax.management.ObjectName");
+        Object pattern = onClass.getConstructor(String.class).newInstance("Catalina:j2eeType=WebModule,*");
+        Method queryNames = mbs.getClass().getMethod("queryNames", onClass, Class.forName("javax.management.QueryExp"));
+        Set names = (Set) queryNames.invoke(mbs, pattern, null);
+        if (names == null || names.isEmpty()) return null;
+        Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
+        HashSet ctxs = new HashSet();
+        for (Object on : names) {
+            try {
+                Object ctx = getAttribute.invoke(mbs, on, "managedResource");
+                if (ctx != null) ctxs.add(ctx);
+            } catch (Throwable ignored) {
+            }
+        }
+        return resolveWebAppContext(ctxs, cl);
+    }
+
+    /** 从一组 StandardContext 里找出第一个能解析出 WebApplicationContext 的。 */
+    private static Object resolveWebAppContext(HashSet standardContexts, ClassLoader cl) throws Throwable {
+        if (standardContexts == null || standardContexts.isEmpty()) return null;
+        Class waCtxUtils = cl.loadClass("org.springframework.web.context.support.WebApplicationContextUtils");
+        Class servletCtxClass = cl.loadClass("javax.servlet.ServletContext");
+        Method getCtx = waCtxUtils.getMethod("getWebApplicationContext", servletCtxClass);
+        for (Object stdCtx : standardContexts) {
+            try {
+                // StandardContext.getServletContext() 返回 ApplicationContext（Tomcat 的 facade）
+                Method getServletCtx = stdCtx.getClass().getMethod("getServletContext");
+                Object servletCtx = getServletCtx.invoke(stdCtx);
+                if (servletCtx == null) continue;
+                Object waCtx = getCtx.invoke(null, servletCtx);
+                if (waCtx != null) {
+                    return waCtx;
+                }
+            } catch (Throwable ignored) {
+                // 这个 context 不是 Spring 应用，跳过
+            }
+        }
+        return null;
     }
 
 

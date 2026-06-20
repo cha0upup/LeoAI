@@ -49,10 +49,14 @@ public class PluginManageController {
     private static final String PARAM_PLUGIN_DESCRIPTION = "pluginDescription";
     private static final String PARAM_VERSION = "version";
     private static final String PARAM_BYTECODE = "bytecode";
+    private static final String PARAM_SCRIPT_CONTENT = "scriptContent";
     private static final String PARAM_PARAMS_DEMO = "paramsDemo";
     private static final String PARAM_PLUGIN_TYPE = "pluginType";
     private static final String PARAM_PLUGIN_ID = "pluginId";
     private static final String PARAM_REMARK = "remark";
+
+    /** 字节码插件类型：bytecode 字段是 JVM .class，需经反编译校验。 */
+    private static final String PLUGIN_TYPE_JAVA = "java";
     
     // 结果字段常量
     private static final String RESULT_PLUGIN_ID = "pluginId";
@@ -122,39 +126,76 @@ public class PluginManageController {
         componentPlugin.setPluginName((String) params.get(PARAM_PLUGIN_NAME));
         componentPlugin.setPluginDescription((String) params.get(PARAM_PLUGIN_DESCRIPTION));
         componentPlugin.setVersion((String) params.get(PARAM_VERSION));
-
-        Object bytecodeObj = params.get(PARAM_BYTECODE);
-        if (bytecodeObj == null || !(bytecodeObj instanceof String)) {
-            return ApiResponse.badRequest("bytecode参数不能为空且必须是Base64字符串");
-        }
-        byte[] bytecode = Base64.getDecoder().decode((String) bytecodeObj);
-        try {
-            DecompilerUtil.decompile(bytecode);
-        } catch (Exception e) {
-            return ApiResponse.badRequest("字节码验证失败");
-        }
-        componentPlugin.setBytecode(bytecode);
         componentPlugin.setParamsDemo((String) params.get(PARAM_PARAMS_DEMO));
         componentPlugin.setPluginType((String) params.get(PARAM_PLUGIN_TYPE));
-        
+
+        // 字节码插件走 bytecode + 反编译校验，脚本插件走 scriptContent 文本字节
+        boolean isJava = isJavaPlugin(componentPlugin.getPluginType());
+        byte[] payloadBytes;
+        String identifier;
+        try {
+            if (isJava) {
+                payloadBytes = decodeAndValidateBytecode(params.get(PARAM_BYTECODE));
+                identifier = DecompilerUtil.extractClassName(payloadBytes);
+            } else {
+                payloadBytes = encodeScriptContent(params.get(PARAM_SCRIPT_CONTENT));
+                identifier = componentPlugin.getPluginName();
+            }
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+        componentPlugin.setBytecode(payloadBytes);
+
         User user = getUserFromSession(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
         componentPlugin.setCreateUserId(user.getUserId());
         componentPlugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
-        
-        // 从bytecode中提取类名（简单类名，不包含包名），生成插件ID格式：类名_版本号.plugin
-        String className = DecompilerUtil.extractClassName(bytecode);
-        String pluginId = generatePluginId(className, componentPlugin.getVersion());
+
+        String pluginId = generatePluginId(identifier, componentPlugin.getVersion());
         componentPlugin.setPluginId(pluginId);
         pluginManager.inStallPlugin(componentPlugin);
         boolean result = savePlugin(componentPlugin);
         if (result) {
-            return ApiResponse.success();
+            HashMap<String, Object> data = new HashMap<>();
+            data.put(RESULT_PLUGIN_ID, pluginId);
+            return ApiResponse.success(data);
         } else {
             return ApiResponse.error("保存插件失败");
         }
+    }
+
+    /** java 类型按字节码处理；空值视为 java（向后兼容旧数据）。 */
+    private boolean isJavaPlugin(String pluginType) {
+        return pluginType == null || pluginType.isBlank() || PLUGIN_TYPE_JAVA.equalsIgnoreCase(pluginType.trim());
+    }
+
+    /** 解码并反编译校验 Java 字节码。 */
+    private byte[] decodeAndValidateBytecode(Object rawBase64) {
+        if (!(rawBase64 instanceof String s) || s.isBlank()) {
+            throw new IllegalArgumentException("bytecode参数不能为空且必须是Base64字符串");
+        }
+        byte[] bytes;
+        try {
+            bytes = Base64.getDecoder().decode(s);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("bytecode 解码失败: " + e.getMessage());
+        }
+        try {
+            DecompilerUtil.decompile(bytes);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("字节码验证失败");
+        }
+        return bytes;
+    }
+
+    /** 脚本类型把 scriptContent 文本以 UTF-8 存入 bytecode 字段。 */
+    private byte[] encodeScriptContent(Object rawScript) {
+        if (!(rawScript instanceof String s) || s.isBlank()) {
+            throw new IllegalArgumentException("scriptContent不能为空");
+        }
+        return s.getBytes(StandardCharsets.UTF_8);
     }
 
     private boolean savePlugin(Plugin componentPlugin) throws Exception {
@@ -277,23 +318,25 @@ public class PluginManageController {
         }
         
         Plugin componentPlugin;
-        
+
         // 处理 .plugin 文件（已加密的插件文件）
         try {
             // 尝试解密并解析插件文件
             String decrypted = AesUtil.decrypt(new String(fileBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
             componentPlugin = (Plugin) JsonUtil.fromJsonString(decrypted, Plugin.class);
-            
+
             // 所有插件信息都从插件文件中解析，不允许通过参数覆盖
             // 更新创建信息
             componentPlugin.setCreateUserId(user.getUserId());
             componentPlugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
-            
-            // 如果版本变化，重新生成pluginId
-            String className = DecompilerUtil.extractClassName(componentPlugin.getBytecode());
-            String pluginId = generatePluginId(className, componentPlugin.getVersion());
+
+            // 重新派生 pluginId：java 走类名，脚本走插件名
+            String identifier = isJavaPlugin(componentPlugin.getPluginType())
+                    ? DecompilerUtil.extractClassName(componentPlugin.getBytecode())
+                    : componentPlugin.getPluginName();
+            String pluginId = generatePluginId(identifier, componentPlugin.getVersion());
             componentPlugin.setPluginId(pluginId);
-            
+
         } catch (Exception e) {
             return ApiResponse.badRequest("插件文件解析失败: " + e.getMessage());
         }
@@ -341,14 +384,19 @@ public class PluginManageController {
         if (params == null) {
             return ApiResponse.badRequest("params参数不能为空");
         }
+        // 反编译 = 看 Java 字节码源码；脚本类型直接返回原始 UTF-8 文本即可
+        String pluginType = (String) params.get(PARAM_PLUGIN_TYPE);
         Object bytecodeObj = params.get("bytecode");
         if (bytecodeObj == null || !(bytecodeObj instanceof String)) {
             return ApiResponse.badRequest("bytecode参数不能为空且必须是Base64字符串");
         }
         byte[] bytecode = Base64.getDecoder().decode((String) bytecodeObj);
-        String decompiledCode = DecompilerUtil.decompile(bytecode);
         HashMap<String, Object> data = new HashMap<String, Object>();
-        data.put(RESULT_JAVA_CODE, decompiledCode);
+        if (isJavaPlugin(pluginType)) {
+            data.put(RESULT_JAVA_CODE, DecompilerUtil.decompile(bytecode));
+        } else {
+            data.put("scriptText", new String(bytecode, StandardCharsets.UTF_8));
+        }
         return ApiResponse.success(data);
     }
 
@@ -506,8 +554,10 @@ public class PluginManageController {
         }
         // 重新派生 pluginId，确保一致性
         try {
-            String className = DecompilerUtil.extractClassName(plugin.getBytecode());
-            plugin.setPluginId(generatePluginId(className, plugin.getVersion()));
+            String identifier = isJavaPlugin(plugin.getPluginType())
+                    ? DecompilerUtil.extractClassName(plugin.getBytecode())
+                    : plugin.getPluginName();
+            plugin.setPluginId(generatePluginId(identifier, plugin.getVersion()));
         } catch (Exception e) {
             result.put("pluginId", plugin.getPluginId());
             result.put("pluginName", plugin.getPluginName());
@@ -594,36 +644,50 @@ public class PluginManageController {
     }
     
     /**
-     * 如果提供了新的字节码，更新字节码并返回新的pluginId（如果变化）
+     * 如果提供了新的字节码或脚本内容，更新插件 payload 并返回新的 pluginId（如果变化）。
+     *
+     * <p>java 类型走 bytecode + 反编译校验；脚本类型走 scriptContent UTF-8 文本字节。
+     * 两者互斥：传哪个就用哪个，都不传则保持现状。
      */
-    private String updateBytecodeIfProvided(HashMap<String, Object> params, Plugin plugin, 
+    private String updateBytecodeIfProvided(HashMap<String, Object> params, Plugin plugin,
                                              String currentPluginId, String safeFileName) throws Exception {
-        if (!params.containsKey(PARAM_BYTECODE)) {
-            return null;
+        boolean isJava = isJavaPlugin(plugin.getPluginType());
+        byte[] payloadBytes;
+        String identifier;
+        if (isJava) {
+            if (!params.containsKey(PARAM_BYTECODE)) {
+                return null;
+            }
+            Object bytecodeObj = params.get(PARAM_BYTECODE);
+            if (!(bytecodeObj instanceof String s) || s.isBlank()) {
+                return null;
+            }
+            try {
+                payloadBytes = decodeAndValidateBytecode(s);
+            } catch (IllegalArgumentException e) {
+                throw new RuntimeException(e.getMessage(), e);
+            }
+            identifier = DecompilerUtil.extractClassName(payloadBytes);
+        } else {
+            if (!params.containsKey(PARAM_SCRIPT_CONTENT)) {
+                return null;
+            }
+            Object scriptObj = params.get(PARAM_SCRIPT_CONTENT);
+            if (!(scriptObj instanceof String s) || s.isBlank()) {
+                return null;
+            }
+            payloadBytes = s.getBytes(StandardCharsets.UTF_8);
+            identifier = plugin.getPluginName();
         }
-        
-        Object bytecodeObj = params.get(PARAM_BYTECODE);
-        if (bytecodeObj == null || !(bytecodeObj instanceof String)) {
-            return null;
-        }
-        
-        byte[] bytecode = Base64.getDecoder().decode((String) bytecodeObj);
-        try {
-            DecompilerUtil.decompile(bytecode);
-        } catch (Exception e) {
-            throw new RuntimeException("字节码验证失败: " + e.getMessage(), e);
-        }
-        plugin.setBytecode(bytecode);
-        
-        // 如果更新了字节码，可能需要重新生成pluginId（基于新的类名和版本）
-        String className = DecompilerUtil.extractClassName(bytecode);
-        String newPluginId = generatePluginId(className, plugin.getVersion());
-        
-        // 如果pluginId发生变化，需要先卸载旧的，再安装新的
+        plugin.setBytecode(payloadBytes);
+
+        // 重新派生 pluginId：基于类名/插件名 + 版本
+        String newPluginId = generatePluginId(identifier, plugin.getVersion());
+
         if (!currentPluginId.equals(newPluginId)) {
             pluginManager.unload(currentPluginId);
             plugin.setPluginId(newPluginId);
-            
+
             // 删除旧文件
             File root = new File(LeoConfig.getVfsPath());
             File pluginDir = new File(root, PLUGIN_DIR_NAME);
