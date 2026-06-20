@@ -95,7 +95,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 - **Scheduled Tasks**: Windows scheduled task management
 - **Service Manager**: Start, stop, restart Windows services
 - **Docker Manager**: List, start, stop, and inspect containers and images
-- **Application Manager**: Catalina applications (Tomcat/WebLogic), Spring Framework runtime management
+- **Application Manager**: Catalina applications (Tomcat 6/7/8/9/10/11, WebLogic) and Spring Framework runtime management; tolerant to idle deployments and puppets injected into the global ClassLoader (thread-scan + JMX MBean dual fallback); supports immediate unloading of Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### Security & Permissions
 - **Credential Harvesting**: System credentials, browser data, WiFi configurations
@@ -105,6 +105,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 
 #### Other Tools
 - **Class Bytecode Viewer**: Extract and decompile classes loaded in the JVM
+- **Class & Resource Browser**: Read any classpath resource the puppet process can see (`.class` files inside jars, `application.yml`, `META-INF/MANIFEST.MF`, etc.) by class name or path. Auto-detects binary/text/`.class` and decompiles to Java source. When the puppet is injected into Tomcat's global ClassLoader, falls back to scanning every WebappClassLoader so webapp-private classes remain reachable.
 - **Clipboard Reader**: Retrieve clipboard contents from the target system
 - **Disk Mount Manager**: View and manage disk mount points
 - **HostId Switching**: Manage multiple intranet hosts under a single node
@@ -130,12 +131,15 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 - **Rule Tags**: Supports protocol filtering and tag grouping for selective use during scanning
 - **Import/Export**: Export individual rules or batch-export as `.json` / `.zip`; import with conflict policies (skip/overwrite/rename) to easily share rule libraries across teams
 
-### Plugin System
+### Plugins & Script Execution
 
-- **Hot-loading Java Plugins**: Dynamically load and execute custom Java plugins
-- **Built-in Plugins**: Script execution, command execution, WebLogic password retrieval, heap dump analysis
-- **Extensible**: Supports developing and integrating custom functionality plugins
-- **Import/Export**: Export individual plugins or batch-export as `.plugin` / `.zip`; import with conflict policies (skip/overwrite)
+- **Unified execution console**: the "Plugin Invocation" module hosts both script editing and bytecode execution
+  - **Script editor**: JavaScript / Groovy / Python; run ad-hoc without saving, or save as a script plugin in one click
+  - **Java class execution**: drag-and-drop a `.class` file or paste base64 bytecode (URL-safe / whitespace / padding cleanup, `cafebabe` magic check); run ad-hoc or save as a Java plugin
+- **Unified plugin library**: Java bytecode and js/groovy/python script plugins coexist with type badges; script plugins can be reloaded into the editor with one click
+- **Hot-loading Java plugins**: dynamically load and execute custom Java plugins
+- **AI-ready built-in skills**: script execution, command execution, WebLogic password retrieval, heap-dump analysis, and more out of the box
+- **Import/Export**: single-file `.plugin` or batch `.zip`; conflict policies (skip / overwrite) on import
 
 ### Management Features
 
@@ -187,13 +191,13 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 Download the latest release from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-0.0.5-SNAPSHOT.jar
+LeoAi-0.0.6-SNAPSHOT.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -337,8 +341,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # For production, change this to a strong random string (16+ characters)
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
-# Pin to a specific JAR version (defaults to v0.0.5)
-# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.5/LeoAi-0.0.5-SNAPSHOT.jar
+# Pin to a specific JAR version (defaults to v0.0.6)
+# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.6/LeoAi-0.0.6-SNAPSHOT.jar
 ```
 
 After editing `.env`, run `docker compose up -d` to apply changes. **Note**: changing `JAR_URL` requires `--build` to re-fetch the JAR.
@@ -373,7 +377,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.5-SNAPSHOT.jar --server.port=9090
+  LeoAi-0.0.6-SNAPSHOT.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -382,7 +386,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.5-SNAPSHOT.jar \
+  LeoAi-0.0.6-SNAPSHOT.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -403,7 +407,7 @@ LeoAI's AI features require an LLM endpoint. Two configuration methods are avail
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
 ```
 
 ### Supported AI Models
@@ -560,7 +564,7 @@ The console's skill quick-launch panel provides 21 pre-configured puppet-node Sk
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.5-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
 ```
 
 ---
