@@ -72,9 +72,13 @@ public class NetworkConnectionService extends ComponentService {
         data.put("connections", filtered);
         if (!diagnostics.isEmpty()) data.put("diagnostics", diagnostics);
 
+        // ControllerUtil.handlePuppetCall 会把 service 返回值视作 data 部分，
+        // 看到 code=200 就再调 ApiResponse.success(result) 包一层，
+        // 因此 service 层只需要返回 {code, ...payload}（payload 字段直接平铺），
+        // 不要再嵌一层 data，否则前端拿到的是 res.data.data.connections。
         Map<String, Object> result = new HashMap<>();
         result.put("code", 200);
-        result.put("data", data);
+        result.putAll(data);
         return result;
     }
 
@@ -135,9 +139,10 @@ public class NetworkConnectionService extends ComponentService {
         data.put("listeningPorts",   listeningPorts);
         if (!diagnostics.isEmpty()) data.put("diagnostics", diagnostics);
 
+        // 同 list()：handlePuppetCall 会把返回值再包一层 ApiResponse.success，所以这里平铺即可
         Map<String, Object> result = new HashMap<>();
         result.put("code", 200);
-        result.put("data", data);
+        result.putAll(data);
         return result;
     }
 
@@ -209,18 +214,35 @@ public class NetworkConnectionService extends ComponentService {
 
     private void collectMacOS(List<Map<String, Object>> connections, List<String> diagnostics)
             throws Exception {
-        String output = execWithTimeout("lsof -i -n -P 2>/dev/null", 20);
-        if (output != null && output.trim().length() > 10) {
-            diagnostics.add("source=lsof -i -n -P");
+        // PATH 兜底：puppet shell 会话是非 login shell，macOS 默认 PATH 可能不含 /usr/sbin（lsof 在那里）
+        // `command -v` 同时探到，跑哪个用哪个；2>&1 不再丢错误信息
+        String lsofCmd = "PATH=$PATH:/usr/sbin:/sbin:/usr/local/sbin lsof -i -n -P 2>&1";
+        int before = connections.size();
+        String output = execWithTimeout(lsofCmd, 20);
+        if (looksLikeRealOutput(output, "COMMAND")) {
             parseLsof(output, connections);
-            return;
+            if (connections.size() > before) {
+                diagnostics.add("source=lsof -i -n -P");
+                return;
+            }
+            diagnostics.add("lsof returned " + output.length() + " chars but parsed 0 entries");
+            diagnostics.add("lsof preview=" + previewOutput(output));
+        } else {
+            diagnostics.add("lsof unavailable or empty (preview=" + previewOutput(output) + ")");
         }
+
+        // fallback：netstat -an 始终存在
         output = execFast("netstat -an 2>/dev/null");
         if (output != null && !output.trim().isEmpty()) {
-            diagnostics.add("source=netstat -an");
+            int beforeNs = connections.size();
             parseNetstatUnix(output, connections);
+            if (connections.size() > beforeNs) {
+                diagnostics.add("source=netstat -an");
+                return;
+            }
+            diagnostics.add("netstat -an parsed 0 entries (preview=" + previewOutput(output) + ")");
         } else {
-            diagnostics.add("lsof and netstat both returned empty");
+            diagnostics.add("netstat -an returned empty");
         }
     }
 
@@ -228,44 +250,94 @@ public class NetworkConnectionService extends ComponentService {
 
     private void collectLinux(List<Map<String, Object>> connections, List<String> diagnostics)
             throws Exception {
-        String output = execWithTimeout("ss -tulnp 2>/dev/null", 20);
-        if (output != null && output.trim().length() > 10) {
-            diagnostics.add("source=ss -tulnp");
+        // 同样 PATH 兜底，sbin 下的工具最常见
+        String pathPrefix = "PATH=$PATH:/usr/sbin:/sbin:/usr/local/sbin ";
+
+        int before = connections.size();
+        String output = execWithTimeout(pathPrefix + "ss -tulnp 2>&1", 20);
+        if (looksLikeRealOutput(output, "Netid")) {
             parseSs(output, connections, true);
-            String estOutput = execWithTimeout("ss -tnp state established 2>/dev/null", 20);
-            if (estOutput != null && estOutput.trim().length() > 10) {
-                diagnostics.add("source+=ss -tnp state established");
+            String estOutput = execWithTimeout(pathPrefix + "ss -tnp state established 2>&1", 20);
+            if (looksLikeRealOutput(estOutput, null)) {
                 parseSs(estOutput, connections, false);
             }
-            return;
+            if (connections.size() > before) {
+                diagnostics.add("source=ss -tulnp");
+                return;
+            }
+            diagnostics.add("ss returned output but parsed 0 entries");
         }
 
-        output = execWithTimeout("netstat -tulnp 2>/dev/null", 20);
-        if (output != null && output.trim().length() > 10) {
-            diagnostics.add("source=netstat -tulnp");
+        before = connections.size();
+        output = execWithTimeout(pathPrefix + "netstat -tulnp 2>&1", 20);
+        if (looksLikeRealOutput(output, "Proto")) {
             parseNetstatLinux(output, connections);
-            String estOutput = execFast("netstat -tnp 2>/dev/null | grep ESTABLISHED");
+            String estOutput = execFast(pathPrefix + "netstat -tnp 2>/dev/null | grep ESTABLISHED");
             if (estOutput != null && !estOutput.trim().isEmpty()) {
-                diagnostics.add("source+=netstat ESTABLISHED");
                 parseNetstatLinux(estOutput, connections);
             }
-            return;
+            if (connections.size() > before) {
+                diagnostics.add("source=netstat -tulnp");
+                return;
+            }
+            diagnostics.add("netstat returned output but parsed 0 entries");
         }
 
-        output = execWithTimeout("lsof -i -n -P 2>/dev/null", 20);
-        if (output != null && output.trim().length() > 10) {
-            diagnostics.add("source=lsof -i -n -P (fallback)");
+        before = connections.size();
+        output = execWithTimeout(pathPrefix + "lsof -i -n -P 2>&1", 20);
+        if (looksLikeRealOutput(output, "COMMAND")) {
             parseLsof(output, connections);
-        } else {
-            diagnostics.add("ss, netstat, lsof all returned empty");
+            if (connections.size() > before) {
+                diagnostics.add("source=lsof -i -n -P (fallback)");
+                return;
+            }
         }
+        diagnostics.add("ss, netstat, lsof all unavailable or parsed 0 entries");
+    }
+
+    /**
+     * 判断 shell 回显是不是「真有命令输出」而不是只有 prompt + 命令回显。
+     * 出现 expectedHeader 就肯定是真输出；找不到时退而求其次用「行数 ≥ 3 且非 shell-not-found 模式」判断。
+     */
+    private boolean looksLikeRealOutput(String output, String expectedHeader) {
+        if (output == null) return false;
+        String trimmed = output.trim();
+        if (trimmed.isEmpty()) return false;
+        if (expectedHeader != null && trimmed.contains(expectedHeader)) return true;
+        // 常见错误模式：command not found / Permission denied / No such file
+        String lower = trimmed.toLowerCase();
+        if (lower.contains("command not found") || lower.contains("not found")
+                || lower.contains("no such file") || lower.contains("permission denied")) {
+            return false;
+        }
+        // 至少 3 行非空才算有内容（前两行通常是 prompt + 命令回显）
+        int lines = 0;
+        for (String l : trimmed.split("\n")) if (!l.trim().isEmpty()) lines++;
+        return lines >= 3;
+    }
+
+    private String previewOutput(String output) {
+        if (output == null) return "<null>";
+        String trimmed = output.trim().replace('\n', '|').replace('\r', ' ');
+        if (trimmed.isEmpty()) return "<empty>";
+        return trimmed.length() > 160 ? trimmed.substring(0, 160) + "…" : trimmed;
     }
 
     // ── parse ss ──────────────────────────────────────────────────────────────
 
     private void parseSs(String output, List<Map<String, Object>> connections, boolean hasHeader) {
         String[] lines = output.split("\n");
-        int start = hasHeader ? 1 : 0;
+        int start = 0;
+        if (hasHeader) {
+            // ss header 行包含 "Netid"/"State" + "Local Address"，先定位到 header 之后开始
+            for (int i = 0; i < lines.length; i++) {
+                String t = lines[i].trim();
+                if ((t.startsWith("Netid") || t.startsWith("State")) && t.contains("Local")) {
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
         for (int i = start; i < lines.length && connections.size() < 10000; i++) {
             String line = lines[i].trim();
             if (line.isEmpty()) continue;
@@ -344,9 +416,21 @@ public class NetworkConnectionService extends ComponentService {
 
     private void parseLsof(String output, List<Map<String, Object>> connections) {
         String[] lines = output.split("\n");
-        for (int i = 1; i < lines.length && connections.size() < 10000; i++) {
+        // execWithTimeout 的回显前面可能有：shell prompt、命令回显、PATH= 设置等噪声行。
+        // 先找到 lsof 的 header 行（以 COMMAND 开头），从下一行开始解析。
+        int start = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim();
+            if (t.startsWith("COMMAND") && t.contains("PID") && t.contains("NAME")) {
+                start = i + 1;
+                break;
+            }
+        }
+        for (int i = start; i < lines.length && connections.size() < 10000; i++) {
             String line = lines[i].trim();
             if (line.isEmpty()) continue;
+            // 过滤再次出现的 prompt / 命令回显
+            if (line.startsWith("$") || line.startsWith("#") || line.startsWith("%")) continue;
             String[] parts = line.split("\\s+", 10);
             if (parts.length < 9) continue;
 
@@ -354,14 +438,24 @@ public class NetworkConnectionService extends ComponentService {
             String pid     = parts[1];
             String user    = parts[2];
             String node    = parts[7];
-            String name    = parts[8];
+            // node 列必须是 TCP/UDP/IPv4/IPv6 之类，否则是噪声行
+            String nodeUp = node.toUpperCase();
+            if (!nodeUp.startsWith("TCP") && !nodeUp.startsWith("UDP")
+                    && !nodeUp.startsWith("IP")) continue;
+
+            String name = parts[8];
             if (parts.length > 9) name = name + " " + parts[9];
 
             Map<String, Object> conn = new HashMap<>();
             conn.put("process",  command);
             conn.put("pid",      pid);
             conn.put("user",     user);
-            conn.put("protocol", node.toUpperCase());
+            // 协议：node 列若是 IPv4/IPv6，从 NAME 中的 TCP/UDP 推断；否则 node 自身就是协议
+            if (nodeUp.startsWith("IP")) {
+                conn.put("protocol", name.toUpperCase().contains("UDP") ? "UDP" : "TCP");
+            } else {
+                conn.put("protocol", nodeUp);
+            }
 
             int ps = name.lastIndexOf('(');
             int pe = name.lastIndexOf(')');

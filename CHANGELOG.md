@@ -8,11 +8,13 @@
 
 - **TomcatCatalinaManageComponent**
   - `unLoadFilter`：改用公开 API `removeFilterMap(FilterMap)` + `removeFilterDef(FilterDef)`，同时清空 `filterConfigs` 缓存并对其调 `release()`，让卸载**即时生效**而不是等下一次请求；公开 API 不可用时自动退到字段直写
-  - `unLoadListener`：按 Tomcat 版本轮询 `applicationEventListenersList` / `applicationEventListenersObjects` / `applicationEventListeners` 三个字段名，兼容 6/7/8.5+
+  - `getAllListener`：原本只取 `getApplicationEventListeners`（事件监听器），导致大多数 Context 看着「没有 Listener」；新增 `getApplicationLifecycleListeners` 同时收集生命周期监听器（ServletContextListener / HttpSessionListener / Spring `ContextLoaderListener` 都在此），返回结果带 `category=event|lifecycle` 字段；bootstrap CL 加载的 listener `getClassLoader()` 返回 null 时降级显示为 `<bootstrap>`，避免 NPE
+  - `unLoadListener`：候选字段表扩展为 6 个，覆盖 event 和 lifecycle 两类，每类各 3 个 Tomcat 版本字段名（`applicationEventListenersList/Objects/applicationEventListeners` + `applicationLifecycleListenersList/Objects/applicationLifecycleListeners`）；遍历策略改为「全部字段都尝试 remove」而非命中即 break，杜绝同时实现 Lifecycle + Event 接口的 listener 卸载残留
 - **WeblogicCatalinaManageComponent**
   - 移除类加载期 `static contexts = getContext()` 缓存（首次扫到空就永远空）
   - `getContextsByMbean()` 加载 `WebAppServletContext` 时按 `classLoader → systemClassLoader` 两段降级
   - `getContext()` 新增第 3 条兜底路径 `getContextsByPlatformMbean()`：通过 `com.bea:Type=ApplicationRuntime,*` 反推 `WebAppServletContext`，覆盖 idle / 普通 CL 注入场景
+  - `getCatalinaInfo` / `getAllListener`：补齐 Listener 采集，覆盖 `_servletContextListeners` / `_sessionListeners` / `_requestListeners` / `_asyncListeners` 等 8 类字段（带/不带下划线两套命名兜底），结果带 `category` 字段，按 identity 去重
 - **SpringFrameworkManageComponent**
   - 移除 `static Object context` 缓存，改为 instance 字段每次现取
   - 新增**路径 3**：从 Tomcat StandardContext 反推 ServletContext → `WebApplicationContextUtils.getWebApplicationContext()`，解决 idle Spring Boot 部署 + 全局 CL 注入下 `RequestContextHolder` / `LiveBeansView` 全部失效的问题
@@ -33,6 +35,31 @@
   - 自动识别响应内容：`0xCAFEBABE` 走反编译展 Java 源、纯文本走 UTF-8 文本展示（256K 截断）、其他走十六进制 dump（前 4KB + ASCII 列）
   - 配套操作：复制（按预览类型自动选）、下载、清空、最近 6 条历史
   - 后端新接口 `POST /puppet-node/resource/get`，含审计日志、magic-byte 类型识别、反编译失败自动降级到十六进制
+
+### 体验优化
+
+- **「插件调用」模块改名为「脚本与插件」**：原命名只对应模块内一个按钮的语义（仅覆盖 ~25%），不能涵盖脚本编辑、Java Class 临时执行、保存为插件、插件库浏览四类核心动作；同步更新 README 与英文文档对应段落（Plugin Invocation → Scripts & Plugins）
+- **类字节码弹窗比例修复**：在 1440px+ 宽屏下原 `width="80vw"` 会出现「左右大空白、上下挤压」并伴随 Monaco minimap 拖出长条
+  - Dialog 宽度按视口分档（≥2400=1800px / ≥1920=1500px / ≥1440=1200px / ≥1024=920px / 移动端 92vw），高分屏不再「漂在中间」
+  - Dialog 显式 `height: 90vh`、`top: 4vh`、内部 flex 布局，编辑器随高度自然 fill，不再出现「弹窗矮、内容溢出」
+  - 抽出 `useResponsiveDialogWidth` composable，断点表可覆盖；JavaPlugin 调用弹窗（原硬编码 `width="1000px"`）改用同一 composable，自带稍窄一档（≥2400=1600px / ≥1920=1300px / ≥1440=1100px / ≥1024=1000px）匹配其左右两栏布局
+- **资源浏览器代码预览升级为 Monaco**：原 `<el-input type="textarea" :rows="22">` 在大文件下没有语法高亮、Ctrl+F、折叠
+  - 新增 `<CodePreview>` 通用组件，封装 monaco 编辑器实例的复用 / 主题切换 / 内容增量更新（避免每次重建丢滚动）
+  - ResourceBrowser 的 Java 反编译预览、文本预览全部改走 CodePreview
+  - 文本预览自动按扩展名推断语言（json/xml/yaml/properties/sql/sh/js/ts/html/css/md/py/java），常见配置文件直接吃语法高亮
+- **NetworkConnectionService 数据返回 0 条修复**：原 macOS 链路在某些场景上 `lsof -i -n -P` 命令执行了、回显却被 `2>/dev/null` 吞没，`output.trim().length() > 10` 判断仍通过（shell prompt 自身就 >10），结果走进 `parseLsof` 但解析出 0 条；fallback 到 netstat 的逻辑也不会触发
+  - 命令前缀加 `PATH=$PATH:/usr/sbin:/sbin:/usr/local/sbin`，覆盖 puppet 非 login shell 默认 PATH 缺 sbin 的情况
+  - 重定向改为 `2>&1`，错误信息不再丢，便于诊断
+  - 抽 `looksLikeRealOutput(output, expectedHeader)`：见 header 关键字才算"真有输出"，否则识别 `command not found / Permission denied` 等错误模式后直接 fallback
+  - 解析后若仍是 0 条，diagnostics 里附带 `preview=…` 输出片段，下次再有问题能直接看到 shell 回显的原始内容
+  - 现在 macOS / Linux 两侧都遵循「真解析出连接才记 source、否则继续 fallback」的策略
+- **NetworkConnectionService 响应结构平铺修复**：上一轮修好后端能拿到 315 条连接，但前端列表仍空。根因是 `ControllerUtil.handlePuppetCall` 看到 service 返回的 `code=200` 会再调 `ApiResponse.success(result)` 包一层，service 又自己嵌了 `data:{...payload}`，最终 HTTP body 变成 `res.data.data.connections`，而 `NetworkConnectionManager.vue` 读的是 `res.data.connections`
+  - `list()` / `summary()` 把 `result.put("data", data)` 改为 `result.putAll(data)`，让 payload 字段（connections / total / byState 等）直接平铺到 service 返回 map 上
+  - 与 `BrowserDataService` 等其他 puppet service 的返回风格对齐：service 只返回 `{code, ...payload}`，不再自己嵌一层 data
+- **parseLsof / parseSs 跳过 shell 噪声行**：原 parser 假定第 0 行是 header、第 1 行就是数据；但通过 puppet shell 会话执行时，前面会带 prompt + 命令回显
+  - 改为先扫描定位 header 行（lsof 的 `COMMAND ... PID ... NAME`、ss 的 `Netid|State ... Local`），从 header 之后开始解析
+  - 跳过 `$` / `#` / `%` 起始的 prompt 行
+  - parseLsof 增加 NODE 列校验（必须是 TCP/UDP/IPv4/IPv6 才算合法行），并对 `IPv4/IPv6` 协议从 NAME 中再抽取实际的 TCP/UDP 标签
 
 ### 安全加固（继承自 Unreleased）
 

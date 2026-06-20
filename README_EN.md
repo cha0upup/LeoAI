@@ -133,7 +133,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 
 ### Plugins & Script Execution
 
-- **Unified execution console**: the "Plugin Invocation" module hosts both script editing and bytecode execution
+- **Unified execution console**: the "Scripts & Plugins" module hosts both script editing and bytecode execution
   - **Script editor**: JavaScript / Groovy / Python; run ad-hoc without saving, or save as a script plugin in one click
   - **Java class execution**: drag-and-drop a `.class` file or paste base64 bytecode (URL-safe / whitespace / padding cleanup, `cafebabe` magic check); run ad-hoc or save as a Java plugin
 - **Unified plugin library**: Java bytecode and js/groovy/python script plugins coexist with type badges; script plugins can be reloaded into the editor with one click

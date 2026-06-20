@@ -396,38 +396,47 @@ public class TomcatCatalinaManageComponent implements Runnable {
     }
     public ArrayList getAllListener(Object standardContext) {
         ArrayList listeners = new ArrayList();
+        // 同时收集事件监听器和生命周期监听器
+        //   - getApplicationEventListeners → ServletRequestListener / ServletContextAttributeListener / HttpSessionAttributeListener 等
+        //   - getApplicationLifecycleListeners → ServletContextListener / HttpSessionListener（Spring ContextLoaderListener 也在此）
+        // 部分场景（idle context、特定打包方式）只有 lifecycle，没有 event，原来只取 event 会让前端整个 Listener tab 都看不见
+        collectListeners(standardContext, "getApplicationEventListeners", "event", listeners);
+        collectListeners(standardContext, "getApplicationLifecycleListeners", "lifecycle", listeners);
+        return listeners;
+    }
+
+    private void collectListeners(Object standardContext, String getterName, String category, ArrayList sink) {
         try {
-            // 获取运行时实例列表
-            Object objects = invokeMethod(standardContext,"getApplicationEventListeners");
-            if (objects instanceof List){
-                List listenerList = (List) objects;
-                for (Object l : listenerList) {
-                    String lid = Integer.toHexString(System.identityHashCode(l));
-                    // 存入缓存供卸载使用
-                    listenerMap.put(lid,l);
-                    HashMap info = new HashMap();
-                    info.put("listenerId", lid);
-                    info.put("className", l.getClass().getName());
-                    info.put("classLoader", l.getClass().getClassLoader().getClass().getName());
-                    listeners.add(info);
-                }
-            }else {
-                List listenerList = new ArrayList(Arrays.asList(((Object[]) objects)));
-                for (Object l : listenerList) {
-                    String lid = Integer.toHexString(System.identityHashCode(l));
-                    // 存入缓存供卸载使用
-                    listenerMap.put(lid,l);
-                    HashMap info = new HashMap();
-                    info.put("listenerId", lid);
-                    info.put("className", l.getClass().getName());
-                    info.put("classLoader", l.getClass().getClassLoader().getClass().getName());
-                    listeners.add(info);
-                }
+            Object objects = invokeMethod(standardContext, getterName);
+            if (objects == null) return;
+
+            List<Object> listenerList;
+            if (objects instanceof List) {
+                listenerList = (List<Object>) objects;
+            } else if (objects.getClass().isArray()) {
+                listenerList = new ArrayList(Arrays.asList(((Object[]) objects)));
+            } else {
+                return;
+            }
+
+            for (Object l : listenerList) {
+                if (l == null) continue;
+                String lid = Integer.toHexString(System.identityHashCode(l));
+                // 存入缓存供卸载使用
+                listenerMap.put(lid, l);
+                HashMap info = new HashMap();
+                info.put("listenerId", lid);
+                info.put("className", l.getClass().getName());
+                // bootstrap CL 加载的类（理论少见，但 agent / native 注入可能命中）getClassLoader() 返回 null
+                ClassLoader cl = l.getClass().getClassLoader();
+                info.put("classLoader", cl == null ? "<bootstrap>" : cl.getClass().getName());
+                info.put("category", category);
+                sink.add(info);
             }
         } catch (Exception e) {
+            // 单个 getter 失败不影响另一个
             e.printStackTrace();
         }
-        return listeners;
     }
 
     public Boolean unLoadServlet(String contextName, String servletPattern) throws Exception {
@@ -567,24 +576,35 @@ public class TomcatCatalinaManageComponent implements Runnable {
         }
 
         String className = targetListener.getClass().getName();
-        boolean totallyRemoved = false;
 
-        // Tomcat 在不同版本里运行时 listener 列表字段名不一致：
-        //   - Tomcat 8.5/9/10/11：applicationEventListenersList（CopyOnWriteArrayList）
-        //   - Tomcat 7.0.x：applicationEventListenersObjects（Object[]）
-        //   - Tomcat 6：applicationEventListeners（Object[]）
-        // 依次尝试，找到哪个字段对就操作哪个
+        // Tomcat 在不同版本里运行时 listener 列表字段名不一致，且 event / lifecycle 是两套字段：
+        //   event listeners
+        //     - Tomcat 8.5/9/10/11：applicationEventListenersList（CopyOnWriteArrayList）
+        //     - Tomcat 7.0.x：     applicationEventListenersObjects（Object[]）
+        //     - Tomcat 6：         applicationEventListeners（Object[]）
+        //   lifecycle listeners（ServletContextListener / HttpSessionListener / Spring ContextLoaderListener）
+        //     - Tomcat 8.5/9/10/11：applicationLifecycleListenersList（CopyOnWriteArrayList）
+        //     - Tomcat 7.0.x：     applicationLifecycleListenersObjects（Object[]）
+        //     - Tomcat 6：         applicationLifecycleListeners（Object[]）
+        // 依次尝试，命中即操作
         String[] candidateFields = new String[]{
                 "applicationEventListenersList",
                 "applicationEventListenersObjects",
-                "applicationEventListeners"
+                "applicationEventListeners",
+                "applicationLifecycleListenersList",
+                "applicationLifecycleListenersObjects",
+                "applicationLifecycleListeners"
         };
 
         Iterator contextIt = getContexts().iterator();
         while (contextIt.hasNext()) {
             Object standardContext = contextIt.next();
 
-            for (int fi = 0; fi < candidateFields.length && !totallyRemoved; fi++) {
+            // 注意：同一个 Listener 实例如果同时实现了 Lifecycle + Event 两类接口，
+            // Tomcat 会同时塞进两个列表（应用层 register 时是一次，但内部分发到两条链）。
+            // 这里必须遍历完所有候选字段，逐个 remove，不能命中即 break，否则会留一份「半挂载」状态继续触发。
+            boolean anyHit = false;
+            for (int fi = 0; fi < candidateFields.length; fi++) {
                 String fieldName = candidateFields[fi];
                 Object listObj;
                 try {
@@ -597,13 +617,8 @@ public class TomcatCatalinaManageComponent implements Runnable {
                 if (listObj instanceof List) {
                     List list = (List) listObj;
                     // CopyOnWriteArrayList 不允许 iterator.remove()，用 list.remove(Object) 才安全
-                    for (Iterator it = list.iterator(); it.hasNext();) {
-                        Object l = it.next();
-                        if (l == targetListener) {
-                            list.remove(l);
-                            totallyRemoved = true;
-                            break;
-                        }
+                    if (list.remove(targetListener)) {
+                        anyHit = true;
                     }
                 } else if (listObj.getClass().isArray()) {
                     int length = Array.getLength(listObj);
@@ -619,12 +634,12 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     }
                     if (found) {
                         setFieldValue(standardContext, fieldName, newList.toArray());
-                        totallyRemoved = true;
+                        anyHit = true;
                     }
                 }
             }
 
-            if (totallyRemoved) {
+            if (anyHit) {
                 // 同时尝试从配置定义中移除该类名（防止重启复活）
                 try {
                     invokeMethod(standardContext, "removeApplicationListener",

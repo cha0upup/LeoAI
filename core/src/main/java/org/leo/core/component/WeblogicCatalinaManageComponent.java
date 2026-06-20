@@ -61,6 +61,7 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                 contextInfo.put("workDir",getFV(context,"docroot"));
                 contextInfo.put("allFilter",getAllFilter(context));
                 contextInfo.put("allServlet",getAllServlet(context));
+                contextInfo.put("allListener",getAllListener(context));
                 catalinaInfo.add(contextInfo);
             }catch (Exception e){
                 e.printStackTrace();
@@ -123,6 +124,93 @@ public class WeblogicCatalinaManageComponent implements Runnable {
             return servlets;
         } catch (Exception var10) {
             return null;
+        }
+    }
+
+    /**
+     * 收集 WebLogic WebAppServletContext 上注册的所有 Listener。
+     *
+     * <p>WebLogic 把 Listener 拆得比 Tomcat 更细，按事件类型分别存：
+     * <ul>
+     *   <li>{@code _servletContextListeners} / {@code _servletContextAttListeners}（lifecycle）</li>
+     *   <li>{@code _sessionListeners} / {@code _sessionAttListeners} / {@code _sessionIdListeners}（session）</li>
+     *   <li>{@code _requestListeners} / {@code _requestAttListeners}（request）</li>
+     *   <li>{@code _asyncListeners}（async）</li>
+     * </ul>
+     * 这些字段挂在 {@code WebAppServletContext} 自身或其内部的 {@code eventsManager}/{@code _eventsManager} 上，
+     * 不同 WebLogic 版本（10.3 / 12.x / 14.x）字段位置和命名前缀（带不带下划线）有差异，
+     * 全部用反射 + 多候选字段名兜底。
+     */
+    public ArrayList getAllListener(Object standardContext) {
+        ArrayList listeners = new ArrayList();
+        // listener 列表既可能挂在 context 自身，也可能挂在 eventsManager 上，两边都扫
+        Object[] holders = new Object[]{standardContext, tryGetField(standardContext, "eventsManager"), tryGetField(standardContext, "_eventsManager")};
+
+        // (字段名, 分类) 对：覆盖带/不带下划线两套命名
+        String[][] fieldDefs = new String[][]{
+                {"_servletContextListeners", "context"},
+                {"servletContextListeners", "context"},
+                {"_servletContextAttListeners", "context-attr"},
+                {"servletContextAttListeners", "context-attr"},
+                {"_sessionListeners", "session"},
+                {"sessionListeners", "session"},
+                {"_sessionAttListeners", "session-attr"},
+                {"sessionAttListeners", "session-attr"},
+                {"_sessionIdListeners", "session-id"},
+                {"sessionIdListeners", "session-id"},
+                {"_requestListeners", "request"},
+                {"requestListeners", "request"},
+                {"_requestAttListeners", "request-attr"},
+                {"requestAttListeners", "request-attr"},
+                {"_asyncListeners", "async"},
+                {"asyncListeners", "async"}
+        };
+
+        // 已采集实例去重（同一 listener 可能同时落在多个分类）
+        Set<String> seen = new HashSet<>();
+        for (int hi = 0; hi < holders.length; hi++) {
+            Object holder = holders[hi];
+            if (holder == null) continue;
+            for (int fi = 0; fi < fieldDefs.length; fi++) {
+                Object listObj = tryGetField(holder, fieldDefs[fi][0]);
+                if (listObj == null) continue;
+                collectWeblogicListeners(listObj, fieldDefs[fi][1], listeners, seen);
+            }
+        }
+        return listeners;
+    }
+
+    private static Object tryGetField(Object holder, String fieldName) {
+        try {
+            return getFV(holder, fieldName);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static void collectWeblogicListeners(Object listObj, String category, ArrayList sink, Set<String> seen) {
+        List<Object> list;
+        if (listObj instanceof List) {
+            list = (List<Object>) listObj;
+        } else if (listObj.getClass().isArray()) {
+            list = new ArrayList(Arrays.asList((Object[]) listObj));
+        } else {
+            return;
+        }
+
+        for (int i = 0; i < list.size(); i++) {
+            Object l = list.get(i);
+            if (l == null) continue;
+            String lid = Integer.toHexString(System.identityHashCode(l));
+            if (!seen.add(lid)) continue;  // 同实例只记一次
+            HashMap info = new HashMap();
+            info.put("listenerId", lid);
+            info.put("className", l.getClass().getName());
+            // bootstrap CL 加载的类 getClassLoader() 可能返回 null
+            ClassLoader cl = l.getClass().getClassLoader();
+            info.put("classLoader", cl == null ? "<bootstrap>" : cl.getClass().getName());
+            info.put("category", category);
+            sink.add(info);
         }
     }
 
