@@ -51,3 +51,4 @@ CODE_QUALITY_AUDIT.md
 .env
 .claude/
 PROJECT_QUICKREF.md
+.DS_Store
