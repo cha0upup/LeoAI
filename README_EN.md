@@ -45,9 +45,9 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 | Feature | Description |
 |---------|-------------|
 | **AI Agent Automation** | Built on LangChain4j, supports multi-turn tool calls to automatically plan and execute post-exploitation operations |
-| **Multi-Model Support** | Compatible with OpenAI, Anthropic, Qwen, DeepSeek, and any OpenAI-compatible API |
+| **Multi-Model Support** | Compatible with OpenAI, Qwen, DeepSeek, and any OpenAI-compatible API |
 | **175 AI Tools** | Atomic capabilities callable by the AI Agent — covering files, processes, networking, credentials, scanning, HTTP requests, and more |
-| **24 Built-in AI Skills** | Pre-configured scenario-based task prompts for launching complete attack chains with one click (see Skills list below) |
+| **8 Built-in AI Skills** | Pre-configured scenario-based task prompts for launching complete attack chains with one click (see Skills list below) |
 | **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
 | **Context Accumulation** | Reconnaissance summaries accumulate automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
@@ -95,7 +95,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 - **Scheduled Tasks**: Windows scheduled task management
 - **Service Manager**: Start, stop, restart Windows services
 - **Docker Manager**: List, start, stop, and inspect containers and images
-- **Application Manager**: Catalina applications (Tomcat 6/7/8/9/10/11, WebLogic) and Spring Framework runtime management; tolerant to idle deployments and puppets injected into the global ClassLoader (thread-scan + JMX MBean dual fallback); supports immediate unloading of Filter / Servlet / Valve / Listener / Controller / Interceptor
+- **Application Manager**: Catalina applications (Tomcat 5/6/7/8/9+, WebLogic) and Spring Framework runtime management; tolerant to idle deployments and puppets injected into the global ClassLoader (thread-scan + JMX MBean dual fallback); supports immediate unloading of Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### Security & Permissions
 - **Credential Harvesting**: System credentials, browser data, WiFi configurations
@@ -117,16 +117,16 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 ### Shell Generator
 
 #### Memory Shell Generation
-- Supported types: Filter, Servlet, Listener, Valve, Interceptor, WebSocket
-- Supported middleware: Tomcat, Jetty, JBoss, JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, Struct2 (19 total)
-- Expression injection packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, and more (23 total)
+- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket
+- Supported middleware: Tomcat, Jetty, JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, Struct2 (18 total)
+- Expression injection packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, and more (41 total)
 
 #### WebShell Generation
-- Supported formats: JSP, JSPX
+- Supported formats: JSP, JSPX, Groovy
 
 ### Fingerprint & Identification Rules
 
-- **Built-in Rule Library**: 38 pre-configured HTTP/TCP fingerprint rules for common services (Nginx, Tomcat, Jenkins, Nacos, Redis, MySQL, Elasticsearch, GitLab, etc.)
+- **Built-in Rule Library**: 10 pre-configured HTTP/TCP fingerprint rules for common services (Nginx, Tomcat, Redis, MySQL, Shiro, SSH, FTP, SMTP, Spring Boot Actuator, WordPress, etc.)
 - **Custom Rules**: Add, edit, enable/disable fingerprint rules via the "Identification Rules" page
 - **Rule Tags**: Supports protocol filtering and tag grouping for selective use during scanning
 - **Import/Export**: Export individual rules or batch-export as `.json` / `.zip`; import with conflict policies (skip/overwrite/rename) to easily share rule libraries across teams
@@ -159,7 +159,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 |-------|-----------|
 | **Web Framework** | Spring Boot 3.5 |
 | **AI Framework** | LangChain4j 1.16 |
-| **LLM Support** | OpenAI, Anthropic, Qwen, DeepSeek, and all OpenAI-compatible interfaces |
+| **LLM Support** | OpenAI, Qwen, DeepSeek, and all OpenAI-compatible interfaces |
 | **Database** | SQLite (embedded, no separate deployment needed) |
 | **ORM** | MyBatis 3 |
 | **HTTP Client** | OkHttp 4 |
@@ -417,7 +417,6 @@ Compatible with any service that follows the OpenAI API format:
 | Provider | Base URL Example |
 |----------|-----------------|
 | OpenAI | `https://api.openai.com/v1` |
-| Anthropic | Via an OpenAI-compatible proxy (e.g., LiteLLM, One-API) |
 | Qwen (Alibaba) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | DeepSeek | `https://api.deepseek.com` |
 | Ollama (local) | `http://localhost:11434/v1` |
@@ -517,17 +516,15 @@ tags:
 
 **Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
 
-The console's skill quick-launch panel provides 21 pre-configured puppet-node Skills for launching complete scenario tasks with one click:
+The console's skill quick-launch panel provides 5 pre-configured puppet-node Skills for launching complete scenario tasks with one click:
 
 | Category | Skills |
 |----------|--------|
-| **Reconnaissance** | `recon-basic-info`, `recon-internal-network`, `recon-active-directory`, `discover-web-apps`, `analyze-logs-intelligence` |
-| **Credential Harvesting** | `hunt-credentials`, `collect-spring-boot-config`, `collect-cloud-metadata`, `collect-kubernetes-secrets` |
-| **Privilege Escalation** | `escalate-linux-privilege`, `escalate-windows-privilege` |
-| **Persistence** | `persistence-linux`, `persistence-windows` |
-| **Lateral Movement** | `lateral-move-ssh`, `lateral-move-wmi-psexec` |
-| **Exploitation** | `exploit-spring-actuator`, `exploit-nacos-post`, `exploit-redis-post`, `exploit-database-post`, `exploit-kerberos` |
-| **Container / Cloud** | `detect-container-escape` |
+| **Reconnaissance** | `recon-basic-info` |
+| **Credential Harvesting** | `hunt-credentials` |
+| **Privilege Escalation** | `escalate-linux-privilege` |
+| **Persistence** | `persistence-linux` |
+| **Lateral Movement** | `lateral-move-ssh` |
 
 **Platform-level AI**: A global AI assistant with 3 built-in platform Skills (`develop-disguise`, `develop-fingerprint`, `exploit-suggest`). It assists with writing traffic disguise templates, designing fingerprint rules, and generating exploitation suggestions based on matched fingerprints.
 
@@ -542,7 +539,7 @@ The console's skill quick-launch panel provides 21 pre-configured puppet-node Sk
 
 > **Disguise is the key**: LeoAI has no separate connection key field — the management side and shell side communicate using identical encode/decode logic. A mismatched disguise means the request cannot be parsed and the connection fails naturally. **Each user should create their own dedicated disguise**, and different projects should use different disguises — never share built-in templates.
 
-1. Go to **Tools → Traffic Disguise**. Five built-in templates are provided (ZIP upload envelope, JPEG steganography, JSON serialization wrapper, Multipart upload, XML envelope) — use them as references or starting points
+1. Go to **Tools → Traffic Disguise**. Two built-in templates are provided (AES encryption, custom Base64) — use them as references or starting points
 2. Click **Add New**, write custom `encodeBody` / `decodeBody` logic, verify mutual reversibility with the **Test** function, and save
 3. Select the same disguise when generating a shell to ensure both ends use identical codec implementations
 4. In the node configuration, point the "Request Disguise" and "Response Disguise" to the corresponding template
