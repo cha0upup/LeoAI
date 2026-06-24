@@ -44,12 +44,14 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 
 | Feature | Description |
 |---------|-------------|
-| **AI Agent Automation** | Built on LangChain4j, supports multi-turn tool calls to automatically plan and execute post-exploitation operations |
-| **Multi-Model Support** | Compatible with OpenAI, Qwen, DeepSeek, and any OpenAI-compatible API |
-| **175 AI Tools** | Atomic capabilities callable by the AI Agent — covering files, processes, networking, credentials, scanning, HTTP requests, and more |
+| **AI Agent Automation** | Built on LangChain4j, supports multi-turn tool calls with parallel execution to automatically plan and execute post-exploitation operations |
+| **Multi-Model Support** | Compatible with OpenAI, Qwen, DeepSeek, Claude, and OpenAI-compatible APIs; hot-swappable at runtime |
+| **Large Context Window** | Dynamically adapts to model context windows (up to 1M tokens); auto-compresses history to preserve key information |
+| **Task Planning** | AI auto-plans multi-step tasks, executes sequentially with result writeback, tracked in real-time via sticky top bar |
+| **100+ AI Tools** | Atomic capabilities callable by the AI Agent — covering command execution, files, networking, credentials, scanning, HTTP requests, databases, scripting, plugins, and more |
 | **8 Built-in AI Skills** | Pre-configured scenario-based task prompts for launching complete attack chains with one click (see Skills list below) |
 | **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
-| **Context Accumulation** | Reconnaissance summaries accumulate automatically; AI context grows richer as operations deepen |
+| **Context Accumulation** | Reconnaissance summaries accumulate and compress automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
 
 <img src="docs/images/screenshot-ai-assistant.png" alt="AI Assistant Demo" width="800" />
@@ -191,13 +193,13 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 Download the latest release from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-0.0.6-SNAPSHOT.jar
+LeoAi-0.0.7-SNAPSHOT.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -341,8 +343,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # For production, change this to a strong random string (16+ characters)
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
-# Pin to a specific JAR version (defaults to v0.0.6)
-# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.6/LeoAi-0.0.6-SNAPSHOT.jar
+# Pin to a specific JAR version (defaults to v0.0.7)
+# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.7/LeoAi-0.0.7-SNAPSHOT.jar
 ```
 
 After editing `.env`, run `docker compose up -d` to apply changes. **Note**: changing `JAR_URL` requires `--build` to re-fetch the JAR.
@@ -377,7 +379,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.6-SNAPSHOT.jar --server.port=9090
+  LeoAi-0.0.7-SNAPSHOT.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -386,7 +388,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.6-SNAPSHOT.jar \
+  LeoAi-0.0.7-SNAPSHOT.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -407,7 +409,7 @@ LeoAI's AI features require an LLM endpoint. Two configuration methods are avail
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
 ```
 
 ### Supported AI Models
@@ -561,7 +563,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.6-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
 ```
 
 ---
