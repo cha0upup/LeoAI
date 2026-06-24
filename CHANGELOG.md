@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.0.7 (2026-06-24)
+
+### AI Agent 架构精简
+
+本次重构将 Agent 工具数从 ~116 削减到 ~42（64%），移除子 Agent 调度层，所有工具直接注入主 Agent，消除 dispatch 间接开销。
+
+- **纯 OS 命令包装工具移除**：ProcessTools、NetworkInfoTools、UserAccountTools、MountDiskTools、DockerContainerTools、SuidCapabilityTools、InstalledSoftwareTools、ScheduledTaskTools、ServiceManagerTools、EventLogTools、WifiTools、SuidTools、RegistryTools、DiskTools 共 14 个 @Component 删除。这些工具底层仅封装 `exec` 命令，AI 现在直接调 exec 自行解析输出
+- **FileTools 精简**：15 方法 → 4 方法，保留 `startDownloadTask` / `startUploadTask`（分块传输）+ `readTextFile`（会话缓存）+ `searchFileContent`（grep 封装，结构化返回 `[{file, lineNumber, content}]`）
+- **CatalinaTools 合并**：`unloadFilter` / `unloadServlet` / `unloadValve` / `unloadListener` / `unloadController` / `unloadInterceptor` 合并为 `unloadWebComponent(componentType, contextName, identifier)`，保留 `getCatalinaInfo`
+- **子 Agent 架构完全移除**：删除 `ReconSubAgent`、`ExploitSubAgent`、`PersistenceSubAgent`、`SubAgentDispatchTools`（425 行）、`SubAgentPrompts`。所有工具（ScanTools、BrowserDataTools、CredentialHarvestTools、ClipboardTools、HttpRequestTools、ScriptTools、SqlTools、ResourceTools、JavaPluginTools）直接注入主 Agent，消除「主 Agent 推理 → 派发 → 子 Agent 推理 → 合并」的 3 轮 token 消耗
+- 移除子 Agent 相关线程池（`subAgentToolExecutor`、`subAgentDispatchExecutor`）和 `subAgentMemoryProvider`
+- `AiAgentProperties` 清理 `subMaxParallelTools`、`subMaxContextTokens`、`SubAgentConfig`、`autoGrantSession`、`confirmationTimeoutMinutes` 等冗余配置
+
+### 上下文压缩与 1M 窗口支持
+
+- **动态上下文窗口**：`chatMemoryProvider` 不再硬编码 180K，改为从 `AiModelConfig.contextWindowTokens` 读取；未配时根据模型名推断（gpt-4o→200K、gemini→1M、claude→200K 等）
+- **大窗口用消息条数淘汰**：窗口 >96K 时改用 `MessageWindowChatMemory`（按消息数），避免 `CharBasedTokenEstimator` 在百万 token 量级下累积误差
+- **上下文压缩**：新增 `ContextCompressionService` + `CompressingChatMemory`。窗口 ≥100K 且当前 token 数超过 80% 阈值时，自动取最早 20 条消息调用 LLM 压缩为技术摘要，保留关键信息（OS/中间件/凭据/文件路径/操作结果）
+
+### 任务计划重构
+
+- **PlanBar 独立顶栏**：新增 `PlanBar.vue` 组件，plan 不再混在 Task Tree 节点中渲染，而是作为 sticky 独立顶栏吸附在对话区顶部。展开态展示彩色进度条 + 步骤列表，收起态显示当前执行步骤。带展开/收起按钮和 320px 最大高度滚动
+- **Tool 节点标注计划步骤**：后端 SSE 事件携带 `planStepIndex`，前端 tool 节点左侧显示步骤编号圆点（如 ②），hover 显示对应步骤描述
+- **工具结果自动回写**：`beforeToolExecution` 自动检测活跃 plan 的 running 步骤，注入 `AiToolContext.planStepIndex`；`afterToolExecution` 自动将工具结果摘要写入 `step.result`，AI 无需手动调 `updatePlanStep` 记录
+- **跨轮 plan 持久化**：新轮次启动时，如果存在 `IN_PROGRESS` 状态的 plan，自动注入 SSE 事件让前端 PlanBar 跨轮可见
+
+### 用户确认体系移除
+
+用户通过认证登录 + 建立 puppet 会话 + 对 AI 下指令的信任链已完备，中间插入确认弹窗无安全增量，只会打断 AI 连续执行。本次彻底移除确认体系：
+
+- 删除 6 个文件：`AiToolConfirmationCallback`、`ToolExecutionDeniedException`、`AiConfirmationRequest`（后端）、`AiSessionGrantBadge.vue`、`AiToolConfirmDialog.vue`（前端）
+- `AiThread` 移除 `pendingConfirmations`、`sessionGrantedTypes`、`sessionGrantedAll` 及全部确认/授权方法
+- `PuppetNodeSession`、`PlatformAiState`、`AiStateAccessor`、`PuppetNodeAiStateAccessor` 同步清理确认/授权相关接口和实现
+- `PuppetNodeAiController`、`PlatformAiController` 移除 `/confirm`、`/grant` 端点
+- 前端 `useAiChat.js` 移除 `confirmationQueue`、`confirmationResponding`、`respondToConfirmation`、`confirmApi`/`grantApi` 参数
+- `AiAgentProperties` 移除 `autoGrantSession`、`confirmationTimeoutMinutes` 等确认相关配置
+
+### Bug 修复
+
+- **AiToolRegistry 命令执行映射过期**：command 类别映射了 7 个已不存在的旧工具名（`creat`/`write`/`stop` 等），导致 `exec` 调用时 `getCategoryKey("exec")` 返回 null。已修正为 `m.put("exec", "command")`，同步更新 container/file\_write 类别映射
+
+### 升级提示
+
+- 前端需重新构建（`npm run build`），`PlanBar.vue`、`AiSessionGrantBadge.vue`、`AiToolConfirmDialog.vue` 等组件有增删
+- 后端 `AiAgentProperties` 配置项 `sub-*`、`auto-grant-session`、`confirmation-timeout-minutes` 已移除，若 `application.yml` 中有自定义值需删除
+- 14 个已删除的工具类对应 `.payload` 不受影响（这些是纯 Java 服务端代码，不涉及 puppet 端组件）
+- 上下文压缩依赖 `delegatingChatModel`（非流式 LLM），确保模型配置正常可用
+
+---
+
 ## v0.0.6 (2026-06-20)
 
 ### Puppet 组件可用性增强（红队 / 排障场景重点）
