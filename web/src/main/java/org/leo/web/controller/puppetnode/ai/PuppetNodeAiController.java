@@ -161,49 +161,6 @@ public class PuppetNodeAiController {
 
     // ─── 工具确认 ─────────────────────────────────────────────────────────────
 
-    /**
-     * 用户确认或拒绝工具调用。
-     *
-     * @param params {@code sessionId}, {@code threadId}, {@code callId}, {@code approved}(boolean)
-     */
-    @RequestMapping("/confirm")
-    public HashMap<String, Object> confirm(@RequestBody AiConfirmRequest body) {
-        PuppetNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
-        String callId = requiredText(body != null ? body.callId() : null, "缺少 callId");
-        AiThread thread = aiThreadService.requireThread(session, threadId);
-
-        boolean approved = Boolean.TRUE.equals(body != null ? body.approved() : null);
-        boolean resolved = thread.resolveConfirmation(callId, approved);
-        if (!resolved) return ApiResponse.notFound("未找到对应的确认请求，可能已超时或已处理");
-        return ApiResponse.success(true);
-    }
-
-    // ─── 会话级授权 ───────────────────────────────────────────────────────────
-
-    /**
-     * 会话级工具类型授权。
-     *
-     * @param params {@code sessionId}, {@code threadId}, {@code toolType} 或 {@code grantAll}(boolean)
-     */
-    @RequestMapping("/grant")
-    public HashMap<String, Object> grant(@RequestBody AiGrantRequest body,
-                                         HttpServletRequest request) {
-        PuppetNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
-        AiThread thread = aiThreadService.requireThread(session, threadId);
-
-        boolean grantAll = ControllerUtil.isAdmin(request) && Boolean.TRUE.equals(body != null ? body.grantAll() : null);
-        if (grantAll) {
-            thread.grantSessionAll();
-            return ApiResponse.success(true);
-        }
-
-        String toolType = requiredText(body != null ? body.toolType() : null, "缺少 toolType");
-        thread.grantSessionType(toolType);
-        return ApiResponse.success(true);
-    }
-
     // ─── 线程管理 ─────────────────────────────────────────────────────────────
 
     /**

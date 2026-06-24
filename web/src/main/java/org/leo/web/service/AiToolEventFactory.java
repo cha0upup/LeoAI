@@ -3,6 +3,7 @@ package org.leo.web.service;
 import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolExecution;
+import org.leo.ai.agent.AiToolContext;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -30,6 +31,7 @@ class AiToolEventFactory {
         data.put("timestamp", now);
         data.put("startTime", now);
         data.put("endTime", null);
+        injectPlanStepIndex(data);
         return data;
     }
 
@@ -66,7 +68,13 @@ class AiToolEventFactory {
         data.put("timestamp", startTime);
         data.put("startTime", startTime);
         data.put("endTime", toEpochMs(execution.finishTime(), now));
+        injectPlanStepIndex(data);
         return data;
+    }
+
+    private static void injectPlanStepIndex(Map<String, Object> data) {
+        int idx = AiToolContext.getPlanStepIndex();
+        if (idx >= 0) data.put("planStepIndex", idx);
     }
 
     private static String truncate(String value, int max) {

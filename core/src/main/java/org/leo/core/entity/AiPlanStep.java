@@ -110,4 +110,7 @@ public class AiPlanStep {
     // ── 预批准 ───────────────────────────────────────────────────────────────
 
     public void setPreApproved(boolean preApproved) { this.preApproved = preApproved; }
+
+    /** 追加/更新步骤结果摘要（不改变步骤状态）。 */
+    public void setResult(String result) { this.result = result; }
 }

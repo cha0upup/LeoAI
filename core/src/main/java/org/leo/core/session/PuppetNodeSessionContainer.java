@@ -30,7 +30,6 @@ public class PuppetNodeSessionContainer {
 
     /**
      * 会话销毁监听器：在会话被移除/驱逐时回调，参数为 sessionId。
-     * 用于跨模块的会话级资源清理（如 SubAgentDispatchTools 的静态映射）。
      */
     private static final List<Consumer<String>> destroyListeners = new CopyOnWriteArrayList<>();
 

@@ -140,6 +140,32 @@ public class AiModelConfigService {
         return active;
     }
 
+    /**
+     * 获取当前激活模型的上下文窗口 token 数。
+     * 优先从数据库配置 {@code contextWindowTokens} 字段读取，
+     * 为空时根据模型名推断默认值。
+     */
+    public int getActiveContextWindowTokens() {
+        AiModelConfig active = getActive();
+        if (active != null && active.getContextWindowTokens() != null
+                && active.getContextWindowTokens() > 0) {
+            return active.getContextWindowTokens();
+        }
+        String model = active != null ? active.getModel() : "gpt-4o";
+        return inferContextWindow(model);
+    }
+
+    /** 根据模型名推断上下文窗口大小。 */
+    static int inferContextWindow(String model) {
+        if (model == null || model.isBlank()) return 128_000;
+        if (model.contains("gpt-4o") || model.contains("4o")) return 200_000;
+        if (model.contains("gpt-4") || model.contains("4-turbo")) return 128_000;
+        if (model.contains("claude")) return 200_000;
+        if (model.contains("gemini-2") || model.contains("gemini-pro")) return 1_000_000;
+        if (model.contains("deepseek") || model.contains("qwen") || model.contains("llama")) return 128_000;
+        return 128_000;
+    }
+
     // ── 内部工具 ──────────────────────────────────────────────────────────
 
     private void validateRequired(AiModelConfig row) {

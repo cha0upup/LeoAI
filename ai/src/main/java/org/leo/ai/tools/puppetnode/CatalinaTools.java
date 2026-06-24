@@ -5,10 +5,17 @@ import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.core.session.PuppetNodeSession;
 import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
+/**
+ * Catalina / Spring Web 容器管理工具。
+ *
+ * <p>提供 Tomcat/WebLogic/Spring Web 组件的信息查看和卸载能力。
+ * 注册功能不在此处（通过 Java 插件注入）。
+ */
 @Component
 public class CatalinaTools {
 
@@ -19,46 +26,48 @@ public class CatalinaTools {
         return node.getCatalinaInfo(getCatalinaName(sessionId), getWebFrameworkName(sessionId));
     }
 
-    @Tool("卸载 Filter。⚠️ 不可逆。contextName 和 filterName 从 getCatalinaInfo 返回的 filters 列表获取。")
-    public Map<String, Object> unloadFilter(String contextName, String filterName) throws Exception {
+    @Tool("卸载 Web 容器中的一个组件。⚠️ 不可逆。\n"
+            + "componentType: filter | servlet | valve | listener | controller | interceptor\n"
+            + "详细信息从 getCatalinaInfo 返回结果中获取：\n"
+            + "• filter → 传 contextName（来自 name 字段）+ identifier = filterName\n"
+            + "• servlet → 传 contextName（来自 name 字段）+ identifier = url（servletPattern）\n"
+            + "• valve → 传 identifier = valveId（仅 Tomcat）\n"
+            + "• listener → 传 identifier = listenerId（仅 Tomcat）\n"
+            + "• controller → 传 identifier = mappingInfo（仅 Spring，如 GET /api/test）\n"
+            + "• interceptor → 传 identifier = interceptorId（仅 Spring）")
+    public Map<String, Object> unloadWebComponent(
+            @P("组件类型: filter/servlet/valve/listener/controller/interceptor") String componentType,
+            @P("容器上下文名称。valve/listener/controller/interceptor 时可为空") String contextName,
+            @P("组件标识，含义因类型而异（见工具描述）") String identifier) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadCatalinaFilter(getCatalinaName(sessionId), contextName, filterName);
-    }
+        String catalinaName = getCatalinaName(sessionId);
+        String webFramework = getWebFrameworkName(sessionId);
 
-    @Tool("卸载 Servlet 映射。⚠️ 不可逆。contextName 和 servletPattern 从 getCatalinaInfo 返回的 servlets 列表获取。")
-    public Map<String, Object> unloadServlet(String contextName, String servletPattern) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadCatalinaServlet(getCatalinaName(sessionId), contextName, servletPattern);
-    }
-
-    @Tool("卸载 Valve。⚠️ 不可逆。Tomcat 仅用。valveId 从 getCatalinaInfo 返回的 valves 列表获取。")
-    public Map<String, Object> unloadValve(String valveId) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadCatalinaValve(getCatalinaName(sessionId), valveId);
-    }
-
-    @Tool("卸载 Listener。⚠️ 不可逆。Tomcat 仅用。listenerId 从 getCatalinaInfo 返回的 listeners 列表获取。")
-    public Map<String, Object> unloadListener(String listenerId) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadCatalinaListener(getCatalinaName(sessionId), listenerId);
-    }
-
-    @Tool("卸载 Controller 映射。⚠️ 不可逆。Spring Web 仅用。mappingInfo 从 getCatalinaInfo 返回的 controllers 列表获取（如 GET /api/test）。")
-    public Map<String, Object> unloadController(String mappingInfo) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadSpringController(getWebFrameworkName(sessionId), mappingInfo);
-    }
-
-    @Tool("卸载 Interceptor。⚠️ 不可逆。Spring Web 仅用。interceptorId 从 getCatalinaInfo 返回的 interceptors 列表获取。")
-    public Map<String, Object> unloadInterceptor(String interceptorId) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.unloadSpringInterceptor(getWebFrameworkName(sessionId), interceptorId);
+        switch (componentType) {
+            case "filter":
+                return node.unloadCatalinaFilter(catalinaName,
+                        requireNonEmpty(contextName, "contextName"), requireNonEmpty(identifier, "filterName"));
+            case "servlet":
+                return node.unloadCatalinaServlet(catalinaName,
+                        requireNonEmpty(contextName, "contextName"), requireNonEmpty(identifier, "servletPattern"));
+            case "valve":
+                return node.unloadCatalinaValve(catalinaName,
+                        requireNonEmpty(identifier, "valveId"));
+            case "listener":
+                return node.unloadCatalinaListener(catalinaName,
+                        requireNonEmpty(identifier, "listenerId"));
+            case "controller":
+                return node.unloadSpringController(webFramework,
+                        requireNonEmpty(identifier, "mappingInfo"));
+            case "interceptor":
+                return node.unloadSpringInterceptor(webFramework,
+                        requireNonEmpty(identifier, "interceptorId"));
+            default:
+                throw new IllegalArgumentException(
+                        "不支持的 componentType: " + componentType +
+                                "，有效值: filter/servlet/valve/listener/controller/interceptor");
+        }
     }
 
     private String getCatalinaName(String sessionId) {
@@ -86,5 +95,12 @@ public class CatalinaTools {
         }
         Object webFramework = basicInfo.get("WebFramework");
         return webFramework == null ? "" : String.valueOf(webFramework);
+    }
+
+    private static String requireNonEmpty(String value, String label) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(label + " 不能为空");
+        }
+        return value;
     }
 }

@@ -2,13 +2,11 @@ package org.leo.web.service;
 
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
-import org.leo.ai.agent.AiToolConfirmationCallback;
 import org.leo.ai.agent.PuppetNodeAgent;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.service.SessionWarmupService;
-import org.leo.ai.tools.puppetnode.SubAgentDispatchTools;
 import org.leo.ai.thread.AiConversationStoreService;
 import com.alibaba.fastjson.JSON;
 import org.leo.core.entity.AiModelConfig;
@@ -106,8 +104,9 @@ public class PuppetNodeAiThreadService {
             runId = conversationStore.startRun(thread, messageForAgent, startMs);
             conversationStore.updateRuntime(session.getSessionId(), thread);
             sendRecordedEvent(thread, emitter, "status", AiThread.STATUS_RUNNING);
-            SubAgentDispatchTools.setEventEmitter(session.getSessionId(), threadId,
-                    (eventName, payload) -> sendRecordedEventSafely(thread, emitter, eventName, payload));
+
+            // 跨轮 plan 持久化：新轮次启动时注入当前活跃 plan，前端 PlanBar 立即展示
+            emitCurrentPlanAtTurnStart(thread);
 
             final String fRunId = runId;
             AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
@@ -136,8 +135,6 @@ public class PuppetNodeAiThreadService {
                     Map<String, Object> toolData = AiToolEventFactory.buildToolStartEventData(execution);
                     sendRecordedEventSafely(thread, emitter, "node", toolData);
                     recorder.recordExternal("node", toolData);
-                    // 高影响工具确认拦截（检查会话授权、计划预批准，不满足时阻塞等待用户确认）
-                    new AiToolConfirmationCallback(thread).accept(execution);
                 })
                 .onToolExecuted(execution -> {
                     try {
@@ -189,7 +186,6 @@ public class PuppetNodeAiThreadService {
                         sendRecordedEventSafely(thread, emitter, "turn", turn);
                         AiControllerUtil.safeComplete(emitter);
                         thread.clearExecuting();
-                        SubAgentDispatchTools.clearEventEmitter(session.getSessionId(), threadId);
                     }
                 })
                 .onError(error -> {
@@ -209,7 +205,6 @@ public class PuppetNodeAiThreadService {
                             String errMsg = classification.message();
                             thread.markFailed();
                             audit.fail(errMsg, System.currentTimeMillis() - startMs);
-                            thread.cancelAllPendingConfirmations();
                             finishRun(fRunId, AiThread.STATUS_FAILED, startMs, null, errMsg, 0);
                             conversationStore.updateRuntime(session.getSessionId(), thread);
                             sendRecordedStatusSafely(thread, emitter, AiThread.STATUS_FAILED);
@@ -220,7 +215,6 @@ public class PuppetNodeAiThreadService {
                     } finally {
                         AiControllerUtil.safeComplete(emitter);
                         thread.clearExecuting();
-                        SubAgentDispatchTools.clearEventEmitter(session.getSessionId(), threadId);
                     }
                 })
                 .start();
@@ -254,14 +248,12 @@ public class PuppetNodeAiThreadService {
                 AiControllerUtil.safeSendError(emitter, classification);
             }
             thread.clearExecuting();
-            SubAgentDispatchTools.clearEventEmitter(session.getSessionId(), threadId);
         }
     }
 
     private void failThread(AiThread thread, AiChatAuditEntry audit, String message, long startMs) {
         thread.markFailed();
         audit.fail(message, System.currentTimeMillis() - startMs);
-        thread.cancelAllPendingConfirmations();
     }
 
     private void finishRun(String runId, String status, long startMs, String output,
@@ -316,7 +308,6 @@ public class PuppetNodeAiThreadService {
                         Map<String, Object> hb = new LinkedHashMap<>();
                         hb.put("ts", System.currentTimeMillis());
                         hb.put("status", thread.getRunStatus());
-                        hb.put("pendingConfirmations", thread.getPendingConfirmationCount());
                         // 心跳事件不进 eventLog（不希望被当成业务事件持久化），
                         // 直接旁路下发。recordSseEvent 也不调用，seq 设为 0 避免污染序号。
                         try {
@@ -390,6 +381,27 @@ public class PuppetNodeAiThreadService {
             }
         }
         return null;
+    }
+
+    /** 新轮次启动时，如果存在正在执行的 plan，注入当前 plan 快照到 SSE 流，让前端 PlanBar 跨轮可见。 */
+    private void emitCurrentPlanAtTurnStart(AiThread thread) {
+        AiPlan plan = thread.getCurrentPlan();
+        if (plan == null) return;
+        // 只在 plan 正在执行时注入：避免 PLANNING / COMPLETED / FAILED 状态的 plan 跟随新轮次
+        if (plan.getStatus() != AiPlanStatus.IN_PROGRESS) return;
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("kind", "plan");
+            payload.put("planId", plan.getPlanId());
+            payload.put("title", plan.getTitle());
+            payload.put("goal", plan.getGoal());
+            payload.put("status", plan.getStatus().name());
+            payload.put("steps", plan.getSteps());
+            if (plan.getFinalSummary() != null) payload.put("finalSummary", plan.getFinalSummary());
+            thread.offerSseEvent("node", payload);
+        } catch (Exception ignored) {
+            // best-effort
+        }
     }
 
     private void sendRecordedEventSafely(AiThread thread, SseEmitter emitter, String name, Object data) {
@@ -474,8 +486,6 @@ public class PuppetNodeAiThreadService {
         if (startMs > 0) {
             payload.put("elapsedMs", Math.max(0L, System.currentTimeMillis() - startMs));
         }
-        payload.put("pendingConfirmations", thread.getPendingConfirmationCount());
-        payload.put("confirmationExpiresAt", thread.getNextConfirmationExpiresAt());
         payload.put("stopReason", thread.getStopReason());
         payload.put("lastSeq", thread.getLastSseEventSeq());
         payload.put("executing", thread.isExecuting());
@@ -511,10 +521,6 @@ public class PuppetNodeAiThreadService {
         }
         // 异步预热：确保 basicInfo、OS 平台、环境变量缓存就绪
         sessionWarmupService.warmupAsync(session.getSessionId());
-        // 自动授予 session 级全量权限，消除确认等待对并行工具执行的阻塞
-        if (thread != null && agentProperties.getInterceptor().isAutoGrantSession()) {
-            thread.grantSessionAll();
-        }
         return new ThreadResolution(thread, restored, hasCheckpoint, null);
     }
 
@@ -593,10 +599,6 @@ public class PuppetNodeAiThreadService {
 
         // 异步预热：预填 basicInfo、OS 平台、环境变量缓存
         sessionWarmupService.warmupAsync(session.getSessionId());
-        // 自动授予 session 级全量权限，消除确认等待对并行工具执行的阻塞
-        if (agentProperties.getInterceptor().isAutoGrantSession()) {
-            thread.grantSessionAll();
-        }
 
         String userId = session.getCreateByUser();
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
@@ -610,8 +612,6 @@ public class PuppetNodeAiThreadService {
         info.put("configId", resolvedConfigId);
         info.put("mode", thread.getMode());
         info.put("reconSummaryLoaded", session.hasReconSummary());
-        info.put("grantedTypesCount", thread.getSessionGrantedTypes().size());
-        info.put("grantedAll", thread.isSessionGrantedAll());
         return info;
     }
 
@@ -693,7 +693,6 @@ public class PuppetNodeAiThreadService {
         thread.resetRuntimeStats();
         thread.setExecutionPolicy(AiExecutionPolicy.defaultPolicy());
         thread.resetTurnCount();
-        thread.resetSessionGrants();
         thread.setAiConfigId(resolvedConfigId);
 
         updateThreadMeta(session, thread);
@@ -701,8 +700,6 @@ public class PuppetNodeAiThreadService {
 
         HashMap<String, Object> info = new HashMap<>();
         info.put("reconSummaryLoaded", session.hasReconSummary());
-        info.put("grantedTypesCount", thread.getSessionGrantedTypes().size());
-        info.put("grantedAll", thread.isSessionGrantedAll());
         return info;
     }
 
@@ -1003,7 +1000,6 @@ public class PuppetNodeAiThreadService {
         item.put("configId", thread.getAiConfigId());
         item.put("runStatus", thread.getRunStatus());
         item.put("executing", thread.isExecuting());
-        item.put("pendingConfirmations", thread.getPendingConfirmationCount());
         item.put("mode", thread.getMode());
         item.put("parentThreadId", thread.getParentThreadId());
         item.put("inMemory", true);
@@ -1023,7 +1019,6 @@ public class PuppetNodeAiThreadService {
         item.put("configModel", record.getConfigModel());
         item.put("runStatus", record.getRunStatus() != null ? record.getRunStatus() : AiThread.STATUS_IDLE);
         item.put("executing", false);
-        item.put("pendingConfirmations", 0);
         item.put("mode", record.getMode() != null ? record.getMode() : AiThread.MODE_AUTO);
         item.put("parentThreadId", record.getParentThreadId());
         item.put("inMemory", false);

@@ -102,21 +102,12 @@ public final class AiToolRegistry {
     static {
         Map<String, String> m = new HashMap<>();
 
-        // command — 高影响命令（写入 / 执行 / 停止）
-        // 注意：只读侦察工具（collectjavaprocessargs / searchtext / getenvvars /
-        //       getnetworkinfo / getprocesslist / getlisteningports / getcurrentuserinfo）
-        //       不注册到此类别，由拦截器直接放行，无需用户确认。
-        for (String t : new String[]{
-                "creat", "write", "stop",
-                "execonce", "startcommand", "stopcommand", "execwithtimeout"
-        }) m.put(t, "command");
+        // command — 命令执行
+        m.put("exec", "command");
 
         // file_write — 文件系统变更
         for (String t : new String[]{
-                "creatfile", "fileuploadchunk",
-                "compressfile", "decompressfile",
-                "startuploadtask", "startdownloadtask",
-                "editfile", "creatdir", "copyfile", "movefile", "deletefile"
+                "startuploadtask", "startdownloadtask"
         }) m.put(t, "file_write");
 
         // scan — 网络扫描
@@ -127,8 +118,7 @@ public final class AiToolRegistry {
 
         // container — Catalina 卸载操作（仅 admin）
         for (String t : new String[]{
-                "unloadfilter", "unloadservlet", "unloadvalve",
-                "unloadlistener", "unloadcontroller", "unloadinterceptor"
+                "unloadwebcomponent"
         }) m.put(t, "container");
 
         // script — 平台脚本引擎（仅 admin）

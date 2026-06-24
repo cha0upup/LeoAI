@@ -218,48 +218,6 @@ public class PlatformAiController {
     }
 
     /**
-     * 用户确认或拒绝工具调用。前端收到 {@code confirm} SSE 事件后，
-     * 用户操作完成时调用此接口解除拦截器的阻塞等待。
-     */
-    @PostMapping("/confirm")
-    public Map<String, Object> confirm(@RequestBody ConfirmRequest body,
-                                       HttpServletRequest request) {
-        String callId = requireText(body != null ? body.callId() : null, "缺少 callId");
-        PlatformAiState state = platformAiService.requireState(request.getSession(), "AI 会话不存在");
-
-        boolean approved = Boolean.TRUE.equals(body != null ? body.approved() : null);
-        boolean resolved = state.resolveConfirmation(callId, approved);
-        if (!resolved) {
-            throw ApiException.notFound("未找到对应的确认请求，可能已超时或已处理");
-        }
-        return ApiResponse.success(true);
-    }
-
-    /**
-     * 会话级工具类型授权。
-     *
-     * <p>用户在确认弹窗中选择「本次会话不再询问」时，前端调用此接口将对应类型写入
-     * 平台 AI 会话状态，后续同类工具调用无需再弹出确认弹窗。
-     */
-    @PostMapping("/grant")
-    public Map<String, Object> grant(@RequestBody GrantRequest body,
-                                     HttpServletRequest request) {
-        PlatformAiState state = platformAiService.requireState(
-                request.getSession(), "AI 会话不存在，请先调用 createAgent");
-
-        boolean grantAll = ControllerUtil.isAdmin(request)
-                && Boolean.TRUE.equals(body != null ? body.grantAll() : null);
-        if (grantAll) {
-            state.grantSessionAll();
-            return ApiResponse.success(true);
-        }
-
-        String toolType = requireText(body != null ? body.toolType() : null, "缺少 toolType");
-        state.grantSessionType(toolType);
-        return ApiResponse.success(true);
-    }
-
-    /**
      * 获取当前平台 AI 会话的活跃任务计划。
      */
     @PostMapping("/plan")

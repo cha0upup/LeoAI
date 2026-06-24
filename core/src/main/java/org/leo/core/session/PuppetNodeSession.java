@@ -1,7 +1,6 @@
 package org.leo.core.session;
 
 import org.leo.core.config.LeoConfig;
-import org.leo.core.entity.AiConfirmationRequest;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
@@ -13,7 +12,6 @@ import org.leo.core.util.BoundedTtlCache;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -213,12 +211,6 @@ public class PuppetNodeSession {
 
     // ── 活跃线程委托方法 ────────────────────────────────────
 
-    /** 取消活跃线程所有挂起的确认请求。 */
-    public void cancelAllPendingConfirmations() {
-        AiThread t = getActiveThread();
-        if (t != null) t.cancelAllPendingConfirmations();
-    }
-
     /** 获取活跃线程的 SSE 事件队列。 */
     public LinkedBlockingQueue<AiSseEvent> getAiSseEventQueue() {
         AiThread t = getActiveThread();
@@ -255,52 +247,6 @@ public class PuppetNodeSession {
         if (t != null) t.offerSystemWarn(message);
     }
 
-    /** 向活跃线程注册工具确认请求。 */
-    public java.util.concurrent.CompletableFuture<Boolean> registerAndAwaitConfirmation(
-            AiConfirmationRequest request) {
-        AiThread t = getActiveThread();
-        if (t != null) return t.registerAndAwaitConfirmation(request);
-        java.util.concurrent.CompletableFuture<Boolean> f = new java.util.concurrent.CompletableFuture<>();
-        f.complete(false);
-        return f;
-    }
-
-    /** 完成活跃线程挂起的确认 Future。 */
-    public boolean resolveConfirmation(String callId, boolean approved) {
-        AiThread t = getActiveThread();
-        return t != null && t.resolveConfirmation(callId, approved);
-    }
-
-    /** 向活跃线程写入会话级工具授权。 */
-    public void grantSessionType(String toolType) {
-        AiThread t = getActiveThread();
-        if (t != null) t.grantSessionType(toolType);
-    }
-
-    /** 开启活跃线程全量授权。 */
-    public void grantSessionAll() {
-        AiThread t = getActiveThread();
-        if (t != null) t.grantSessionAll();
-    }
-
-    /** 判断活跃线程指定工具类型是否已授权。 */
-    public boolean isSessionGranted(String toolType) {
-        AiThread t = getActiveThread();
-        return t != null && t.isSessionGranted(toolType);
-    }
-
-    /** 返回活跃线程已放行的工具类型集合。 */
-    public Set<String> getSessionGrantedTypes() {
-        AiThread t = getActiveThread();
-        return t != null ? t.getSessionGrantedTypes() : Collections.emptySet();
-    }
-
-    /** 返回活跃线程是否处于全量放行状态。 */
-    public boolean isSessionGrantedAll() {
-        AiThread t = getActiveThread();
-        return t != null && t.isSessionGrantedAll();
-    }
-
     /**
      * 重置活跃线程的 AI 状态（停止执行、清空队列、重置统计）。
      */
@@ -312,7 +258,6 @@ public class PuppetNodeSession {
             t.resetRuntimeStats();
             t.setExecutionPolicy(AiExecutionPolicy.defaultPolicy());
             t.resetTurnCount();
-            t.resetSessionGrants();
         }
         if (aiContextCache != null) aiContextCache.clear();
         lastActiveTime = System.currentTimeMillis();

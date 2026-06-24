@@ -1,22 +1,18 @@
 package org.leo.core.session;
 
-import org.leo.core.entity.AiConfirmationRequest;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
-import java.util.Collections;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 单条 AI 对话线程，归属于某个 {@link PuppetNodeSession}。
@@ -74,14 +70,6 @@ public class AiThread {
     private final LinkedBlockingQueue<AiSseEvent> sseEventQueue = new LinkedBlockingQueue<>();
     private final AtomicLong sseEventSeq = new AtomicLong(0);
     private final List<AiSseEvent> recentSseEvents = Collections.synchronizedList(new ArrayList<>());
-
-    // ── 工具确认 ──────────────────────────────────────────────────────────────
-    private final ConcurrentHashMap<String, CompletableFuture<Boolean>> pendingConfirmations = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AiConfirmationRequest> pendingConfirmationRequests = new ConcurrentHashMap<>();
-
-    // ── 会话级授权 ────────────────────────────────────────────────────────────
-    private final Set<String> sessionGrantedTypes = ConcurrentHashMap.newKeySet();
-    private final AtomicBoolean sessionGrantedAll = new AtomicBoolean(false);
 
     // ── 轮次计数 ──────────────────────────────────────────────────────────────
     private final AtomicInteger turnCount = new AtomicInteger(0);
@@ -178,7 +166,6 @@ public class AiThread {
         }
         Thread t = executingThread;
         if (t != null) t.interrupt();
-        cancelAllPendingConfirmations();
     }
 
     public void setStopCallback(Runnable callback) {
@@ -260,92 +247,6 @@ public class AiThread {
     }
 
     // ── 工具确认 ──────────────────────────────────────────────────────────────
-
-    /**
-     * 注册确认请求并返回等待用户响应的 Future（供拦截器阻塞等待）。
-     */
-    public CompletableFuture<Boolean> registerAndAwaitConfirmation(AiConfirmationRequest request) {
-        long now = System.currentTimeMillis();
-        if (request.getRequestedAt() == null) {
-            request.setRequestedAt(now);
-        }
-        if (request.getTimeoutMs() != null && request.getTimeoutMs() > 0 && request.getExpiresAt() == null) {
-            request.setExpiresAt(request.getRequestedAt() + request.getTimeoutMs());
-        }
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
-        pendingConfirmations.put(request.getCallId(), future);
-        pendingConfirmationRequests.put(request.getCallId(), request);
-        runStatus = STATUS_WAITING_CONFIRMATION;
-        offerSseEvent("confirm", request);
-        return future;
-    }
-
-    /**
-     * 完成挂起的确认 Future（由 /confirm 接口调用）。
-     *
-     * @return 是否找到并完成了对应的 Future
-     */
-    public boolean resolveConfirmation(String callId, boolean approved) {
-        CompletableFuture<Boolean> future = pendingConfirmations.remove(callId);
-        pendingConfirmationRequests.remove(callId);
-        if (future != null) {
-            future.complete(approved);
-            if (pendingConfirmations.isEmpty() && executingThread != null && !stopRequested.get()) {
-                runStatus = STATUS_RUNNING;
-            }
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * 取消所有挂起的确认请求（以 false 完成），防止拦截器永久阻塞。
-     * 在 stop() 和 SSE 断开时调用。
-     */
-    public void cancelAllPendingConfirmations() {
-        for (CompletableFuture<Boolean> f : pendingConfirmations.values()) {
-            f.complete(false);
-        }
-        pendingConfirmations.clear();
-        pendingConfirmationRequests.clear();
-    }
-
-    public int getPendingConfirmationCount() {
-        return pendingConfirmations.size();
-    }
-
-    public long getNextConfirmationExpiresAt() {
-        long next = Long.MAX_VALUE;
-        for (AiConfirmationRequest request : pendingConfirmationRequests.values()) {
-            Long expiresAt = request.getExpiresAt();
-            if (expiresAt != null && expiresAt > 0 && expiresAt < next) {
-                next = expiresAt;
-            }
-        }
-        return next == Long.MAX_VALUE ? 0L : next;
-    }
-
-    // ── 会话级授权 ────────────────────────────────────────────────────────────
-
-    public void grantSessionType(String toolType) {
-        if (toolType != null && !toolType.isBlank()) sessionGrantedTypes.add(toolType.trim());
-    }
-
-    public void grantSessionAll() { sessionGrantedAll.set(true); }
-
-    public boolean isSessionGranted(String toolType) {
-        if (sessionGrantedAll.get()) return true;
-        if (toolType == null) return false;
-        return sessionGrantedTypes.contains(toolType);
-    }
-
-    public Set<String> getSessionGrantedTypes()  { return Collections.unmodifiableSet(sessionGrantedTypes); }
-    public boolean     isSessionGrantedAll()      { return sessionGrantedAll.get(); }
-
-    public void resetSessionGrants() {
-        sessionGrantedTypes.clear();
-        sessionGrantedAll.set(false);
-    }
 
     // ── 轮次计数 ──────────────────────────────────────────────────────────────
 

@@ -56,7 +56,7 @@ public class PuppetNodeSystemPromptProvider {
         sb.append("════════════════════════════════════════\n");
         sb.append("【Skills 优先】\n");
         sb.append("════════════════════════════════════════\n\n");
-        sb.append("面对典型场景优先使用 skill，而不是手工拼装子 Agent 调用。\n");
+        sb.append("面对典型场景优先使用 skill，而不是手工拼装工具调用。\n");
         sb.append("执行前先调用 activate_skill 获取完整指令；Skills 已内置合理参数和顺序，能减少重复调度被拦截的风险。\n\n");
         String formatted = skills.formatAvailableSkills();
         if (formatted == null || formatted.isBlank()) {
@@ -73,18 +73,16 @@ public class PuppetNodeSystemPromptProvider {
         sb.append("2. 平台侧 = Leo 系统所在主机，保存 VFS、skills、uploads、用户空间、已加载 Java 插件。\n");
         sb.append("3. 上传 = 平台 → puppet；下载 = puppet → 平台。不要混用两侧路径。\n\n");
         sb.append("════════════════════════════════════════\n");
-        sb.append("【工具选择与子 Agent 调度】\n");
+        sb.append("【工具选择】\n");
         sb.append("════════════════════════════════════════\n\n");
-        sb.append("你拥有核心工具（命令执行、文件操作、进程管理、网络信息、会话摘要）可直接使用。\n");
-        sb.append("专项任务通过 dispatchSubtask(task, category) 分发给子 Agent：\n\n");
-        sb.append("▸ category=\"recon\" — 侦察/信息收集：端口扫描、存活主机发现、浏览器数据提取、凭据采集、剪贴板操作\n");
-        sb.append("▸ category=\"persistence\" — 持久化/服务管理：计划任务、系统服务、事件日志、Tomcat 内存马、Java 插件\n");
-        sb.append("▸ category=\"exploit\" — 攻击/利用：HTTP 请求/Fuzz、脚本执行、SQL 执行、应用资源读取\n\n");
-        sb.append("调度原则：\n");
-        sb.append("- 简单查询 → 直接用核心工具\n");
-        sb.append("- 多个独立只读检查 → 一次 exec 合并或并行工具调用\n");
-        sb.append("- 需要专项能力时 → dispatchSubtask，task 写清楚具体操作和目标\n");
-        sb.append("- 子 Agent 返回结果后，由你汇总分析并决定下一步\n");
+        sb.append("你拥有完整的工具集（命令执行、文件操作、端口扫描、浏览器数据、凭据采集、\n");
+        sb.append("剪贴板操作、Catalina 容器管理、Java 插件调用、HTTP 请求/Fuzz、脚本执行、\n");
+        sb.append("SQL 执行、资源读取、计划追踪、侦察情报汇总）可直接使用。\n\n");
+        sb.append("选择原则：\n");
+        sb.append("- 简单 OS 查询 → exec\n");
+        sb.append("- 多个独立只读检查 → 并行工具调用\n");
+        sb.append("- 需要专门能力 → 直接调用对应工具，无需走 dispatch 间接层\n");
+        sb.append("- 工具返回结果后，观察分析并决定下一步\n");
         return sb.toString();
     }
 
@@ -113,15 +111,58 @@ public class PuppetNodeSystemPromptProvider {
             2. 主动使用工具获取事实，不把"我将执行"当成已经完成。
             3. 每次回答都区分事实、推断和下一步建议。
             4. 小步执行；遇到失败时根据错误调整路径，而不是重复同一个失败调用。
-            5. 子 Agent 不是默认选项，只有当任务天然可拆分、需要专门工具链、或者独立读任务可以并发时才分发。
-            6. 复杂任务先 createPlan，再按步骤推进；每完成一步就更新计划状态，别把全部动作塞进一轮里。
+            5. 多步骤任务必须创建计划，详细规则见下方【任务计划】章节。
+
+            ════════════════════════════════════════
+            【任务计划】
+            ════════════════════════════════════════
+
+            计划工具让你在动手前先建立执行框架，前端会实时展示进度。它不是形式要求，而是帮你理清思路、防止遗漏、让步骤可追踪。
+
+            ▸ 何时创建计划
+            满足以下任一条件时必须 createPlan：
+            - 任务预计需要 2 个以上工具调用步骤
+            - 用户明确提出了多阶段目标（如"先侦察，再提权，最后清洗日志"）
+            - 任务涉及破坏性操作，需要和用户对齐步骤顺序
+            - 多个步骤之间存在先后依赖关系
+
+            简单单步查询（如"whoami"、"看下 /etc/passwd"）不需要计划。
+
+            ▸ 步骤字段说明
+            createPlan 的每个 step 支持以下字段：
+            - description（必填）— 清晰描述这一步要做什么，如"扫描 8080-9000 端口"
+            - toolHint — 建议使用的工具名，如"startScanPort"，帮助前端预览
+            - parallel（true/false）— 标记此步骤是否可与其他 parallel 步骤并发执行。
+              所有标记 parallel 的步骤可以在同一轮工具调用中一次性发出。
+              例：步骤 1（查用户）、步骤 2（查网络）、步骤 3（查磁盘）互相独立 → 全部 parallel=true
+            - dependsOn — 依赖的步骤序号数组，如 [0, 2] 表示必须等步骤 0 和 2 完成才能 start 本步骤。
+              依赖不满足时 start 会报错并被系统拦截。
+            - successCriteria — 完成标准，如"返回至少 3 个开放端口"
+            - maxRetries — 失败后最多重试次数（默认 1）
+
+            ▸ 计划生命周期
+            1. createPlan(title, goal, steps)     — 创建计划，写入所有步骤
+            2. updatePlanStep(0, "start", null)   — 标记第 0 步开始执行（完成后立即 start 下一步）
+            3. updatePlanStep(0, "complete", "发现 3 个开放端口：8080，8443，9000")
+               updatePlanStep(1, "fail", "权限不足，需要提权")     — 失败时写明原因
+               updatePlanStep(2, "skip", "目标不是 WebLogic，跳过") — 条件不满足时跳过
+            4. completePlan("已完成权限提升，获得 root shell。关键发现：...") — 所有步骤结束后写入最终结论
+
+            ▸ 注意
+            - 创建计划后不等待，立即 start 第一个步骤并开始执行
+            - 高危操作（脚本执行、插件调用、容器卸载）由系统自动弹窗确认，不需要你在 plan 中处理
+
+            ▸ 最佳实践
+            - 每完成一个步骤，在 updatePlanStep 的 resultText 里简要记录输出摘要
+            - 步骤失败不要放弃，分析原因后换策略重试或标记 fail 继续下一个
+            - 计划完成后，将关键发现沉淀到 manage_recon_summary
 
             ReAct 循环：
-            - THINK：先判断当前缺口、最优工具和是否需要子 Agent。
-            - TOOL：只发真实需要的工具调用，独立只读任务优先并发。
+            - THINK：先判断当前缺口和最优工具。多步任务先 createPlan 并立即 start。
+            - PLAN_ACTION：创建计划后立即 start 第一步，将步骤目标转化为本轮工具调用。
             - OBSERVE：每次工具返回后先看结果，再决定下一步。
             - ANALYZE：用简短自然语言概括事实、风险和线索。
-            - NEXT_ACTION：立即推进下一轮工具、子 Agent 分发或结束任务。
+            - NEXT_ACTION：立即推进下一轮工具调用或结束任务。
 
             只在真实状态变化时输出简短过渡语，不要使用固定模板。
             执行过程由系统根据模型原生流式思考和工具调用自动展示，不要输出 XML/JSON 过程标记。

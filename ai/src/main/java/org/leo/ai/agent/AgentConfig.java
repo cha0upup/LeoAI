@@ -1,11 +1,13 @@
 package org.leo.ai.agent;
 
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
+import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
 import org.leo.ai.config.AiAgentProperties;
@@ -23,10 +25,6 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -40,11 +38,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>线程池架构：
  * <ul>
- *   <li>{@code rawAiToolExecutor}      — 底层固定 12 线程池，承载所有工具执行</li>
- *   <li>{@code aiToolExecutor}         — 主 Agent 工具执行器（限流包装，maxParallelTools=5）</li>
- *   <li>{@code subAgentToolExecutor}   — 子 Agent 工具执行器（限流包装，subMaxParallelTools=3）</li>
- *   <li>{@code subAgentDispatchExecutor} — 子 Agent 调度执行器（独立 cached 池，避免与工具池争抢）</li>
+ *   <li>{@code rawAiToolExecutor} — 底层固定 12 线程池，承载所有工具执行</li>
+ *   <li>{@code aiToolExecutor}    — 主 Agent 工具执行器（限流包装，maxParallelTools=5）</li>
  * </ul>
+ *
+ * <p>所有工具直接附着到主 Agent，无子 Agent 调度层。
+ * 纯 OS 命令包装工具已移除，统一通过 exec 工具替代。
  */
 @Configuration
 @EnableAsync
@@ -55,9 +54,11 @@ public class AgentConfig {
     // ── 注入依赖 ──────────────────────────────────────────────────────────────
 
     private final AiAgentProperties agentProps;
+    private final AiModelConfigService modelConfigService;
 
-    public AgentConfig(AiAgentProperties agentProps) {
+    public AgentConfig(AiAgentProperties agentProps, AiModelConfigService modelConfigService) {
         this.agentProps = agentProps;
+        this.modelConfigService = modelConfigService;
     }
 
     @Value("${leo.ai.openai.api-key:}")
@@ -100,48 +101,11 @@ public class AgentConfig {
         return new ThrottledExecutorService(raw, maxParallel);
     }
 
-    /**
-     * 子 Agent 工具执行器：并发数更低，避免目标侧资源竞争。
-     */
-    @Bean
-    public ExecutorService subAgentToolExecutor(@Qualifier("rawAiToolExecutor") ExecutorService raw) {
-        int maxParallel = agentProps.getPuppetNode().getSubMaxParallelTools();
-        return new ThrottledExecutorService(raw, maxParallel);
-    }
-
-    /**
-     * 子 Agent 派发执行器：每个子 Agent 调度占用一个线程（reasoning + 等待内部工具结果）。
-     * 必须独立于 {@code rawAiToolExecutor}，否则当多个主 Agent 工具同时派发子 Agent
-     * 并在 {@code Future.get()} 阻塞时，子 Agent 自身又需要 {@code rawAiToolExecutor}
-     * 的线程跑工具，会出现死锁。
-     *
-     * <p>线程池策略：核心 0，上限由 {@code subagent.dispatchMaxThreads} 控制（默认 64），
-     * 空闲 60s 回收，队列满直接由调用线程兜底执行（避免任务被静默丢弃）。
-     * 不用 unbounded cached pool —— 突发流量下 cached pool 会无限创建线程拖垮 JVM。
-     */
-    @Bean(destroyMethod = "shutdown")
-    public ExecutorService subAgentDispatchExecutor() {
-        int max = Math.max(1, agentProps.getSubagent().getDispatchMaxThreads());
-        AtomicInteger counter = new AtomicInteger(1);
-        ThreadFactory factory = r -> {
-            Thread t = new Thread(r, "subagent-dispatch-" + counter.getAndIncrement());
-            t.setDaemon(true);
-            return t;
-        };
-        return new ThreadPoolExecutor(
-                0, max,
-                60L, TimeUnit.SECONDS,
-                new SynchronousQueue<>(),
-                factory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-    }
-
     // ── Token 估算与对话记忆 ─────────────────────────────────────────────────
 
     /**
      * 轻量级字符 token 估算器，无网络调用。
-     * 用于 {@link TokenWindowChatMemory} 的滑动窗口淘汰判定。
+     * 用于 {@link TokenWindowChatMemory} 的滑动窗口淘汰判定和压缩触发判断。
      */
     @Bean
     public TokenCountEstimator charBasedTokenEstimator() {
@@ -149,28 +113,67 @@ public class AgentConfig {
     }
 
     /**
-     * 主 Agent 对话记忆：token-aware 滑动窗口，窗口大小由 maxContextTokens 配置控制。
+     * 上下文压缩服务：在对话历史接近窗口上限时自动将旧消息压缩为摘要。
      */
     @Bean
-    @Primary
-    public ChatMemoryProvider chatMemoryProvider(TokenCountEstimator tokenEstimator) {
-        int maxContextTokens = agentProps.getPuppetNode().getMain().getMaxContextTokens();
-        return memoryId -> TokenWindowChatMemory.builder()
-                .id(memoryId)
-                .maxTokens(maxContextTokens, tokenEstimator)
-                .build();
+    public ContextCompressionService contextCompressionService(
+            DelegatingChatModel chatModel, TokenCountEstimator tokenEstimator) {
+        return new ContextCompressionService(chatModel, tokenEstimator);
     }
 
     /**
-     * 子 Agent 对话记忆：窗口更小（默认 16k token），适合短期任务执行。
+     * 主 Agent 对话记忆：自动适配模型上下文窗口大小。
+     *
+     * <p>优先级：
+     * <ol>
+     *   <li>数据库激活模型配置的 {@code contextWindowTokens} 字段</li>
+     *   <li>常见模型名的默认窗口推断（gpt-4o→200K, gemini→1M 等）</li>
+     *   <li>配置文件 {@code leo.ai.agent.puppet-node.main.max-context-tokens}（默认 180K）</li>
+     * </ol>
+     *
+     * <p>小窗口（&lt;=96K）使用 {@link TokenWindowChatMemory}（基于 token 精确淘汰）；
+     * 大窗口（&gt;96K）使用 {@link MessageWindowChatMemory}（按消息条数淘汰），
+     * 避免 {@link CharBasedTokenEstimator} 在百万 token 量级下的累积误差。
+     *
+     * <p>压缩由 {@link ContextCompressionService#compressIfNeeded} 在工具执行前触发，
+     * 仅当窗口 &gt;=100K 且当前 token 数 &gt; 80% 阈值时执行。
      */
     @Bean
-    public ChatMemoryProvider subAgentMemoryProvider(TokenCountEstimator tokenEstimator) {
-        int maxContextTokens = agentProps.getPuppetNode().getSubMaxContextTokens();
-        return memoryId -> TokenWindowChatMemory.builder()
-                .id(memoryId)
-                .maxTokens(maxContextTokens, tokenEstimator)
-                .build();
+    @Primary
+    public ChatMemoryProvider chatMemoryProvider(TokenCountEstimator tokenEstimator,
+                                                  ContextCompressionService compressionService) {
+        return memoryId -> {
+            int modelWindow = modelConfigService.getActiveContextWindowTokens();
+            // 预留 system prompt + tools 空间，默认扣除 20K
+            int effectiveWindow = modelWindow > 0 ? modelWindow - 20_000 : 180_000;
+            int configuredMin = agentProps.getPuppetNode().getMain().getMaxContextTokens();
+            effectiveWindow = Math.max(effectiveWindow, configuredMin);
+
+            // 小窗口用 TokenWindow（精确），大窗口用 MessageWindow（避免 token 估算误差）
+            if (effectiveWindow <= 96_000) {
+                return TokenWindowChatMemory.builder()
+                        .id(memoryId)
+                        .maxTokens(effectiveWindow, tokenEstimator)
+                        .build();
+            }
+            // 大窗口：按消息条数 + 压缩兜底
+            int maxMessages = estimateMaxMessages(effectiveWindow);
+            return new CompressingChatMemory(
+                    memoryId,
+                    MessageWindowChatMemory.builder().id(memoryId).maxMessages(maxMessages).build(),
+                    tokenEstimator,
+                    compressionService,
+                    effectiveWindow
+            );
+        };
+    }
+
+    /**
+     * 根据上下文窗口估算可保留的最大消息条数。
+     * 假设每条消息平均 2K token（含工具调用和结果）。
+     */
+    private static int estimateMaxMessages(int contextWindowTokens) {
+        return Math.max(50, contextWindowTokens / 2000);
     }
 
     // ── 模型 Bean ────────────────────────────────────────────────────────────
@@ -236,11 +239,21 @@ public class AgentConfig {
         return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PLATFORM);
     }
 
-    // ── 主 Agent ──────────────────────────────────────────────────────────────
+    // ── 主 Agent（单一 Agent，所有工具直接附着）────────────────────────────────
 
     /**
-     * 主 Agent：只保留核心工具（~32 方法）+ SubAgentDispatchTools（1 方法）。
-     * 专项任务通过 dispatchSubtask(task, category) 统一分发给子 Agent。
+     * 主 Agent：所有 puppet 侧工具直接注入，无子 Agent 调度层。
+     *
+     * <p>工具分层：
+     * <ul>
+     *   <li>核心操作 — exec、文件信息、加解密、反向隧道</li>
+     *   <li>侦察 — 端口扫描、浏览器数据、凭据采集、剪贴板</li>
+     *   <li>持久化 — Java 插件调用、Catalina 容器管理</li>
+     *   <li>攻击 — HTTP/Fuzz、脚本执行、SQL、资源读取</li>
+     *   <li>元管理 — 计划追踪、侦察情报汇总、技能激活</li>
+     * </ul>
+     *
+     * <p>纯 OS 命令包装工具（进程/用户/磁盘/网络/文件操作等）已移除，统一通过 exec 工具替代。
      */
     @Bean
     public PuppetNodeAgent puppetNodeAgent(
@@ -248,17 +261,29 @@ public class AgentConfig {
             DelegatingChatModel chatModel,
             ChatMemoryProvider memoryProvider,
             PuppetNodeSystemPromptProvider systemPromptProvider,
+            // 核心操作
             CommandTools commandTools,
             BasicInfoTools basicInfoTools,
-            ProcessTools processTools,
-            NetworkInfoTools networkInfoTools,
             ReverseTunnelTools reverseTunnelTools,
             UtilTools utilTools,
             FileTools fileTools,
+            // 侦察
+            ScanTools scanTools,
+            BrowserDataTools browserDataTools,
+            CredentialHarvestTools credentialHarvestTools,
+            ClipboardTools clipboardTools,
+            // 持久化
+            CatalinaTools catalinaTools,
+            JavaPluginTools javaPluginTools,
+            // 攻击
+            HttpRequestTools httpRequestTools,
+            ScriptTools scriptTools,
+            SqlTools sqlTools,
+            ResourceTools resourceTools,
+            // 元管理
             SessionTools sessionTools,
             PlanTools planTools,
             @Qualifier("puppetNodeSkillActivationTools") SkillActivationTools skillActivationTools,
-            SubAgentDispatchTools subAgentDispatchTools,
             AutoReconAppendService autoReconAppendService,
             ExecutorService aiToolExecutor) {
 
@@ -268,26 +293,29 @@ public class AgentConfig {
                 .chatMemoryProvider(memoryProvider)
                 .systemMessageProvider(systemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(aiToolExecutor)
-                // 工具执行前后设置 / 清除 ThreadLocal 上下文，工具方法通过 AiToolContext 读取
                 .beforeToolExecution(execution -> {
                     if (execution != null && execution.invocationContext() != null) {
                         AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
                     }
+                    // 关联 plan step：如果当前计划有正在执行的步骤，将 stepIndex 注入上下文
+                    autoAssociatePlanStep();
                 })
                 .afterToolExecution(execution -> {
                     try {
-                        // 工具执行结束后异步分析输出，把侦察情报追加到 reconSummary。
-                        // 注意：在 clear() 之前读 sessionId —— ThreadLocal 一会儿就清掉了。
                         triggerAutoReconAppend(execution, autoReconAppendService);
+                        // 自动将工具结果写入 plan step
+                        autoAppendToolResultToPlanStep(execution);
                     } finally {
                         AiToolContext.clear();
                     }
                 })
-                .tools(commandTools, basicInfoTools, processTools,
-                        networkInfoTools, reverseTunnelTools,
-                        utilTools, fileTools, sessionTools,
-                        planTools, skillActivationTools,
-                        subAgentDispatchTools)
+                .tools(commandTools, basicInfoTools,
+                        reverseTunnelTools,
+                        utilTools, fileTools,
+                        scanTools, browserDataTools, credentialHarvestTools, clipboardTools,
+                        catalinaTools, javaPluginTools,
+                        httpRequestTools, scriptTools, sqlTools, resourceTools,
+                        sessionTools, planTools, skillActivationTools)
                 .build();
     }
 
@@ -298,8 +326,6 @@ public class AgentConfig {
      * <ul>
      *   <li>SessionTools 的 reconSummary 读写工具：分析自己的输出毫无意义</li>
      *   <li>PlanTools：计划/进度本身不是侦察情报</li>
-     *   <li>dispatchSubtask：SubAgent 的内部执行已经在子 Agent 内消耗 token，
-     *       它返回给主 Agent 的只是"摘要文本"，再走一次提取会反复压缩、价值不高</li>
      * </ul>
      *
      * <p>{@link AutoReconAppendService#analyzeAndAppend} 自身带 {@code @Async} 注解，
@@ -309,7 +335,6 @@ public class AgentConfig {
     private static final java.util.Set<String> AUTO_RECON_APPEND_SKIPPED_TOOLS = java.util.Set.of(
             "manage_recon_summary",
             "createPlan", "updatePlan", "getPlan", "deletePlan",
-            "dispatchSubtask",
             "activate_skill"
     );
 
@@ -328,115 +353,131 @@ public class AgentConfig {
         try {
             autoReconAppendService.analyzeAndAppend(sessionId, toolName, result);
         } catch (Throwable t) {
-            // 任何异常都不能让工具结果回写主对话失败 —— 这里完全是 best-effort 的旁路
             org.slf4j.LoggerFactory.getLogger(AgentConfig.class)
                     .debug("AutoReconAppend 触发失败 tool={} sessionId={}: {}",
                             toolName, sessionId, t.getMessage());
         }
     }
 
-    // ── 子 Agent ──────────────────────────────────────────────────────────────
+    // ── Plan Step 自动关联 ──────────────────────────────────────────────────
 
-    /**
-     * 子 Agent 通用构建逻辑：所有子 Agent 共享 chatModel、subAgentMemoryProvider、
-     * subAgentToolExecutor 与同一对 beforeToolExecution / afterToolExecution hook。
-     */
-    private <T> T buildSubAgent(
-            Class<T> agentClass,
-            DelegatingChatModel model,
-            ChatMemoryProvider memoryProvider,
-            ExecutorService subExecutor,
-            String systemPrompt,
-            AutoReconAppendService autoReconAppendService,
-            Object... tools) {
+    /** Plan 工具本身不应触发 step 关联（避免 createPlan/updatePlanStep 自关联）。 */
+    private static final java.util.Set<String> PLAN_TOOLS = java.util.Set.of(
+            "createPlan", "updatePlanStep", "completePlan");
 
-        return AiServices.builder(agentClass)
-                .chatModel(model)
-                .chatMemoryProvider(memoryProvider)
-                .systemMessageProvider(memoryId -> systemPrompt)
-                .executeToolsConcurrently(subExecutor)
-                .beforeToolExecution(execution -> {
-                    SubAgentDispatchTools.emitInnerToolStart(execution);
-                    if (execution != null && execution.invocationContext() != null) {
-                        AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
+    /** 在工具执行前检测活跃 plan 的 running step，注入到 AiToolContext。 */
+    private static void autoAssociatePlanStep() {
+        try {
+            String sessionId = AiToolContext.getSessionId();
+            String threadId = AiToolContext.getThreadId();
+            if (sessionId == null || sessionId.isBlank()) return;
+
+            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
+            if (session == null) return;
+
+            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
+            if (thread == null) return;
+
+            var plan = thread.getCurrentPlan();
+            if (plan == null) return;
+
+            var steps = plan.getSteps();
+            if (steps == null) return;
+
+            for (int i = 0; i < steps.size(); i++) {
+                var step = steps.get(i);
+                if (step.getStatus().name().equals("RUNNING")) {
+                    AiToolContext.setPlanStepIndex(step.getIndex());
+                    AiToolContext.setPlanStepPreApproved(step.isPreApproved());
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+            // best-effort，失败不影响工具执行
+        }
+    }
+
+    /** 在工具执行后将结果自动写入 plan step 的 result 字段。 */
+    private static void autoAppendToolResultToPlanStep(
+            dev.langchain4j.service.tool.ToolExecution execution) {
+        int stepIndex = AiToolContext.getPlanStepIndex();
+        if (stepIndex < 0) return;
+        if (execution == null) return;
+
+        String toolName = execution.request() != null ? execution.request().name() : null;
+        if (toolName == null || PLAN_TOOLS.contains(toolName)) return;
+
+        try {
+            String sessionId = AiToolContext.getSessionId();
+            String threadId = AiToolContext.getThreadId();
+            if (sessionId == null || sessionId.isBlank()) return;
+
+            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
+            if (session == null) return;
+
+            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
+            if (thread == null) return;
+
+            var plan = thread.getCurrentPlan();
+            if (plan == null) return;
+
+            var steps = plan.getSteps();
+            if (steps == null) return;
+
+            for (var step : steps) {
+                if (step.getIndex() == stepIndex) {
+                    String summary = buildToolResultSummary(toolName, execution);
+                    if (step.getResult() != null && !step.getResult().isBlank()) {
+                        step.setResult(step.getResult() + " | " + summary);
+                    } else {
+                        step.setResult(summary);
                     }
-                })
-                .afterToolExecution(execution -> {
-                    try {
-                        SubAgentDispatchTools.emitInnerToolDone(execution);
-                        triggerAutoReconAppend(execution, autoReconAppendService);
-                    } finally {
-                        AiToolContext.clear();
-                    }
-                })
-                .tools(tools)
-                .build();
+                    // 通知前端 step 更新
+                    thread.offerSseEvent("patch", buildPlanStepPatch(plan, step, toolName));
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // best-effort
+        }
     }
 
-    /**
-     * 侦察子 Agent：端口扫描、浏览器数据、凭据采集、剪贴板。
-     * 非流式，由 SubAgentDispatchTools 同步调用。
-     */
-    @Bean
-    public ReconSubAgent reconSubAgent(
-            DelegatingChatModel model,
-            @Qualifier("subAgentMemoryProvider") ChatMemoryProvider memoryProvider,
-            ScanTools scanTools,
-            BrowserDataTools browserDataTools,
-            CredentialHarvestTools credentialHarvestTools,
-            ClipboardTools clipboardTools,
-            UserAccountTools userAccountTools,
-            MountDiskTools mountDiskTools,
-            DockerContainerTools dockerContainerTools,
-            SuidCapabilityTools suidCapabilityTools,
-            InstalledSoftwareTools installedSoftwareTools,
-            AutoReconAppendService autoReconAppendService,
-            @Qualifier("subAgentToolExecutor") ExecutorService subExecutor) {
-        return buildSubAgent(ReconSubAgent.class, model, memoryProvider, subExecutor,
-                SubAgentPrompts.RECON, autoReconAppendService,
-                scanTools, browserDataTools, credentialHarvestTools, clipboardTools,
-                userAccountTools, mountDiskTools, dockerContainerTools,
-                suidCapabilityTools, installedSoftwareTools);
+    /** 构建工具结果摘要（最多 120 字符）。 */
+    private static String buildToolResultSummary(String toolName,
+                                                  dev.langchain4j.service.tool.ToolExecution execution) {
+        StringBuilder sb = new StringBuilder(toolName);
+        if (execution.hasFailed()) {
+            sb.append(" 失败");
+            String err = execution.result();
+            if (err != null && !err.isBlank()) {
+                String shortErr = err.length() > 80 ? err.substring(0, 80) + "…" : err;
+                sb.append("（").append(shortErr).append("）");
+            }
+        } else {
+            sb.append(" 完成");
+            String result = execution.result();
+            if (result != null && !result.isBlank()) {
+                // 取第一行或前 80 字符
+                String firstLine = result.lines().findFirst().orElse("");
+                String shortResult = firstLine.length() > 80 ? firstLine.substring(0, 80) + "…" : firstLine;
+                sb.append(" → ").append(shortResult);
+            }
+        }
+        return sb.toString();
     }
 
-    /**
-     * 持久化子 Agent：计划任务、服务管理、事件日志、Tomcat 内存马、Java 插件。
-     * 非流式，由 SubAgentDispatchTools 同步调用。
-     */
-    @Bean
-    public PersistenceSubAgent persistenceSubAgent(
-            DelegatingChatModel model,
-            @Qualifier("subAgentMemoryProvider") ChatMemoryProvider memoryProvider,
-            ScheduledTaskTools scheduledTaskTools,
-            ServiceManagerTools serviceManagerTools,
-            EventLogTools eventLogTools,
-            CatalinaTools catalinaTools,
-            JavaPluginTools javaPluginTools,
-            AutoReconAppendService autoReconAppendService,
-            @Qualifier("subAgentToolExecutor") ExecutorService subExecutor) {
-        return buildSubAgent(PersistenceSubAgent.class, model, memoryProvider, subExecutor,
-                SubAgentPrompts.PERSISTENCE, autoReconAppendService,
-                scheduledTaskTools, serviceManagerTools, eventLogTools,
-                catalinaTools, javaPluginTools);
-    }
-
-    /**
-     * 攻击/利用子 Agent：HTTP 请求/Fuzz、脚本执行、SQL、资源读取。
-     * 非流式，由 SubAgentDispatchTools 同步调用。
-     */
-    @Bean
-    public ExploitSubAgent exploitSubAgent(
-            DelegatingChatModel model,
-            @Qualifier("subAgentMemoryProvider") ChatMemoryProvider memoryProvider,
-            HttpRequestTools httpRequestTools,
-            ScriptTools scriptTools,
-            SqlTools sqlTools,
-            ResourceTools resourceTools,
-            AutoReconAppendService autoReconAppendService,
-            @Qualifier("subAgentToolExecutor") ExecutorService subExecutor) {
-        return buildSubAgent(ExploitSubAgent.class, model, memoryProvider, subExecutor,
-                SubAgentPrompts.EXPLOIT, autoReconAppendService,
-                httpRequestTools, scriptTools, sqlTools, resourceTools);
+    /** 构建 plan step patch 事件 payload。 */
+    private static java.util.Map<String, Object> buildPlanStepPatch(
+            org.leo.core.entity.AiPlan plan, org.leo.core.entity.AiPlanStep step, String toolName) {
+        java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("kind", "plan");
+        payload.put("planId", plan.getPlanId());
+        payload.put("stepIndex", step.getIndex());
+        payload.put("status", step.getStatus().name());
+        payload.put("result", step.getResult());
+        payload.put("toolName", toolName);
+        payload.put("timestamp", System.currentTimeMillis());
+        return payload;
     }
 
     // ── Platform Agent ───────────────────────────────────────────────────────

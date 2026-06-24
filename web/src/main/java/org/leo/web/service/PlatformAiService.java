@@ -85,7 +85,7 @@ public class PlatformAiService {
                     state.getCreatedAt(),
                     null);
         }
-        return new AgentInfoResponse(state.getSessionGrantedTypes().size());
+        return new AgentInfoResponse(0);
     }
 
     public void switchChannel(HttpSession httpSession, User user, Integer configId) {
@@ -241,7 +241,6 @@ public class PlatformAiService {
                     if (state.isStopRequested() || Thread.currentThread().isInterrupted()) {
                         String reason = state.getStopReason() != null ? state.getStopReason() : "已停止";
                         audit.fail(reason, System.currentTimeMillis() - startMs);
-                        state.cancelAllPendingConfirmations();
                         state.markCancelled();
                         finishRun(fRunId, PlatformAiState.STATUS_CANCELLED, startMs, null, reason, 0);
                         conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
@@ -250,7 +249,6 @@ public class PlatformAiService {
                     } else {
                         AiErrorClassifier.Classification classification = aiErrorClassifier.classify(error);
                         audit.fail(classification.message(), System.currentTimeMillis() - startMs);
-                        state.cancelAllPendingConfirmations();
                         state.markFailed();
                         finishRun(fRunId, PlatformAiState.STATUS_FAILED, startMs, null, classification.message(), 0);
                         conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
@@ -266,7 +264,6 @@ public class PlatformAiService {
                 stopAndFlushQueuedEvents(state, emitter, eventLog, queueDrain);
                 String reason = state.getStopReason() != null ? state.getStopReason() : "已停止";
                 audit.fail(reason, System.currentTimeMillis() - startMs);
-                state.cancelAllPendingConfirmations();
                 state.markCancelled();
                 finishRun(runId, PlatformAiState.STATUS_CANCELLED, startMs, null, reason, 0);
                 conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
@@ -276,7 +273,6 @@ public class PlatformAiService {
                 stopAndFlushQueuedEvents(state, emitter, eventLog, queueDrain);
                 AiErrorClassifier.Classification classification = aiErrorClassifier.classify(e);
                 audit.fail(classification.message(), System.currentTimeMillis() - startMs);
-                state.cancelAllPendingConfirmations();
                 state.markFailed();
                 finishRun(runId, PlatformAiState.STATUS_FAILED, startMs, null, classification.message(), 0);
                 conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
@@ -304,7 +300,6 @@ public class PlatformAiService {
             item.put("messageCount", r.getMessageCount() != null ? r.getMessageCount() : 0);
             item.put("runStatus", r.getRunStatus());
             item.put("executing", false);
-            item.put("pendingConfirmations", 0);
             return item;
         }).collect(Collectors.toList());
     }
@@ -419,11 +414,9 @@ public class PlatformAiService {
         HashMap<String, Object> payload = new HashMap<>();
         payload.put("status", state.getRunStatus());
         payload.put("executing", state.isExecuting());
-        payload.put("pendingConfirmations", state.getPendingConfirmationCount());
         payload.put("elapsedMs", startMs > 0 ? Math.max(0L, System.currentTimeMillis() - startMs) : 0L);
         payload.put("lastSeq", state.getLastSseEventSeq());
         payload.put("stopReason", state.getStopReason());
-        payload.put("confirmationExpiresAt", state.getNextConfirmationExpiresAt());
         return payload;
     }
 
@@ -476,7 +469,6 @@ public class PlatformAiService {
                         Map<String, Object> hb = new LinkedHashMap<>();
                         hb.put("ts", System.currentTimeMillis());
                         hb.put("status", state.getRunStatus());
-                        hb.put("pendingConfirmations", state.getPendingConfirmationCount());
                         try {
                             sendHeartbeat(emitter, hb);
                             lastSentAt = System.currentTimeMillis();

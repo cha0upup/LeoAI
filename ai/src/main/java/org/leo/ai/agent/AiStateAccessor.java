@@ -6,7 +6,6 @@ import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
@@ -23,23 +22,6 @@ public interface AiStateAccessor {
     boolean isValid();
 
     boolean isStopRequested();
-
-    CompletableFuture<Boolean> awaitConfirmation(String callId, String toolName,
-            String toolType, String toolTypeLabel, String argsPreview, String impact);
-
-    CompletableFuture<Boolean> awaitConfirmation(String callId, String toolName,
-            String toolType, String toolTypeLabel, String argsPreview, String impact,
-            long timeoutMs);
-
-    boolean resolveConfirmation(String callId, boolean approved);
-
-    void cancelAllPendingConfirmations();
-
-    void grantSessionType(String toolType);
-
-    void grantSessionAll();
-
-    boolean isSessionGranted(String toolType);
 
     void offerWarnMessage(String message);
 

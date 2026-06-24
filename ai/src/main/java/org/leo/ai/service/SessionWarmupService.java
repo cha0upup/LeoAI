@@ -102,7 +102,7 @@ public class SessionWarmupService {
             }
         }
 
-        // 3. 网络拓扑 — 侦察任务高频使用，NetworkInfoTools.collectAll 直接命中缓存
+        // 3. 网络拓扑预热 — AI 侦察任务高频使用
         Object cachedNetwork = PuppetNodeSessionUtils.getAiContextValue(sessionId, NETWORK_INFO_CACHE_KEY);
         if (cachedNetwork == null) {
             try {
