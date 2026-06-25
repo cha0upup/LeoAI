@@ -30,17 +30,22 @@ public class PlanTools {
     @Tool("""
             创建当前对话的执行计划。steps 传入步骤列表，每个步骤对象建议包含：
             description, toolHint, parallel, successCriteria, maxRetries, dependsOn。
+            stepTimeoutMs 可选，单步骤超时时间（毫秒），超过此时间的步骤将被自动标记为失败，0 表示不启用。
             适合在开始执行前先明确"先做什么、后做什么"。
             """)
     public Map<String, Object> createPlan(
             @P("计划标题") String title,
             @P("任务目标") String goal,
-            @P("步骤列表（对象数组）") List<Map<String, Object>> steps) {
+            @P("步骤列表（对象数组）") List<Map<String, Object>> steps,
+            @P("步骤超时毫秒，0 表示不启用（可选，默认 0）") long stepTimeoutMs) {
         AiThread thread = resolveThread();
         if (thread == null) {
             throw new IllegalStateException("会话或线程不存在，无法创建计划");
         }
         AiPlan plan = new AiPlan(title, goal, normalizeSteps(steps));
+        if (stepTimeoutMs > 0) {
+            plan.setStepTimeoutMs(stepTimeoutMs);
+        }
         thread.addPlan(plan);
         emitPlan(thread, plan, true);
         Map<String, Object> result = new LinkedHashMap<>();

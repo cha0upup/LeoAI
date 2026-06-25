@@ -28,6 +28,8 @@ public class AiPlan {
     private volatile AiPlanStatus status = AiPlanStatus.PLANNING;
     /** completePlan 时写入的最终结论摘要 */
     private volatile String finalSummary;
+    /** 单步骤超时时间（毫秒），0 表示不启用。超过此时间仍在 RUNNING 的步骤将被自动标记为失败 */
+    private volatile long stepTimeoutMs;
 
     private final long createdAt;
     private volatile long updatedAt;
@@ -112,13 +114,24 @@ public class AiPlan {
     }
 
     /**
-     * 更新指定步骤为失败。
+     * 更新指定步骤为失败。步骤失败不会自动将整个计划标记为失败；
+     * 仅当所有步骤均已终止且至少有一个步骤失败时，计划才会自动转为 FAILED。
+     * AI 也可以通过 {@link #fail(String)} 或 {@link #complete(String)} 显式决定计划终态。
      */
     public boolean failStep(int stepIndex, String reason) {
         AiPlanStep step = findStep(stepIndex);
         if (step == null) return false;
         step.markFailed(reason);
-        this.status    = AiPlanStatus.FAILED;
+        // 自动检测：仅当所有步骤都已终止（无 PENDING/IN_PROGRESS）且至少有一个失败时才标记计划失败
+        if (allStepsTerminated()) {
+            boolean anyFailed = false;
+            for (AiPlanStep s : steps) {
+                if (s.getStatus() == AiStepStatus.FAILED) { anyFailed = true; break; }
+            }
+            if (anyFailed) {
+                this.status = AiPlanStatus.FAILED;
+            }
+        }
         this.updatedAt = System.currentTimeMillis();
         return true;
     }
@@ -214,6 +227,42 @@ public class AiPlan {
             if (st == AiStepStatus.PENDING || st == AiStepStatus.IN_PROGRESS) return false;
         }
         return true;
+    }
+
+    /**
+     * 检查所有 RUNNING 状态步骤是否超时，超时则自动标记为失败。
+     * 在每次工具调用前由 AgentConfig 调用，确保卡住的步骤不会无限等待。
+     *
+     * @return 因超时被自动失败的步骤数量
+     */
+    public int checkStepTimeouts() {
+        if (stepTimeoutMs <= 0) return 0;
+        long now = System.currentTimeMillis();
+        int timedOut = 0;
+        for (AiPlanStep s : steps) {
+            if (s.getStatus() != AiStepStatus.IN_PROGRESS) continue;
+            long elapsed = now - s.getStartedAt();
+            if (elapsed > stepTimeoutMs) {
+                s.markFailed("步骤超时（已执行 " + elapsed + "ms，超过阈值 " + stepTimeoutMs + "ms）");
+                timedOut++;
+            }
+        }
+        if (timedOut > 0) {
+            this.updatedAt = now;
+            // 全部终止且存在失败 → 计划失败
+            if (allStepsTerminated()) {
+                boolean anyFailed = steps.stream().anyMatch(s -> s.getStatus() == AiStepStatus.FAILED);
+                if (anyFailed) {
+                    this.status = AiPlanStatus.FAILED;
+                }
+            }
+        }
+        return timedOut;
+    }
+
+    /** 设置步骤超时时间（毫秒），0 表示不启用。 */
+    public void setStepTimeoutMs(long stepTimeoutMs) {
+        this.stepTimeoutMs = stepTimeoutMs;
     }
 
     // ── Getters ───────────────────────────────────────────────────────────────
