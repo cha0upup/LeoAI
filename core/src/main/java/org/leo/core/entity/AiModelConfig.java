@@ -12,15 +12,22 @@ package org.leo.core.entity;
 public class AiModelConfig {
 
     private Integer id;
+    private Integer providerId;
     private String name;
+    private String providerKey;
+    private String providerName;
     private String baseUrl;
     private String apiKey;
     private String model;
     private String completionsPath;
     private Integer isActive;
+    private Integer enabled;
     private Integer maxOutputTokens;
     private Integer thinkingEnabled;
+    private String reasoningEffort;
     private Integer contextWindowTokens;
+    private Double temperature;
+    private String headersJson;
     private String createTime;
     private String updateTime;
     private String remark;
@@ -28,8 +35,17 @@ public class AiModelConfig {
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
 
+    public Integer getProviderId() { return providerId; }
+    public void setProviderId(Integer providerId) { this.providerId = providerId; }
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getProviderKey() { return providerKey; }
+    public void setProviderKey(String providerKey) { this.providerKey = providerKey; }
+
+    public String getProviderName() { return providerName; }
+    public void setProviderName(String providerName) { this.providerName = providerName; }
 
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
@@ -46,14 +62,26 @@ public class AiModelConfig {
     public Integer getIsActive() { return isActive; }
     public void setIsActive(Integer isActive) { this.isActive = isActive; }
 
+    public Integer getEnabled() { return enabled; }
+    public void setEnabled(Integer enabled) { this.enabled = enabled; }
+
     public Integer getMaxOutputTokens() { return maxOutputTokens; }
     public void setMaxOutputTokens(Integer maxOutputTokens) { this.maxOutputTokens = maxOutputTokens; }
 
     public Integer getThinkingEnabled() { return thinkingEnabled; }
     public void setThinkingEnabled(Integer thinkingEnabled) { this.thinkingEnabled = thinkingEnabled; }
 
+    public String getReasoningEffort() { return reasoningEffort; }
+    public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
+
     public Integer getContextWindowTokens() { return contextWindowTokens; }
     public void setContextWindowTokens(Integer contextWindowTokens) { this.contextWindowTokens = contextWindowTokens; }
+
+    public Double getTemperature() { return temperature; }
+    public void setTemperature(Double temperature) { this.temperature = temperature; }
+
+    public String getHeadersJson() { return headersJson; }
+    public void setHeadersJson(String headersJson) { this.headersJson = headersJson; }
 
     public String getCreateTime() { return createTime; }
     public void setCreateTime(String createTime) { this.createTime = createTime; }

@@ -4,6 +4,7 @@ import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
 import org.leo.ai.agent.PuppetNodeAgent;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.service.SessionWarmupService;
@@ -61,6 +62,7 @@ public class PuppetNodeAiThreadService {
 
     private final PuppetNodeAgent puppetNodeAgent;
     private final AiModelConfigService modelConfigService;
+    private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
@@ -69,12 +71,14 @@ public class PuppetNodeAiThreadService {
     @Autowired
     public PuppetNodeAiThreadService(PuppetNodeAgent puppetNodeAgent,
                                      AiModelConfigService modelConfigService,
+                                     DynamicModelProvider dynamicModelProvider,
                                      AiErrorClassifier aiErrorClassifier,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      AiAgentProperties agentProperties) {
         this.puppetNodeAgent = puppetNodeAgent;
         this.modelConfigService = modelConfigService;
+        this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
@@ -101,6 +105,7 @@ public class PuppetNodeAiThreadService {
             if (thread.isStopRequested()) {
                 throw new InterruptedException("已停止");
             }
+            applyThreadModel(thread);
             runId = conversationStore.startRun(thread, messageForAgent, startMs);
             conversationStore.updateRuntime(session.getSessionId(), thread);
             sendRecordedEvent(thread, emitter, "status", AiThread.STATUS_RUNNING);
@@ -516,8 +521,9 @@ public class PuppetNodeAiThreadService {
         if (configError != null) {
             return new ThreadResolution(thread, restored, hasCheckpoint, configError);
         }
-        if (thread != null && thread.getAiConfigId() == null) {
+        if (thread != null && (thread.getAiConfigId() == null || configId != null)) {
             thread.setAiConfigId(resolvedConfigId);
+            updateThreadConfig(session, thread, resolvedChannel);
         }
         // 异步预热：确保 basicInfo、OS 平台、环境变量缓存就绪
         sessionWarmupService.warmupAsync(session.getSessionId());
@@ -974,6 +980,14 @@ public class PuppetNodeAiThreadService {
     private AiModelConfig resolveOptionalChannel(Integer configId) {
         if (configId == null) return null;
         return resolveChannel(configId);
+    }
+
+    private void applyThreadModel(AiThread thread) {
+        AiModelConfig config = resolveChannel(thread != null ? thread.getAiConfigId() : null);
+        dynamicModelProvider.refreshFromConfig(config);
+        if (thread != null) {
+            thread.setAiConfigId(config.getId());
+        }
     }
 
     private String validateConfigId(Integer configId) {

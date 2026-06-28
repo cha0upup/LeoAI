@@ -41,7 +41,11 @@ public class LoginInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        if (handlerMethod.getBean() instanceof UserController) {
+        boolean aiModelWrite = request.getRequestURI().startsWith(request.getContextPath() + "/platform/admin/ai-models")
+                && !"GET".equalsIgnoreCase(request.getMethod());
+        boolean aiProviderWrite = request.getRequestURI().startsWith(request.getContextPath() + "/platform/admin/ai-providers")
+                && !"GET".equalsIgnoreCase(request.getMethod());
+        if (handlerMethod.getBean() instanceof UserController || aiModelWrite || aiProviderWrite) {
             if (!PermissionPolicy.isAdmin(user)) {
                 writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, ApiResponse.unauthorized("管理员权限不足"));
                 return false;

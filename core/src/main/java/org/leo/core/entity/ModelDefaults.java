@@ -5,9 +5,8 @@ import java.util.Locale;
 /**
  * 模型级默认推断。按 model name 推断"该模型默认是否启用 reasoning"。
  *
- * <p>OpenAI Chat Completions 兼容：reasoning 能力按厂家事实标准产出在
- * {@code delta.reasoning_content} 字段中。用户在 {@link AiModelConfig}
- * 上的显式配置始终优先于这里的推断。
+ * <p>OpenAI Responses API：reasoning 能力按模型能力和配置启用。用户在
+ * {@link AiModelConfig} 上的显式配置始终优先于这里的推断。
  */
 public final class ModelDefaults {
 

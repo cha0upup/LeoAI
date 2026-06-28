@@ -5,12 +5,15 @@ import dev.langchain4j.service.TokenStream;
 import jakarta.servlet.http.HttpSession;
 import org.leo.ai.agent.PlatformAgent;
 import org.leo.ai.audit.AiAuditLogStore;
+import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
 import com.alibaba.fastjson.JSON;
 import org.leo.core.entity.AiChatAuditEntry;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiSseEvent;
@@ -51,15 +54,21 @@ public class PlatformAiService {
             });
 
     private final PlatformAgent platformAgent;
+    private final AiModelConfigService modelConfigService;
+    private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
 
     public PlatformAiService(PlatformAgent platformAgent,
+                             AiModelConfigService modelConfigService,
+                             DynamicModelProvider dynamicModelProvider,
                              AiErrorClassifier aiErrorClassifier,
                              AiAuditLogStore auditLogStore,
                              AiConversationStoreService conversationStore) {
         this.platformAgent = platformAgent;
+        this.modelConfigService = modelConfigService;
+        this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
         this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
@@ -73,6 +82,10 @@ public class PlatformAiService {
         PlatformAiState state = recreateState(httpSession);
         state.resetTurnCount();
         state.setMode(mode);
+        AiModelConfig config = resolveOptionalChannel(configId);
+        if (config != null) {
+            state.setAiConfigId(config.getId());
+        }
         // 确保线程记录持久化到 DB
         String threadId = state.getStateId();
         AiThreadRecord existing = conversationStore.findThread(threadId);
@@ -83,14 +96,19 @@ public class PlatformAiService {
                     threadId,
                     "平台 AI",
                     state.getCreatedAt(),
-                    null);
+                    config);
         }
         return new AgentInfoResponse(0);
     }
 
     public void switchChannel(HttpSession httpSession, User user, Integer configId) {
-        requireState(httpSession, "AI 会话不存在，请先调用 createAgent");
-        // LangChain4j 原生管理模型，switchChannel 仅更新配置标记
+        PlatformAiState state = requireState(httpSession, "AI 会话不存在，请先调用 createAgent");
+        if (state.isExecuting()) {
+            throw ApiException.badRequest("平台 AI 正在执行中，请等待完成或先停止后再切换通道");
+        }
+        AiModelConfig config = resolveOptionalChannel(configId);
+        state.setAiConfigId(config != null ? config.getId() : null);
+        conversationStore.updateConfig(state.getStateId(), config);
     }
 
     public Map<String, Object> switchMode(HttpSession httpSession, User user, String mode) {
@@ -140,6 +158,7 @@ public class PlatformAiService {
             state.touchLastActiveAt();
             conversationStore.appendMessage(state.getStateId(), "user", userMessage);
             String messageForAgent = withPersistedHistoryContext(state, guardedMessage);
+            applyThreadModel(state);
             runId = conversationStore.startRun(state.getStateId(), state.getAiConfigId(), messageForAgent, startMs);
             conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
             sendRecordedEvent(state, emitter, "status", PlatformAiState.STATUS_RUNNING);
@@ -300,6 +319,10 @@ public class PlatformAiService {
             item.put("messageCount", r.getMessageCount() != null ? r.getMessageCount() : 0);
             item.put("runStatus", r.getRunStatus());
             item.put("executing", false);
+            item.put("configId", r.getConfigId());
+            item.put("configName", r.getConfigName());
+            item.put("configProtocol", r.getConfigProtocol());
+            item.put("configModel", r.getConfigModel());
             return item;
         }).collect(Collectors.toList());
     }
@@ -311,6 +334,10 @@ public class PlatformAiService {
         String threadId = "platform-ai-" + UUID.randomUUID();
         PlatformAiState state = PlatformAiStateStore.create(threadId);
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
+        AiModelConfig config = resolveOptionalChannel(configId);
+        if (config != null) {
+            state.setAiConfigId(config.getId());
+        }
 
         String safeTitle = (title != null && !title.isBlank()) ? title : "新对话";
         conversationStore.createPlatformThread(
@@ -319,11 +346,12 @@ public class PlatformAiService {
                 threadId,
                 safeTitle,
                 state.getCreatedAt(),
-                null);
+                config);
 
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("threadId", threadId);
         info.put("title", safeTitle);
+        info.put("configId", state.getAiConfigId());
         return info;
     }
 
@@ -368,6 +396,8 @@ public class PlatformAiService {
         if (state == null) {
             state = PlatformAiStateStore.create(threadId);
         }
+        state.setAiConfigId(record.getConfigId());
+        state.setMode(record.getMode());
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
         return state;
     }
@@ -743,6 +773,34 @@ public class PlatformAiService {
             throw ApiException.notFound(message);
         }
         return state;
+    }
+
+    private AiModelConfig resolveChannel(Integer configId) {
+        try {
+            AiModelConfig config = modelConfigService.resolve(configId);
+            if (config == null) {
+                if (configId != null) {
+                    throw ApiException.notFound("AI 模型不存在或已删除，configId: " + configId);
+                }
+                throw ApiException.notFound("未配置激活的 AI 模型，请先在设置中添加并激活一条");
+            }
+            return config;
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            throw ApiException.notFound(e.getMessage());
+        }
+    }
+
+    private AiModelConfig resolveOptionalChannel(Integer configId) {
+        if (configId == null) return null;
+        return resolveChannel(configId);
+    }
+
+    private void applyThreadModel(PlatformAiState state) {
+        AiModelConfig config = resolveChannel(state != null ? state.getAiConfigId() : null);
+        dynamicModelProvider.refreshFromConfig(config);
+        if (state != null) {
+            state.setAiConfigId(config.getId());
+        }
     }
 
     private PlatformAiState recreateState(HttpSession httpSession) {

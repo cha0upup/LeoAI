@@ -32,6 +32,10 @@ public class AiErrorClassifier {
         String category;
         if (isThinkingPassbackError(lower)) {
             category = CATEGORY_THINKING_MODE;
+        } else if ((lower.contains("responses api") || lower.contains("/v1/responses"))
+                && (lower.contains("不支持") || lower.contains("unsupported")
+                || lower.contains("compatible") || lower.contains("兼容"))) {
+            category = CATEGORY_UNSUPPORTED_PARAMETER;
         } else if (lower.contains("chatcompletion$choice.message() is null")
                 || lower.contains("chatcompletionmessage.role()")
                 || (lower.contains("chatcompletion") && lower.contains("message() is null"))) {
@@ -44,6 +48,8 @@ public class AiErrorClassifier {
             category = CATEGORY_AUTH;
         } else if (lower.contains("model") && (lower.contains("not found") || lower.contains("does not exist")
                 || lower.contains("不存在") || lower.contains("not exist"))) {
+            category = CATEGORY_MODEL_NOT_FOUND;
+        } else if (lower.contains("modelnotfoundexception")) {
             category = CATEGORY_MODEL_NOT_FOUND;
         } else if (lower.contains("param incorrect") || lower.contains("unsupported")
                 || lower.contains("invalid request") || lower.contains("bad request")

@@ -78,6 +78,15 @@ public class PlatformAiController {
             AiControllerUtil.safeSendError(emitter, "AI 会话不存在，请先调用 createAgent");
             return emitter;
         }
+        Integer configId = body != null ? body.configId() : null;
+        if (configId != null) {
+            try {
+                platformAiService.switchChannel(request.getSession(), ControllerUtil.getCurrentUser(request), configId);
+            } catch (RuntimeException e) {
+                AiControllerUtil.safeSendError(emitter, "切换 AI 通道失败: " + e.getMessage());
+                return emitter;
+            }
+        }
         if (!state.claimExecution()) {
             AiControllerUtil.safeSendError(emitter, "当前平台 AI 正在执行中，请等待完成或先停止后再发送新消息");
             return emitter;

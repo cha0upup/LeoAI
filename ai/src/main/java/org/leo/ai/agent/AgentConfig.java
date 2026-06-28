@@ -3,9 +3,10 @@ package org.leo.ai.agent;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.TokenCountEstimator;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
+import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
@@ -181,38 +182,48 @@ public class AgentConfig {
     /**
      * 代理流式模型 Bean。Agent 绑定此代理，底层实例可热切换。
      * 启动时使用 fallback 配置构建初始实例；DynamicModelProvider @PostConstruct 会从 DB 覆盖。
-     * OpenAI 兼容协议：reasoning_content 通过 returnThinking(true) 启用，模型不支持时自动降级。
+     * OpenAI Responses API：reasoning summary 通过 reasoningSummary("auto") 启用。
      */
     @Bean
     public DelegatingStreamingChatModel delegatingStreamingChatModel() {
-        var builder = OpenAiStreamingChatModel.builder()
+        var builder = OpenAiResponsesStreamingChatModel.builder()
+                .httpClientBuilder(new JdkHttpClientBuilder()
+                        .connectTimeout(Duration.ofSeconds(15))
+                        .readTimeout(Duration.ofMinutes(5)))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(modelName)
                 .parallelToolCalls(true)
-                .timeout(Duration.ofMinutes(5))
-                .returnThinking(thinkingEnabled);
+                .store(false)
+                .strictTools(false);
+        if (thinkingEnabled) {
+            builder.reasoningSummary("auto");
+        }
         Integer configuredMaxTokens = parsePositiveInt(maxTokens);
         if (configuredMaxTokens != null) {
-            builder.maxTokens(configuredMaxTokens);
+            builder.maxOutputTokens(configuredMaxTokens);
         }
         return new DelegatingStreamingChatModel(builder.build());
     }
 
     /**
-     * 代理非流式模型 Bean。辅助服务（摘要、情报提取）注入此 Bean，永不开 reasoning。
+     * 代理非流式模型 Bean。辅助服务（摘要、情报提取）注入此 Bean。
      */
     @Bean
     public DelegatingChatModel delegatingChatModel() {
-        var builder = OpenAiChatModel.builder()
+        var builder = OpenAiResponsesChatModel.builder()
+                .httpClientBuilder(new JdkHttpClientBuilder()
+                        .connectTimeout(Duration.ofSeconds(15))
+                        .readTimeout(Duration.ofMinutes(2)))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(modelName)
                 .parallelToolCalls(true)
-                .timeout(Duration.ofMinutes(2));
+                .store(false)
+                .strictTools(false);
         Integer configuredMaxTokens = parsePositiveInt(maxTokens);
         if (configuredMaxTokens != null) {
-            builder.maxTokens(configuredMaxTokens);
+            builder.maxOutputTokens(configuredMaxTokens);
         }
         return new DelegatingChatModel(builder.build());
     }

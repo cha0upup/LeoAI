@@ -59,6 +59,8 @@ public class DatabaseInitializer implements CommandLineRunner {
         addColumnIfMissing("ai_threads", "mode", "VARCHAR(16) NOT NULL DEFAULT 'auto'");
         addColumnIfMissing("ai_threads", "context_summary", "TEXT");
         addColumnIfMissing("ai_threads", "root_plan_id", "VARCHAR(64)");
+        ensureAiProviderTable();
+        ensureAiModelConfigColumns();
         normalizeAiModelConfigOptionalDefaults();
     }
 
@@ -86,6 +88,24 @@ public class DatabaseInitializer implements CommandLineRunner {
             }
         } catch (SQLException e) {
             System.err.println("迁移失败: normalize ai_model_configs optional defaults — " + e.getMessage());
+        }
+    }
+
+    private void ensureAiModelConfigColumns() {
+        addColumnIfMissing("ai_model_configs", "provider_id", "INTEGER");
+        addColumnIfMissing("ai_model_configs", "provider_key", "VARCHAR(64) NOT NULL DEFAULT 'custom'");
+        addColumnIfMissing("ai_model_configs", "provider_name", "VARCHAR(100)");
+        addColumnIfMissing("ai_model_configs", "enabled", "INTEGER NOT NULL DEFAULT 1");
+        addColumnIfMissing("ai_model_configs", "reasoning_effort", "VARCHAR(16)");
+        addColumnIfMissing("ai_model_configs", "temperature", "REAL");
+        addColumnIfMissing("ai_model_configs", "headers_json", "TEXT");
+    }
+
+    private void ensureAiProviderTable() {
+        try (Connection conn = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/ai_model_schema.sql"));
+        } catch (Exception e) {
+            System.err.println("迁移失败: ensure ai_providers — " + e.getMessage());
         }
     }
 
