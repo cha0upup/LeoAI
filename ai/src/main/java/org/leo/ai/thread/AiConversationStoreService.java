@@ -1,6 +1,7 @@
 package org.leo.ai.thread;
 
 import com.alibaba.fastjson.JSON;
+import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
@@ -260,7 +261,7 @@ public class AiConversationStoreService {
         }
         row.setConfigId(config.getId());
         row.setConfigName(config.getName());
-        row.setConfigProtocol("openai");
+        row.setConfigProtocol(DynamicModelProvider.resolveProtocol(config));
         row.setConfigModel(config.getModel());
         row.setConfigBaseUrl(config.getBaseUrl());
         row.setConfigCompletionsPath(config.getCompletionsPath());

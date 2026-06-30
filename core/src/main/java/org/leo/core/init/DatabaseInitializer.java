@@ -61,6 +61,8 @@ public class DatabaseInitializer implements CommandLineRunner {
         addColumnIfMissing("ai_threads", "root_plan_id", "VARCHAR(64)");
         ensureAiProviderTable();
         ensureAiModelConfigColumns();
+        ensureAiProviderColumns();
+        backfillAiProtocolColumns();
         normalizeAiModelConfigOptionalDefaults();
     }
 
@@ -96,9 +98,38 @@ public class DatabaseInitializer implements CommandLineRunner {
         addColumnIfMissing("ai_model_configs", "provider_key", "VARCHAR(64) NOT NULL DEFAULT 'custom'");
         addColumnIfMissing("ai_model_configs", "provider_name", "VARCHAR(100)");
         addColumnIfMissing("ai_model_configs", "enabled", "INTEGER NOT NULL DEFAULT 1");
+        addColumnIfMissing("ai_model_configs", "protocol", "VARCHAR(32) NOT NULL DEFAULT 'chat_completions'");
         addColumnIfMissing("ai_model_configs", "reasoning_effort", "VARCHAR(16)");
         addColumnIfMissing("ai_model_configs", "temperature", "REAL");
         addColumnIfMissing("ai_model_configs", "headers_json", "TEXT");
+    }
+
+    private void ensureAiProviderColumns() {
+        addColumnIfMissing("ai_providers", "protocol", "VARCHAR(32) NOT NULL DEFAULT 'chat_completions'");
+    }
+
+    private void backfillAiProtocolColumns() {
+        try (Connection conn = dataSource.getConnection()) {
+            if (tableExists(conn, "ai_providers")) {
+                backfillProtocol(conn, "ai_providers");
+            }
+            if (tableExists(conn, "ai_model_configs")) {
+                backfillProtocol(conn, "ai_model_configs");
+            }
+        } catch (SQLException e) {
+            System.err.println("迁移失败: backfill ai protocol columns — " + e.getMessage());
+        }
+    }
+
+    private void backfillProtocol(Connection conn, String table) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("UPDATE " + table + " "
+                    + "SET protocol = 'responses' "
+                    + "WHERE lower(coalesce(completions_path, '')) LIKE '%/responses%'");
+            st.executeUpdate("UPDATE " + table + " "
+                    + "SET protocol = 'chat_completions' "
+                    + "WHERE protocol IS NULL OR trim(protocol) = ''");
+        }
     }
 
     private void ensureAiProviderTable() {

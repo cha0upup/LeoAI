@@ -8,6 +8,7 @@ public class AiProvider {
     private String providerKey;
     private String baseUrl;
     private String apiKey;
+    private String protocol;
     private String completionsPath;
     private String headersJson;
     private Integer enabled;
@@ -30,6 +31,9 @@ public class AiProvider {
 
     public String getApiKey() { return apiKey; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+
+    public String getProtocol() { return protocol; }
+    public void setProtocol(String protocol) { this.protocol = protocol; }
 
     public String getCompletionsPath() { return completionsPath; }
     public void setCompletionsPath(String completionsPath) { this.completionsPath = completionsPath; }

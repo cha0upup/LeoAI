@@ -5,15 +5,19 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.TokenCountEstimator;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
+import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.AutoReconAppendService;
 import org.leo.ai.service.SkillRegistryService;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.ai.tools.platform.*;
 import org.leo.ai.tools.puppetnode.*;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -70,6 +74,12 @@ public class AgentConfig {
 
     @Value("${leo.ai.openai.base-url:https://api.openai.com/v1}")
     private String baseUrl;
+
+    @Value("${leo.ai.openai.protocol:}")
+    private String protocol;
+
+    @Value("${leo.ai.openai.completions-path:}")
+    private String completionsPath;
 
     @Value("${leo.ai.openai.thinking-enabled:false}")
     private boolean thinkingEnabled;
@@ -186,12 +196,26 @@ public class AgentConfig {
      */
     @Bean
     public DelegatingStreamingChatModel delegatingStreamingChatModel() {
+        AiModelConfig fallback = fallbackConfig();
+        if (!DynamicModelProvider.useResponsesApi(fallback)) {
+            var builder = OpenAiStreamingChatModel.builder()
+                    .apiKey(apiKey)
+                    .baseUrl(DynamicModelProvider.resolveChatCompletionsBaseUrl(fallback))
+                    .modelName(modelName)
+                    .parallelToolCalls(true)
+                    .timeout(Duration.ofMinutes(5));
+            Integer configuredMaxTokens = parsePositiveInt(maxTokens);
+            if (configuredMaxTokens != null) {
+                builder.maxTokens(configuredMaxTokens);
+            }
+            return new DelegatingStreamingChatModel(builder.build());
+        }
         var builder = OpenAiResponsesStreamingChatModel.builder()
                 .httpClientBuilder(new JdkHttpClientBuilder()
                         .connectTimeout(Duration.ofSeconds(15))
                         .readTimeout(Duration.ofMinutes(5)))
                 .apiKey(apiKey)
-                .baseUrl(baseUrl)
+                .baseUrl(DynamicModelProvider.resolveResponsesBaseUrl(fallback))
                 .modelName(modelName)
                 .parallelToolCalls(true)
                 .store(false)
@@ -211,12 +235,26 @@ public class AgentConfig {
      */
     @Bean
     public DelegatingChatModel delegatingChatModel() {
+        AiModelConfig fallback = fallbackConfig();
+        if (!DynamicModelProvider.useResponsesApi(fallback)) {
+            var builder = OpenAiChatModel.builder()
+                    .apiKey(apiKey)
+                    .baseUrl(DynamicModelProvider.resolveChatCompletionsBaseUrl(fallback))
+                    .modelName(modelName)
+                    .parallelToolCalls(true)
+                    .timeout(Duration.ofMinutes(2));
+            Integer configuredMaxTokens = parsePositiveInt(maxTokens);
+            if (configuredMaxTokens != null) {
+                builder.maxTokens(configuredMaxTokens);
+            }
+            return new DelegatingChatModel(builder.build());
+        }
         var builder = OpenAiResponsesChatModel.builder()
                 .httpClientBuilder(new JdkHttpClientBuilder()
                         .connectTimeout(Duration.ofSeconds(15))
                         .readTimeout(Duration.ofMinutes(2)))
                 .apiKey(apiKey)
-                .baseUrl(baseUrl)
+                .baseUrl(DynamicModelProvider.resolveResponsesBaseUrl(fallback))
                 .modelName(modelName)
                 .parallelToolCalls(true)
                 .store(false)
@@ -226,6 +264,19 @@ public class AgentConfig {
             builder.maxOutputTokens(configuredMaxTokens);
         }
         return new DelegatingChatModel(builder.build());
+    }
+
+    private AiModelConfig fallbackConfig() {
+        AiModelConfig config = new AiModelConfig();
+        config.setApiKey(apiKey);
+        config.setBaseUrl(baseUrl);
+        config.setModel(modelName);
+        config.setProtocol(DynamicModelProvider.normalizeProtocol(protocol));
+        config.setCompletionsPath(completionsPath);
+        if (config.getProtocol() == null) {
+            config.setProtocol(DynamicModelProvider.resolveProtocol(config));
+        }
+        return config;
     }
 
     private static Integer parsePositiveInt(String value) {

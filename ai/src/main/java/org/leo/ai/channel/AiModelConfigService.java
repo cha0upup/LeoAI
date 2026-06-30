@@ -205,6 +205,9 @@ public class AiModelConfigService {
             existing.setApiKey(patch.getApiKey());
         }
         if (!isBlank(patch.getModel())) existing.setModel(patch.getModel().trim());
+        if (!isBlank(patch.getProtocol())) {
+            existing.setProtocol(patch.getProtocol().trim());
+        }
         if (!isBlank(patch.getCompletionsPath())) {
             existing.setCompletionsPath(patch.getCompletionsPath().trim());
         }
@@ -336,8 +339,10 @@ public class AiModelConfigService {
         row.setModel(row.getModel().trim());
         if (row.getEnabled() == null) row.setEnabled(1);
         row.setEnabled(Integer.valueOf(1).equals(row.getEnabled()) ? 1 : 0);
+        row.setProtocol(resolveProtocol(row.getProtocol(), row.getCompletionsPath(),
+                row.getProviderKey(), row.getBaseUrl()));
         if (isBlank(row.getCompletionsPath())) {
-            row.setCompletionsPath("/v1/responses");
+            row.setCompletionsPath(DynamicModelProvider.defaultPathForProtocol(row.getProtocol()));
         } else {
             row.setCompletionsPath(row.getCompletionsPath().trim());
         }
@@ -363,6 +368,7 @@ public class AiModelConfigService {
         row.setProviderName(provider.getName());
         row.setBaseUrl(provider.getBaseUrl());
         row.setApiKey(provider.getApiKey());
+        row.setProtocol(provider.getProtocol());
         row.setCompletionsPath(provider.getCompletionsPath());
         row.setHeadersJson(provider.getHeadersJson());
         if (!Integer.valueOf(1).equals(provider.getEnabled())) {
@@ -392,6 +398,7 @@ public class AiModelConfigService {
         snapshot.setProviderName(provider.getName());
         snapshot.setApiKey(provider.getApiKey());
         snapshot.setBaseUrl(provider.getBaseUrl());
+        snapshot.setProtocol(provider.getProtocol());
         snapshot.setCompletionsPath(provider.getCompletionsPath());
         snapshot.setHeadersJson(provider.getHeadersJson());
         snapshot.setUpdateTime(nowSqlite());
@@ -412,6 +419,7 @@ public class AiModelConfigService {
             if (!isBlank(patch.getProviderKey())) target.setProviderKey(patch.getProviderKey().trim());
             if (patch.getApiKey() != null && !patch.getApiKey().isEmpty()) target.setApiKey(patch.getApiKey());
             if (!isBlank(patch.getBaseUrl())) target.setBaseUrl(patch.getBaseUrl().trim());
+            if (!isBlank(patch.getProtocol())) target.setProtocol(patch.getProtocol().trim());
             if (!isBlank(patch.getCompletionsPath())) target.setCompletionsPath(patch.getCompletionsPath().trim());
             if (patch.getHeadersJson() != null) target.setHeadersJson(blankToNull(patch.getHeadersJson()));
             if (patch.getEnabled() != null) target.setEnabled(Integer.valueOf(1).equals(patch.getEnabled()) ? 1 : 0);
@@ -420,11 +428,26 @@ public class AiModelConfigService {
             target.setName(target.getName().trim());
             target.setProviderKey(isBlank(target.getProviderKey()) ? "custom" : target.getProviderKey().trim());
             target.setBaseUrl(target.getBaseUrl().trim());
-            target.setCompletionsPath(isBlank(target.getCompletionsPath())
-                    ? "/v1/responses" : target.getCompletionsPath().trim());
             target.setHeadersJson(blankToNull(target.getHeadersJson()));
             target.setEnabled(target.getEnabled() == null || Integer.valueOf(1).equals(target.getEnabled()) ? 1 : 0);
         }
+        target.setProtocol(resolveProtocol(target.getProtocol(), target.getCompletionsPath(),
+                target.getProviderKey(), target.getBaseUrl()));
+        target.setCompletionsPath(isBlank(target.getCompletionsPath())
+                ? DynamicModelProvider.defaultPathForProtocol(target.getProtocol())
+                : target.getCompletionsPath().trim());
+    }
+
+    private static String resolveProtocol(String protocol, String completionsPath, String providerKey, String baseUrl) {
+        String normalized = DynamicModelProvider.normalizeProtocol(protocol);
+        if (normalized != null) {
+            return normalized;
+        }
+        AiModelConfig probe = new AiModelConfig();
+        probe.setCompletionsPath(completionsPath);
+        probe.setProviderKey(providerKey);
+        probe.setBaseUrl(baseUrl);
+        return DynamicModelProvider.resolveProtocol(probe);
     }
 
     private static Integer normalizeTriStateFlag(Integer v) {

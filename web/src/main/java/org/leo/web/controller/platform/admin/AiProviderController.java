@@ -74,6 +74,7 @@ public class AiProviderController {
         m.put("name", p.getName());
         m.put("providerKey", p.getProviderKey());
         m.put("baseUrl", p.getBaseUrl());
+        m.put("protocol", p.getProtocol());
         m.put("completionsPath", p.getCompletionsPath());
         m.put("headersJson", p.getHeadersJson());
         m.put("enabled", p.getEnabled());

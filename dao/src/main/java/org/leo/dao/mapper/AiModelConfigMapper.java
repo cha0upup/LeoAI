@@ -30,11 +30,11 @@ public interface AiModelConfigMapper {
     int countAll();
 
     @Insert("INSERT INTO ai_model_configs (provider_id, name, provider_key, provider_name, api_key, base_url, "
-            + "model, completions_path, is_active, enabled, max_output_tokens, thinking_enabled, "
+            + "model, protocol, completions_path, is_active, enabled, max_output_tokens, thinking_enabled, "
             + "reasoning_effort, context_window_tokens, temperature, headers_json, "
             + "create_time, update_time, remark) "
             + "VALUES (#{providerId}, #{name}, #{providerKey}, #{providerName}, #{apiKey}, #{baseUrl}, "
-            + "#{model}, #{completionsPath}, #{isActive}, #{enabled}, #{maxOutputTokens}, "
+            + "#{model}, #{protocol}, #{completionsPath}, #{isActive}, #{enabled}, #{maxOutputTokens}, "
             + "#{thinkingEnabled}, #{reasoningEffort}, #{contextWindowTokens}, #{temperature}, "
             + "#{headersJson}, #{createTime}, #{updateTime}, #{remark})")
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
@@ -42,7 +42,7 @@ public interface AiModelConfigMapper {
 
     @Update("UPDATE ai_model_configs SET provider_id=#{providerId}, name=#{name}, provider_key=#{providerKey}, "
             + "provider_name=#{providerName}, api_key=#{apiKey}, base_url=#{baseUrl}, "
-            + "model=#{model}, completions_path=#{completionsPath}, is_active=#{isActive}, "
+            + "model=#{model}, protocol=#{protocol}, completions_path=#{completionsPath}, is_active=#{isActive}, "
             + "enabled=#{enabled}, max_output_tokens=#{maxOutputTokens}, "
             + "thinking_enabled=#{thinkingEnabled}, reasoning_effort=#{reasoningEffort}, "
             + "context_window_tokens=#{contextWindowTokens}, temperature=#{temperature}, "
@@ -50,7 +50,7 @@ public interface AiModelConfigMapper {
     int update(AiModelConfig row);
 
     @Update("UPDATE ai_model_configs SET provider_key=#{providerKey}, provider_name=#{providerName}, "
-            + "api_key=#{apiKey}, base_url=#{baseUrl}, completions_path=#{completionsPath}, "
+            + "api_key=#{apiKey}, base_url=#{baseUrl}, protocol=#{protocol}, completions_path=#{completionsPath}, "
             + "headers_json=#{headersJson}, update_time=#{updateTime} WHERE provider_id=#{providerId}")
     int updateProviderSnapshot(AiModelConfig row);
 

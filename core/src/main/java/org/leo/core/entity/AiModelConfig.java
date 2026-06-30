@@ -19,6 +19,7 @@ public class AiModelConfig {
     private String baseUrl;
     private String apiKey;
     private String model;
+    private String protocol;
     private String completionsPath;
     private Integer isActive;
     private Integer enabled;
@@ -55,6 +56,9 @@ public class AiModelConfig {
 
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
+
+    public String getProtocol() { return protocol; }
+    public void setProtocol(String protocol) { this.protocol = protocol; }
 
     public String getCompletionsPath() { return completionsPath; }
     public void setCompletionsPath(String completionsPath) { this.completionsPath = completionsPath; }

@@ -125,8 +125,10 @@ public class AiModelConfigController {
             return ApiResponse.notFound("模型配置不存在，id: " + id);
         }
         long start = System.currentTimeMillis();
+        String protocol = DynamicModelProvider.resolveProtocol(config);
+        String effectiveBaseUrl = DynamicModelProvider.resolveEffectiveBaseUrl(config);
         try {
-            boolean responsesApi = DynamicModelProvider.useResponsesApi(config);
+            boolean responsesApi = DynamicModelProvider.PROTOCOL_RESPONSES.equals(protocol);
             ChatResponse response = responsesApi
                     ? testResponsesConnection(config)
                     : testChatCompletionsConnection(config);
@@ -137,7 +139,9 @@ public class AiModelConfigController {
             result.put("success", true);
             result.put("latencyMs", latency);
             result.put("model", config.getModel());
-            result.put("protocol", responsesApi ? "responses" : "chat_completions");
+            result.put("providerKey", config.getProviderKey());
+            result.put("protocol", protocol);
+            result.put("effectiveBaseUrl", effectiveBaseUrl);
             result.put("responsePreview", text != null && text.length() > 100
                     ? text.substring(0, 100) + "..." : text);
             return ApiResponse.success(result);
@@ -148,6 +152,9 @@ public class AiModelConfigController {
             result.put("success", false);
             result.put("latencyMs", latency);
             result.put("model", config.getModel());
+            result.put("providerKey", config.getProviderKey());
+            result.put("protocol", protocol);
+            result.put("effectiveBaseUrl", effectiveBaseUrl);
             result.put("category", classification.category());
             result.put("message", classification.message());
             return ApiResponse.success(result);
@@ -199,22 +206,30 @@ public class AiModelConfigController {
     public HashMap<String, Object> providers() {
         List<Map<String, Object>> list = new ArrayList<>();
         list.add(provider("OpenAI (Responses API)", "openai", "https://api.openai.com/v1",
+                DynamicModelProvider.PROTOCOL_RESPONSES,
                 Arrays.asList("gpt-4.1", "gpt-4.1-mini", "gpt-4o", "o3", "o4-mini")));
         list.add(provider("DeepSeek", "deepseek", "https://api.deepseek.com",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash")));
         list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("qwen-max", "qwen-plus", "qwen-turbo", "qwq-plus", "qwen3-235b-a22b")));
         list.add(provider("Moonshot (Kimi)", "moonshot", "https://api.moonshot.cn",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k")));
         list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("glm-4", "glm-4-air", "glm-4-flash", "glm-z1-flash")));
         list.add(provider("Gemini (OpenAI compat)", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash")));
         list.add(provider("OpenRouter", "openrouter", "https://openrouter.ai/api",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("openai/gpt-4o", "anthropic/claude-opus-4-5", "deepseek/deepseek-r1")));
         list.add(provider("Ollama (本地)", "ollama", "http://localhost:11434",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
                 Arrays.asList("llama3.3", "qwen3", "deepseek-r1")));
-        list.add(provider("自定义", "custom", "", new ArrayList<>()));
+        list.add(provider("自定义", "custom", "", DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, new ArrayList<>()));
         return ApiResponse.success(list);
     }
 
@@ -226,11 +241,14 @@ public class AiModelConfigController {
         return ApiResponse.success(view);
     }
 
-    private static Map<String, Object> provider(String label, String key, String baseUrl, List<String> models) {
+    private static Map<String, Object> provider(String label, String key, String baseUrl,
+                                                String protocol, List<String> models) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("label", label);
         m.put("key", key);
         m.put("baseUrl", baseUrl);
+        m.put("protocol", protocol);
+        m.put("completionsPath", DynamicModelProvider.defaultPathForProtocol(protocol));
         m.put("popularModels", models);
         return m;
     }
@@ -385,6 +403,7 @@ public class AiModelConfigController {
         m.put("providerName", c.getProviderName());
         m.put("baseUrl", c.getBaseUrl());
         m.put("model", c.getModel());
+        m.put("protocol", DynamicModelProvider.resolveProtocol(c));
         m.put("completionsPath", c.getCompletionsPath());
         m.put("isActive", c.getIsActive());
         m.put("isDefault", c.getIsActive());

@@ -33,6 +33,11 @@ public class DynamicModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicModelProvider.class);
 
+    public static final String PROTOCOL_RESPONSES = "responses";
+    public static final String PROTOCOL_CHAT_COMPLETIONS = "chat_completions";
+    public static final String RESPONSES_PATH = "/responses";
+    public static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+
     private static final Duration STREAMING_TIMEOUT = Duration.ofMinutes(5);
     private static final Duration BLOCKING_TIMEOUT = Duration.ofMinutes(2);
 
@@ -51,6 +56,12 @@ public class DynamicModelProvider {
 
     @Value("${leo.ai.openai.base-url:https://api.openai.com}")
     private String fallbackBaseUrl;
+
+    @Value("${leo.ai.openai.protocol:}")
+    private String fallbackProtocol;
+
+    @Value("${leo.ai.openai.completions-path:}")
+    private String fallbackCompletionsPath;
 
     public DynamicModelProvider(AiModelConfigService configService,
                                 DelegatingStreamingChatModel streamingModel,
@@ -89,6 +100,8 @@ public class DynamicModelProvider {
                 fallback.setApiKey(fallbackApiKey);
                 fallback.setBaseUrl(fallbackBaseUrl);
                 fallback.setModel(fallbackModelName);
+                fallback.setProtocol(normalizeProtocol(fallbackProtocol));
+                fallback.setCompletionsPath(fallbackCompletionsPath);
                 fallback.setThinkingEnabled(fallbackThinkingEnabled ? 1 : 0);
                 refreshFromConfig(fallback);
                 return;
@@ -116,7 +129,7 @@ public class DynamicModelProvider {
                 ? buildResponsesBlocking(apiKey, baseUrl, plan)
                 : buildChatBlocking(apiKey, baseUrl, plan));
         log.info("模型已切换 — protocol={}, model={}, maxTokens={}, reasoning={}",
-                responsesApi ? "responses" : "chat-completions",
+                resolveProtocol(config),
                 plan.modelName, plan.maxTokens, plan.doReasoning);
     }
 
@@ -323,21 +336,52 @@ public class DynamicModelProvider {
     }
 
     public static boolean useResponsesApi(AiModelConfig config) {
-        if (config == null) return false;
+        return PROTOCOL_RESPONSES.equals(resolveProtocol(config));
+    }
+
+    public static String resolveProtocol(AiModelConfig config) {
+        if (config == null) return PROTOCOL_CHAT_COMPLETIONS;
+        String protocol = normalizeProtocol(config.getProtocol());
+        if (protocol != null) {
+            return protocol;
+        }
         String path = config.getCompletionsPath();
         if (path != null && path.toLowerCase().contains("/responses")) {
-            return true;
+            return PROTOCOL_RESPONSES;
         }
-        String key = config.getProviderKey();
-        String baseUrl = config.getBaseUrl();
-        if (key != null && "openai".equalsIgnoreCase(key.trim())) {
-            return true;
+        if (path != null && path.toLowerCase().contains("/chat/completions")) {
+            return PROTOCOL_CHAT_COMPLETIONS;
         }
-        if (baseUrl == null || baseUrl.isBlank()) {
-            return false;
+        return inferDefaultProtocol(config.getProviderKey(), config.getBaseUrl());
+    }
+
+    public static String normalizeProtocol(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim().toLowerCase().replace('-', '_');
+        if ("responses".equals(normalized) || "response".equals(normalized)) {
+            return PROTOCOL_RESPONSES;
         }
-        String normalized = baseUrl.toLowerCase();
-        return normalized.contains("api.openai.com");
+        if ("chat_completions".equals(normalized) || "chat_completion".equals(normalized)
+                || "openai_compatible".equals(normalized) || "compatible".equals(normalized)) {
+            return PROTOCOL_CHAT_COMPLETIONS;
+        }
+        return null;
+    }
+
+    public static String inferDefaultProtocol(String providerKey, String baseUrl) {
+        if (providerKey != null && "openai".equalsIgnoreCase(providerKey.trim())) {
+            return PROTOCOL_RESPONSES;
+        }
+        if (baseUrl != null && baseUrl.toLowerCase().contains("api.openai.com")) {
+            return PROTOCOL_RESPONSES;
+        }
+        return PROTOCOL_CHAT_COMPLETIONS;
+    }
+
+    public static String defaultPathForProtocol(String protocol) {
+        return PROTOCOL_RESPONSES.equals(normalizeProtocol(protocol))
+                ? RESPONSES_PATH
+                : CHAT_COMPLETIONS_PATH;
     }
 
     private record ModelPlan(String modelName,

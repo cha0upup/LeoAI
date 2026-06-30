@@ -23,15 +23,15 @@ public interface AiProviderMapper {
     @Select("SELECT COUNT(*) FROM ai_model_configs WHERE provider_id = #{providerId}")
     int countModels(@Param("providerId") Integer providerId);
 
-    @Insert("INSERT INTO ai_providers (name, provider_key, api_key, base_url, completions_path, "
+    @Insert("INSERT INTO ai_providers (name, provider_key, api_key, base_url, protocol, completions_path, "
             + "headers_json, enabled, create_time, update_time, remark) "
-            + "VALUES (#{name}, #{providerKey}, #{apiKey}, #{baseUrl}, #{completionsPath}, "
+            + "VALUES (#{name}, #{providerKey}, #{apiKey}, #{baseUrl}, #{protocol}, #{completionsPath}, "
             + "#{headersJson}, #{enabled}, #{createTime}, #{updateTime}, #{remark})")
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
     int insert(AiProvider row);
 
     @Update("UPDATE ai_providers SET name=#{name}, provider_key=#{providerKey}, api_key=#{apiKey}, "
-            + "base_url=#{baseUrl}, completions_path=#{completionsPath}, headers_json=#{headersJson}, "
+            + "base_url=#{baseUrl}, protocol=#{protocol}, completions_path=#{completionsPath}, headers_json=#{headersJson}, "
             + "enabled=#{enabled}, update_time=#{updateTime}, remark=#{remark} WHERE id=#{id}")
     int update(AiProvider row);
 
