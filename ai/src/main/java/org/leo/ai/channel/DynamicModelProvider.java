@@ -14,12 +14,14 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 动态模型提供者：从 {@link AiModelConfigService#getActive()} 读取激活配置，
@@ -29,6 +31,7 @@ import java.util.Map;
  * 外部调用 {@link #refresh()} 可热切换底层模型。
  */
 @Component
+@DependsOn("aiModelCapabilitySchemaMigrator")
 public class DynamicModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicModelProvider.class);
@@ -114,33 +117,154 @@ public class DynamicModelProvider {
 
     /** 根据指定配置重建模型。 */
     public void refreshFromConfig(AiModelConfig config) {
+        ModelRuntime runtime;
+        try {
+            runtime = buildRuntime(config);
+        } catch (IllegalArgumentException e) {
+            log.warn("模型配置 (id={}) 不可用，跳过模型切换: {}", config.getId(), e.getMessage());
+            return;
+        }
+        streamingModel.setDelegate(runtime.streamingModel());
+        chatModel.setDelegate(runtime.chatModel());
+        log.info("模型已切换 — protocol={}, model={}, maxTokens={}, reasoning={}",
+                runtime.protocol(), runtime.modelName(), runtime.maxTokens(), runtime.doReasoning());
+    }
+
+    public ModelRuntime buildRuntime(AiModelConfig config) {
         String apiKey = config.getApiKey();
         if (apiKey == null || apiKey.isEmpty()) {
-            log.warn("模型配置 (id={}) apiKey 为空，跳过模型切换", config.getId());
-            return;
+            throw new IllegalArgumentException("模型配置 apiKey 为空，id=" + config.getId());
         }
         boolean responsesApi = useResponsesApi(config);
         String baseUrl = responsesApi ? resolveResponsesBaseUrl(config) : resolveChatCompletionsBaseUrl(config);
         ModelPlan plan = plan(config);
-        streamingModel.setDelegate(responsesApi
+        StreamingChatModel streaming = responsesApi
                 ? buildResponsesStreaming(apiKey, baseUrl, plan)
-                : buildChatStreaming(apiKey, baseUrl, plan));
-        chatModel.setDelegate(responsesApi
+                : buildChatStreaming(apiKey, baseUrl, plan);
+        ChatModel blocking = responsesApi
                 ? buildResponsesBlocking(apiKey, baseUrl, plan)
-                : buildChatBlocking(apiKey, baseUrl, plan));
-        log.info("模型已切换 — protocol={}, model={}, maxTokens={}, reasoning={}",
+                : buildChatBlocking(apiKey, baseUrl, plan);
+        return new ModelRuntime(streaming, blocking, resolveProtocol(config),
+                config.getProviderKey(), baseUrl, plan.modelName, plan.maxTokens,
+                plan.doReasoning, plan.reasoningEffort,
+                plan.supportsFunctionCalling, plan.parallelToolCalls);
+    }
+
+    public static String runtimeCacheKey(AiModelConfig config) {
+        if (config == null) return "";
+        return Integer.toHexString(Objects.hash(
+                config.getId(),
+                config.getProviderId(),
+                config.getProviderKey(),
+                config.getBaseUrl(),
+                config.getApiKey(),
+                config.getModel(),
+                config.getProtocol(),
+                config.getCompletionsPath(),
+                config.getMaxOutputTokens(),
+                config.getThinkingEnabled(),
+                config.getReasoningEffort(),
+                config.getContextWindowTokens(),
+                config.getTemperature(),
+                config.getHeadersJson(),
+                config.getUpdateTime()));
+    }
+
+    public static String runtimeCacheKey(AiModelConfig config, ModelRuntime runtime) {
+        if (runtime == null) return runtimeCacheKey(config);
+        return runtimeCacheKey(config,
+                runtime.protocol(),
+                runtime.providerKey(),
+                runtime.effectiveBaseUrl(),
+                runtime.modelName(),
+                runtime.maxTokens(),
+                runtime.doReasoning(),
+                runtime.reasoningEffort(),
+                runtime.supportsFunctionCalling(),
+                runtime.parallelToolCalls());
+    }
+
+    public String plannedRuntimeCacheKey(AiModelConfig config) {
+        if (config == null) return "";
+        boolean responsesApi = useResponsesApi(config);
+        String baseUrl = responsesApi ? resolveResponsesBaseUrl(config) : resolveChatCompletionsBaseUrl(config);
+        ModelPlan plan = plan(config);
+        return runtimeCacheKey(config,
                 resolveProtocol(config),
-                plan.modelName, plan.maxTokens, plan.doReasoning);
+                config.getProviderKey(),
+                baseUrl,
+                plan.modelName,
+                plan.maxTokens,
+                plan.doReasoning,
+                plan.reasoningEffort,
+                plan.supportsFunctionCalling,
+                plan.parallelToolCalls);
+    }
+
+    private static String runtimeCacheKey(AiModelConfig config,
+                                          String protocol,
+                                          String providerKey,
+                                          String effectiveBaseUrl,
+                                          String modelName,
+                                          int maxTokens,
+                                          boolean doReasoning,
+                                          String reasoningEffort,
+                                          boolean supportsFunctionCalling,
+                                          boolean parallelToolCalls) {
+        return Integer.toHexString(Objects.hash(
+                runtimeCacheKey(config),
+                protocol,
+                providerKey,
+                effectiveBaseUrl,
+                modelName,
+                maxTokens,
+                doReasoning,
+                reasoningEffort,
+                supportsFunctionCalling,
+                parallelToolCalls));
+    }
+
+    public static String runtimeSnapshotJson(AiModelConfig config, ModelRuntime runtime) {
+        LinkedHashMap<String, Object> snapshot = new LinkedHashMap<>();
+        if (config != null) {
+            snapshot.put("configId", config.getId());
+            snapshot.put("configName", config.getName());
+            snapshot.put("providerId", config.getProviderId());
+            snapshot.put("providerName", config.getProviderName());
+            snapshot.put("thinkingEnabled", config.getThinkingEnabled());
+            snapshot.put("contextWindowTokens", config.getContextWindowTokens());
+            snapshot.put("temperature", config.getTemperature());
+            snapshot.put("cacheKey", runtimeCacheKey(config, runtime));
+        }
+        if (runtime != null) {
+            snapshot.put("providerKey", runtime.providerKey());
+            snapshot.put("model", runtime.modelName());
+            snapshot.put("protocol", runtime.protocol());
+            snapshot.put("effectiveBaseUrl", runtime.effectiveBaseUrl());
+            snapshot.put("maxOutputTokens", runtime.maxTokens());
+            snapshot.put("reasoning", runtime.doReasoning());
+            snapshot.put("reasoningEffort", runtime.reasoningEffort());
+            snapshot.put("supportsFunctionCalling", runtime.supportsFunctionCalling());
+            snapshot.put("parallelToolCalls", runtime.parallelToolCalls());
+        }
+        return JSON.toJSONString(snapshot);
     }
 
     // ── 计划构造 ──────────────────────────────────────────────────────────
 
     private ModelPlan plan(AiModelConfig config) {
         String modelName = config.getModel();
-        ProviderCapabilities caps = configService.capabilitiesForModel(modelName);
+        String providerKey = config.getProviderKey();
+        ProviderCapabilities caps = configService.capabilitiesForModel(providerKey, modelName);
+        if (!caps.supportsTextGeneration()) {
+            throw new IllegalArgumentException("模型不支持文本生成，不能用于对话调用: " + modelName);
+        }
+        if (!caps.supportsStreaming()) {
+            throw new IllegalArgumentException("模型不支持流式输出，不能用于当前对话通道: " + modelName);
+        }
 
         Boolean userIntent = toBoolean(config.getThinkingEnabled());
-        Boolean modelDefault = ModelDefaults.defaultThinkingEnabled(modelName);
+        Boolean modelDefault = ModelDefaults.defaultThinkingEnabled(providerKey, modelName);
         String reasoningEffort = config.getReasoningEffort();
         boolean wantsReasoning;
         if (userIntent != null) {
@@ -165,10 +289,21 @@ public class DynamicModelProvider {
                 : caps.maxOutputTokens();
         String effectiveReasoningEffort = doReasoning && reasoningEffort != null
                 && !reasoningEffort.isBlank() && !"auto".equalsIgnoreCase(reasoningEffort)
-                ? reasoningEffort.trim().toLowerCase()
+                ? normalizeReasoningEffortForModel(modelName, reasoningEffort)
                 : null;
+        Map<String, Object> customParameters = chatCustomParameters(config, doReasoning, userIntent);
+        boolean sendThinking = doReasoning && isDeepSeekLike(providerKey, modelName);
+        boolean parallelToolCalls = caps.supportsFunctionCalling()
+                && caps.supportsParallelToolCalls()
+                && !usesRepeatedToolCallId(providerKey, modelName);
+        boolean accumulateToolCallId = !usesRepeatedToolCallId(providerKey, modelName);
+        Double temperature = doReasoning && isDeepSeekLike(providerKey, modelName)
+                ? null
+                : config.getTemperature();
         return new ModelPlan(modelName, effectiveMaxTokens, doReasoning,
-                effectiveReasoningEffort, config.getTemperature(), parseHeaders(config.getHeadersJson()));
+                effectiveReasoningEffort, temperature, parseHeaders(config.getHeadersJson()),
+                customParameters, sendThinking, accumulateToolCallId,
+                caps.supportsFunctionCalling(), parallelToolCalls);
     }
 
     // ── SDK builder ─────────────────────────────────────────────────────
@@ -181,7 +316,7 @@ public class DynamicModelProvider {
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(plan.modelName)
-                .parallelToolCalls(true)
+                .parallelToolCalls(plan.parallelToolCalls)
                 .store(false)
                 .strictTools(false)
                 .maxOutputTokens(plan.maxTokens);
@@ -202,7 +337,7 @@ public class DynamicModelProvider {
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(plan.modelName)
-                .parallelToolCalls(true)
+                .parallelToolCalls(plan.parallelToolCalls)
                 .store(false)
                 .strictTools(false)
                 .maxOutputTokens(plan.maxTokens);
@@ -222,11 +357,14 @@ public class DynamicModelProvider {
                 .modelName(plan.modelName)
                 .maxTokens(plan.maxTokens)
                 .timeout(STREAMING_TIMEOUT)
-                .parallelToolCalls(true)
-                .returnThinking(plan.doReasoning);
+                .parallelToolCalls(plan.parallelToolCalls)
+                .returnThinking(plan.doReasoning)
+                .sendThinking(plan.sendThinking)
+                .accumulateToolCallId(plan.accumulateToolCallId);
         if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
         if (plan.temperature != null) builder.temperature(plan.temperature);
         if (!plan.customHeaders.isEmpty()) builder.customHeaders(plan.customHeaders);
+        if (!plan.customParameters.isEmpty()) builder.customParameters(plan.customParameters);
         return builder.build();
     }
 
@@ -237,11 +375,13 @@ public class DynamicModelProvider {
                 .modelName(plan.modelName)
                 .maxTokens(plan.maxTokens)
                 .timeout(BLOCKING_TIMEOUT)
-                .parallelToolCalls(true)
-                .returnThinking(plan.doReasoning);
+                .parallelToolCalls(plan.parallelToolCalls)
+                .returnThinking(plan.doReasoning)
+                .sendThinking(plan.sendThinking);
         if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
         if (plan.temperature != null) builder.temperature(plan.temperature);
         if (!plan.customHeaders.isEmpty()) builder.customHeaders(plan.customHeaders);
+        if (!plan.customParameters.isEmpty()) builder.customParameters(plan.customParameters);
         return builder.build();
     }
 
@@ -271,6 +411,54 @@ public class DynamicModelProvider {
             log.warn("自定义请求头 JSON 解析失败，将忽略该配置: {}", e.getMessage());
             return Map.of();
         }
+    }
+
+    private static String normalizeReasoningEffortForModel(String modelName, String reasoningEffort) {
+        String effort = reasoningEffort.trim().toLowerCase();
+        String model = modelName == null ? "" : modelName.toLowerCase();
+        if (model.contains("deepseek-v4")) {
+            return switch (effort) {
+                case "low", "medium" -> "high";
+                case "xhigh" -> "max";
+                default -> effort;
+            };
+        }
+        return effort;
+    }
+
+    private static Map<String, Object> chatCustomParameters(AiModelConfig config,
+                                                            boolean doReasoning,
+                                                            Boolean userIntent) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        if (usesDeepSeekThinkingBody(config.getProviderKey(), config.getModel())) {
+            if (doReasoning) {
+                params.put("thinking", Map.of("type", "enabled"));
+            } else if (Boolean.FALSE.equals(userIntent)) {
+                params.put("thinking", Map.of("type", "disabled"));
+            }
+        }
+        return params;
+    }
+
+    private static boolean usesDeepSeekThinkingBody(String providerKey, String modelName) {
+        String model = modelName == null ? "" : modelName.toLowerCase();
+        return model.contains("deepseek-v4");
+    }
+
+    private static boolean isDeepSeekLike(String providerKey, String modelName) {
+        String provider = providerKey == null ? "" : providerKey.toLowerCase();
+        String model = modelName == null ? "" : modelName.toLowerCase();
+        return provider.contains("deepseek") || model.contains("deepseek");
+    }
+
+    private static boolean usesRepeatedToolCallId(String providerKey, String modelName) {
+        String provider = providerKey == null ? "" : providerKey.toLowerCase();
+        String model = modelName == null ? "" : modelName.toLowerCase();
+        return provider.contains("deepseek")
+                || provider.contains("qwen")
+                || provider.contains("dashscope")
+                || model.contains("deepseek")
+                || model.contains("qwen");
     }
 
     /**
@@ -389,5 +577,22 @@ public class DynamicModelProvider {
                              boolean doReasoning,
                              String reasoningEffort,
                              Double temperature,
-                             Map<String, String> customHeaders) {}
+                             Map<String, String> customHeaders,
+                             Map<String, Object> customParameters,
+                             boolean sendThinking,
+                             boolean accumulateToolCallId,
+                             boolean supportsFunctionCalling,
+                             boolean parallelToolCalls) {}
+
+    public record ModelRuntime(StreamingChatModel streamingModel,
+                               ChatModel chatModel,
+                               String protocol,
+                               String providerKey,
+                               String effectiveBaseUrl,
+                               String modelName,
+                               int maxTokens,
+                               boolean doReasoning,
+                               String reasoningEffort,
+                               boolean supportsFunctionCalling,
+                               boolean parallelToolCalls) {}
 }

@@ -226,10 +226,18 @@ public class AiConversationStoreService {
     }
 
     public String startRun(AiThread thread, String input, long startedAt) {
-        return startRun(thread.getThreadId(), thread.getAiConfigId(), input, startedAt);
+        return startRun(thread.getThreadId(), thread.getAiConfigId(), input, startedAt, null);
+    }
+
+    public String startRun(AiThread thread, String input, long startedAt, String runtimeJson) {
+        return startRun(thread.getThreadId(), thread.getAiConfigId(), input, startedAt, runtimeJson);
     }
 
     public String startRun(String threadId, Integer configId, String input, long startedAt) {
+        return startRun(threadId, configId, input, startedAt, null);
+    }
+
+    public String startRun(String threadId, Integer configId, String input, long startedAt, String runtimeJson) {
         AiRunRecord row = new AiRunRecord();
         row.setRunId(UUID.randomUUID().toString());
         row.setThreadId(threadId);
@@ -237,6 +245,7 @@ public class AiConversationStoreService {
         row.setStartedAt(startedAt);
         row.setConfigId(configId);
         row.setInput(input);
+        row.setRuntimeJson(runtimeJson);
         mapper.insertRun(row);
         return row.getRunId();
     }

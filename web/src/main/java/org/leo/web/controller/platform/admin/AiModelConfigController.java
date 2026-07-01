@@ -1,11 +1,11 @@
 package org.leo.web.controller.platform.admin;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.service.AiErrorClassifier;
@@ -42,11 +42,14 @@ import java.util.Map;
 public class AiModelConfigController {
 
     private final AiModelConfigService configService;
+    private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
 
     public AiModelConfigController(AiModelConfigService configService,
+                                   DynamicModelProvider dynamicModelProvider,
                                    AiErrorClassifier aiErrorClassifier) {
         this.configService = configService;
+        this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
     }
 
@@ -128,10 +131,7 @@ public class AiModelConfigController {
         String protocol = DynamicModelProvider.resolveProtocol(config);
         String effectiveBaseUrl = DynamicModelProvider.resolveEffectiveBaseUrl(config);
         try {
-            boolean responsesApi = DynamicModelProvider.PROTOCOL_RESPONSES.equals(protocol);
-            ChatResponse response = responsesApi
-                    ? testResponsesConnection(config)
-                    : testChatCompletionsConnection(config);
+            ChatResponse response = testConnectionWithRuntime(config);
             long latency = System.currentTimeMillis() - start;
             String text = response != null && response.aiMessage() != null
                     ? response.aiMessage().text() : null;
@@ -161,40 +161,8 @@ public class AiModelConfigController {
         }
     }
 
-    private ChatResponse testResponsesConnection(AiModelConfig config) {
-        String effectiveBaseUrl = DynamicModelProvider.resolveResponsesBaseUrl(config);
-        var chatBuilder = OpenAiResponsesChatModel.builder()
-                .httpClientBuilder(new JdkHttpClientBuilder()
-                        .connectTimeout(java.time.Duration.ofSeconds(10))
-                        .readTimeout(java.time.Duration.ofSeconds(30)))
-                .apiKey(config.getApiKey())
-                .baseUrl(effectiveBaseUrl)
-                .modelName(config.getModel())
-                .parallelToolCalls(true)
-                .store(false)
-                .strictTools(false);
-        if (config.getMaxOutputTokens() != null && config.getMaxOutputTokens() > 0) {
-            chatBuilder.maxOutputTokens(config.getMaxOutputTokens());
-        }
-        OpenAiResponsesChatModel chatModel = chatBuilder.build();
-        return chatModel.chat(ChatRequest.builder()
-                .messages(List.of(new UserMessage("请只回复 OK。")))
-                .build());
-    }
-
-    private ChatResponse testChatCompletionsConnection(AiModelConfig config) {
-        String effectiveBaseUrl = DynamicModelProvider.resolveChatCompletionsBaseUrl(config);
-        var chatBuilder = OpenAiChatModel.builder()
-                .apiKey(config.getApiKey())
-                .baseUrl(effectiveBaseUrl)
-                .modelName(config.getModel())
-                .parallelToolCalls(true)
-                .timeout(java.time.Duration.ofSeconds(30));
-        if (config.getMaxOutputTokens() != null && config.getMaxOutputTokens() > 0) {
-            chatBuilder.maxTokens(config.getMaxOutputTokens());
-        }
-        OpenAiChatModel chatModel = chatBuilder.build();
-        return chatModel.chat(ChatRequest.builder()
+    private ChatResponse testConnectionWithRuntime(AiModelConfig config) {
+        return dynamicModelProvider.buildRuntime(config).chatModel().chat(ChatRequest.builder()
                 .messages(List.of(new UserMessage("请只回复 OK。")))
                 .build());
     }
@@ -207,28 +175,28 @@ public class AiModelConfigController {
         List<Map<String, Object>> list = new ArrayList<>();
         list.add(provider("OpenAI (Responses API)", "openai", "https://api.openai.com/v1",
                 DynamicModelProvider.PROTOCOL_RESPONSES,
-                Arrays.asList("gpt-4.1", "gpt-4.1-mini", "gpt-4o", "o3", "o4-mini")));
+                Arrays.asList("gpt-5.5", "gpt-5.4")));
         list.add(provider("DeepSeek", "deepseek", "https://api.deepseek.com",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash")));
+                Arrays.asList("deepseek-v4-pro", "deepseek-v4-flash")));
         list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("qwen-max", "qwen-plus", "qwen-turbo", "qwq-plus", "qwen3-235b-a22b")));
-        list.add(provider("Moonshot (Kimi)", "moonshot", "https://api.moonshot.cn",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k")));
+                Arrays.asList("qwen3-max", "qwen3-coder")));
         list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("glm-4", "glm-4-air", "glm-4-flash", "glm-z1-flash")));
+                Arrays.asList("glm-5.2", "glm-5.1")));
         list.add(provider("Gemini (OpenAI compat)", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash")));
+                Arrays.asList("gemini-2.5-pro", "gemini-2.5-flash")));
+        list.add(provider("小米 MiMo", "mimo", "https://api.mimo.ai/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
+                Arrays.asList("mimo-v2.5-pro", "mimo-v2.5-flash")));
         list.add(provider("OpenRouter", "openrouter", "https://openrouter.ai/api",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("openai/gpt-4o", "anthropic/claude-opus-4-5", "deepseek/deepseek-r1")));
+                Arrays.asList("openai/gpt-5.5", "deepseek/deepseek-v4-pro", "zhipu/glm-5.2")));
         list.add(provider("Ollama (本地)", "ollama", "http://localhost:11434",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("llama3.3", "qwen3", "deepseek-r1")));
+                Arrays.asList("qwen3", "deepseek-v4-flash")));
         list.add(provider("自定义", "custom", "", DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, new ArrayList<>()));
         return ApiResponse.success(list);
     }
@@ -239,6 +207,37 @@ public class AiModelConfigController {
                 .map(AiModelConfigController::capabilityToView)
                 .toList();
         return ApiResponse.success(view);
+    }
+
+    @RequestMapping(value = "/capabilities", method = RequestMethod.POST)
+    public HashMap<String, Object> createCapability(@RequestBody AiModelCapability body) {
+        try {
+            return ApiResponse.success(capabilityToView(configService.createCapability(body)));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/capabilities/{modelName}", method = RequestMethod.PUT)
+    public HashMap<String, Object> updateCapability(@PathVariable("modelName") String modelName,
+                                                   @RequestBody AiModelCapability body) {
+        try {
+            AiModelCapability saved = configService.updateCapability(modelName, body);
+            if (saved == null) {
+                return ApiResponse.notFound("模型能力不存在: " + modelName);
+            }
+            return ApiResponse.success(capabilityToView(saved));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/capabilities/{modelName}", method = RequestMethod.DELETE)
+    public HashMap<String, Object> deleteCapability(@PathVariable("modelName") String modelName) {
+        if (!configService.deleteCapability(modelName)) {
+            return ApiResponse.notFound("模型能力不存在: " + modelName);
+        }
+        return ApiResponse.success();
     }
 
     private static Map<String, Object> provider(String label, String key, String baseUrl,
@@ -261,55 +260,7 @@ public class AiModelConfigController {
     public HashMap<String, Object> fetchModels(@RequestBody Map<String, String> body) {
         String baseUrl = body.getOrDefault("baseUrl", "").trim();
         String apiKey  = body.getOrDefault("apiKey", "").trim();
-        if (baseUrl.isEmpty() || apiKey.isEmpty()) {
-            return ApiResponse.badRequest("baseUrl 和 apiKey 不能为空");
-        }
-        String modelsPath = inferModelsPath(baseUrl);
-        String url = baseUrl.replaceAll("/+$", "") + modelsPath;
-        try {
-            HttpURLConnection conn = (HttpURLConnection)
-                    URI.create(url).toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setConnectTimeout(10_000);
-            conn.setReadTimeout(15_000);
-            int status = conn.getResponseCode();
-            if (status != 200) {
-                return ApiResponse.badRequest("服务商返回 HTTP " + status + "，请检查 baseUrl / apiKey");
-            }
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                String line;
-                while ((line = br.readLine()) != null) sb.append(line);
-            }
-            // 简单解析 {"data":[{"id":"..."},...]}, 不引入额外 JSON 库
-            String json = sb.toString();
-            List<String> ids = new ArrayList<>();
-            int dataIdx = json.indexOf("\"data\"");
-            if (dataIdx >= 0) {
-                int arrStart = json.indexOf('[', dataIdx);
-                int arrEnd   = json.lastIndexOf(']');
-                if (arrStart >= 0 && arrEnd > arrStart) {
-                    String arr = json.substring(arrStart, arrEnd + 1);
-                    int pos = 0;
-                    while ((pos = arr.indexOf("\"id\"", pos)) >= 0) {
-                        int colon = arr.indexOf(':', pos);
-                        int q1 = arr.indexOf('"', colon + 1);
-                        int q2 = arr.indexOf('"', q1 + 1);
-                        if (q1 >= 0 && q2 > q1) {
-                            ids.add(arr.substring(q1 + 1, q2));
-                        }
-                        pos = colon + 1;
-                    }
-                }
-            }
-            // 按名称排序便于查找
-            ids.sort(String::compareToIgnoreCase);
-            return ApiResponse.success(ids);
-        } catch (Exception e) {
-            return ApiResponse.badRequest("请求失败: " + e.getMessage());
-        }
+        return fetchModelIds(baseUrl, apiKey);
     }
 
     /**
@@ -372,30 +323,34 @@ public class AiModelConfigController {
 
     private static List<String> parseModelIds(String json) {
         List<String> ids = new ArrayList<>();
-        int dataIdx = json.indexOf("\"data\"");
-        if (dataIdx >= 0) {
-            int arrStart = json.indexOf('[', dataIdx);
-            int arrEnd   = json.lastIndexOf(']');
-            if (arrStart >= 0 && arrEnd > arrStart) {
-                String arr = json.substring(arrStart, arrEnd + 1);
-                int pos = 0;
-                while ((pos = arr.indexOf("\"id\"", pos)) >= 0) {
-                    int colon = arr.indexOf(':', pos);
-                    int q1 = arr.indexOf('"', colon + 1);
-                    int q2 = arr.indexOf('"', q1 + 1);
-                    if (q1 >= 0 && q2 > q1) {
-                        ids.add(arr.substring(q1 + 1, q2));
-                    }
-                    pos = colon + 1;
-                }
-            }
+        Object parsed = JSON.parse(json);
+        if (parsed instanceof JSONObject object) {
+            collectModelIds(object.get("data"), ids);
+            collectModelIds(object.get("models"), ids);
+        } else {
+            collectModelIds(parsed, ids);
         }
         return ids;
     }
 
+    private static void collectModelIds(Object value, List<String> ids) {
+        if (value instanceof JSONArray array) {
+            for (Object item : array) {
+                collectModelIds(item, ids);
+            }
+        } else if (value instanceof JSONObject object) {
+            String id = object.getString("id");
+            if (id == null || id.isBlank()) id = object.getString("name");
+            if (id == null || id.isBlank()) id = object.getString("model");
+            if (id != null && !id.isBlank()) ids.add(id.trim());
+        } else if (value instanceof String s && !s.isBlank()) {
+            ids.add(s.trim());
+        }
+    }
+
     private HashMap<String, Object> toView(AiModelConfig c) {
         HashMap<String, Object> m = new LinkedHashMap<>();
-        ProviderCapabilities capabilities = configService.capabilitiesForModel(c.getModel());
+        ProviderCapabilities capabilities = configService.capabilitiesForModel(c);
         m.put("id", c.getId());
         m.put("providerId", c.getProviderId());
         m.put("name", c.getName());
@@ -417,6 +372,7 @@ public class AiModelConfigController {
         m.put("capabilityStatus", capabilities.status());
         m.put("capabilityRecognized", capabilities.recognized());
         m.put("capabilitySource", capabilities.source());
+        m.put("capabilityModelName", configService.capabilityModelName(c));
         m.put("capabilityContextWindowTokens", capabilities.contextWindowTokens());
         m.put("capabilityMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("effectiveContextWindowTokens", clampPositive(c.getContextWindowTokens(), capabilities.contextWindowTokens()));
@@ -440,7 +396,6 @@ public class AiModelConfigController {
     private static HashMap<String, Object> capabilityToView(AiModelCapability c) {
         HashMap<String, Object> m = new LinkedHashMap<>();
         m.put("modelName", c.getModelName());
-        m.put("providerKey", c.getProviderKey());
         m.put("source", c.getSource());
         m.put("contextWindowTokens", c.getContextWindowTokens());
         m.put("maxOutputTokens", c.getMaxOutputTokens());

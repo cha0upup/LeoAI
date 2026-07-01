@@ -13,6 +13,7 @@ public class AiRunRecord {
     private String output;
     private String errorMessage;
     private Integer toolCallCount;
+    private String runtimeJson;
 
     public String getRunId() { return runId; }
     public void setRunId(String runId) { this.runId = runId; }
@@ -46,4 +47,7 @@ public class AiRunRecord {
 
     public Integer getToolCallCount() { return toolCallCount; }
     public void setToolCallCount(Integer toolCallCount) { this.toolCallCount = toolCallCount; }
+
+    public String getRuntimeJson() { return runtimeJson; }
+    public void setRuntimeJson(String runtimeJson) { this.runtimeJson = runtimeJson; }
 }

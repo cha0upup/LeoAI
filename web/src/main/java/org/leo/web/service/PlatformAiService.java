@@ -3,6 +3,7 @@ package org.leo.web.service;
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
 import jakarta.servlet.http.HttpSession;
+import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAgent;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.channel.AiModelConfigService;
@@ -34,6 +35,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -53,20 +56,21 @@ public class PlatformAiService {
                 return thread;
             });
 
-    private final PlatformAgent platformAgent;
+    private final AiAgentFactory aiAgentFactory;
     private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
+    private final ConcurrentMap<String, CachedPlatformAgent> platformAgents = new ConcurrentHashMap<>();
 
-    public PlatformAiService(PlatformAgent platformAgent,
+    public PlatformAiService(AiAgentFactory aiAgentFactory,
                              AiModelConfigService modelConfigService,
                              DynamicModelProvider dynamicModelProvider,
                              AiErrorClassifier aiErrorClassifier,
                              AiAuditLogStore auditLogStore,
                              AiConversationStoreService conversationStore) {
-        this.platformAgent = platformAgent;
+        this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
@@ -108,6 +112,7 @@ public class PlatformAiService {
         }
         AiModelConfig config = resolveOptionalChannel(configId);
         state.setAiConfigId(config != null ? config.getId() : null);
+        platformAgents.remove(state.getStateId());
         conversationStore.updateConfig(state.getStateId(), config);
     }
 
@@ -158,14 +163,15 @@ public class PlatformAiService {
             state.touchLastActiveAt();
             conversationStore.appendMessage(state.getStateId(), "user", userMessage);
             String messageForAgent = withPersistedHistoryContext(state, guardedMessage);
-            applyThreadModel(state);
-            runId = conversationStore.startRun(state.getStateId(), state.getAiConfigId(), messageForAgent, startMs);
+            CachedPlatformAgent agentRuntime = threadAgent(state);
+            runId = conversationStore.startRun(state.getStateId(), state.getAiConfigId(),
+                    messageForAgent, startMs, agentRuntime.runtimeJson());
             conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
             sendRecordedEvent(state, emitter, "status", PlatformAiState.STATUS_RUNNING);
 
             final String fRunId = runId;
             AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
-            TokenStream stream = platformAgent.chat(memoryId, messageForAgent);
+            TokenStream stream = agentRuntime.agent().chat(memoryId, messageForAgent);
 
             // 注册停止回调：必须在 stream.start() 之前，否则存在用户在 start() 返回前
             // 触发 stop 导致回调尚未注册、cancel() 永远不执行的竞态窗口。
@@ -365,6 +371,7 @@ public class PlatformAiService {
             state.stopGeneration("线程已删除");
             PlatformAiStateStore.remove(threadId);
         }
+        platformAgents.remove(threadId);
         conversationStore.deleteThread(threadId);
         Object activeId = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
         if (threadId.equals(activeId)) {
@@ -795,13 +802,27 @@ public class PlatformAiService {
         return resolveChannel(configId);
     }
 
-    private void applyThreadModel(PlatformAiState state) {
+    private CachedPlatformAgent threadAgent(PlatformAiState state) {
         AiModelConfig config = resolveChannel(state != null ? state.getAiConfigId() : null);
-        dynamicModelProvider.refreshFromConfig(config);
         if (state != null) {
             state.setAiConfigId(config.getId());
         }
+        String stateId = state != null ? state.getStateId() : "";
+        String cacheKey = dynamicModelProvider.plannedRuntimeCacheKey(config);
+        CachedPlatformAgent cached = platformAgents.get(stateId);
+        if (cached != null && cacheKey.equals(cached.cacheKey())) {
+            return cached;
+        }
+        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
+        PlatformAgent agent = aiAgentFactory.createPlatformAgent(
+                runtime.streamingModel(), runtime.supportsFunctionCalling());
+        CachedPlatformAgent created = new CachedPlatformAgent(cacheKey, agent,
+                DynamicModelProvider.runtimeSnapshotJson(config, runtime));
+        platformAgents.put(stateId, created);
+        return created;
     }
+
+    private record CachedPlatformAgent(String cacheKey, PlatformAgent agent, String runtimeJson) {}
 
     private PlatformAiState recreateState(HttpSession httpSession) {
         Object existing = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
@@ -811,6 +832,7 @@ public class PlatformAiService {
                 existingState.stopGeneration("平台 AI 会话已重建");
             }
             PlatformAiStateStore.remove(stateId);
+            platformAgents.remove(stateId);
         }
         String stateId = "platform-ai-" + UUID.randomUUID();
         PlatformAiState state = PlatformAiStateStore.create(stateId);

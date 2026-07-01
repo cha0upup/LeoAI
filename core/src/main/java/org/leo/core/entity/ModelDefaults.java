@@ -24,20 +24,28 @@ public final class ModelDefaults {
      * </ul>
      */
     public static Boolean defaultThinkingEnabled(String modelName) {
+        return defaultThinkingEnabled(null, modelName);
+    }
+
+    public static Boolean defaultThinkingEnabled(String providerKey, String modelName) {
         if (modelName == null) return null;
-        String m = modelName.toLowerCase(Locale.ROOT);
+        String provider = providerKey == null ? "" : providerKey.toLowerCase(Locale.ROOT);
+        String m = ProviderCapabilities.normalizeModelName(provider, modelName);
 
         // OpenAI reasoning 系列优先识别（避免被 mini 规则误杀）
         if (m.contains("o3-mini") || m.contains("o4-mini")) return true;
         if (m.startsWith("o1") || m.contains("-o1")) return true;
         if (m.startsWith("o3") || m.contains("-o3")) return true;
         if (m.startsWith("o4") || m.contains("-o4")) return true;
-        if (m.contains("gpt-5") && (m.contains("reason") || m.contains("thinking"))) return true;
+        if (m.contains("gpt-5") || m.contains("gpt5.")) return true;
 
         // 第三方 reasoning
         if (m.contains("reasoner")) return true;           // deepseek-reasoner
         if (m.contains("thinking")) return true;           // qwen-*-thinking, glm-*-thinking
         if (m.contains("deepseek-r1")) return true;
+        if (m.contains("deepseek-v4")) return true;
+        if (m.contains("glm-5") || m.contains("glm5.")) return true;
+        if (m.contains("mimo-v2.5") || m.contains("mimo2.5")) return true;
         if (m.contains("qwq")) return true;                // qwen QwQ
 
         // 轻量/快速模型：永远不开 reasoning

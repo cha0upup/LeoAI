@@ -9,17 +9,14 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import dev.langchain4j.service.AiServices;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.config.AiAgentProperties;
-import org.leo.ai.service.AutoReconAppendService;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.ai.tools.platform.*;
-import org.leo.ai.tools.puppetnode.*;
+import org.leo.ai.tools.platform.SkillActivationTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -301,272 +298,20 @@ public class AgentConfig {
         return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PLATFORM);
     }
 
-    // ── 主 Agent（单一 Agent，所有工具直接附着）────────────────────────────────
+    // ── 主 Agent（默认 Bean，按激活通道热切换；会话级 Agent 由 AiAgentFactory 构建）────
 
-    /**
-     * 主 Agent：所有 puppet 侧工具直接注入，无子 Agent 调度层。
-     *
-     * <p>工具分层：
-     * <ul>
-     *   <li>核心操作 — exec、文件信息、加解密、反向隧道</li>
-     *   <li>侦察 — 端口扫描、浏览器数据、凭据采集、剪贴板</li>
-     *   <li>持久化 — Java 插件调用、Catalina 容器管理</li>
-     *   <li>攻击 — HTTP/Fuzz、脚本执行、SQL、资源读取</li>
-     *   <li>元管理 — 计划追踪、侦察情报汇总、技能激活</li>
-     * </ul>
-     *
-     * <p>纯 OS 命令包装工具（进程/用户/磁盘/网络/文件操作等）已移除，统一通过 exec 工具替代。
-     */
     @Bean
-    public PuppetNodeAgent puppetNodeAgent(
-            DelegatingStreamingChatModel streamingModel,
-            DelegatingChatModel chatModel,
-            ChatMemoryProvider memoryProvider,
-            PuppetNodeSystemPromptProvider systemPromptProvider,
-            // 核心操作
-            CommandTools commandTools,
-            BasicInfoTools basicInfoTools,
-            ReverseTunnelTools reverseTunnelTools,
-            UtilTools utilTools,
-            FileTools fileTools,
-            // 侦察
-            ScanTools scanTools,
-            BrowserDataTools browserDataTools,
-            CredentialHarvestTools credentialHarvestTools,
-            ClipboardTools clipboardTools,
-            // 持久化
-            CatalinaTools catalinaTools,
-            JavaPluginTools javaPluginTools,
-            // 攻击
-            HttpRequestTools httpRequestTools,
-            ScriptTools scriptTools,
-            SqlTools sqlTools,
-            ResourceTools resourceTools,
-            // 元管理
-            SessionTools sessionTools,
-            PlanTools planTools,
-            @Qualifier("puppetNodeSkillActivationTools") SkillActivationTools skillActivationTools,
-            AutoReconAppendService autoReconAppendService,
-            ExecutorService aiToolExecutor) {
-
-        return AiServices.builder(PuppetNodeAgent.class)
-                .streamingChatModel(streamingModel)
-                .chatModel(chatModel)
-                .chatMemoryProvider(memoryProvider)
-                .systemMessageProvider(systemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(aiToolExecutor)
-                .beforeToolExecution(execution -> {
-                    if (execution != null && execution.invocationContext() != null) {
-                        AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
-                    }
-                    // 关联 plan step：如果当前计划有正在执行的步骤，将 stepIndex 注入上下文
-                    autoAssociatePlanStep();
-                })
-                .afterToolExecution(execution -> {
-                    try {
-                        triggerAutoReconAppend(execution, autoReconAppendService);
-                        // 自动将工具结果写入 plan step
-                        autoAppendToolResultToPlanStep(execution);
-                    } finally {
-                        AiToolContext.clear();
-                    }
-                })
-                .tools(commandTools, basicInfoTools,
-                        reverseTunnelTools,
-                        utilTools, fileTools,
-                        scanTools, browserDataTools, credentialHarvestTools, clipboardTools,
-                        catalinaTools, javaPluginTools,
-                        httpRequestTools, scriptTools, sqlTools, resourceTools,
-                        sessionTools, planTools, skillActivationTools)
-                .build();
-    }
-
-    /**
-     * 在主 Agent 的 afterToolExecution 钩子中触发自动侦察情报提取。
-     *
-     * <p>跳过下列工具，避免无效分析或反馈循环：
-     * <ul>
-     *   <li>SessionTools 的 reconSummary 读写工具：分析自己的输出毫无意义</li>
-     *   <li>PlanTools：计划/进度本身不是侦察情报</li>
-     * </ul>
-     *
-     * <p>{@link AutoReconAppendService#analyzeAndAppend} 自身带 {@code @Async} 注解，
-     * 配合 {@code @EnableAsync}（见本类顶部）实际异步执行；调用立即返回，不阻塞工具回写。
-     * 即便如此仍捕获所有异常，确保旁路分析的任何故障都不会影响主对话流程。
-     */
-    private static final java.util.Set<String> AUTO_RECON_APPEND_SKIPPED_TOOLS = java.util.Set.of(
-            "manage_recon_summary",
-            "createPlan", "updatePlan", "getPlan", "deletePlan",
-            "activate_skill"
-    );
-
-    private static void triggerAutoReconAppend(dev.langchain4j.service.tool.ToolExecution execution,
-                                                AutoReconAppendService autoReconAppendService) {
-        if (execution == null || execution.hasFailed()) return;
-        String toolName = execution.request() != null ? execution.request().name() : null;
-        if (toolName == null || AUTO_RECON_APPEND_SKIPPED_TOOLS.contains(toolName)) return;
-
-        String sessionId = AiToolContext.getSessionId();
-        if (sessionId == null || sessionId.isBlank()) return;
-
-        String result = execution.result();
-        if (result == null || result.isBlank()) return;
-
-        try {
-            autoReconAppendService.analyzeAndAppend(sessionId, toolName, result);
-        } catch (Throwable t) {
-            org.slf4j.LoggerFactory.getLogger(AgentConfig.class)
-                    .debug("AutoReconAppend 触发失败 tool={} sessionId={}: {}",
-                            toolName, sessionId, t.getMessage());
-        }
-    }
-
-    // ── Plan Step 自动关联 ──────────────────────────────────────────────────
-
-    /** Plan 工具本身不应触发 step 关联（避免 createPlan/updatePlanStep 自关联）。 */
-    private static final java.util.Set<String> PLAN_TOOLS = java.util.Set.of(
-            "createPlan", "updatePlanStep", "completePlan");
-
-    /** 在工具执行前检测活跃 plan 的 running step，注入到 AiToolContext。 */
-    private static void autoAssociatePlanStep() {
-        try {
-            String sessionId = AiToolContext.getSessionId();
-            String threadId = AiToolContext.getThreadId();
-            if (sessionId == null || sessionId.isBlank()) return;
-
-            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
-            if (session == null) return;
-
-            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
-            if (thread == null) return;
-
-            var plan = thread.getCurrentPlan();
-            if (plan == null) return;
-
-            var steps = plan.getSteps();
-            if (steps == null) return;
-
-            for (int i = 0; i < steps.size(); i++) {
-                var step = steps.get(i);
-                if (step.getStatus().name().equals("RUNNING")) {
-                    AiToolContext.setPlanStepIndex(step.getIndex());
-                    AiToolContext.setPlanStepPreApproved(step.isPreApproved());
-                    return;
-                }
-            }
-        } catch (Exception ignored) {
-            // best-effort，失败不影响工具执行
-        }
-    }
-
-    /** 在工具执行后将结果自动写入 plan step 的 result 字段。 */
-    private static void autoAppendToolResultToPlanStep(
-            dev.langchain4j.service.tool.ToolExecution execution) {
-        int stepIndex = AiToolContext.getPlanStepIndex();
-        if (stepIndex < 0) return;
-        if (execution == null) return;
-
-        String toolName = execution.request() != null ? execution.request().name() : null;
-        if (toolName == null || PLAN_TOOLS.contains(toolName)) return;
-
-        try {
-            String sessionId = AiToolContext.getSessionId();
-            String threadId = AiToolContext.getThreadId();
-            if (sessionId == null || sessionId.isBlank()) return;
-
-            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
-            if (session == null) return;
-
-            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
-            if (thread == null) return;
-
-            var plan = thread.getCurrentPlan();
-            if (plan == null) return;
-
-            var steps = plan.getSteps();
-            if (steps == null) return;
-
-            for (var step : steps) {
-                if (step.getIndex() == stepIndex) {
-                    String summary = buildToolResultSummary(toolName, execution);
-                    if (step.getResult() != null && !step.getResult().isBlank()) {
-                        step.setResult(step.getResult() + " | " + summary);
-                    } else {
-                        step.setResult(summary);
-                    }
-                    // 通知前端 step 更新
-                    thread.offerSseEvent("patch", buildPlanStepPatch(plan, step, toolName));
-                    break;
-                }
-            }
-        } catch (Exception ignored) {
-            // best-effort
-        }
-    }
-
-    /** 构建工具结果摘要（最多 120 字符）。 */
-    private static String buildToolResultSummary(String toolName,
-                                                  dev.langchain4j.service.tool.ToolExecution execution) {
-        StringBuilder sb = new StringBuilder(toolName);
-        if (execution.hasFailed()) {
-            sb.append(" 失败");
-            String err = execution.result();
-            if (err != null && !err.isBlank()) {
-                String shortErr = err.length() > 80 ? err.substring(0, 80) + "…" : err;
-                sb.append("（").append(shortErr).append("）");
-            }
-        } else {
-            sb.append(" 完成");
-            String result = execution.result();
-            if (result != null && !result.isBlank()) {
-                // 取第一行或前 80 字符
-                String firstLine = result.lines().findFirst().orElse("");
-                String shortResult = firstLine.length() > 80 ? firstLine.substring(0, 80) + "…" : firstLine;
-                sb.append(" → ").append(shortResult);
-            }
-        }
-        return sb.toString();
-    }
-
-    /** 构建 plan step patch 事件 payload。 */
-    private static java.util.Map<String, Object> buildPlanStepPatch(
-            org.leo.core.entity.AiPlan plan, org.leo.core.entity.AiPlanStep step, String toolName) {
-        java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
-        payload.put("kind", "plan");
-        payload.put("planId", plan.getPlanId());
-        payload.put("stepIndex", step.getIndex());
-        payload.put("status", step.getStatus().name());
-        payload.put("result", step.getResult());
-        payload.put("toolName", toolName);
-        payload.put("timestamp", System.currentTimeMillis());
-        return payload;
+    public PuppetNodeAgent puppetNodeAgent(DelegatingStreamingChatModel streamingModel,
+                                           DelegatingChatModel chatModel,
+                                           AiAgentFactory agentFactory) {
+        return agentFactory.createPuppetNodeAgent(streamingModel, chatModel);
     }
 
     // ── Platform Agent ───────────────────────────────────────────────────────
 
     @Bean
-    public PlatformAgent platformAgent(
-            DelegatingStreamingChatModel model,
-            ChatMemoryProvider memoryProvider,
-            PlatformSystemPromptProvider systemPromptProvider,
-            PuppetTools puppetTools,
-            UserTools userTools,
-            TeamTools teamTools,
-            PluginTools pluginTools,
-            FingerprintTools fingerprintTools,
-            DisguiseTools disguiseTools,
-            ShellGeneratorTools shellGeneratorTools,
-            @Qualifier("platformSkillActivationTools") SkillActivationTools skillActivationTools,
-            ExecutorService aiToolExecutor) {
-
-        return AiServices.builder(PlatformAgent.class)
-                .streamingChatModel(model)
-                .chatMemoryProvider(memoryProvider)
-                .systemMessageProvider(systemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(aiToolExecutor)
-                .tools(puppetTools, userTools, teamTools,
-                        pluginTools, fingerprintTools, disguiseTools,
-                        shellGeneratorTools, skillActivationTools)
-                .build();
+    public PlatformAgent platformAgent(DelegatingStreamingChatModel model,
+                                       AiAgentFactory agentFactory) {
+        return agentFactory.createPlatformAgent(model);
     }
 }

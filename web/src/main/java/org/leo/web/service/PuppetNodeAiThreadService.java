@@ -2,6 +2,7 @@ package org.leo.web.service;
 
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
+import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PuppetNodeAgent;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DynamicModelProvider;
@@ -36,6 +37,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -60,23 +63,24 @@ public class PuppetNodeAiThreadService {
                 return thread;
             });
 
-    private final PuppetNodeAgent puppetNodeAgent;
+    private final AiAgentFactory aiAgentFactory;
     private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final AiAgentProperties agentProperties;
+    private final ConcurrentMap<String, CachedPuppetNodeAgent> puppetNodeAgents = new ConcurrentHashMap<>();
 
     @Autowired
-    public PuppetNodeAiThreadService(PuppetNodeAgent puppetNodeAgent,
+    public PuppetNodeAiThreadService(AiAgentFactory aiAgentFactory,
                                      AiModelConfigService modelConfigService,
                                      DynamicModelProvider dynamicModelProvider,
                                      AiErrorClassifier aiErrorClassifier,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      AiAgentProperties agentProperties) {
-        this.puppetNodeAgent = puppetNodeAgent;
+        this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
@@ -105,8 +109,8 @@ public class PuppetNodeAiThreadService {
             if (thread.isStopRequested()) {
                 throw new InterruptedException("已停止");
             }
-            applyThreadModel(thread);
-            runId = conversationStore.startRun(thread, messageForAgent, startMs);
+            CachedPuppetNodeAgent agentRuntime = threadAgent(session, thread);
+            runId = conversationStore.startRun(thread, messageForAgent, startMs, agentRuntime.runtimeJson());
             conversationStore.updateRuntime(session.getSessionId(), thread);
             sendRecordedEvent(thread, emitter, "status", AiThread.STATUS_RUNNING);
 
@@ -115,7 +119,7 @@ public class PuppetNodeAiThreadService {
 
             final String fRunId = runId;
             AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
-            TokenStream stream = puppetNodeAgent.chat(memoryId, messageForAgent);
+            TokenStream stream = agentRuntime.agent().chat(memoryId, messageForAgent);
 
             stream
                 .onPartialThinking(thinking -> {
@@ -623,6 +627,7 @@ public class PuppetNodeAiThreadService {
 
     public void deleteThread(PuppetNodeSession session, String threadId) {
         session.removeAiThread(threadId);
+        puppetNodeAgents.remove(agentCacheKey(session, threadId));
 
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
         if (puppetId != null) {
@@ -700,6 +705,7 @@ public class PuppetNodeAiThreadService {
         thread.setExecutionPolicy(AiExecutionPolicy.defaultPolicy());
         thread.resetTurnCount();
         thread.setAiConfigId(resolvedConfigId);
+        puppetNodeAgents.remove(agentCacheKey(session, threadId));
 
         updateThreadMeta(session, thread);
         updateThreadConfig(session, thread, config);
@@ -722,6 +728,7 @@ public class PuppetNodeAiThreadService {
         AiModelConfig config = resolveOptionalChannel(resolveConfigId(requestedConfigId, thread, persisted));
         Integer configId = config != null ? config.getId() : null;
         thread.setAiConfigId(configId);
+        puppetNodeAgents.remove(agentCacheKey(session, threadId));
         updateThreadConfig(session, thread, config);
     }
 
@@ -982,13 +989,32 @@ public class PuppetNodeAiThreadService {
         return resolveChannel(configId);
     }
 
-    private void applyThreadModel(AiThread thread) {
+    private CachedPuppetNodeAgent threadAgent(PuppetNodeSession session, AiThread thread) {
         AiModelConfig config = resolveChannel(thread != null ? thread.getAiConfigId() : null);
-        dynamicModelProvider.refreshFromConfig(config);
         if (thread != null) {
             thread.setAiConfigId(config.getId());
         }
+        String agentKey = agentCacheKey(session, thread != null ? thread.getThreadId() : null);
+        String cacheKey = dynamicModelProvider.plannedRuntimeCacheKey(config);
+        CachedPuppetNodeAgent cached = puppetNodeAgents.get(agentKey);
+        if (cached != null && cacheKey.equals(cached.cacheKey())) {
+            return cached;
+        }
+        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
+        PuppetNodeAgent agent = aiAgentFactory.createPuppetNodeAgent(
+                runtime.streamingModel(), runtime.chatModel(), runtime.supportsFunctionCalling());
+        CachedPuppetNodeAgent created = new CachedPuppetNodeAgent(cacheKey, agent,
+                DynamicModelProvider.runtimeSnapshotJson(config, runtime));
+        puppetNodeAgents.put(agentKey, created);
+        return created;
     }
+
+    private static String agentCacheKey(PuppetNodeSession session, String threadId) {
+        String sessionId = session != null ? session.getSessionId() : "";
+        return sessionId + ":" + (threadId != null ? threadId : "");
+    }
+
+    private record CachedPuppetNodeAgent(String cacheKey, PuppetNodeAgent agent, String runtimeJson) {}
 
     private String validateConfigId(Integer configId) {
         // 新架构下不再做能力探测，仅校验存在性

@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * AI 模型配置服务（ccswitch 风格的单表 CRUD）。
@@ -59,18 +60,36 @@ public class AiModelConfigService {
     }
 
     public ProviderCapabilities capabilitiesForModel(String modelName) {
+        return capabilitiesForModel(null, modelName);
+    }
+
+    public ProviderCapabilities capabilitiesForModel(String providerKey, String modelName) {
         if (modelName == null || modelName.isBlank()) {
-            return ProviderCapabilities.forModel(modelName);
+            return ProviderCapabilities.missing();
         }
-        AiModelCapability row = capabilityMapper.findByModelName(modelName.trim());
+        AiModelCapability row = capabilityMapper.findByModelName(normalizeCapabilityModelName(providerKey, modelName));
         if (row == null) {
-            return ProviderCapabilities.forModel(modelName);
+            return ProviderCapabilities.conservativeDefault();
         }
+        return capabilityFromRow(row);
+    }
+
+    public ProviderCapabilities capabilitiesForModel(AiModelConfig config) {
+        return config == null
+                ? ProviderCapabilities.missing()
+                : capabilitiesForModel(config.getProviderKey(), config.getModel());
+    }
+
+    public String capabilityModelName(AiModelConfig config) {
+        return config == null ? "" : normalizeCapabilityModelName(config.getProviderKey(), config.getModel());
+    }
+
+    private static ProviderCapabilities capabilityFromRow(AiModelCapability row) {
         return new ProviderCapabilities(true,
                 "recognized",
                 row.getSource() == null || row.getSource().isBlank() ? "system" : row.getSource(),
                 positiveOrDefault(row.getContextWindowTokens(), 32_768),
-                positiveOrDefault(row.getMaxOutputTokens(), 4_096),
+                nonNegativeOrDefault(row.getMaxOutputTokens(), 4_096),
                 flag(row.getSupportsTextGeneration()),
                 flag(row.getSupportsReasoning()),
                 flag(row.getSupportsStreaming()),
@@ -102,6 +121,7 @@ public class AiModelConfigService {
             return saved;
         }
 
+        boolean providerEnabled = Integer.valueOf(1).equals(saved.getEnabled());
         boolean hasExistingModels = mapper.countAll() > 0;
         int requestedDefaultIndex = -1;
         for (int i = 0; i < models.size(); i++) {
@@ -110,7 +130,9 @@ public class AiModelConfigService {
                 break;
             }
         }
-        int defaultIndex = requestedDefaultIndex >= 0 ? requestedDefaultIndex : (hasExistingModels ? -1 : 0);
+        int defaultIndex = providerEnabled
+                ? (requestedDefaultIndex >= 0 ? requestedDefaultIndex : (hasExistingModels ? -1 : 0))
+                : -1;
         if (defaultIndex >= 0) {
             mapper.clearActive();
         }
@@ -165,6 +187,54 @@ public class AiModelConfigService {
         return createModel(row, true, true);
     }
 
+    public AiModelCapability createCapability(AiModelCapability row) {
+        validateCapability(row);
+        normalizeCapability(row);
+        if (capabilityMapper.findByModelName(row.getModelName()) != null) {
+            throw new IllegalArgumentException("模型能力已存在: " + row.getModelName());
+        }
+        String now = nowSqlite();
+        row.setCreateTime(now);
+        row.setUpdateTime(now);
+        capabilityMapper.insert(row);
+        notifyModelRefresh();
+        return capabilityMapper.findByModelName(row.getModelName());
+    }
+
+    public AiModelCapability updateCapability(String modelName, AiModelCapability patch) {
+        String normalizedName = normalizeCapabilityKey(modelName);
+        AiModelCapability existing = capabilityMapper.findByModelName(normalizedName);
+        if (existing == null) return null;
+        if (patch == null) {
+            throw new IllegalArgumentException("模型能力配置不能为空");
+        }
+        existing.setSource(blankToNull(patch.getSource()) == null ? existing.getSource() : patch.getSource());
+        existing.setContextWindowTokens(patch.getContextWindowTokens());
+        existing.setMaxOutputTokens(patch.getMaxOutputTokens());
+        existing.setSupportsTextGeneration(patch.getSupportsTextGeneration());
+        existing.setSupportsReasoning(patch.getSupportsReasoning());
+        existing.setSupportsStreaming(patch.getSupportsStreaming());
+        existing.setSupportsFunctionCalling(patch.getSupportsFunctionCalling());
+        existing.setSupportsStructuredOutput(patch.getSupportsStructuredOutput());
+        existing.setSupportsWebSearch(patch.getSupportsWebSearch());
+        existing.setSupportsParallelToolCalls(patch.getSupportsParallelToolCalls());
+        if (patch.getRemark() != null) existing.setRemark(patch.getRemark());
+        validateCapability(existing);
+        normalizeCapability(existing);
+        existing.setUpdateTime(nowSqlite());
+        capabilityMapper.update(existing);
+        notifyModelRefresh();
+        return capabilityMapper.findByModelName(existing.getModelName());
+    }
+
+    public boolean deleteCapability(String modelName) {
+        String normalizedName = normalizeCapabilityKey(modelName);
+        if (normalizedName == null || normalizedName.isBlank()) return false;
+        boolean deleted = capabilityMapper.deleteByModelName(normalizedName) > 0;
+        if (deleted) notifyModelRefresh();
+        return deleted;
+    }
+
     private AiModelConfig createModel(AiModelConfig row, boolean autoActivateFirst, boolean notify) {
         validateRequired(row);
         normalize(row);
@@ -178,10 +248,11 @@ public class AiModelConfigService {
         if (row.getEnabled() == null) {
             row.setEnabled(1);
         }
-        if (autoActivateFirst && mapper.countAll() == 0) {
+        if (autoActivateFirst && mapper.countAll() == 0 && Integer.valueOf(1).equals(row.getEnabled())) {
             row.setIsActive(1);
             row.setEnabled(1);
-        } else if (Integer.valueOf(1).equals(row.getIsActive())) {
+        }
+        if (Integer.valueOf(1).equals(row.getIsActive())) {
             assertUsable(row);
             mapper.clearActive();
         }
@@ -211,19 +282,14 @@ public class AiModelConfigService {
         if (!isBlank(patch.getCompletionsPath())) {
             existing.setCompletionsPath(patch.getCompletionsPath().trim());
         }
-        if (patch.getMaxOutputTokens() != null) {
-            existing.setMaxOutputTokens(patch.getMaxOutputTokens() > 0 ? patch.getMaxOutputTokens() : null);
-        }
-        if (patch.getThinkingEnabled() != null) {
-            existing.setThinkingEnabled(normalizeTriStateFlag(patch.getThinkingEnabled()));
-        }
+        existing.setMaxOutputTokens(patch.getMaxOutputTokens() != null && patch.getMaxOutputTokens() > 0
+                ? patch.getMaxOutputTokens() : null);
+        existing.setThinkingEnabled(normalizeTriStateFlag(patch.getThinkingEnabled()));
         if (patch.getReasoningEffort() != null) {
             existing.setReasoningEffort(normalizeReasoningEffort(patch.getReasoningEffort()));
         }
-        if (patch.getContextWindowTokens() != null) {
-            existing.setContextWindowTokens(patch.getContextWindowTokens() > 0
-                    ? patch.getContextWindowTokens() : null);
-        }
+        existing.setContextWindowTokens(patch.getContextWindowTokens() != null && patch.getContextWindowTokens() > 0
+                ? patch.getContextWindowTokens() : null);
         if (patch.getTemperature() != null) {
             existing.setTemperature(normalizeTemperature(patch.getTemperature()));
         }
@@ -232,13 +298,11 @@ public class AiModelConfigService {
             existing.setEnabled(Integer.valueOf(1).equals(patch.getEnabled()) ? 1 : 0);
         }
         if (patch.getRemark() != null) existing.setRemark(patch.getRemark());
+        boolean activating = patch.getIsActive() != null && Integer.valueOf(1).equals(patch.getIsActive());
         if (patch.getIsActive() != null) {
-            if (Integer.valueOf(1).equals(patch.getIsActive())) {
-                mapper.clearActive();
-                existing.setIsActive(1);
+            existing.setIsActive(activating ? 1 : 0);
+            if (activating) {
                 existing.setEnabled(1);
-            } else {
-                existing.setIsActive(0);
             }
         }
         if (Integer.valueOf(1).equals(existing.getIsActive())
@@ -248,6 +312,15 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         normalize(existing);
         applyProvider(existing);
+        if (activating && !Integer.valueOf(1).equals(existing.getIsActive())) {
+            throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
+        }
+        if (Integer.valueOf(1).equals(existing.getIsActive())) {
+            assertUsable(existing);
+        }
+        if (activating) {
+            mapper.clearActive();
+        }
         mapper.update(existing);
         boolean isActiveNow = Integer.valueOf(1).equals(existing.getIsActive());
         if (wasActive || isActiveNow) {
@@ -299,9 +372,9 @@ public class AiModelConfigService {
     public int getActiveContextWindowTokens() {
         AiModelConfig active = getActive();
         if (active == null) {
-            return capabilitiesForModel("gpt-4o").contextWindowTokens();
+            return 32_768;
         }
-        ProviderCapabilities capabilities = capabilitiesForModel(active.getModel());
+        ProviderCapabilities capabilities = capabilitiesForModel(active);
         Integer custom = active.getContextWindowTokens();
         if (custom != null && custom > 0) {
             return Math.min(custom, capabilities.contextWindowTokens());
@@ -315,6 +388,10 @@ public class AiModelConfigService {
 
     private static int positiveOrDefault(Integer value, int fallback) {
         return value != null && value > 0 ? value : fallback;
+    }
+
+    private static int nonNegativeOrDefault(Integer value, int fallback) {
+        return value != null && value >= 0 ? value : fallback;
     }
 
     // ── 内部工具 ──────────────────────────────────────────────────────────
@@ -380,6 +457,16 @@ public class AiModelConfigService {
     private void assertUsable(AiModelConfig row) {
         if (row == null || !Integer.valueOf(1).equals(row.getEnabled())) {
             throw new IllegalArgumentException("模型未启用，不能设为默认模型");
+        }
+        ProviderCapabilities capabilities = capabilitiesForModel(row);
+        if (!capabilities.supportsTextGeneration()) {
+            throw new IllegalArgumentException("模型不支持文本生成，不能设为默认聊天模型");
+        }
+        if (!capabilities.supportsStreaming()) {
+            throw new IllegalArgumentException("模型不支持流式输出，不能用于当前聊天通道");
+        }
+        if (capabilities.maxOutputTokens() <= 0) {
+            throw new IllegalArgumentException("模型最大输出长度为 0，不能用于当前聊天通道");
         }
         if (row.getProviderId() == null) return;
         AiProvider provider = providerMapper.findById(row.getProviderId());
@@ -470,6 +557,43 @@ public class AiModelConfigService {
             throw new IllegalArgumentException("temperature 必须在 0 到 2 之间");
         }
         return value;
+    }
+
+    private static void validateCapability(AiModelCapability row) {
+        if (row == null) throw new IllegalArgumentException("模型能力配置不能为空");
+        if (isBlank(row.getModelName())) throw new IllegalArgumentException("modelName 不能为空");
+        if (row.getContextWindowTokens() == null || row.getContextWindowTokens() <= 0) {
+            throw new IllegalArgumentException("contextWindowTokens 必须大于 0");
+        }
+        if (row.getMaxOutputTokens() == null || row.getMaxOutputTokens() < 0) {
+            throw new IllegalArgumentException("maxOutputTokens 不能小于 0");
+        }
+    }
+
+    private static void normalizeCapability(AiModelCapability row) {
+        row.setModelName(normalizeCapabilityKey(row.getModelName()));
+        row.setSource(isBlank(row.getSource()) ? "manual" : row.getSource().trim());
+        row.setSupportsTextGeneration(normalizeFlag(row.getSupportsTextGeneration(), 1));
+        row.setSupportsReasoning(normalizeFlag(row.getSupportsReasoning(), 0));
+        row.setSupportsStreaming(normalizeFlag(row.getSupportsStreaming(), 1));
+        row.setSupportsFunctionCalling(normalizeFlag(row.getSupportsFunctionCalling(), 0));
+        row.setSupportsStructuredOutput(normalizeFlag(row.getSupportsStructuredOutput(), 0));
+        row.setSupportsWebSearch(normalizeFlag(row.getSupportsWebSearch(), 0));
+        row.setSupportsParallelToolCalls(normalizeFlag(row.getSupportsParallelToolCalls(), 1));
+        row.setRemark(blankToNull(row.getRemark()));
+    }
+
+    private static int normalizeFlag(Integer value, int fallback) {
+        if (value == null) return fallback;
+        return value > 0 ? 1 : 0;
+    }
+
+    private static String normalizeCapabilityKey(String value) {
+        return value == null ? null : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeCapabilityModelName(String providerKey, String modelName) {
+        return ProviderCapabilities.normalizeModelName(normalizeCapabilityKey(providerKey), modelName);
     }
 
     private static String blankToNull(String s) {

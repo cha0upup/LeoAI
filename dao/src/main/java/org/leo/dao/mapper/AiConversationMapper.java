@@ -107,9 +107,9 @@ public interface AiConversationMapper {
     List<AiMessageRecord> recentMessages(@Param("threadId") String threadId, @Param("limit") int limit);
 
     @Insert("INSERT INTO ai_runs (run_id, thread_id, status, started_at, finished_at, duration_ms, "
-            + "config_id, input, output, error_message, tool_call_count) "
+            + "config_id, input, output, error_message, tool_call_count, runtime_json) "
             + "VALUES (#{runId}, #{threadId}, #{status}, #{startedAt}, #{finishedAt}, #{durationMs}, "
-            + "#{configId}, #{input}, #{output}, #{errorMessage}, #{toolCallCount})")
+            + "#{configId}, #{input}, #{output}, #{errorMessage}, #{toolCallCount}, #{runtimeJson})")
     int insertRun(AiRunRecord row);
 
     @Update("UPDATE ai_runs SET status = #{status}, finished_at = #{finishedAt}, duration_ms = #{durationMs}, "
