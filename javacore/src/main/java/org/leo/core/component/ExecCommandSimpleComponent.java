@@ -40,8 +40,8 @@ public class ExecCommandSimpleComponent implements Runnable {
     private static final long MAX_TIMEOUT_MS     = 300000L;          // 5min 上限，防止入参滥用
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // ── Worker thread 通信字段（volatile 保证跨线程可见性） ─────────────────────
     private volatile boolean workerMode     = false;

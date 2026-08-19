@@ -118,8 +118,8 @@ public class ExecCommandComponent implements Runnable {
         " try: os.close(master)\n" +
         " except OSError: pass\n";
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         String workerProcessId = (String) THREAD_PARAMS.remove(Thread.currentThread());

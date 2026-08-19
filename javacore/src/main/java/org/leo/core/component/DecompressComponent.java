@@ -25,8 +25,8 @@ public class DecompressComponent implements Runnable {
     private static final long MAX_TOTAL_SIZE = 1073741824L; // 1GB
 
     
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
 
     @Override

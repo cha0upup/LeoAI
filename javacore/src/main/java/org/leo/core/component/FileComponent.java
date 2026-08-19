@@ -19,8 +19,8 @@ public class FileComponent implements Runnable {
     private static final long MAX_WRITE_BYTES = 50L * 1024 * 1024;
     private static final int COPY_BUFFER_SIZE = 8192;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     
     public void run() {

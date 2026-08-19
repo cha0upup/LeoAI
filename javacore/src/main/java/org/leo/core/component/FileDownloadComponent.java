@@ -15,8 +15,8 @@ public class FileDownloadComponent implements Runnable {
     
     private static final int MAX_CHUNK_SIZE = 1048576;
     
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
 
     

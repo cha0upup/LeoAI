@@ -53,8 +53,8 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
 
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     private static final String STATE_RUNNING = "RUNNING";
     private static final String STATE_PAUSED  = "PAUSED";

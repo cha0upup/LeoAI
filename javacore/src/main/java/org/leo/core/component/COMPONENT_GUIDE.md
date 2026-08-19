@@ -26,11 +26,21 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 ## 结构约束
 
 - [ ] **入口方法**：实现 `Runnable`，框架通过 `new Thread(component).start()` 调用 `run()`。`run()` 内通过 `Thread.currentThread().getContextClassLoader()` 拿到框架注入的 `InvocationHandler`，再用 `h.invoke(null, null, null)` 获取 `params`，用 `h.invoke(null, null, new Object[]{results})` 写回结果
-- [ ] **字段声明**：`private HashMap params;` 和 `private HashMap results;`，使用 raw type（Javassist clone 会处理字段访问，不需要 public）
+- [ ] **字段声明**：`private HashMap<String, Object> params;` 和 `private HashMap<String, Object> results;`，组件入口使用明确的键和值类型（Javassist clone 会处理字段访问，不需要 public）
 - [ ] **不产生额外 .class 文件**：不用匿名类、内部类、局部类。如需多线程回调，使用 `static ConcurrentHashMap<Thread, Object[]>` 传参模式（见下方"多线程回调模式"）
 - [ ] **run() 防御**：多线程模式下 `run()` 入口先检查 THREAD_PARAMS，若命中则走 worker 分支并 return，避免重复执行主逻辑
 
 ## 类型安全
+
+### 响应边界
+
+组件可以在内部使用任意运行态对象，但写入 `results` 的最终值必须收敛为协议可表达的基础类型：
+
+- `null`、`String`、`Boolean`、`Integer`、`Long`、`Double`、`byte[]`；
+- `List`，其元素继续遵守本列表；
+- `Map<String, Object>`，键统一转换为字符串，值继续遵守本列表。
+
+日期使用毫秒时间戳或格式化字符串；数组和 `Set` 转为 `List`；反射对象、`Class`、`ClassLoader`、`Process`、连接对象等转为类名/文本或不返回。转换必须在产生该值的 Component 内完成，`LeoCore` 不承担递归转换。
 
 - [ ] **整数取值**：传输编解码器可能产生 `Number`、`String` 或 UTF-8 `byte[]`；先判断 `Number`，其他类型转文本后用 `Integer.parseInt` / `Long.parseLong` 解析（直接强转 `Number` 不兼容字符串）
 - [ ] **字符串取值**：`(String) params.get("key")` 或 `params.get("key").toString()`
@@ -76,8 +86,8 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 ```java
 public class XxxComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h =
@@ -110,8 +120,8 @@ public class XxxComponent implements Runnable {
 // 1. 组件自身实现 Runnable
 public class XxxComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // 2. 静态 Map 传递线程参数，key 为 Thread 对象本身
     private static final java.util.Map THREAD_PARAMS =

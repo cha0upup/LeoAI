@@ -36,8 +36,8 @@ public class ResourceComponent implements Runnable {
 
     private static final int MAX_RESOURCE_SIZE = 16 * 1024 * 1024;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
     private boolean resourceTooLarge;
 
     public void run() {

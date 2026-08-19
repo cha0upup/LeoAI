@@ -23,8 +23,8 @@ public class FileUploadComponent implements Runnable {
         }
     }
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
   
     
     

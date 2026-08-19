@@ -56,8 +56,8 @@ public class ReverseTunnelComponent implements Runnable {
 
     private static final long IDLE_TIMEOUT_MS = 10L * 60L * 1000L;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
@@ -76,6 +76,7 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     public void invoke() throws IOException {
+        sweepIdleConns();
         Object opObj = params.get("op");
         if (!(opObj instanceof Number)) {
             results.put("code", Integer.valueOf(400));
@@ -201,7 +202,6 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     private void handleAccept() throws IOException {
-        sweepIdleConns();
         String listenId = getRequiredString("listenId");
         if (listenId == null) return;
         ServerSocketChannel ssc = (ServerSocketChannel) listenMap.get(listenId);

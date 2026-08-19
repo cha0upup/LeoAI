@@ -26,8 +26,8 @@ public class HostIsReachableComponent implements Runnable, ThreadFactory {
     private static final int MAX_TIMEOUT_MS = 300000;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // 用于单个主机检测的实例变量
     private String scanHost;

@@ -24,8 +24,8 @@ public class ScreenComponent implements Runnable {
     // 支持的图片格式
     private static final String[] SUPPORTED_FORMATS = {"jpg", "jpeg", "png", "bmp"};
     
-    public HashMap<String, Object> params;
-    public HashMap<String, Object> results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     /**
      * 组件执行入口

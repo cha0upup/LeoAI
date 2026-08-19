@@ -27,8 +27,8 @@ public class FileEnhanceComponent implements Runnable {
     private static final int ACTION_RENAME = 4;
     private static final int ACTION_CHMOD  = 5;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
     private String packSourceCanonical;
     private String packDestinationCanonical;
     private HashSet packVisitedDirectories;

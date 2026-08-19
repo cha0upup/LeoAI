@@ -56,8 +56,8 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
 
     private static volatile SSLSocketFactory trustAllSslSocketFactory;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
 
     public void run() {

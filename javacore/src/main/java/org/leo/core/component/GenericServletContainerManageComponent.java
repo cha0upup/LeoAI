@@ -7,6 +7,7 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -24,8 +25,8 @@ import java.util.Set;
  */
 public class GenericServletContainerManageComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h =
@@ -102,8 +103,8 @@ public class GenericServletContainerManageComponent implements Runnable {
             String className = stringValue(tryInvoke(registration, "getClassName"));
             info.put("filterName", name);
             info.put("filterClassName", className);
-            info.put("urlPatterns", toArray(tryInvoke(registration, "getUrlPatternMappings")));
-            info.put("servletNames", toArray(tryInvoke(registration, "getServletNameMappings")));
+            info.put("urlPatterns", toList(tryInvoke(registration, "getUrlPatternMappings")));
+            info.put("servletNames", toList(tryInvoke(registration, "getServletNameMappings")));
             filters.add(info);
         }
         return filters;
@@ -120,12 +121,12 @@ public class GenericServletContainerManageComponent implements Runnable {
             String name = String.valueOf(entry.getKey());
             String className = stringValue(tryInvoke(registration, "getClassName"));
             Object mappings = tryInvoke(registration, "getMappings");
-            Object[] paths = toArray(mappings);
-            if (paths.length == 0) {
+            ArrayList paths = toList(mappings);
+            if (paths.isEmpty()) {
                 servlets.add(servletInfo(name, className, ""));
             } else {
-                for (int i = 0; i < paths.length; i++) {
-                    servlets.add(servletInfo(name, className, String.valueOf(paths[i])));
+                for (int i = 0; i < paths.size(); i++) {
+                    servlets.add(servletInfo(name, className, String.valueOf(paths.get(i))));
                 }
             }
         }
@@ -379,16 +380,26 @@ public class GenericServletContainerManageComponent implements Runnable {
         return !name.startsWith("java.lang.") && !name.startsWith("java.time.");
     }
 
-    private static Object[] toArray(Object value) {
-        if (value == null) return new Object[0];
-        if (value instanceof Collection) return ((Collection) value).toArray();
-        if (value.getClass().isArray()) {
-            int length = Array.getLength(value);
-            Object[] answer = new Object[length];
-            for (int i = 0; i < length; i++) answer[i] = Array.get(value, i);
+    private static ArrayList toList(Object value) {
+        ArrayList answer = new ArrayList();
+        if (value == null) return answer;
+        if (value instanceof Iterable) {
+            Iterator iterator = ((Iterable) value).iterator();
+            while (iterator.hasNext()) answer.add(String.valueOf(iterator.next()));
             return answer;
         }
-        return new Object[]{value};
+        if (value instanceof Enumeration) {
+            Enumeration enumeration = (Enumeration) value;
+            while (enumeration.hasMoreElements()) answer.add(String.valueOf(enumeration.nextElement()));
+            return answer;
+        }
+        if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            for (int i = 0; i < length; i++) answer.add(String.valueOf(Array.get(value, i)));
+            return answer;
+        }
+        answer.add(String.valueOf(value));
+        return answer;
     }
 
     private static Object firstNonNull(Object first, Object second) {

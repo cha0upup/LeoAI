@@ -24,8 +24,8 @@ public class PortScanComponent implements Runnable, ThreadFactory {
     private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
 
     // 存储所有扫描任务的状态和结果

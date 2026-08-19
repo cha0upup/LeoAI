@@ -7,8 +7,8 @@ import java.lang.reflect.Method;
 import java.util.*;
 
 public class TomcatContainerManageComponent implements Runnable {
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     private static HashSet getContexts() {
         return getContext();
@@ -266,8 +266,8 @@ public class TomcatContainerManageComponent implements Runnable {
         for (Object context : getContexts()) {
             try {
                 HashMap contextInfo = new HashMap();
-                contextInfo.put("name", getFV(context, "name"));
-                contextInfo.put("basePath", getFV(context, "path"));
+                contextInfo.put("name", String.valueOf(getFV(context, "name")));
+                contextInfo.put("basePath", String.valueOf(getFV(context, "path")));
 
                 // 获取各类组件信息
                 contextInfo.put("allFilter", getAllFilter(context));
@@ -385,11 +385,11 @@ public class TomcatContainerManageComponent implements Runnable {
                     HashMap filterInfo = new HashMap();
                     String filterName = (String) getFV(filterMap, "filterName");
                     filterInfo.put("filterName", filterName);
-                    filterInfo.put("servletNames", getFV(filterMap, "servletNames"));
-                    filterInfo.put("urlPatterns", getFV(filterMap, "urlPatterns"));
+                    filterInfo.put("servletNames", toList(getFV(filterMap, "servletNames")));
+                    filterInfo.put("urlPatterns", toList(getFV(filterMap, "urlPatterns")));
                     Object filterDef = invokeMethod(standardContext, "findFilterDef",
                             new Class[]{String.class}, new Object[]{filterName});
-                    filterInfo.put("filterClassName", filterDef == null ? null : getFV(filterDef, "filterClass"));
+                    filterInfo.put("filterClassName", filterDef == null ? null : String.valueOf(getFV(filterDef, "filterClass")));
                     Object filterConfig = invokeMethod(standardContext, "findFilterConfig",
                             new Class[]{String.class}, new Object[]{filterName});
                     String loaderName = "";
@@ -436,7 +436,7 @@ public class TomcatContainerManageComponent implements Runnable {
                     HashMap servletInfo = new HashMap();
                     servletInfo.put("url", url);
                     servletInfo.put("wrapperName", wrapperName);
-                    servletInfo.put("servletClass", wrapper == null ? null : invokeMethod(wrapper, "getServletClass"));
+                    servletInfo.put("servletClass", wrapper == null ? null : String.valueOf(invokeMethod(wrapper, "getServletClass")));
                     ClassLoader loader = wrapper == null ? null : wrapper.getClass().getClassLoader();
                     servletInfo.put("servletClassLoaderClassName", loader == null
                             ? "<bootstrap>" : loader.getClass().getName());
@@ -768,6 +768,28 @@ public class TomcatContainerManageComponent implements Runnable {
             }
         }
         return Boolean.FALSE;
+    }
+
+    private static ArrayList toList(Object value) {
+        ArrayList answer = new ArrayList();
+        if (value == null) return answer;
+        if (value instanceof Iterable) {
+            Iterator iterator = ((Iterable) value).iterator();
+            while (iterator.hasNext()) answer.add(String.valueOf(iterator.next()));
+            return answer;
+        }
+        if (value instanceof Enumeration) {
+            Enumeration enumeration = (Enumeration) value;
+            while (enumeration.hasMoreElements()) answer.add(String.valueOf(enumeration.nextElement()));
+            return answer;
+        }
+        if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            for (int i = 0; i < length; i++) answer.add(String.valueOf(Array.get(value, i)));
+            return answer;
+        }
+        answer.add(String.valueOf(value));
+        return answer;
     }
 
 

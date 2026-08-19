@@ -53,8 +53,8 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
 
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // ==================== 常量 ====================
 

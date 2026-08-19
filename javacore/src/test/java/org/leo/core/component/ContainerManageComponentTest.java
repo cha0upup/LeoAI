@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -102,6 +103,27 @@ class ContainerManageComponentTest {
         assertEquals(2, servlets.size());
         assertTrue(servlets.stream().map(item -> ((Map) item).get("url"))
                 .anyMatch("/health"::equals));
+    }
+
+    @Test
+    void containerCollectionAdaptersNormalizeEnumerationValues() throws Exception {
+        Enumeration values = Collections.enumeration(Arrays.asList("/a", "/b"));
+        assertEquals(Arrays.asList("/a", "/b"), invokeToList(GenericServletContainerManageComponent.class, values));
+        values = Collections.enumeration(Arrays.asList("/a", "/b"));
+        assertEquals(Arrays.asList("/a", "/b"), invokeToList(TomcatContainerManageComponent.class, values));
+        values = Collections.enumeration(Arrays.asList("/a", "/b"));
+        assertEquals(Arrays.asList("/a", "/b"), invokeToList(WeblogicContainerManageComponent.class, values));
+
+        values = Collections.enumeration(Arrays.asList("/a", "/b"));
+        Method patterns = SpringFrameworkManageComponent.class.getDeclaredMethod("patternStrings", Object.class);
+        patterns.setAccessible(true);
+        assertEquals(Arrays.asList("/a", "/b"), patterns.invoke(new SpringFrameworkManageComponent(), values));
+    }
+
+    private ArrayList invokeToList(Class<?> type, Object value) throws Exception {
+        Method method = type.getDeclaredMethod("toList", Object.class);
+        method.setAccessible(true);
+        return (ArrayList) method.invoke(null, value);
     }
 
     @Test

@@ -28,8 +28,8 @@ import java.util.Set;
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class CredentialHarvestComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // 操作类型
     private static final int OP_HARVEST_ALL = 0;

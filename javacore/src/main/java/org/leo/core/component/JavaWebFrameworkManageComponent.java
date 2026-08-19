@@ -17,8 +17,8 @@ import java.util.Map;
  */
 public class JavaWebFrameworkManageComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     public void run() {
         java.lang.reflect.InvocationHandler h =
@@ -109,7 +109,7 @@ public class JavaWebFrameworkManageComponent implements Runnable {
                     HashMap actionInfo = new HashMap();
                     actionInfo.put("mappingInfo", joinAction(namespace, actionName));
                     actionInfo.put("mappingName", actionName);
-                    actionInfo.put("directPaths", new String[]{joinAction(namespace, actionName)});
+                    actionInfo.put("directPaths", java.util.Collections.singletonList(joinAction(namespace, actionName)));
                     actionInfo.put("description", stringValue(tryInvoke(action, "getClassName"))
                             + "#" + stringValue(tryInvoke(action, "getMethodName")));
                     actionInfo.put("packageName", String.valueOf(packageEntry.getKey()));
@@ -132,8 +132,8 @@ public class JavaWebFrameworkManageComponent implements Runnable {
             String name = String.valueOf(entry.getKey());
             value.put("interceptorId", namespace + "|" + name);
             value.put("interceptorName", stringValue(tryInvoke(interceptor, "getClassName")));
-            value.put("pathPatterns", new String[]{namespace.length() == 0 ? "/*" : namespace + "/*"});
-            value.put("excludePatterns", new String[0]);
+            value.put("pathPatterns", java.util.Collections.singletonList(namespace.length() == 0 ? "/*" : namespace + "/*"));
+            value.put("excludePatterns", new ArrayList());
             value.put("kind", "interceptor");
             sink.add(value);
         }
@@ -145,8 +145,8 @@ public class JavaWebFrameworkManageComponent implements Runnable {
             String name = String.valueOf(entry.getKey());
             value.put("interceptorId", namespace + "|stack:" + name);
             value.put("interceptorName", name);
-            value.put("pathPatterns", new String[]{namespace.length() == 0 ? "/*" : namespace + "/*"});
-            value.put("excludePatterns", new String[0]);
+            value.put("pathPatterns", java.util.Collections.singletonList(namespace.length() == 0 ? "/*" : namespace + "/*"));
+            value.put("excludePatterns", new ArrayList());
             value.put("kind", "stack");
             sink.add(value);
         }
@@ -194,8 +194,8 @@ public class JavaWebFrameworkManageComponent implements Runnable {
                     value.put("interceptorId", lifecycleId + "|"
                             + Integer.toHexString(System.identityHashCode(listener)));
                     value.put("interceptorName", listener.getClass().getName());
-                    value.put("pathPatterns", new String[]{"/*"});
-                    value.put("excludePatterns", new String[0]);
+                    value.put("pathPatterns", java.util.Collections.singletonList("/*"));
+                    value.put("excludePatterns", new ArrayList());
                     value.put("kind", "phase-listener");
                     sink.add(value);
                 }

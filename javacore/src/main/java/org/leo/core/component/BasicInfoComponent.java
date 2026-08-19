@@ -214,7 +214,7 @@ public class BasicInfoComponent implements Runnable {
             info.put("OSArch", stdOs.getArch());
             info.put("HostName", host);
             info.put("SystemUptime", formatUptime(getRuntimeBean().getUptime()));
-            info.put("StartTime", new Date(getRuntimeBean().getStartTime()));
+            info.put("StartTime", Long.valueOf(getRuntimeBean().getStartTime()));
 
         } catch (Exception e) {
             info.put("error", "failed to get OS info: " + e.getMessage());
@@ -485,7 +485,7 @@ public class BasicInfoComponent implements Runnable {
             RuntimeMXBean runtime = getRuntimeBean();
             processInfo.put("ProcessId", getProcessId());
             processInfo.put("ProcessName", System.getProperty("sun.java.command"));
-            processInfo.put("StartTime", new Date(runtime.getStartTime()));
+            processInfo.put("StartTime", Long.valueOf(runtime.getStartTime()));
             processInfo.put("Uptime", formatUptime(runtime.getUptime()));
         } catch (Exception e) {
             processInfo.put("error", "failed to get process info: " + e.getMessage());
