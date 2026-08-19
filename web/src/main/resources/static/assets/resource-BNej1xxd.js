@@ -1,1 +1,0 @@
-import{n as e}from"./http-C3GRzBQV.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};
