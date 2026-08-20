@@ -57,8 +57,9 @@ Java WebShell 的五个阶段占位符必须各出现一次、独占一行并保
 
 1. 调用 `getShellGeneratorMeta()` 和 `getDisguises()`，确认 PHP generator 的真实能力。
 2. 询问请求/响应伪装和输出模式；PHP 当前仅支持 `http`，应向用户说明而不是查询 Puppet。
-3. `headerName` 与 `headerValue` 必须同时设置或同时留空；不要在回复中显示 Header 密钥。
-4. 调用 `generatePhpWebShell(...)`，检查最低版本、运行要求、输出模式和警告后交付结果。
+3. 要求用户提供 PHP PayloadCodec AES 密钥；不得使用默认值或环境变量。
+4. `headerName` 与 `headerValue` 必须同时设置或同时留空；不要在回复中显示 Header 密钥。
+5. 调用 `generatePhpWebShell(...)`，检查最低版本、运行要求、输出模式和警告后交付结果。
 
 ## 明确匹配 Puppet 的例外
 

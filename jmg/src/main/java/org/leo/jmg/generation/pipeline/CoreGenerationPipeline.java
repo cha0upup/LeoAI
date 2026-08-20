@@ -21,7 +21,7 @@ public final class CoreGenerationPipeline {
     public byte[] generate() throws Exception {
         LeoCore leoCore = new LeoCore(
                 request.createRequestDisguiseSnapshot(),
-                request.createResponseDisguiseSnapshot());
+                request.createResponseDisguiseSnapshot(), request.getPayloadKey());
         byte[] bytecode = leoCore.genLeoCoreByClassName(
                 request.getCoreClassName(), request.getCoreGenerationNames());
         return ClassFileMinimizer.transform(bytecode);

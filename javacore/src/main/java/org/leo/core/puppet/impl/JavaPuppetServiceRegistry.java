@@ -5,6 +5,7 @@ import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.payload.PayloadCodec;
 import org.leo.core.puppet.service.ComponentLoadRegistry;
 import org.leo.core.puppet.service.ComponentService;
 import org.leo.core.util.request.ComponentClassNameStrategy;
@@ -41,6 +42,10 @@ final class JavaPuppetServiceRegistry {
 
     void setResponseLayers(List<ResponseLayer> responseLayers) {
         for (ComponentService service : services) service.setResponseLayers(responseLayers);
+    }
+
+    void setPayloadCodec(PayloadCodec payloadCodec) {
+        for (ComponentService service : services) service.setPayloadCodec(payloadCodec);
     }
 
     void setUrlStrategy(UrlStrategy strategy) {

@@ -1,7 +1,9 @@
 <?php
-/* Generated PHP wrapper: decode -> phpcore -> encode. PHP 5.6+. */
+/* Generated PHP wrapper: traffic -> payload -> core -> payload -> traffic. PHP 5.6+. */
 
 {{WIRE_HELPERS}}
+
+{{PAYLOAD_CODEC}}
 
 {{REQUEST_DECODER}}
 
@@ -20,16 +22,13 @@ try {
     {{HEADER_GUARD}}
     $body = file_get_contents('php://input');
     if ($body === false || $body === '') throw new InvalidArgumentException();
-    $request = leo_request_decode($body);
+    $request = leo_payload_decode(leo_traffic_decode($body));
     $response = {{CORE_ENTRY}}($request);
 } catch (Exception $error) {
-    $response = $failure($request);
-} catch (Throwable $error) {
     $response = $failure($request);
 }
 
 http_response_code({{RESPONSE_CODE}});
 {{RESPONSE_HEADERS}}
-try { echo leo_response_encode($response); }
+try { echo leo_traffic_encode(leo_payload_encode($response)); }
 catch (Exception $error) { http_response_code(500); }
-catch (Throwable $error) { http_response_code(500); }

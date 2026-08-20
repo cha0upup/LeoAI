@@ -65,7 +65,7 @@ class ShellGeneratorToolsTest {
                         && List.of("AgentJarBase64").equals(item.get("supportedPackers"))));
 
         Map<String, Object> result = tools.generatePhpWebShell(
-                "req", "resp", "http", "portable", "X-Test", "secret", 202, "seed-a");
+                "req", "resp", "http", "portable", "X-Test", "secret", 202, "php-test-key", "seed-a");
 
         assertEquals(true, result.get("success"));
         assertNotNull(result.get("resultId"));
@@ -80,6 +80,7 @@ class ShellGeneratorToolsTest {
         assertEquals("X-Test", request.getOptions().get("headerName"));
         assertEquals("secret", request.getOptions().get("headerValue"));
         assertEquals(202, request.getOptions().get("respCode"));
+        assertEquals("php-test-key", request.getOptions().get("payloadKey"));
         assertEquals("seed-a", request.getOptions().get("seed"));
     }
 
@@ -90,12 +91,12 @@ class ShellGeneratorToolsTest {
 
         AiToolException protocolError = assertThrows(AiToolException.class,
                 () -> tools.generatePhpWebShell(
-                        "req", "resp", "httpchunk", "compact", null, null, 200, null));
+                        "req", "resp", "httpchunk", "compact", null, null, 200, "php-test-key", null));
         assertTrue(protocolError.getMessage().contains("仅支持 http"));
 
         AiToolException headerError = assertThrows(AiToolException.class,
                 () -> tools.generatePhpWebShell(
-                        "req", "resp", "http", "compact", "X-Test", null, 200, null));
+                        "req", "resp", "http", "compact", "X-Test", null, 200, "php-test-key", null));
         assertTrue(headerError.getMessage().contains("必须同时设置"));
     }
 
@@ -117,7 +118,7 @@ class ShellGeneratorToolsTest {
 
         Map<String, Object> core = tools.createJavaCoreArtifact(
                 "req-core", "resp-core", "http", "org.demo.GeneratedCore",
-                "8", "javax", 405L);
+                "8", "javax", "ai-test-key", 405L);
 
         assertEquals(true, core.get("success"));
         assertNotNull(core.get("coreArtifactId"));
@@ -159,7 +160,7 @@ class ShellGeneratorToolsTest {
                 coreStore, templateStore);
         Map<String, Object> core = tools.createJavaCoreArtifact(
                 "req-core", "resp-core", "http", "org.demo.RetryCore",
-                "8", "javax", 406L);
+                "8", "javax", "ai-test-key", 406L);
 
         Map<String, Object> result = tools.designWebShellWrapper(
                 String.valueOf(core.get("coreArtifactId")), "JSP", "保持简洁");
@@ -193,15 +194,15 @@ class ShellGeneratorToolsTest {
 
     private static Disguise requestDisguise(String id) {
         Disguise disguise = disguise(id);
-        disguise.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        disguise.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 
     private static Disguise responseDisguise(String id) {
         Disguise disguise = disguise(id);
-        disguise.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        disguise.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 

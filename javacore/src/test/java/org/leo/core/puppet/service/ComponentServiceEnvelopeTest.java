@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
+import org.leo.core.payload.PayloadCodec;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.RequestLayer;
@@ -13,7 +14,6 @@ import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.core.util.request.ComponentClassNameStrategy;
-import org.leo.core.util.json.PortableJsonCodec;
 import org.objectweb.asm.ClassReader;
 
 import java.util.LinkedHashMap;
@@ -63,10 +63,10 @@ class ComponentServiceEnvelopeTest {
         PortableDisguise disguise = new PortableDisguise();
         List<byte[]> bytecodes = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             Map<?, ?> params = (Map<?, ?>) request.get("params");
             bytecodes.add((byte[]) params.get("bytecode"));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("loaded", true)));
         };
@@ -89,9 +89,9 @@ class ComponentServiceEnvelopeTest {
         PortableDisguise disguise = new PortableDisguise();
         List<byte[]> bytecodes = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             bytecodes.add((byte[]) ((Map<?, ?>) request.get("params")).get("bytecode"));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("loaded", true)));
         };
@@ -115,8 +115,8 @@ class ComponentServiceEnvelopeTest {
             requests.incrementAndGet();
             entered.countDown();
             assertTrue(release.await(2, TimeUnit.SECONDS));
-            Map<String, Object> request = PortableJsonCodec.decode(data);
-            return PortableJsonCodec.encode(Map.of(
+            Map<String, Object> request = WireCodec.decode(data);
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("loaded", true)));
         };
@@ -153,8 +153,8 @@ class ComponentServiceEnvelopeTest {
         long[] now = {0L};
         Communication communication = data -> {
             requests.incrementAndGet();
-            Map<String, Object> request = PortableJsonCodec.decode(data);
-            return PortableJsonCodec.encode(Map.of(
+            Map<String, Object> request = WireCodec.decode(data);
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 500,
                     "message", "temporary"));
         };
@@ -181,8 +181,8 @@ class ComponentServiceEnvelopeTest {
         Communication communication = data -> {
             entered.countDown();
             assertTrue(release.await(2, TimeUnit.SECONDS));
-            Map<String, Object> request = PortableJsonCodec.decode(data);
-            return PortableJsonCodec.encode(Map.of(
+            Map<String, Object> request = WireCodec.decode(data);
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("loaded", true)));
         };
@@ -209,7 +209,7 @@ class ComponentServiceEnvelopeTest {
     void sendsEnvelopeAndRestoresExistingComponentResultShape() {
         PortableDisguise disguise = new PortableDisguise();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             assertEquals("COMPONENT_INVOKE", request.get("operation"));
             assertEquals("host-1", request.get("hostId"));
             assertEquals("ExecCommandComponent", request.get("component"));
@@ -217,7 +217,7 @@ class ComponentServiceEnvelopeTest {
             assertEquals(Map.of("cmd", "whoami"), request.get("params"));
             assertFalse(request.containsKey("protocol"));
             assertFalse(request.containsKey("version"));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"),
                     "code", 200,
                     "data", Map.of("data", "root", "exitCode", 0)));
@@ -237,7 +237,7 @@ class ComponentServiceEnvelopeTest {
         int[] calls = {0};
         Communication communication = data -> {
             calls[0]++;
-            return PortableJsonCodec.encode(Map.of("code", 200, "hostId", "invalid"));
+            return WireCodec.encode(Map.of("code", 200, "hostId", "invalid"));
         };
         TestService service = service(communication, disguise);
 
@@ -251,20 +251,20 @@ class ComponentServiceEnvelopeTest {
     void wrapsEveryRelayLayerInItsOwnEnvelope() {
         PortableDisguise disguise = new PortableDisguise();
         Communication communication = data -> {
-            Map<String, Object> relay = PortableJsonCodec.decode(data);
+            Map<String, Object> relay = WireCodec.decode(data);
             assertEquals("RELAY", relay.get("operation"));
             Map<?, ?> relayParams = (Map<?, ?>) relay.get("params");
             assertEquals("/inner", relayParams.get("url"));
             Map<?, ?> relayHeaders = (Map<?, ?>) relayParams.get("headers");
             assertEquals("application/octet-stream", relayHeaders.get("Content-Type"));
             assertEquals("identity", relayHeaders.get("Accept-Encoding"));
-            Map<String, Object> inner = PortableJsonCodec.decode((byte[]) relayParams.get("body"));
+            Map<String, Object> inner = WireCodec.decode((byte[]) relayParams.get("body"));
             assertEquals("PING", inner.get("operation"));
-            byte[] innerResponse = PortableJsonCodec.encode(Map.of(
+            byte[] innerResponse = WireCodec.encode(Map.of(
                     "requestId", inner.get("requestId"),
                     "code", 200,
                     "data", Map.of("hostId", "host-1")));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", relay.get("requestId"),
                     "code", 200,
                     "data", Map.of("body", innerResponse)));
@@ -290,10 +290,10 @@ class ComponentServiceEnvelopeTest {
         List<String> requestIds = new ArrayList<>();
         List<Long> delays = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             requestIds.add(String.valueOf(request.get("requestId")));
             if (attempts.incrementAndGet() < 3) throw new java.io.IOException("temporary");
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("hostId", "host-1")));
         };
@@ -320,11 +320,11 @@ class ComponentServiceEnvelopeTest {
         AtomicInteger recoveries = new AtomicInteger();
         List<String> requestIds = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             attempts.incrementAndGet();
             requestIds.add(String.valueOf(request.get("requestId")));
             assertEquals("host-1", request.get("hostId"));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"),
                     "code", 409,
                     "error", Map.of(
@@ -359,9 +359,9 @@ class ComponentServiceEnvelopeTest {
     void usesBucketPaddingWithDerivedFieldName() {
         PortableDisguise disguise = new PortableDisguise();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = WireCodec.decode(data);
             assertTrue(request.keySet().stream().anyMatch(key -> key.matches("_[a-f0-9]{12}")));
-            return PortableJsonCodec.encode(Map.of(
+            return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("hostId", "host-1")));
         };
@@ -386,8 +386,8 @@ class ComponentServiceEnvelopeTest {
             userAgents.add(exchange.getRequestHeaders().getFirst("User-Agent"));
             languages.add(exchange.getRequestHeaders().getFirst("Accept-Language"));
             traceIds.add(exchange.getRequestHeaders().getFirst("X-Trace-Id"));
-            Map<String, Object> request = PortableJsonCodec.decode(exchange.getRequestBody().readAllBytes());
-            byte[] response = PortableJsonCodec.encode(Map.of(
+            Map<String, Object> request = WireCodec.decode(exchange.getRequestBody().readAllBytes());
+            byte[] response = WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 200,
                     "data", Map.of("hostId", "host-http")));
             exchange.sendResponseHeaders(200, response.length);
@@ -440,6 +440,7 @@ class ComponentServiceEnvelopeTest {
                             List<RequestLayer> requestLayers,
                             List<ResponseLayer> responseLayers) {
             super(communication, requestLayers, responseLayers);
+            setPayloadCodec(new PayloadCodec("component-test-key"));
         }
 
         private Map<String, Object> execute(PuppetOperation operation, String component,
@@ -449,14 +450,31 @@ class ComponentServiceEnvelopeTest {
     }
 
     private static final class PortableDisguise extends Disguise {
-        @Override
-        public byte[] encode(Map<String, Object> params) {
-            return PortableJsonCodec.encode(params);
+        private PortableDisguise() {
+            setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
+            setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");
         }
 
         @Override
-        public Map<String, Object> decode(byte[] data) {
-            return new LinkedHashMap<>(PortableJsonCodec.decode(data));
+        public byte[] encodeTraffic(byte[] payload) {
+            return payload;
+        }
+
+        @Override
+        public byte[] decodeTraffic(byte[] data) {
+            return data;
+        }
+    }
+
+    private static final class WireCodec {
+        private static final PayloadCodec CODEC = new PayloadCodec("component-test-key");
+
+        private static byte[] encode(Map<String, Object> payload) throws Exception {
+            return CODEC.encode(payload);
+        }
+
+        private static Map<String, Object> decode(byte[] data) throws Exception {
+            return CODEC.decode(data);
         }
     }
 }

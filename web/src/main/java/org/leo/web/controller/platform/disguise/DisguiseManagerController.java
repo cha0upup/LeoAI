@@ -107,10 +107,10 @@ public class DisguiseManagerController {
             return ApiResponse.unauthorized("用户未登录");
         }
         try {
-            String encodeBody = ControllerUtil.getRequiredStringParam(params, "encodeBody");
-            String decodeBody = ControllerUtil.getRequiredStringParam(params, "decodeBody");
-            disguiseService.testDisguise(encodeBody, decodeBody);
-            return ApiResponse.success("测试通过：encode和decode方法可以正确互逆");
+            String trafficEncodeBody = ControllerUtil.getRequiredStringParam(params, "trafficEncodeBody");
+            String trafficDecodeBody = ControllerUtil.getRequiredStringParam(params, "trafficDecodeBody");
+            disguiseService.testDisguise(trafficEncodeBody, trafficDecodeBody);
+            return ApiResponse.success("测试通过：traffic 编解码可以正确互逆");
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
         } catch (Exception e) {
@@ -126,12 +126,12 @@ public class DisguiseManagerController {
         if (getCurrentUser(request) == null) return ApiResponse.unauthorized("用户未登录");
         try {
             Disguise disguise = new Disguise();
-            disguise.setEncodeBody(ControllerUtil.getRequiredStringParam(params, "encodeBody"));
-            disguise.setDecodeBody(ControllerUtil.getRequiredStringParam(params, "decodeBody"));
-            disguise.setPhpEncodeBody(optionalText(params.get("phpEncodeBody")));
-            disguise.setPhpDecodeBody(optionalText(params.get("phpDecodeBody")));
-            disguise.setSchemaVersion(integerValue(params.get("schemaVersion"), 2));
-            disguise.setProtocolVersion(integerValue(params.get("protocolVersion"), 2));
+            disguise.setTrafficEncodeBody(ControllerUtil.getRequiredStringParam(params, "trafficEncodeBody"));
+            disguise.setTrafficDecodeBody(ControllerUtil.getRequiredStringParam(params, "trafficDecodeBody"));
+            disguise.setPhpTrafficEncodeBody(optionalText(params.get("phpTrafficEncodeBody")));
+            disguise.setPhpTrafficDecodeBody(optionalText(params.get("phpTrafficDecodeBody")));
+            disguise.setSchemaVersion(integerValue(params.get("schemaVersion"), 3));
+            disguise.setProtocolVersion(integerValue(params.get("protocolVersion"), 3));
             disguise.setSupportedRuntimes(runtimeSet(params.get("supportedRuntimes")));
             if (params.get("requirements") instanceof Map<?, ?> raw) {
                 Map<String, Object> requirements = new LinkedHashMap<>();
@@ -165,14 +165,7 @@ public class DisguiseManagerController {
         return result;
     }
 
-    /**
-     * 实时预览：编译 encodeBody/decodeBody，用给定的 params 执行 encode，
-     * 返回编码后的字节（Base64 与可打印 ASCII），以及 decode 逆向结果。
-     * 用于编辑器实时预览，无副作用。
-     *
-     * 注意：该接口会动态编译并执行任意 Java 代码，必须验证用户已登录，
-     * 防止未授权用户利用编译/执行能力。
-     */
+    /** Preview a traffic-only adapter with opaque bytes; PayloadCodec is not involved here. */
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
     @AdminOnlyEndpoint
     public HashMap<String, Object> previewDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
@@ -180,32 +173,21 @@ public class DisguiseManagerController {
             return ApiResponse.unauthorized("用户未登录");
         }
         try {
-            String encodeBody = ControllerUtil.getRequiredStringParam(params, "encodeBody");
-            String decodeBody = ControllerUtil.getRequiredStringParam(params, "decodeBody");
-
-            // 用户自定义测试参数，默认使用标准测试数据
-            Object customParams = params.get("testParams");
-            java.util.HashMap<String, Object> testInput = new java.util.HashMap<>();
-            if (customParams instanceof java.util.Map<?, ?> customMap) {
-                customMap.forEach((key, value) -> {
-                    if (key instanceof String stringKey) testInput.put(stringKey, value);
-                });
-            } else {
-                testInput.put("testKey", "hello_world");
-                testInput.put("sessionId", "preview-session");
-            }
+            String trafficEncodeBody = ControllerUtil.getRequiredStringParam(params, "trafficEncodeBody");
+            String trafficDecodeBody = ControllerUtil.getRequiredStringParam(params, "trafficDecodeBody");
+            byte[] testInput = new byte[]{0, 1, 2, 3, 7, 13, 42, (byte) 0xff};
 
             // 动态编译并执行
-            Class<?> cls = JavassistDisguiseFactory.createDisguiseClass(encodeBody, decodeBody);
+            Class<?> cls = JavassistDisguiseFactory.createTrafficDisguiseClass(trafficEncodeBody, trafficDecodeBody);
             Object instance = cls.getDeclaredConstructor().newInstance();
 
-            java.lang.reflect.Method encMethod = cls.getMethod("encode", java.util.HashMap.class);
-            java.lang.reflect.Method decMethod = cls.getMethod("decode", byte[].class);
+            java.lang.reflect.Method encMethod = cls.getMethod("encodeTraffic", byte[].class);
+            java.lang.reflect.Method decMethod = cls.getMethod("decodeTraffic", byte[].class);
             encMethod.setAccessible(true);
             decMethod.setAccessible(true);
 
             byte[] encoded = (byte[]) encMethod.invoke(instance, testInput);
-            Object decoded = decMethod.invoke(instance, encoded);
+            byte[] decoded = (byte[]) decMethod.invoke(instance, encoded);
 
             // Base64 编码结果
             String encodedBase64 = java.util.Base64.getEncoder().encodeToString(encoded);
@@ -234,8 +216,8 @@ public class DisguiseManagerController {
             data.put("encodedPrintable", printable.toString());
             data.put("encodedHex", hex.toString());
             data.put("encodedLength", encoded.length);
-            data.put("decoded", decoded != null ? decoded.toString() : null);
-            data.put("inverseOk", testInput.equals(decoded));
+            data.put("decodedBase64", decoded == null ? null : java.util.Base64.getEncoder().encodeToString(decoded));
+            data.put("inverseOk", java.util.Arrays.equals(testInput, decoded));
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);

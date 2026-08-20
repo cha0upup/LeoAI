@@ -104,15 +104,15 @@ class WebShellWrapperServiceTest {
 
     private static Disguise requestDisguise() {
         Disguise disguise = new Disguise();
-        disguise.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        disguise.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 
     private static Disguise responseDisguise() {
         Disguise disguise = new Disguise();
-        disguise.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        disguise.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 

@@ -4,7 +4,7 @@ services:
       context: .
       args:
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-eclipse-temurin:17-jre}
-        JAR_URL: ${JAR_URL:-https://github.com/cha0upup/LeoAI/releases/download/v2.0.2/LeoAi-2.0.2.jar}
+        JAR_URL: ${JAR_URL:-https://github.com/cha0upup/LeoAI/releases/download/v2.1.0/LeoAi-2.1.0.jar}
     image: leoai:local
     container_name: leoai
     restart: unless-stopped

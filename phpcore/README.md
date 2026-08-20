@@ -5,7 +5,7 @@ an equal-status sibling of `javacore`.
 
 The shared runtime, capability, plugin and generator contracts live in `core`.
 This module provides the platform-side `PhpPuppetNode`, the Java-compatible
-`M=0/1/2/3` core client, PHP disguise validation, single-file endpoint generation
+runtime-neutral RPC client, PHP disguise validation, single-file endpoint generation
 and target-side PHP components. Neither runtime module depends on or adapts the
 other one.
 
@@ -29,9 +29,8 @@ whitespace-minified PHP without an `eval`/zlib bootstrap. `packed` retains the
 smallest DEFLATE + Base64 representation, while `portable` emits line-oriented
 plain PHP for inspection and debugging. The outer wrapper only decodes the
 request, calls the generated core entry point, and encodes the result. The inner
-core mirrors Java's operation model: `M=0` tests the endpoint,
-`M=1` forwards an encoded inner request, `M=2` loads a component, and `M=3`
-invokes a component.
+core mirrors Java's runtime-neutral operation model for endpoint tests, relay,
+component loading and component invocation.
 
 Business and runtime inspection logic lives in independently delivered PHP
 components. An invocation carries an opaque platform-assigned `componentKey`, so

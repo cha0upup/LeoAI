@@ -84,7 +84,7 @@ public class DisguiseManager {
     /**
      * 安装单个Disguise
      */
-    public boolean inStallDisguise(Disguise disguise) {
+    public boolean installDisguise(Disguise disguise) {
         try {
             disguise.init();
             disguises.put(disguise.getDisguiseId(), disguise);

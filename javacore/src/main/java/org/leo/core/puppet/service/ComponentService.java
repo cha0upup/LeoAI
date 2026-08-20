@@ -12,6 +12,7 @@ import org.leo.core.net.layer.HeaderNoiseGenerator;
 import org.leo.core.net.layer.HttpSessionProfile;
 import org.leo.core.net.layer.UrlGenerator;
 import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.payload.PayloadCodec;
 import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.rpc.PuppetRpcRequest;
@@ -30,9 +31,7 @@ import java.util.function.LongSupplier;
 
 import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
 
-/**
- * pipeline 执行引擎（最终优化版）
- */
+/** Shared Java component request pipeline. */
 public class ComponentService {
 
     private static final int MIN_HOST_AFFINITY_ATTEMPTS = 8;
@@ -43,6 +42,7 @@ public class ComponentService {
 
     private List<RequestLayer> requestLayers = new ArrayList<>();
     private List<ResponseLayer> responseLayers = new ArrayList<>();
+    private PayloadCodec payloadCodec;
 
     protected String hostId;
 
@@ -109,6 +109,10 @@ public class ComponentService {
     public void setResponseLayers(List<ResponseLayer> responseLayers) {
         this.responseLayers = responseLayers;
         this.pipelineInitialized = false;
+    }
+
+    public void setPayloadCodec(PayloadCodec payloadCodec) {
+        this.payloadCodec = payloadCodec;
     }
 
     public void setUrlStrategy(UrlStrategy urlStrategy) {
@@ -467,9 +471,7 @@ public class ComponentService {
 
         List<String> requestIds = new ArrayList<>();
         requestIds.add(requestId);
-        byte[] temp = requestLayers.get(0)
-                .getDisguise()
-                .encode(params);
+        byte[] temp = encodeLayer(requestLayers.get(0), params);
 
         for (int i = 1; i < requestLayers.size(); i++) {
             RequestLayer layer = requestLayers.get(i);
@@ -485,7 +487,7 @@ public class ComponentService {
             Map<String, Object> relayPayload = PuppetRpcEnvelopeMapper.toMap(relay);
             PaddingUtil.pad(relayPayload, paddingStrategy, estimateBytes(relayPayload),
                     relayRequestId + "|" + i + "|" + transportSeed());
-            temp = layer.getDisguise().encode(relayPayload);
+            temp = encodeLayer(layer, relayPayload);
             requestIds.add(relayRequestId);
         }
 
@@ -505,7 +507,7 @@ public class ComponentService {
             Map<String, Object> map = null;
 
             for (int i = 0; i < responseLayers.size(); i++) {
-                map = responseLayers.get(i).getDisguise().decode(temp);
+                map = decodeLayer(responseLayers.get(i), temp);
                 String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
                 if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(map, expectedRequestId)) {
                     Object actualRequestId = map == null ? null : map.get("requestId");
@@ -528,13 +530,13 @@ public class ComponentService {
                 }
             }
 
-            // result 可能为 null（Disguise.decode 返回 null）
+            // result 可能为 null（PayloadCodec 解码结果为空）
             if (result == null) {
                 log.warn("[ComponentService] decode: Disguise 返回 null，data.length={}",
                         data == null ? -1 : data.length);
                 result = new HashMap<>();
                 result.put("reqStatus", "fail");
-                result.put("reqMsg", "Disguise.decode 返回 null");
+                result.put("reqMsg", "PayloadCodec 解码结果为空");
                 return result;
             }
 
@@ -562,6 +564,21 @@ public class ComponentService {
         }
 
         return result;
+    }
+
+    private byte[] encodeLayer(RequestLayer layer, Map<String, Object> payload) throws Exception {
+        return layer.encodeTraffic(requirePayloadCodec().encode(payload));
+    }
+
+    private Map<String, Object> decodeLayer(ResponseLayer layer, byte[] body) throws Exception {
+        return requirePayloadCodec().decode(layer.decodeTraffic(body));
+    }
+
+    private PayloadCodec requirePayloadCodec() {
+        if (payloadCodec == null) {
+            throw new IllegalStateException("Java PayloadCodec 未配置");
+        }
+        return payloadCodec;
     }
 
     private record EncodedPayload(byte[] data, List<String> requestIds) { }

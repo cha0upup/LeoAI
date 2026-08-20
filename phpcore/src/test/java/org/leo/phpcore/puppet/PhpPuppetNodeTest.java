@@ -27,10 +27,10 @@ import org.leo.core.puppet.database.SqlCommand;
 import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.rpc.PuppetRpcRequest;
-import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 import org.leo.phpcore.component.PhpComponentVariantBuilder;
 import org.leo.phpcore.rpc.PhpRpcClient;
+import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -45,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhpPuppetNodeTest {
+    private static final String KEY = "php-node-test-key";
 
     @Test
     void restoresOpaquePingAliasesAndUsesEndpointVariantForInvocations() throws Exception {
@@ -405,36 +406,49 @@ class PhpPuppetNodeTest {
     private PhpPuppetNode node(Communication communication, Disguise disguise) {
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), disguise)),
-                List.of(new ResponseLayer(disguise)));
+                List.of(new ResponseLayer(disguise)), KEY);
         return new PhpPuppetNode(client, new PhpComponentArtifactRegistry());
     }
 
     private DecodedRequest decodeRequest(byte[] bytes) {
-        Map<String, Object> wire = PortableJsonCodec.decode(bytes);
-        PuppetRpcRequest request = PuppetRpcEnvelopeMapper.requestFromMap(wire);
-        Map<String, Object> execution = new LinkedHashMap<>(request.params());
-        if (request.component() != null) execution.put("componentName", request.component());
-        if (request.action() != null) execution.put("action", request.action());
-        if (request.hostId() != null) execution.put("hostId", request.hostId());
-        return new DecodedRequest(execution, request);
+        try {
+            Map<String, Object> wire = new PhpPayloadCodec(KEY).decode(bytes);
+            PuppetRpcRequest request = PuppetRpcEnvelopeMapper.requestFromMap(wire);
+            Map<String, Object> execution = new LinkedHashMap<>(request.params());
+            if (request.component() != null) execution.put("componentName", request.component());
+            if (request.action() != null) execution.put("action", request.action());
+            if (request.hostId() != null) execution.put("hostId", request.hostId());
+            return new DecodedRequest(execution, request);
+        } catch (Exception e) {
+            throw new IllegalStateException("PHP payload decode failed", e);
+        }
     }
 
     private byte[] response(DecodedRequest request, Map<String, Object> data) {
-        return PortableJsonCodec.encode(PuppetRpcEnvelopeMapper.toMap(
-                PuppetRpcEnvelopeMapper.responseFromResult(request.request().requestId(), data)));
+        try {
+            return new PhpPayloadCodec(KEY).encode(PuppetRpcEnvelopeMapper.toMap(
+                    PuppetRpcEnvelopeMapper.responseFromResult(request.request().requestId(), data)));
+        } catch (Exception e) {
+            throw new IllegalStateException("PHP payload encode failed", e);
+        }
     }
 
     private record DecodedRequest(Map<String, Object> execution, PuppetRpcRequest request) { }
 
     private static final class PortableDisguise extends Disguise {
-        @Override
-        public byte[] encode(Map<String, Object> params) {
-            return PortableJsonCodec.encode(params);
+        private PortableDisguise() {
+            setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
+            setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");
         }
 
         @Override
-        public Map<String, Object> decode(byte[] data) {
-            return new LinkedHashMap<>(PortableJsonCodec.decode(data));
+        public byte[] encodeTraffic(byte[] payload) {
+            return payload;
+        }
+
+        @Override
+        public byte[] decodeTraffic(byte[] data) {
+            return data;
         }
     }
 }

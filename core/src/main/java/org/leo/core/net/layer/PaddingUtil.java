@@ -9,8 +9,8 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * 请求体 Padding 工具类（v4 — Map 级填充）。
  * <p>
- * 核心思想：在 encode 之前向参数 Map 中注入随机填充字段，
- * Disguise.encode() 会将填充数据与真实数据一起加密。
+ * 核心思想：在 PayloadCodec 编码之前向参数 Map 中注入随机填充字段，
+ * 填充数据会与业务字段一起序列化、压缩并加密。
  * <p>
  * 优势：
  * <ul>
@@ -37,8 +37,7 @@ public class PaddingUtil {
     /**
      * 在参数 Map 中注入随机填充数据。
      * <p>
-     * 注入后的 Map 交给 Disguise.encode() 一起加密，
-     * 填充数据在加密后完全不可识别。
+     * 注入后的 Map 交给 PayloadCodec 一起编码，填充数据在加密后完全不可识别。
      *
      * @param params   待编码的参数 Map（会被直接修改）
      * @param strategy padding 策略配置

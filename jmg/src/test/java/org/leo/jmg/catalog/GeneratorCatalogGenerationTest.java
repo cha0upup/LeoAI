@@ -157,12 +157,13 @@ class GeneratorCatalogGenerationTest {
     void tomcatUpgradeExecutesHeaderGateAndKeepsConfiguredResponseCode()
             throws Exception {
         Disguise request = new Disguise();
-        request.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         Disguise response = new Disguise();
-        response.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         ShellGeneratorConfig config = ShellGeneratorConfig.builder(request, response)
+                .payloadKey("catalog-test-key")
                 .serverType("Tomcat")
                 .shellType("UpgradeInjector")
                 .protocol("http")
@@ -305,13 +306,14 @@ class GeneratorCatalogGenerationTest {
                                              ServletNamespace namespace,
                                              String serverVersion) throws Exception {
         Disguise request = new Disguise();
-        request.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         Disguise response = new Disguise();
-        response.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
 
         ShellGeneratorConfig.Builder builder = ShellGeneratorConfig.builder(request, response)
+                .payloadKey("catalog-test-key")
                 .serverType(descriptor.getServerType().getValue())
                 .shellType(descriptor.getInjectorName())
                 .protocol(descriptor.getProtocol().getValue())

@@ -105,11 +105,13 @@ class GenerationPipelineTest {
 
     private static ShellGeneratorConfig.Builder baseBuilder() {
         Disguise request = new Disguise();
-        request.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         Disguise response = new Disguise();
-        response.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
-        return ShellGeneratorConfig.builder(request, response);
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
+        return ShellGeneratorConfig.builder(request, response)
+                .payloadKey("pipeline-test-key")
+                .header("X-Test", "pipeline");
     }
 }

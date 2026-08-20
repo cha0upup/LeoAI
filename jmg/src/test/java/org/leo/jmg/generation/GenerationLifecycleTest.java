@@ -33,13 +33,13 @@ class GenerationLifecycleTest {
                 .build();
 
         GenerationRequest request = GenerationRequest.from(config);
-        config.getReqDisguise().setDecodeBody("changed-after-snapshot");
+        config.getReqDisguise().setTrafficDecodeBody("changed-after-snapshot");
 
         assertEquals("before", request.getCustomJspTemplate());
         assertFalse(request.isBypassJavaModule());
         assertEquals(TransportProtocol.HTTP_CHUNK, request.getProtocol());
         assertFalse("changed-after-snapshot".equals(
-                request.createRequestDisguiseSnapshot().getDecodeBody()));
+                request.createRequestDisguiseSnapshot().getTrafficDecodeBody()));
         assertThrows(UnsupportedOperationException.class,
                 () -> request.getJspObfuscationSteps().add("another-step"));
     }
@@ -80,7 +80,7 @@ class GenerationLifecycleTest {
                 .obfuscationSeed(84L)
                 .build();
         GenerationRequest request = GenerationRequest.from(config);
-        config.getReqDisguise().setDecodeBody(null);
+        config.getReqDisguise().setTrafficDecodeBody(null);
 
         GenerationResult result =
                 new ShellGenerator(request).generateFormattedInjector();
@@ -168,12 +168,13 @@ class GenerationLifecycleTest {
 
     private static ShellGeneratorConfig.Builder injectorConfig() {
         Disguise request = new Disguise();
-        request.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         Disguise response = new Disguise();
-        response.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         return ShellGeneratorConfig.builder(request, response)
+                .payloadKey("lifecycle-test-key")
                 .protocol("httpchunk")
                 .serverType("Tomcat")
                 .shellType("FilterInjector")

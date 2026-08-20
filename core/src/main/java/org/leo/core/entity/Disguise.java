@@ -2,30 +2,29 @@ package org.leo.core.entity;
 
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.core.util.json.JsonUtil;
+import org.leo.core.disguise.DisguiseProtocol;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Disguise：编码/解码策略
- */
+/** Traffic wrapper definition; payload serialization and encryption are external codecs. */
 public class Disguise {
 
     private String disguiseId;
     private String disguiseName;
-    private String encodeBody;
-    private String decodeBody;
+    /** Java traffic-only methods. They wrap opaque payload bytes. */
+    private String trafficEncodeBody;
+    private String trafficDecodeBody;
 
-    private Integer schemaVersion = 2;
-    private Integer protocolVersion = 2;
+    private Integer schemaVersion = DisguiseProtocol.SCHEMA_VERSION;
+    private Integer protocolVersion = DisguiseProtocol.PROTOCOL_VERSION;
 
-    /** PHP function bodies. encode receives $payload; decode receives $body. */
-    private String phpEncodeBody;
-    private String phpDecodeBody;
+    /** PHP traffic function bodies. Encode receives opaque bytes; decode receives the HTTP body. */
+    private String phpTrafficEncodeBody;
+    private String phpTrafficDecodeBody;
     private Set<String> supportedRuntimes;
     private Map<String, Object> requirements;
 
@@ -40,8 +39,8 @@ public class Disguise {
 
     /** 运行时字段（不建议持久化） */
     private transient Class<?> handlerClass;
-    private transient Method encodeMethod;
-    private transient Method decodeMethod;
+    private transient Method trafficEncodeMethod;
+    private transient Method trafficDecodeMethod;
 
     // ================== 初始化 ==================
 
@@ -50,57 +49,42 @@ public class Disguise {
             return;
         }
 
-        handlerClass = JavassistDisguiseFactory.createDisguiseClass(
-                getEncodeBody(), getDecodeBody()
-        );
-
-        encodeMethod = handlerClass.getMethod("encode", HashMap.class);
-        decodeMethod = handlerClass.getMethod("decode", byte[].class);
-
-        encodeMethod.setAccessible(true);
-        decodeMethod.setAccessible(true);
+        if (!isTrafficOnly()) {
+            throw new IllegalStateException("Disguise 必须配置 traffic 编解码");
+        }
+        handlerClass = JavassistDisguiseFactory.createTrafficDisguiseClass(
+                getTrafficEncodeBody(), getTrafficDecodeBody());
+        trafficEncodeMethod = handlerClass.getMethod("encodeTraffic", byte[].class);
+        trafficDecodeMethod = handlerClass.getMethod("decodeTraffic", byte[].class);
+        trafficEncodeMethod.setAccessible(true);
+        trafficDecodeMethod.setAccessible(true);
     }
 
-    // ================== encode ==================
-
-    public byte[] encode(Map<String, Object> params) throws Exception {
-        if (handlerClass == null) {
-            init();
-        }
-
+    public byte[] encodeTraffic(byte[] payload) throws Exception {
+        if (!isTrafficOnly()) throw new IllegalStateException("traffic encode 未配置");
+        if (handlerClass == null) init();
         Object instance = handlerClass.getDeclaredConstructor().newInstance();
-
-        Object result;
         try {
-            result = encodeMethod.invoke(instance, new HashMap<>(params));
+            return (byte[]) trafficEncodeMethod.invoke(instance, payload);
         } catch (InvocationTargetException ite) {
-            // 用户自定义 encode 代码抛出的真实异常被 JDK 反射层包装在 ITE 里，getMessage()=null。
-            // 展开为真实 cause 抛出，上层日志和错误处理才能看到真正的异常类型和消息。
             throw unwrap(ite);
         }
-
-        return (byte[]) result;
     }
 
-    // ================== decode ==================
-
-
-    public Map<String, Object> decode(byte[] data) throws Exception {
-        if (handlerClass == null) {
-        init();
-        }
-
+    public byte[] decodeTraffic(byte[] body) throws Exception {
+        if (!isTrafficOnly()) throw new IllegalStateException("traffic decode 未配置");
+        if (handlerClass == null) init();
         Object instance = handlerClass.getDeclaredConstructor().newInstance();
-
-        Object result;
         try {
-            result = decodeMethod.invoke(instance, data);
+            return (byte[]) trafficDecodeMethod.invoke(instance, body);
         } catch (InvocationTargetException ite) {
-            // 同 encode：展开 InvocationTargetException，暴露 user-defined decode 抛出的真实异常
             throw unwrap(ite);
         }
+    }
 
-        return (Map<String, Object>) result;
+    public boolean isTrafficOnly() {
+        return trafficEncodeBody != null && !trafficEncodeBody.isBlank()
+                && trafficDecodeBody != null && !trafficDecodeBody.isBlank();
     }
 
     /**
@@ -138,21 +122,17 @@ public class Disguise {
         this.disguiseName = disguiseName;
     }
 
-    public String getEncodeBody() {
-        return encodeBody;
-    }
+    public String getTrafficEncodeBody() { return trafficEncodeBody; }
 
-    public void setEncodeBody(String encodeBody) {
-        this.encodeBody = encodeBody;
+    public void setTrafficEncodeBody(String trafficEncodeBody) {
+        this.trafficEncodeBody = trafficEncodeBody;
         resetRuntimeHandler();
     }
 
-    public String getDecodeBody() {
-        return decodeBody;
-    }
+    public String getTrafficDecodeBody() { return trafficDecodeBody; }
 
-    public void setDecodeBody(String decodeBody) {
-        this.decodeBody = decodeBody;
+    public void setTrafficDecodeBody(String trafficDecodeBody) {
+        this.trafficDecodeBody = trafficDecodeBody;
         resetRuntimeHandler();
     }
 
@@ -172,20 +152,20 @@ public class Disguise {
         this.protocolVersion = protocolVersion;
     }
 
-    public String getPhpEncodeBody() {
-        return phpEncodeBody;
+    public String getPhpTrafficEncodeBody() {
+        return phpTrafficEncodeBody;
     }
 
-    public void setPhpEncodeBody(String phpEncodeBody) {
-        this.phpEncodeBody = phpEncodeBody;
+    public void setPhpTrafficEncodeBody(String phpTrafficEncodeBody) {
+        this.phpTrafficEncodeBody = phpTrafficEncodeBody;
     }
 
-    public String getPhpDecodeBody() {
-        return phpDecodeBody;
+    public String getPhpTrafficDecodeBody() {
+        return phpTrafficDecodeBody;
     }
 
-    public void setPhpDecodeBody(String phpDecodeBody) {
-        this.phpDecodeBody = phpDecodeBody;
+    public void setPhpTrafficDecodeBody(String phpTrafficDecodeBody) {
+        this.phpTrafficDecodeBody = phpTrafficDecodeBody;
     }
 
     public Set<String> getSupportedRuntimes() {
@@ -211,20 +191,18 @@ public class Disguise {
             return false;
         }
         if ("php".equalsIgnoreCase(runtime)) {
-            return phpEncodeBody != null && !phpEncodeBody.isBlank()
-                    && phpDecodeBody != null && !phpDecodeBody.isBlank()
-                    && encodeBody != null && !encodeBody.isBlank()
-                    && decodeBody != null && !decodeBody.isBlank();
+            return phpTrafficEncodeBody != null && !phpTrafficEncodeBody.isBlank()
+                    && phpTrafficDecodeBody != null && !phpTrafficDecodeBody.isBlank()
+                    && isTrafficOnly();
         }
         return "java".equalsIgnoreCase(runtime)
-                && encodeBody != null && !encodeBody.isBlank()
-                && decodeBody != null && !decodeBody.isBlank();
+                && isTrafficOnly();
     }
 
     private synchronized void resetRuntimeHandler() {
         handlerClass = null;
-        encodeMethod = null;
-        decodeMethod = null;
+        trafficEncodeMethod = null;
+        trafficDecodeMethod = null;
     }
 
     public Map<String, String> getHeaders() {

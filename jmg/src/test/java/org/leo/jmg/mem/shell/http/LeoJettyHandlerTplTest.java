@@ -85,16 +85,18 @@ class LeoJettyHandlerTplTest {
         }
     }
 
-    public static class Core {
+    public static class Core implements java.lang.reflect.InvocationHandler {
         @Override
-        public boolean equals(Object value) {
+        public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
             try {
-                ByteArrayOutputStream output = (ByteArrayOutputStream) value;
+                if (method != null || args == null || args.length != 1
+                        || !(args[0] instanceof ByteArrayOutputStream)) return null;
+                ByteArrayOutputStream output = (ByteArrayOutputStream) args[0];
                 output.reset();
                 output.write("handled".getBytes("UTF-8"));
-                return true;
+                return null;
             } catch (Exception ignored) {
-                return false;
+                return null;
             }
         }
     }

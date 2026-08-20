@@ -40,24 +40,24 @@ public class DisguiseTools {
         return result;
     }
 
-    @Tool("测试 encodeBody 和 decodeBody 是否能正确互逆。测试会传入完整 HashMap（包含 testString=54ikun），decode(encode(map)) 必须返回完全相等的 HashMap，不能只处理 data 单字段。")
+    @Tool("测试 trafficEncodeBody 和 trafficDecodeBody 是否能对任意不透明字节正确互逆。测试不会解析、序列化、压缩或加密载荷。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> testDisguise(
-            @P("待验证的 encodeBody Java 方法体") String encodeBody,
-            @P("待验证的 decodeBody Java 方法体") String decodeBody) throws Exception {
-        disguiseService.testDisguise(encodeBody, decodeBody);
+            @P("待验证的 trafficEncodeBody Java 方法体") String trafficEncodeBody,
+            @P("待验证的 trafficDecodeBody Java 方法体") String trafficDecodeBody) throws Exception {
+        disguiseService.testDisguise(trafficEncodeBody, trafficDecodeBody);
         HashMap<String, Object> result = successResult("passed");
-        result.put("message", "测试通过：encode和decode方法可以正确互逆");
+        result.put("message", "测试通过：traffic 编解码可以正确互逆");
         return result;
     }
 
-    @Tool("创建并保存新的 Disguise。headersJson 必须是 JSON 字符串；未传 disguiseId 时会自动生成。保存前会校验 encode/decode 对完整 HashMap 可互逆。生成过程中的候选方案不得保存；只能在最终 Disguise 确定并通过测试后调用一次。")
+    @Tool("创建并保存 Java traffic-only Disguise。headersJson 必须是 JSON 字符串；PayloadCodec 固定负责 Map 序列化、GZIP 和 AES，traffic 代码只能处理不透明字节。")
     public Map<String, Object> addDisguise(
             @P("创建人用户 ID") String userId,
             @P("Disguise 名称") String disguiseName,
-            @P("encodeBody Java 方法体") String encodeBody,
-            @P("decodeBody Java 方法体") String decodeBody,
+            @P("trafficEncodeBody Java 方法体") String trafficEncodeBody,
+            @P("trafficDecodeBody Java 方法体") String trafficDecodeBody,
             @P("请求头 JSON 字符串") String headersJson,
             @P(value = "版本；省略时按服务端默认值", required = false) String version,
             @P(value = "描述", required = false) String description,
@@ -65,8 +65,8 @@ public class DisguiseTools {
             @P(value = "Disguise ID；省略时自动生成", required = false) String disguiseId) throws Exception {
         HashMap<String, Object> params = new HashMap<>();
         params.put("disguiseName", requireNonBlank(disguiseName, "disguiseName不能为空"));
-        params.put("encodeBody", requireNonBlank(encodeBody, "encodeBody不能为空"));
-        params.put("decodeBody", requireNonBlank(decodeBody, "decodeBody不能为空"));
+        params.put("trafficEncodeBody", requireNonBlank(trafficEncodeBody, "trafficEncodeBody不能为空"));
+        params.put("trafficDecodeBody", requireNonBlank(trafficDecodeBody, "trafficDecodeBody不能为空"));
         params.put("headers", requireNonBlank(headersJson, "headersJson不能为空"));
         putIfNotBlank(params, "version", version);
         putIfNotBlank(params, "description", description);
@@ -78,12 +78,12 @@ public class DisguiseTools {
         return buildResult("created", resolvedDisguiseId, disguiseName);
     }
 
-    @Tool("更新已有 Disguise。disguiseId 必填，其余字段按需更新。headersJson 必须是 JSON 字符串。保存前会校验 encode/decode 对完整 HashMap 可互逆。生成过程中的候选方案不得保存；只能在最终 Disguise 确定并通过测试后调用一次。")
+    @Tool("更新已有 Java traffic-only Disguise。disguiseId 必填；traffic 编解码和 headers 按需更新。")
     public Map<String, Object> updateDisguise(
             @P("待更新 Disguise ID") String disguiseId,
             @P(value = "新名称", required = false) String disguiseName,
-            @P(value = "新 encodeBody Java 方法体", required = false) String encodeBody,
-            @P(value = "新 decodeBody Java 方法体", required = false) String decodeBody,
+            @P(value = "新 trafficEncodeBody Java 方法体", required = false) String trafficEncodeBody,
+            @P(value = "新 trafficDecodeBody Java 方法体", required = false) String trafficDecodeBody,
             @P(value = "新请求头 JSON 字符串", required = false) String headersJson,
             @P(value = "新版本", required = false) String version,
             @P(value = "新描述", required = false) String description,
@@ -91,8 +91,8 @@ public class DisguiseTools {
         HashMap<String, Object> params = new HashMap<>();
         params.put("disguiseId", requireNonBlank(disguiseId, "disguiseId不能为空"));
         putIfNotBlank(params, "disguiseName", disguiseName);
-        putIfNotBlank(params, "encodeBody", encodeBody);
-        putIfNotBlank(params, "decodeBody", decodeBody);
+        putIfNotBlank(params, "trafficEncodeBody", trafficEncodeBody);
+        putIfNotBlank(params, "trafficDecodeBody", trafficDecodeBody);
         putIfNotBlank(params, "headers", headersJson);
         putIfNotBlank(params, "version", version);
         putIfNotBlank(params, "description", description);

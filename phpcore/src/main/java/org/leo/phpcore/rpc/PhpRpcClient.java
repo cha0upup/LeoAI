@@ -17,6 +17,7 @@ import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.core.rpc.PuppetRpcRequest;
 import org.leo.core.rpc.PuppetRpcResponse;
+import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -37,6 +38,7 @@ public final class PhpRpcClient implements AutoCloseable {
     private final Communication communication;
     private final List<RequestLayer> requestLayers;
     private final List<ResponseLayer> responseLayers;
+    private final PhpPayloadCodec payloadCodec;
     private volatile String hostId;
     /** 最大请求总数，包含首次请求。 */
     private int maxAttempts = Puppet.DEFAULT_MAX_REQUEST_COUNT;
@@ -52,10 +54,12 @@ public final class PhpRpcClient implements AutoCloseable {
 
     public PhpRpcClient(Communication communication,
                         List<RequestLayer> requestLayers,
-                        List<ResponseLayer> responseLayers) {
+                        List<ResponseLayer> responseLayers,
+                        String payloadKey) {
         this.communication = communication;
         this.requestLayers = requestLayers == null ? List.of() : new ArrayList<>(requestLayers);
         this.responseLayers = responseLayers == null ? List.of() : new ArrayList<>(responseLayers);
+        this.payloadCodec = new PhpPayloadCodec(payloadKey);
     }
 
     public void setHostId(String hostId) {
@@ -204,7 +208,7 @@ public final class PhpRpcClient implements AutoCloseable {
         Map<String, Object> wireRequest = PuppetRpcEnvelopeMapper.toMap(request);
         PaddingUtil.pad(wireRequest, paddingStrategy, estimateBytes(wireRequest),
                 request.requestId() + "|0|" + transportSeed());
-        byte[] current = requestLayers.get(0).getDisguise().encode(wireRequest);
+        byte[] current = encodeLayer(wireRequest, requestLayers.get(0).getDisguise());
         for (int i = 1; i < requestLayers.size(); i++) {
             RequestLayer previous = requestLayers.get(i - 1);
             Map<String, Object> relayParams = new LinkedHashMap<>();
@@ -215,7 +219,7 @@ public final class PhpRpcClient implements AutoCloseable {
             Map<String, Object> relayWire = PuppetRpcEnvelopeMapper.toMap(relay);
             PaddingUtil.pad(relayWire, paddingStrategy, estimateBytes(relayWire),
                     relay.requestId() + "|" + i + "|" + transportSeed());
-            current = requestLayers.get(i).getDisguise().encode(relayWire);
+            current = encodeLayer(relayWire, requestLayers.get(i).getDisguise());
             requestIds.add(relay.requestId());
         }
         return new EncodedPayload(current, requestIds);
@@ -231,7 +235,7 @@ public final class PhpRpcClient implements AutoCloseable {
         byte[] current = response;
         Map<String, Object> decoded = null;
         for (int i = 0; i < responseLayers.size(); i++) {
-            decoded = responseLayers.get(i).getDisguise().decode(current);
+            decoded = payloadCodec.decode(responseLayers.get(i).getDisguise().decodeTraffic(current));
             String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
             if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(decoded, expectedRequestId)) {
                 throw new IllegalStateException("PHP Puppet 响应 requestId 不匹配");
@@ -249,6 +253,14 @@ public final class PhpRpcClient implements AutoCloseable {
             throw new IllegalStateException("PHP Puppet 响应为空");
         }
         return decoded;
+    }
+
+    private byte[] encodeLayer(Map<String, Object> payload, org.leo.core.entity.Disguise disguise)
+            throws Exception {
+        if (disguise == null || !disguise.isTrafficOnly()) {
+            throw new IllegalStateException("PHP 伪装必须配置 traffic 编解码");
+        }
+        return disguise.encodeTraffic(payloadCodec.encode(payload));
     }
 
     private record EncodedPayload(byte[] data, List<String> requestIds) { }

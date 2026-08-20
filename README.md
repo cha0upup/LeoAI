@@ -304,13 +304,13 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-2.0.2.jar
+LeoAi-2.1.0.jar
 ```
 
 ### 第二步：启动
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.0.2.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -485,7 +485,7 @@ LEOAI_PORT=9090 docker compose up -d
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.0.2.jar --server.port=9090
+  LeoAi-2.1.0.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -494,7 +494,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.0.2.jar \
+  LeoAi-2.1.0.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -644,10 +644,10 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 
 ### 流量伪装
 
-> **伪装即密钥**：LeoAI 没有独立的连接密钥字段——管理端与 Shell 端使用完全相同的 encode/decode 逻辑通信，伪装不匹配则请求无法解析，连接自然失败。因此**强烈建议每位用户创建专属伪装**，不同项目使用不同伪装，避免共享内置模板。
+> 流量伪装只负责包装不透明字节。PayloadCodec 固定完成序列化、GZIP 压缩和 AES 加密，AES 密钥由用户在生成与连接时输入；伪装不匹配则请求无法解析。
 
-1. 进入「**工具 → 流量伪装**」，系统内置 2 套伪装模板（AES 加密、自定义 Base64），可作为参考或起点
-2. 点击「**新增**」，编写自定义 `encodeBody` / `decodeBody` 逻辑，通过「**测试**」验证互逆后保存
+1. 进入「**工具 → 流量伪装**」，系统内置 JSON API 和表单两套流量包装模板，可作为参考或起点
+2. 点击「**新增**」，编写 `trafficEncodeBody` / `trafficDecodeBody` 流量包装逻辑，通过「**测试**」验证任意字节互逆后保存
 3. 在 Shell 生成时选择同一个伪装，确保管理端和 Shell 端使用完全一致的编解码实现
 4. 在节点配置中将「请求伪装」和「响应伪装」指向对应模板即可生效
 
@@ -672,7 +672,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.0.2.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
 ```
 
 ---

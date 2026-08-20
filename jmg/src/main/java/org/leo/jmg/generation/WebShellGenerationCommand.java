@@ -27,6 +27,7 @@ public final class WebShellGenerationCommand {
     private final TargetJavaVersion targetJavaVersion;
     private final ServletNamespace servletNamespace;
     private final int responseCode;
+    private final String payloadKey;
     private final List<String> obfuscationSteps;
     private final Long obfuscationSeed;
 
@@ -39,6 +40,7 @@ public final class WebShellGenerationCommand {
         this.targetJavaVersion = parseTargetJavaVersion(builder.targetJavaVersion);
         this.servletNamespace = parseServletNamespace(builder.servletNamespace);
         this.responseCode = builder.responseCode == null ? 200 : builder.responseCode;
+        this.payloadKey = trimToNull(builder.payloadKey);
         this.obfuscationSteps = snapshot(builder.obfuscationSteps);
         this.obfuscationSeed = builder.obfuscationSeed;
     }
@@ -56,6 +58,7 @@ public final class WebShellGenerationCommand {
                         .targetJavaVersion(targetJavaVersion)
                         .servletNamespace(servletNamespace)
                         .respCode(responseCode);
+        if (payloadKey != null) builder.payloadKey(payloadKey);
         if (coreClassName != null) {
             builder.coreClassName(coreClassName);
         }
@@ -85,6 +88,7 @@ public final class WebShellGenerationCommand {
         private String targetJavaVersion;
         private String servletNamespace;
         private Integer responseCode;
+        private String payloadKey;
         private List<String> obfuscationSteps;
         private Long obfuscationSeed;
 
@@ -118,6 +122,11 @@ public final class WebShellGenerationCommand {
 
         public Builder responseCode(Integer responseCode) {
             this.responseCode = responseCode;
+            return this;
+        }
+
+        public Builder payloadKey(String payloadKey) {
+            this.payloadKey = payloadKey;
             return this;
         }
 
@@ -180,9 +189,9 @@ public final class WebShellGenerationCommand {
         }
         Disguise snapshot = new Disguise();
         if (request) {
-            snapshot.setDecodeBody(value.getDecodeBody());
+            snapshot.setTrafficDecodeBody(value.getTrafficDecodeBody());
         } else {
-            snapshot.setEncodeBody(value.getEncodeBody());
+            snapshot.setTrafficEncodeBody(value.getTrafficEncodeBody());
         }
         return snapshot;
     }

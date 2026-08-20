@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     headers TEXT,
     req_disguise_id VARCHAR(100) NOT NULL,
     resp_disguise_id VARCHAR(100) NOT NULL,
+    payload_key TEXT,
     proxy_enabled INTEGER DEFAULT 0 CHECK (proxy_enabled IN (0, 1)), -- 0:禁用 1:启用
     proxy_type VARCHAR(20), -- http, socks
     proxy_host VARCHAR(255),

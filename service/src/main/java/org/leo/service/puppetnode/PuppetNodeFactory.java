@@ -176,22 +176,26 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
         List<Puppet> chain = route.chain();
         for (Puppet tempPuppet : chain) {
             String reqDisguiseId = tempPuppet.getReqDisguiseId();
-            if (reqDisguiseId != null) {
+            if (reqDisguiseId != null && !reqDisguiseId.trim().isEmpty()) {
                 Disguise reqDisguise = DisguiseManager.getInstance().getDisguiseById(reqDisguiseId);
-                if (reqDisguise != null) {
-                    RequestLayer requestLayer = new RequestLayer(
-                            tempPuppet.getConnLink(),
-                            parseStringHeaders(tempPuppet.getHeaders()),
-                            reqDisguise);
-                    requestLayers.add(requestLayer);
+                if (reqDisguise == null) {
+                    throw new IllegalArgumentException("请求伪装不存在: " + reqDisguiseId
+                            + "（puppetId=" + tempPuppet.getPuppetId() + "）");
                 }
+                RequestLayer requestLayer = new RequestLayer(
+                        tempPuppet.getConnLink(),
+                        parseStringHeaders(tempPuppet.getHeaders()),
+                        reqDisguise);
+                requestLayers.add(requestLayer);
             }
             String respDisguiseId = tempPuppet.getRespDisguiseId();
-            if (respDisguiseId != null) {
+            if (respDisguiseId != null && !respDisguiseId.trim().isEmpty()) {
                 Disguise respDisguise = DisguiseManager.getInstance().getDisguiseById(respDisguiseId);
-                if (respDisguise != null) {
-                    responseLayers.add(0, new ResponseLayer(respDisguise));
+                if (respDisguise == null) {
+                    throw new IllegalArgumentException("响应伪装不存在: " + respDisguiseId
+                            + "（puppetId=" + tempPuppet.getPuppetId() + "）");
                 }
+                responseLayers.add(0, new ResponseLayer(respDisguise));
             }
         }
         return new TransportLayers(requestLayers, responseLayers);

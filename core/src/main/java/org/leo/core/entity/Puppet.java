@@ -28,6 +28,8 @@ public class Puppet {
     private String headers;
     private String reqDisguiseId;
     private String respDisguiseId;
+    /** Java PayloadCodec AES key supplied for this node. */
+    private String payloadKey;
     private Integer proxyEnabled;
     private String proxyType;
     private String proxyHost;
@@ -163,6 +165,14 @@ public class Puppet {
 
     public void setRespDisguiseId(String respDisguiseId) {
         this.respDisguiseId = respDisguiseId;
+    }
+
+    public String getPayloadKey() {
+        return payloadKey;
+    }
+
+    public void setPayloadKey(String payloadKey) {
+        this.payloadKey = payloadKey;
     }
 
     public Integer getProxyEnabled() {

@@ -22,12 +22,7 @@ class PhpBuiltinDisguiseCatalogTest {
 
     @Test
     void presetsRoundTripOnJavaPlatformSide() throws Exception {
-        Map<String, Object> sample = new LinkedHashMap<>();
-        sample.put("text", "hello世界");
-        sample.put("count", 7);
-        sample.put("enabled", true);
-        sample.put("nested", Map.of("items", List.of("one", "two")));
-        sample.put("binary", new byte[]{0, 1, 2, -1});
+        byte[] sample = new byte[]{0, 1, 2, -1, 42};
 
         List<Disguise> presets = PhpBuiltinDisguiseCatalog.createPresets();
         assertEquals(List.of(PhpBuiltinDisguiseCatalog.JSON_API_ID,
@@ -35,35 +30,30 @@ class PhpBuiltinDisguiseCatalogTest {
                 presets.stream().map(Disguise::getDisguiseId).toList());
 
         for (Disguise disguise : presets) {
-            assertEquals(2, disguise.getSchemaVersion());
-            assertEquals(2, disguise.getProtocolVersion());
+            assertEquals(3, disguise.getSchemaVersion());
+            assertEquals(3, disguise.getProtocolVersion());
             assertTrue(disguise.supportsRuntime("php"));
 
-            byte[] encoded = disguise.encode(sample);
-            Map<String, Object> decoded = disguise.decode(encoded);
-
-            assertEquals(sample.get("text"), decoded.get("text"));
-            assertEquals(sample.get("count"), decoded.get("count"));
-            assertEquals(sample.get("enabled"), decoded.get("enabled"));
-            assertEquals(sample.get("nested"), decoded.get("nested"));
-            assertArrayEquals((byte[]) sample.get("binary"), (byte[]) decoded.get("binary"));
+            byte[] encoded = disguise.encodeTraffic(sample);
+            byte[] decoded = disguise.decodeTraffic(encoded);
+            assertArrayEquals(sample, decoded);
         }
     }
 
     @Test
     void presetsUseRecognizableHttpBodyShapes() throws Exception {
-        Map<String, Object> sample = Map.of("message", "ok");
+        byte[] sample = "opaque payload".getBytes(StandardCharsets.UTF_8);
         List<Disguise> presets = PhpBuiltinDisguiseCatalog.createPresets();
 
         Disguise json = presets.get(0);
-        String jsonBody = new String(json.encode(sample), StandardCharsets.UTF_8);
+        String jsonBody = new String(json.encodeTraffic(sample), StandardCharsets.UTF_8);
         assertEquals("application/json;charset=utf-8", json.getHeaders().get("Content-Type"));
         assertTrue(jsonBody.startsWith("{"));
         assertTrue(jsonBody.contains("\"status\":\"ok\""));
         assertTrue(jsonBody.contains("\"data\":"));
 
         Disguise form = presets.get(1);
-        String formBody = new String(form.encode(sample), StandardCharsets.UTF_8);
+        String formBody = new String(form.encodeTraffic(sample), StandardCharsets.UTF_8);
         assertEquals("application/x-www-form-urlencoded;charset=utf-8",
                 form.getHeaders().get("Content-Type"));
         assertTrue(formBody.startsWith("action=sync&v=1&ts="));
@@ -83,11 +73,11 @@ class PhpBuiltinDisguiseCatalogTest {
     @Test
     void rejectsAmbiguousOrMismatchedEnvelopes() {
         Disguise json = PhpBuiltinDisguiseCatalog.createPresets().get(0);
-        assertThrows(IllegalArgumentException.class, () -> json.decode(
+        assertThrows(IllegalArgumentException.class, () -> json.decodeTraffic(
                 "{\"version\":\"2.0\",\"data\":\"e30\"}".getBytes(StandardCharsets.UTF_8)));
 
         Disguise form = PhpBuiltinDisguiseCatalog.createPresets().get(1);
-        assertThrows(IllegalArgumentException.class, () -> form.decode(
+        assertThrows(IllegalArgumentException.class, () -> form.decodeTraffic(
                 "action=sync&v=1&data=e30&data=e30".getBytes(StandardCharsets.UTF_8)));
     }
 
@@ -96,25 +86,20 @@ class PhpBuiltinDisguiseCatalogTest {
         String php = resolvePhpBinary();
         Assumptions.assumeTrue(php != null, "PHP CLI is not installed");
 
-        Map<String, Object> sample = new LinkedHashMap<>();
-        sample.put("text", "cross-runtime世界");
-        sample.put("count", 9);
-        sample.put("nested", Map.of("ok", true, "items", List.of("a", "b")));
-        sample.put("binary", new byte[]{0, 10, 127, -1});
+        byte[] sample = new byte[]{0, 10, 127, -1};
 
         for (Disguise disguise : PhpBuiltinDisguiseCatalog.createPresets()) {
-            byte[] javaEncoded = disguise.encode(sample);
+                byte[] javaEncoded = disguise.encodeTraffic(sample);
             Path script = Files.createTempFile("php-disguise-wire-", ".php");
             try {
-                String source = "<?php\n" + PhpSourceSupport.wireHelpers()
+                String source = "<?php\n"
                         + PhpSourceSupport.requestDecodeFunction(disguise)
                         + PhpSourceSupport.responseEncodeFunction(disguise)
                         + "$request = base64_decode($argv[1], true);\n"
                         + "if ($request === false) { fwrite(STDERR, 'invalid test input'); exit(2); }\n"
-                        + "$decoded = leo_request_decode($request);\n"
-                        + "if (!isset($decoded['binary']) || base64_encode($decoded['binary']) !== 'AAp//w==') { fwrite(STDERR, 'binary request mismatch'); exit(3); }\n"
-                        + "$decoded['binary'] = leo_binary($decoded['binary']);\n"
-                        + "$response = leo_response_encode($decoded);\n"
+                        + "$decoded = leo_traffic_decode($request);\n"
+                        + "if (base64_encode($decoded) !== 'AAp//w==') { fwrite(STDERR, 'binary request mismatch'); exit(3); }\n"
+                        + "$response = leo_traffic_encode($decoded);\n"
                         + "echo base64_encode($response);\n";
                 Files.writeString(script, source, StandardCharsets.UTF_8);
 
@@ -127,11 +112,8 @@ class PhpBuiltinDisguiseCatalogTest {
                         StandardCharsets.UTF_8).trim();
                 assertEquals(0, process.exitValue(), output);
 
-                Map<String, Object> decoded = disguise.decode(Base64.getDecoder().decode(output));
-                assertEquals(sample.get("text"), decoded.get("text"));
-                assertEquals(sample.get("count"), decoded.get("count"));
-                assertEquals(sample.get("nested"), decoded.get("nested"));
-                assertArrayEquals((byte[]) sample.get("binary"), (byte[]) decoded.get("binary"));
+                byte[] decoded = disguise.decodeTraffic(Base64.getDecoder().decode(output));
+                assertArrayEquals(sample, decoded);
             } finally {
                 Files.deleteIfExists(script);
             }

@@ -39,12 +39,12 @@ public final class PhpDisguiseValidator implements DisguiseRuntimeValidator {
 
         Path script = Files.createTempFile("leo-php-disguise-", ".php");
         try {
-            String source = "<?php\n" + PhpSourceSupport.wireHelpers()
+            String source = "<?php\n"
                     + PhpSourceSupport.requestDecodeFunction(disguise)
                     + PhpSourceSupport.responseEncodeFunction(disguise)
-                    + "$sample = ['testString' => '54ikun', 'nested' => ['ok' => true], 'binary' => \"\\x00\\x01leo\"];\n"
-                    + "$encoded = leo_response_encode($sample);\n"
-                    + "$decoded = leo_request_decode($encoded);\n"
+                    + "$sample = \"\\x00\\x01leo\\xff\";\n"
+                    + "$encoded = leo_traffic_encode($sample);\n"
+                    + "$decoded = leo_traffic_decode($encoded);\n"
                     + "if ($decoded !== $sample) { fwrite(STDERR, 'roundtrip mismatch'); exit(3); }\n"
                     + "echo 'OK';\n";
             Files.writeString(script, source, StandardCharsets.UTF_8);

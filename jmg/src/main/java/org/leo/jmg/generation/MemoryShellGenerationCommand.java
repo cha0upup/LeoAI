@@ -36,6 +36,7 @@ public final class MemoryShellGenerationCommand {
     private final boolean staticInitialize;
     private final boolean shrink;
     private final int responseCode;
+    private final String payloadKey;
     private final List<String> obfuscationSteps;
     private final String customJspTemplate;
     private final Long obfuscationSeed;
@@ -76,6 +77,7 @@ public final class MemoryShellGenerationCommand {
         this.staticInitialize = Boolean.TRUE.equals(builder.staticInitialize);
         this.shrink = builder.shrink == null || builder.shrink;
         this.responseCode = builder.responseCode == null ? 200 : builder.responseCode;
+        this.payloadKey = trimToNull(builder.payloadKey);
         this.obfuscationSteps = snapshot(builder.obfuscationSteps);
         this.customJspTemplate = trimToNull(builder.customJspTemplate);
         this.obfuscationSeed = builder.obfuscationSeed;
@@ -104,6 +106,7 @@ public final class MemoryShellGenerationCommand {
                         .staticInitialize(staticInitialize)
                         .shrink(shrink)
                         .respCode(responseCode);
+        if (payloadKey != null) builder.payloadKey(payloadKey);
         if (coreClassName != null) {
             builder.coreClassName(coreClassName);
         }
@@ -197,6 +200,7 @@ public final class MemoryShellGenerationCommand {
         private Boolean staticInitialize;
         private Boolean shrink;
         private Integer responseCode;
+        private String payloadKey;
         private List<String> obfuscationSteps;
         private String customJspTemplate;
         private Long obfuscationSeed;
@@ -298,6 +302,11 @@ public final class MemoryShellGenerationCommand {
             return this;
         }
 
+        public Builder payloadKey(String payloadKey) {
+            this.payloadKey = payloadKey;
+            return this;
+        }
+
         public Builder obfuscationSteps(List<String> obfuscationSteps) {
             this.obfuscationSteps = obfuscationSteps;
             return this;
@@ -337,9 +346,9 @@ public final class MemoryShellGenerationCommand {
         }
         Disguise snapshot = new Disguise();
         if (request) {
-            snapshot.setDecodeBody(value.getDecodeBody());
+            snapshot.setTrafficDecodeBody(value.getTrafficDecodeBody());
         } else {
-            snapshot.setEncodeBody(value.getEncodeBody());
+            snapshot.setTrafficEncodeBody(value.getTrafficEncodeBody());
         }
         return snapshot;
     }

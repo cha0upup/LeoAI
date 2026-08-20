@@ -6,6 +6,7 @@ import org.leo.core.net.Communication;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.payload.PayloadCodec;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.core.runtime.PuppetNodeCreationContext;
@@ -35,6 +36,9 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
         PuppetNodeCreationContext.ConnectionPlan plan = context.createConnectionPlan(puppet);
         Communication communication = plan.getCommunication();
         PuppetNodeCreationContext.TransportLayers layers = plan.getTransportLayers();
+        if (layers.getRequestLayers().isEmpty() || layers.getResponseLayers().isEmpty()) {
+            throw new IllegalArgumentException("Java Puppet 必须配置请求和响应伪装");
+        }
 
         JavaPuppetNode node = new JavaPuppetNode();
         node.setPuppet(puppet);
@@ -42,6 +46,11 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
         node.setRequestLayers(layers.getRequestLayers());
         node.setResponseLayers(layers.getResponseLayers());
         node.setCommunication(communication);
+        String payloadKey = puppet.getPayloadKey();
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("Java Puppet AES 密钥不能为空");
+        }
+        node.setPayloadCodec(new PayloadCodec(payloadKey.trim()));
         node.setMaxReqCount(Puppet.requireValidMaxRequestCount(puppet.getMaxReqCount()));
         node.initService();
         applyRuntimeStrategies(puppet, node);

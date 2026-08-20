@@ -61,10 +61,14 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
                 .getDisguise().supportsRuntime("php")) {
             throw new IllegalArgumentException("响应伪装不支持 PHP");
         }
+        String payloadKey = puppet.getPayloadKey();
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("PHP Puppet AES 密钥不能为空");
+        }
 
         PhpRpcClient client = new PhpRpcClient(
-                plan.getCommunication(),
-                layers.getRequestLayers(), layers.getResponseLayers());
+                plan.getCommunication(), layers.getRequestLayers(), layers.getResponseLayers(),
+                payloadKey.trim());
         client.setMaxReqCount(puppet.getMaxReqCount());
         applyStrategies(puppet, client);
 

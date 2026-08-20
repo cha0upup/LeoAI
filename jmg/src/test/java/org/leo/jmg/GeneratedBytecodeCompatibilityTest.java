@@ -56,7 +56,8 @@ class GeneratedBytecodeCompatibilityTest {
                 "通过 -Djmg.compat.java=/path/to/java 启用指定 JDK 验证");
 
         ShellGeneratorConfig config = createConfig();
-        byte[] core = new LeoCore(config.getReqDisguise(), config.getRespDisguise())
+        byte[] core = new LeoCore(config.getReqDisguise(), config.getRespDisguise(),
+                config.getPayloadKey())
                 .genLeoCoreByClassName(config.getCoreClassName(), config);
         core = ClassFileMinimizer.transform(core);
 
@@ -226,16 +227,17 @@ class GeneratedBytecodeCompatibilityTest {
     private static ShellGeneratorConfig createConfig(ServletNamespace servletNamespace,
                                                      String serverType) {
         Disguise request = new Disguise();
-        request.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}"
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}"
         );
 
         Disguise response = new Disguise();
-        response.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}"
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}"
         );
 
         return ShellGeneratorConfig.builder(request, response)
+                .payloadKey("compatibility-test-key")
                 .coreClassName("org.example.Java6Core")
                 .shellClassName("org.example.Java6Filter")
                 .injectorClassName("org.example.Java6Injector")

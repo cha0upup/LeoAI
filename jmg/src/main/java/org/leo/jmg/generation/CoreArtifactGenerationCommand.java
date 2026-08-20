@@ -15,6 +15,7 @@ public final class CoreArtifactGenerationCommand {
     private final TransportProtocol protocol;
     private final TargetJavaVersion targetJavaVersion;
     private final ServletNamespace servletNamespace;
+    private final String payloadKey;
     private final Long obfuscationSeed;
 
     private CoreArtifactGenerationCommand(Builder builder) {
@@ -27,6 +28,7 @@ public final class CoreArtifactGenerationCommand {
                 ? TargetJavaVersion.AUTO : TargetJavaVersion.parse(builder.targetJavaVersion);
         this.servletNamespace = isBlank(builder.servletNamespace)
                 ? ServletNamespace.AUTO : ServletNamespace.parse(builder.servletNamespace);
+        this.payloadKey = trimToNull(builder.payloadKey);
         this.obfuscationSeed = builder.obfuscationSeed;
     }
 
@@ -40,6 +42,7 @@ public final class CoreArtifactGenerationCommand {
                 .protocol(protocol.getValue())
                 .targetJavaVersion(targetJavaVersion)
                 .servletNamespace(servletNamespace);
+        if (payloadKey != null) builder.payloadKey(payloadKey);
         if (coreClassName != null) builder.coreClassName(coreClassName);
         if (obfuscationSeed != null) builder.obfuscationSeed(obfuscationSeed.longValue());
         return builder.build();
@@ -52,6 +55,7 @@ public final class CoreArtifactGenerationCommand {
         private String protocol;
         private String targetJavaVersion;
         private String servletNamespace;
+        private String payloadKey;
         private Long obfuscationSeed;
 
         private Builder(Disguise requestDisguise, Disguise responseDisguise) {
@@ -79,6 +83,11 @@ public final class CoreArtifactGenerationCommand {
             return this;
         }
 
+        public Builder payloadKey(String value) {
+            this.payloadKey = value;
+            return this;
+        }
+
         public Builder obfuscationSeed(Long value) {
             this.obfuscationSeed = value;
             return this;
@@ -92,8 +101,11 @@ public final class CoreArtifactGenerationCommand {
     private static Disguise snapshot(Disguise value, boolean request) {
         if (value == null) return null;
         Disguise result = new Disguise();
-        if (request) result.setDecodeBody(value.getDecodeBody());
-        else result.setEncodeBody(value.getEncodeBody());
+        if (request) {
+            result.setTrafficDecodeBody(value.getTrafficDecodeBody());
+        } else {
+            result.setTrafficEncodeBody(value.getTrafficEncodeBody());
+        }
         return result;
     }
 

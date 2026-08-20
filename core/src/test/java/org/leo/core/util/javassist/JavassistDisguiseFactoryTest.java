@@ -7,16 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class JavassistDisguiseFactoryTest {
 
     @Test
-    void definesAndRunsGeneratedClassOnJava17WithoutModuleOpens() throws Exception {
-        String encode = "public byte[] encode(java.util.HashMap params) { "
-                + "return params.get(\"value\").toString().getBytes(java.nio.charset.StandardCharsets.UTF_8); }";
-        String decode = "public java.util.HashMap decode(byte[] data) { "
-                + "java.util.HashMap result = new java.util.HashMap(); "
-                + "result.put(\"value\", new String(data, java.nio.charset.StandardCharsets.UTF_8)); "
-                + "return result; }";
+    void definesAndRunsTrafficAdapterOnJava17WithoutModuleOpens() throws Exception {
+        String encode = "public byte[] encodeTraffic(byte[] payload) { "
+                + "return java.util.Base64.getEncoder().encode(payload); }";
+        String decode = "public byte[] decodeTraffic(byte[] data) { "
+                + "return java.util.Base64.getDecoder().decode(data); }";
 
-        assertTrue(JavassistDisguiseFactory.testDisguise(
-                encode.replace("\"value\"", "\"testString\""),
-                decode.replace("\"value\"", "\"testString\"")));
+        assertTrue(JavassistDisguiseFactory.testTrafficDisguise(encode, decode));
     }
 }

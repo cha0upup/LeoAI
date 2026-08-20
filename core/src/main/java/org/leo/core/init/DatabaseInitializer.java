@@ -74,6 +74,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             ensureUserInputRequestTable(connection);
             ensureColumn(connection, "ai_user_input_requests",
                     "confirmation_consumed_at", "INTEGER");
+            ensureColumn(connection, "puppets", "payload_key", "TEXT");
             // 旧版本已存在评估表但没有保存规范化参数；默认空对象仅用于完成结构迁移，
             // 其旧哈希不会匹配新的实际调用，待处理评估会要求模型重新评估。
             ensureColumn(connection, "ai_operation_assessments", "arguments_json",

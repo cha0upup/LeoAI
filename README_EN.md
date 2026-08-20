@@ -252,13 +252,13 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-2.0.2.jar
+LeoAi-2.1.0.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.0.2.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -431,7 +431,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.0.2.jar --server.port=9090
+  LeoAi-2.1.0.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -440,7 +440,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.0.2.jar \
+  LeoAi-2.1.0.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -578,10 +578,10 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 
 ### Traffic Disguise
 
-> **Disguise is the key**: LeoAI has no separate connection key field — the management side and shell side communicate using identical encode/decode logic. A mismatched disguise means the request cannot be parsed and the connection fails naturally. **Each user should create their own dedicated disguise**, and different projects should use different disguises — never share built-in templates.
+> Traffic disguises only wrap opaque bytes. The fixed PayloadCodec performs serialization, GZIP compression, and AES encryption; the AES key is entered by the user during generation and connection. A mismatched disguise cannot parse the request.
 
-1. Go to **Tools → Traffic Disguise**. Two built-in templates are provided (AES encryption, custom Base64) — use them as references or starting points
-2. Click **Add New**, write custom `encodeBody` / `decodeBody` logic, verify mutual reversibility with the **Test** function, and save
+1. Go to **Tools → Traffic Disguise**. Two built-in traffic wrappers are provided (JSON API and form) — use them as references or starting points
+2. Click **Add New**, write `trafficEncodeBody` / `trafficDecodeBody` wrappers, verify arbitrary-byte reversibility with the **Test** function, and save
 3. Select the same disguise when generating a shell to ensure both ends use identical codec implementations
 4. In the node configuration, point the "Request Disguise" and "Response Disguise" to the corresponding template
 
@@ -602,7 +602,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.0.2.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
 ```
 
 ---

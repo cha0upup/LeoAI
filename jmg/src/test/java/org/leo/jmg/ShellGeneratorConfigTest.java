@@ -131,6 +131,7 @@ class ShellGeneratorConfigTest {
                 () -> builder().servletNamespace("unsupported"));
         assertThrows(IllegalArgumentException.class,
                 () -> validateWebShell(builder()
+                        .header("X-Test", "secret")
                         .servletNamespace("jakarta")
                         .targetJavaVersion("7")
                         .build()));
@@ -165,7 +166,11 @@ class ShellGeneratorConfigTest {
     }
 
     private ShellGeneratorConfig.Builder builder() {
-        return ShellGeneratorConfig.builder(new Disguise(), new Disguise());
+        Disguise request = new Disguise();
+        request.setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");
+        Disguise response = new Disguise();
+        response.setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
+        return ShellGeneratorConfig.builder(request, response).payloadKey("config-test-key");
     }
 
     private ShellGeneratorConfig.Builder injectorBuilder() {

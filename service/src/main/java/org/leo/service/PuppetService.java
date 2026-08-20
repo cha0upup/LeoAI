@@ -92,6 +92,7 @@ public class PuppetService {
                 puppet.getHeaders(),
                 puppet.getReqDisguiseId(),
                 puppet.getRespDisguiseId(),
+                puppet.getPayloadKey(),
                 puppet.getProxyEnabled(),
                 puppet.getProxyType(),
                 puppet.getProxyHost(),
@@ -128,6 +129,7 @@ public class PuppetService {
                 puppet.getHeaders(),
                 puppet.getReqDisguiseId(),
                 puppet.getRespDisguiseId(),
+                puppet.getPayloadKey(),
                 puppet.getProxyEnabled(),
                 puppet.getProxyType(),
                 puppet.getProxyHost(),
@@ -250,5 +252,9 @@ public class PuppetService {
 
     private void validateRequestPolicy(Puppet puppet) {
         Puppet.requireValidMaxRequestCount(puppet.getMaxReqCount());
+        if ("java".equalsIgnoreCase(puppet.getType())
+                && (puppet.getPayloadKey() == null || puppet.getPayloadKey().trim().isEmpty())) {
+            throw new IllegalArgumentException("Java 节点 AES 密钥不能为空");
+        }
     }
 }

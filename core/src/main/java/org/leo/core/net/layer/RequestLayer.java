@@ -29,6 +29,15 @@ public class RequestLayer {
         return disguise;
     }
 
+    /** Wraps already encoded payload bytes with the traffic-only disguise. */
+    public byte[] encodeTraffic(byte[] payload) throws Exception {
+        if (disguise == null) throw new IllegalStateException("请求伪装不能为空");
+        if (!disguise.isTrafficOnly()) {
+            throw new IllegalStateException("请求伪装必须配置 traffic 编解码");
+        }
+        return disguise.encodeTraffic(payload);
+    }
+
     /**
      * 返回当前层最终生效的请求头。伪装默认值先写入，节点自定义值按大小写不敏感覆盖。
      */

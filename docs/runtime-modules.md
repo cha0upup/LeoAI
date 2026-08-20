@@ -82,9 +82,9 @@ HTTP Fuzzer 使用 `HttpSenderEngine` 级共享执行域，默认 50 个 daemon 
 `phpcore` 是可用运行时，`isReady()` 返回 `true`。交付范围：
 
 - 通过通用 `PuppetNodeFactory` 创建 PHP 节点；测试连接只返回稳定 hostId 和缓存组件名，运行环境详情由 `BasicInfoComponent` 按需读取。
-- 使用协议 v2 完成请求/响应伪装、HTTP RPC、URL/填充/Header Noise 策略及 hostId 传递。
+- 使用协议 v3 完成请求/响应伪装、HTTP RPC、URL/填充/Header Noise 策略及 hostId 传递。
 - 提供基础信息、命令、文件、分块上传下载、压缩/解压、PHP 脚本、PDO 数据库、HTTP 发包、SOCKS5/HTTP 代理、本地转发、反向隧道、平台插件、进程管理、网络拓扑、实时网络连接、端口扫描/主机探活、服务管理、计划任务、注册表、事件日志、防火墙和用户账户 capability。
-- 通过 `/platform/shell-generator/generate/runtime` 生成 PHP 5.6+ 单文件 HTTP 启动器；外层只负责伪装编解码，内层使用与 Java Core 对齐的 `M=0/1/2/3` 测试、转发、加载和调用协议。组件按 digest 懒加载到目标临时目录，业务和运行环境检测逻辑均由组件承载。
+- 通过 `/platform/shell-generator/generate/runtime` 生成 PHP 5.6+ 单文件 HTTP 启动器；外层只负责伪装编解码，内层使用与 Java Core 对齐的运行时中立操作协议完成测试、转发、加载和调用。组件按 digest 懒加载到目标临时目录，业务和运行环境检测逻辑均由组件承载。
 - 平台脚本生成器、伪装管理、插件管理/调用、节点信息页和 AI 插件工具均按 runtime 识别 PHP。
 
 PHP endpoint 虽然采用请求式 HTTP 传输，但虚拟终端通过会话 ID 在目标临时目录维护进程与输出状态：Unix 优先使用 Python PTY，缺少 Python 时使用无额外依赖的命令后端；Windows 使用命令后端。只有真实 PTY 支持终端尺寸调整，命令后端仍保留工作目录、输入缓冲、清屏、中断和输出游标等稳定交互行为。网络代理组件同样使用目标临时目录中的队列和独立 PHP worker 保持跨请求 socket 状态，启动 worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。压缩/解压依赖目标环境的 `ZipArchive`。数据库管理层使用与运行时无关的连接描述，Java 适配器生成 JDBC 参数，PHP 适配器独立生成 PDO DSN；PHP 组件不解析或接收 JDBC URL。目标 PHP 需安装对应的 `pdo_mysql`、`pdo_pgsql`、`pdo_sqlsrv`/`pdo_dblib`、`pdo_oci` 或 `pdo_sqlite` driver。
@@ -101,7 +101,7 @@ Linux 下的 Process 列表、端口到 PID 的归属、NetworkConnection socket
 
 PHP 平台侧 HTTP 客户端以 endpoint 地址和 hostId 派生会话级传输画像：User-Agent、Accept、语言、同源 Referer、可选 Header 集合及生成 URL 在会话内保持稳定，调用方显式配置继续拥有最高优先级。携带请求体的方法只使用文本/API 类型的动态扩展名；启用 Padding 后优先补齐至有界的 1/2/4/8 KiB 长度桶并使用请求 seed 派生字段名。多次请求沿用原 RPC requestId，失败重试采用有上限的指数退避和确定性抖动。多层寄生链路会把内层伪装默认 Header 与节点 Header 合并后交给 Relay，缺省补齐二进制 `Content-Type` 并固定 `Accept-Encoding: identity`，避免中转容器按表单消费请求体或返回平台无法识别的压缩内层响应。
 
-PHP 运行时另外注册两个 protocol-v2 内置流量画像：`inner_PHP_JSON_API_1.0.0` 使用 JSON API envelope，将协议负载放入 Base64URL 编码的 `data` 字段，并附带状态、版本和时间字段；`inner_PHP_FORM_SYNC_1.0.0` 使用 `application/x-www-form-urlencoded` 的同步表单结构，提供 `action`、`v`、`ts` 和 `data` 字段。两种画像均复用 `PortableJsonCodec` 的二进制类型标记，支持平台 Java 编解码与 PHP 5.6+ 目标端互逆，无需 JSON 之外的额外扩展。JSON API 适合双向或响应层，Form Sync 更适合作为请求层，也可在需要时双向使用。解码器严格校验画像版本、动作字段、重复表单字段、Base64URL 长度和 16 MiB 原始消息边界；回归测试覆盖 Java 编码 → PHP 解码 → PHP 编码 → Java 解码的完整互操作链路。
+PHP 运行时另外注册两个 protocol-v3 内置流量画像：`inner_PHP_JSON_API_1.0.0` 使用 JSON API envelope，将协议负载放入 Base64URL 编码的 `data` 字段，并附带状态、版本和时间字段；`inner_PHP_FORM_SYNC_1.0.0` 使用 `application/x-www-form-urlencoded` 的同步表单结构，提供 `action`、`v`、`ts` 和 `data` 字段。两种画像均复用 `PortableJsonCodec` 的二进制类型标记，支持平台 Java 编解码与 PHP 5.6+ 目标端互逆，无需 JSON 之外的额外扩展。JSON API 适合双向或响应层，Form Sync 更适合作为请求层，也可在需要时双向使用。解码器严格校验画像版本、动作字段、重复表单字段、Base64URL 长度和 16 MiB 原始消息边界；回归测试覆盖 Java 编码 → PHP 解码 → PHP 编码 → Java 解码的完整互操作链路。
 
 PHP endpoint 的组件缓存按最近访问时间维护，最多保留 48 个制品，七天未访问的制品和五分钟未完成的原子写临时文件会被回收；平台侧 endpoint component 变体缓存采用 1024 项 LRU。终端状态通过临时文件加原子 rename 更新。Scan 最多保留 64 个任务，Proxy 最多保留 128 个连接目录，ReverseTunnel 最多保留 32 个 listener 和每 listener 256 个活动连接；代理和隧道队列单文件限制为 8 MiB。关闭的连接子树会按 TTL 回收，后台 worker 启动超时会写入停止标记。
 

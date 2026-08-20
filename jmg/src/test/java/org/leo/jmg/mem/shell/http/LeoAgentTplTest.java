@@ -17,7 +17,7 @@ class LeoAgentTplTest {
     void appliesConfiguredResponseCodeAfterResolvingNonPositionalArguments() throws Exception {
         set("headerName", "X-Agent");
         set("headerValue", "ready");
-        set("coreClassName", "java.lang.Object");
+        set("coreClassName", Core.class.getName());
         set("coreClass", "");
         set("respCode", Integer.valueOf(418));
         FixtureRequest request = new FixtureRequest();
@@ -56,6 +56,17 @@ class LeoAgentTplTest {
 
         public OutputStream getOutputStream() {
             return output;
+        }
+    }
+
+    public static class Core implements java.lang.reflect.InvocationHandler {
+        @Override
+        public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
+            if (method == null && args != null && args.length == 1
+                    && args[0] instanceof ByteArrayOutputStream) {
+                return null;
+            }
+            return null;
         }
     }
 }

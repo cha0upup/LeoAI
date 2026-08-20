@@ -5,7 +5,7 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
-import org.leo.core.util.json.PortableJsonCodec;
+import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,15 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhpRpcClientTest {
+    private static final String KEY = "php-test-key";
 
     @Test
     void sendsCoreTestMethodAndKeepsDirectResponseFields() throws Exception {
         Disguise portable = new PortableDisguise();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = codec().decode(data);
             assertEquals("PING", request.get("operation"));
             assertEquals(Map.of(), request.get("params"));
-            return PortableJsonCodec.encode(Map.of(
+            return codec().encode(Map.of(
                     "requestId", request.get("requestId"),
                     "code", 200,
                     "data", Map.of(
@@ -38,7 +39,7 @@ class PhpRpcClientTest {
 
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)));
+                List.of(new ResponseLayer(portable)), KEY);
         Map<String, Object> result = client.ping();
 
         assertEquals(200, result.get("code"));
@@ -51,20 +52,20 @@ class PhpRpcClientTest {
     void wrapsInnerRequestWithCoreForwardMethod() throws Exception {
         Disguise portable = new PortableDisguise();
         Communication communication = data -> {
-            Map<String, Object> relay = PortableJsonCodec.decode(data);
+            Map<String, Object> relay = codec().decode(data);
             assertEquals("RELAY", relay.get("operation"));
             Map<?, ?> relayParams = (Map<?, ?>) relay.get("params");
             assertEquals("/inner", relayParams.get("url"));
             Map<?, ?> relayHeaders = (Map<?, ?>) relayParams.get("headers");
             assertEquals("application/octet-stream", relayHeaders.get("Content-Type"));
             assertEquals("identity", relayHeaders.get("Accept-Encoding"));
-            Map<String, Object> inner = PortableJsonCodec.decode((byte[]) relayParams.get("body"));
+            Map<String, Object> inner = codec().decode((byte[]) relayParams.get("body"));
             assertEquals("PING", inner.get("operation"));
-            byte[] innerResponse = PortableJsonCodec.encode(Map.of(
+            byte[] innerResponse = codec().encode(Map.of(
                     "requestId", inner.get("requestId"),
                     "code", 200,
                     "data", Map.of("value", "ok")));
-            return PortableJsonCodec.encode(Map.of(
+            return codec().encode(Map.of(
                     "requestId", relay.get("requestId"),
                     "code", 200,
                     "data", Map.of("body", innerResponse)));
@@ -73,7 +74,7 @@ class PhpRpcClientTest {
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/inner", Map.of("X-Layer", "inner"), portable),
                         new RequestLayer("/outer", Map.of(), portable)),
-                List.of(new ResponseLayer(portable), new ResponseLayer(portable)));
+                List.of(new ResponseLayer(portable), new ResponseLayer(portable)), KEY);
 
         Map<String, Object> result = client.ping();
         assertEquals(200, result.get("code"));
@@ -86,13 +87,13 @@ class PhpRpcClientTest {
         int[] calls = {0};
         Communication communication = data -> {
             calls[0]++;
-            Map<String, Object> request = PortableJsonCodec.decode(data);
-            return PortableJsonCodec.encode(Map.of("code", 200, "hostId", "invalid"));
+            Map<String, Object> request = codec().decode(data);
+            return codec().encode(Map.of("code", 200, "hostId", "invalid"));
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)));
+                List.of(new ResponseLayer(portable)), KEY);
 
         assertThrows(IllegalStateException.class, client::ping);
         assertEquals(1, calls[0]);
@@ -105,10 +106,10 @@ class PhpRpcClientTest {
         List<String> requestIds = new ArrayList<>();
         List<Long> delays = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = codec().decode(data);
             requestIds.add(String.valueOf(request.get("requestId")));
             if (attempts.incrementAndGet() < 3) throw new java.io.IOException("temporary");
-            return PortableJsonCodec.encode(Map.of(
+            return codec().encode(Map.of(
                     "requestId", request.get("requestId"),
                     "code", 200,
                     "data", Map.of("msg", "pong")));
@@ -116,7 +117,7 @@ class PhpRpcClientTest {
 
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)));
+                List.of(new ResponseLayer(portable)), KEY);
         client.setMaxReqCount(3);
         client.setRetryBackoff(100, 1_000);
         client.setRetrySleeper(delays::add);
@@ -136,11 +137,11 @@ class PhpRpcClientTest {
         AtomicInteger recoveries = new AtomicInteger();
         List<String> requestIds = new ArrayList<>();
         Communication communication = data -> {
-            Map<String, Object> request = PortableJsonCodec.decode(data);
+            Map<String, Object> request = codec().decode(data);
             attempts.incrementAndGet();
             requestIds.add(String.valueOf(request.get("requestId")));
             assertEquals("php-host-1", request.get("hostId"));
-            return PortableJsonCodec.encode(Map.of(
+            return codec().encode(Map.of(
                     "requestId", request.get("requestId"),
                     "code", 409,
                     "error", Map.of(
@@ -150,7 +151,7 @@ class PhpRpcClientTest {
         };
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)));
+                List.of(new ResponseLayer(portable)), KEY);
         client.setHostId("php-host-1");
         client.setMaxReqCount(3);
         client.setRetryBackoff(0, 0);
@@ -174,14 +175,23 @@ class PhpRpcClientTest {
     }
 
     private static final class PortableDisguise extends Disguise {
-        @Override
-        public byte[] encode(Map<String, Object> params) {
-            return PortableJsonCodec.encode(params);
+        private PortableDisguise() {
+            setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
+            setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");
         }
 
         @Override
-        public Map<String, Object> decode(byte[] data) {
-            return new LinkedHashMap<>(PortableJsonCodec.decode(data));
+        public byte[] encodeTraffic(byte[] payload) {
+            return payload;
         }
+
+        @Override
+        public byte[] decodeTraffic(byte[] data) {
+            return data;
+        }
+    }
+
+    private static PhpPayloadCodec codec() {
+        return new PhpPayloadCodec(KEY);
     }
 }

@@ -2,13 +2,14 @@ package org.leo.phpcore.disguise;
 
 import org.leo.core.entity.Disguise;
 
-/** Shared PHP source fragments used by the generator and disguise validator. */
+/** Shared PHP source fragments used by PayloadCodec generation and traffic validation. */
 public final class PhpSourceSupport {
 
     private PhpSourceSupport() {
     }
 
     public static String wireHelpers() {
+        // PayloadCodec owns structured-value serialization; traffic functions only wrap its bytes.
         return """
                 function leo_binary($value) { return ['$leoBinary' => base64_encode($value)]; }
                 function leo_wire_encode($value) {
@@ -37,22 +38,22 @@ public final class PhpSourceSupport {
 
     public static String requestDecodeFunction(Disguise disguise) {
         requirePhp(disguise);
-        return "function leo_request_decode($body) {\n"
-                + disguise.getPhpDecodeBody() + "\n}\n";
+        return "function leo_traffic_decode($body) {\n"
+                + disguise.getPhpTrafficDecodeBody() + "\n}\n";
     }
 
     public static String responseEncodeFunction(Disguise disguise) {
         requirePhp(disguise);
-        return "function leo_response_encode($payload) {\n"
-                + disguise.getPhpEncodeBody() + "\n}\n";
+        return "function leo_traffic_encode($payload) {\n"
+                + disguise.getPhpTrafficEncodeBody() + "\n}\n";
     }
 
     public static void requirePhp(Disguise disguise) {
         if (disguise == null || !disguise.supportsRuntime("php")) {
-            throw new IllegalArgumentException("所选伪装缺少完整 PHP encode/decode 与平台 Java 实现");
+            throw new IllegalArgumentException("所选伪装缺少完整 PHP traffic 编解码与平台 Java 实现");
         }
-        rejectPhpTags(disguise.getPhpEncodeBody());
-        rejectPhpTags(disguise.getPhpDecodeBody());
+        rejectPhpTags(disguise.getPhpTrafficEncodeBody());
+        rejectPhpTags(disguise.getPhpTrafficDecodeBody());
     }
 
     private static void rejectPhpTags(String source) {

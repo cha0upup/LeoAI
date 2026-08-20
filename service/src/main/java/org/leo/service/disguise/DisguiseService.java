@@ -3,6 +3,7 @@ package org.leo.service.disguise;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.disguise.DisguiseRuntimeValidator;
 import org.leo.core.entity.Disguise;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.User;
 import org.leo.core.manager.DisguiseManager;
 import org.leo.core.util.SafeZipReader;
@@ -54,8 +55,8 @@ public class DisguiseService {
     public void addDisguise(HashMap<String, Object> params, String userId) throws Exception {
         requireNonBlank(userId, "用户未登录");
         String disguiseName = requireString(params, "disguiseName");
-        String encodeBody = requireString(params, "encodeBody");
-        String decodeBody = requireString(params, "decodeBody");
+        String trafficEncodeBody = requireString(params, "trafficEncodeBody");
+        String trafficDecodeBody = requireString(params, "trafficDecodeBody");
         Map<String, String> headers = parseHeaders(requireString(params, "headers"));
         String version = defaultVersion(optionalString(params, "version"));
         String description = optionalString(params, "description");
@@ -65,13 +66,13 @@ public class DisguiseService {
             disguiseId = generateDisguiseId(disguiseName, version);
         }
         ensureDisguiseIdNotExists(disguiseId);
-        ensureDisguiseLogic(encodeBody, decodeBody);
+        ensureTrafficLogic(trafficEncodeBody, trafficDecodeBody);
 
         Disguise disguise = new Disguise();
         disguise.setDisguiseId(disguiseId);
         disguise.setDisguiseName(disguiseName);
-        disguise.setEncodeBody(encodeBody);
-        disguise.setDecodeBody(decodeBody);
+        disguise.setTrafficEncodeBody(trafficEncodeBody);
+        disguise.setTrafficDecodeBody(trafficDecodeBody);
         applyRuntimeFields(params, disguise);
         disguise.setHeaders(headers);
         disguise.setVersion(version);
@@ -99,11 +100,11 @@ public class DisguiseService {
         if (params.containsKey("disguiseName")) {
             existingDisguise.setDisguiseName(optionalString(params, "disguiseName"));
         }
-        if (params.containsKey("encodeBody")) {
-            existingDisguise.setEncodeBody(optionalString(params, "encodeBody"));
+        if (params.containsKey("trafficEncodeBody")) {
+            existingDisguise.setTrafficEncodeBody(optionalString(params, "trafficEncodeBody"));
         }
-        if (params.containsKey("decodeBody")) {
-            existingDisguise.setDecodeBody(optionalString(params, "decodeBody"));
+        if (params.containsKey("trafficDecodeBody")) {
+            existingDisguise.setTrafficDecodeBody(optionalString(params, "trafficDecodeBody"));
         }
         applyRuntimeFields(params, existingDisguise);
         if (params.containsKey("headers")) {
@@ -119,7 +120,7 @@ public class DisguiseService {
             existingDisguise.setRemark(optionalString(params, "remark"));
         }
 
-        ensureDisguiseLogic(existingDisguise.getEncodeBody(), existingDisguise.getDecodeBody());
+        ensureTrafficLogic(existingDisguise.getTrafficEncodeBody(), existingDisguise.getTrafficDecodeBody());
         validateRuntimeImplementations(existingDisguise);
         existingDisguise.setUpdateTime(String.valueOf(System.currentTimeMillis()));
         installAndPersist(existingDisguise);
@@ -160,12 +161,12 @@ public class DisguiseService {
         return disguise;
     }
 
-    public void testDisguise(String encodeBody, String decodeBody) throws Exception {
-        ensureDisguiseLogic(encodeBody, decodeBody);
+    public void testDisguise(String trafficEncodeBody, String trafficDecodeBody) throws Exception {
+        ensureTrafficLogic(trafficEncodeBody, trafficDecodeBody);
     }
 
     public Map<String, Object> validateDisguise(Disguise disguise) throws Exception {
-        ensureDisguiseLogic(disguise.getEncodeBody(), disguise.getDecodeBody());
+        ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("java", Map.of("valid", true));
         result.putAll(validateRuntimeImplementations(disguise));
@@ -312,7 +313,7 @@ public class DisguiseService {
             disguise.setCreateUserId(user.getUserId());
             disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
             disguise.setVersion(defaultVersion(disguise.getVersion()));
-            ensureDisguiseLogic(disguise.getEncodeBody(), disguise.getDecodeBody());
+            ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
             validateRuntimeImplementations(disguise);
             installAndPersist(disguise);
             String statusStr = (policy == ConflictPolicy.OVERWRITE && exists) ? "overwritten" : "imported";
@@ -324,7 +325,7 @@ public class DisguiseService {
     }
 
     private void installAndPersist(Disguise disguise) throws Exception {
-        boolean installed = disguiseManager.inStallDisguise(disguise);
+        boolean installed = disguiseManager.installDisguise(disguise);
         if (!installed) {
             throw new IllegalStateException("安装disguise失败: " + disguise.getDisguiseId());
         }
@@ -368,12 +369,12 @@ public class DisguiseService {
         }
     }
 
-    private void ensureDisguiseLogic(String encodeBody, String decodeBody) throws Exception {
-        requireNonBlank(encodeBody, "encodeBody不能为空");
-        requireNonBlank(decodeBody, "decodeBody不能为空");
-        boolean testResult = JavassistDisguiseFactory.testDisguise(encodeBody, decodeBody);
+    private void ensureTrafficLogic(String trafficEncodeBody, String trafficDecodeBody) throws Exception {
+        requireNonBlank(trafficEncodeBody, "trafficEncodeBody不能为空");
+        requireNonBlank(trafficDecodeBody, "trafficDecodeBody不能为空");
+        boolean testResult = JavassistDisguiseFactory.testTrafficDisguise(trafficEncodeBody, trafficDecodeBody);
         if (!testResult) {
-            throw new IllegalArgumentException("测试失败：encode和decode方法无法正确互逆，请检查代码逻辑");
+            throw new IllegalArgumentException("测试失败：traffic 编解码无法正确互逆，请检查代码逻辑");
         }
     }
 
@@ -391,16 +392,16 @@ public class DisguiseService {
     @SuppressWarnings("unchecked")
     private void applyRuntimeFields(Map<String, Object> params, Disguise disguise) {
         if (params.containsKey("schemaVersion")) {
-            disguise.setSchemaVersion(parseInteger(params.get("schemaVersion"), 2));
+            disguise.setSchemaVersion(parseInteger(params.get("schemaVersion"), DisguiseProtocol.SCHEMA_VERSION));
         }
         if (params.containsKey("protocolVersion")) {
-            disguise.setProtocolVersion(parseInteger(params.get("protocolVersion"), 2));
+            disguise.setProtocolVersion(parseInteger(params.get("protocolVersion"), DisguiseProtocol.PROTOCOL_VERSION));
         }
-        if (params.containsKey("phpEncodeBody")) {
-            disguise.setPhpEncodeBody(optionalString(params, "phpEncodeBody"));
+        if (params.containsKey("phpTrafficEncodeBody")) {
+            disguise.setPhpTrafficEncodeBody(optionalString(params, "phpTrafficEncodeBody"));
         }
-        if (params.containsKey("phpDecodeBody")) {
-            disguise.setPhpDecodeBody(optionalString(params, "phpDecodeBody"));
+        if (params.containsKey("phpTrafficDecodeBody")) {
+            disguise.setPhpTrafficDecodeBody(optionalString(params, "phpTrafficDecodeBody"));
         }
         if (params.containsKey("supportedRuntimes")) {
             Object raw = params.get("supportedRuntimes");

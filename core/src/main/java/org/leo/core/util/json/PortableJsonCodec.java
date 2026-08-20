@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Runtime-neutral JSON codec used by PHP protocol v2.
+ * Runtime-neutral JSON codec used by portable component and wire payloads.
  *
  * <p>JSON has no binary type, so byte arrays are represented as
  * {@code {"$leoBinary":"base64..."}} and restored recursively on decode.
