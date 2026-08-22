@@ -93,7 +93,6 @@ public class AiTurnApplicationService {
 
         try {
             bind(state, turn);
-            state.bindActiveConfirmationRequestId(command.getAnswerToQuestionId());
             if (command.getConfigId() != null) {
                 platformThreads.switchChannel(state, command.getConfigId());
             }
@@ -159,7 +158,6 @@ public class AiTurnApplicationService {
         String executionLeaseToken = null;
         try {
             bind(thread, turn);
-            thread.bindActiveConfirmationRequestId(command.getAnswerToQuestionId());
             if (command.getConfigId() != null) {
                 puppetThreads.switchChannel(
                         session, turn.threadId(), command.getConfigId());
@@ -223,7 +221,6 @@ public class AiTurnApplicationService {
             state.offerSseEvent(
                     "turn/completed", Map.of("turn", completed.toMap()));
         } finally {
-            state.bindActiveConfirmationRequestId(null);
             platformTurns.releaseExecutionLease(state);
         }
     }
@@ -242,7 +239,6 @@ public class AiTurnApplicationService {
             thread.offerSseEvent(
                     "turn/completed", Map.of("turn", completed.toMap()));
         } finally {
-            thread.bindActiveConfirmationRequestId(null);
             puppetTurns.releaseExecutionLease(thread);
         }
     }
@@ -262,7 +258,6 @@ public class AiTurnApplicationService {
                         "turn/completed", Map.of("turn", failed.toMap()));
             }
         } finally {
-            if (owns) state.bindActiveConfirmationRequestId(null);
             if (owns) platformTurns.releaseExecutionLease(state);
         }
     }
@@ -282,7 +277,6 @@ public class AiTurnApplicationService {
                         "turn/completed", Map.of("turn", failed.toMap()));
             }
         } finally {
-            if (owns) thread.bindActiveConfirmationRequestId(null);
             if (owns) puppetTurns.releaseExecutionLease(thread);
         }
     }

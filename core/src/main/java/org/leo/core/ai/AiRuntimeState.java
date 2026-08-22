@@ -38,7 +38,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     private volatile String activeTurnId;
     private volatile String activeItemId;
     private volatile String activeRunId;
-    private volatile String activeConfirmationRequestId;
     private volatile String activeLeaseToken;
     private volatile String stopReason;
     private volatile long taskTimeoutAt;
@@ -96,9 +95,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     @Override public void bindActiveItemId(String itemId) { activeItemId = itemId; }
     @Override public String getActiveRunId() { return activeRunId; }
     @Override public void bindActiveRunId(String runId) { activeRunId = runId; }
-    public String getActiveConfirmationRequestId() { return activeConfirmationRequestId; }
-    public void bindActiveConfirmationRequestId(String requestId) { activeConfirmationRequestId = requestId; }
-    public void clearActiveConfirmationRequestId() { activeConfirmationRequestId = null; }
     @Override public String getActiveLeaseToken() { return activeLeaseToken; }
     @Override public void bindActiveLeaseToken(String leaseToken) { activeLeaseToken = leaseToken; }
     @Override public String getStopReason() { return stopReason; }
@@ -205,7 +201,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         activeTurnId = null;
         activeItemId = null;
         activeRunId = null;
-        activeConfirmationRequestId = null;
         activeLeaseToken = null;
     }
 

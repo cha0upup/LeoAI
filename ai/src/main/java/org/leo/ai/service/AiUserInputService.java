@@ -112,7 +112,6 @@ public class AiUserInputService {
         AiUserInputRequest existing = store.findPendingUserInputRequest(target.threadId());
         if (existing != null) {
             target.markWaiting();
-            target.bindConfirmation(existing.getRequestId());
             return result(existing, true);
         }
 
@@ -137,9 +136,6 @@ public class AiUserInputService {
 
         AiUserInputRequest persisted = store.createUserInputRequest(request);
         target.markWaiting();
-        target.bindConfirmation(
-                AiUserInputRequest.TYPE_CONFIRMATION.equals(persisted.getRequestType())
-                        ? persisted.getRequestId() : null);
         target.emit(persisted.toMap());
         return result(persisted, persisted != request);
     }
@@ -188,7 +184,6 @@ public class AiUserInputService {
             return new RuntimeTarget(
                     state.getStateId(), state.getActiveTurnId(), state.getActiveItemId(),
                     state::markWaitingForUserInput,
-                    state::bindActiveConfirmationRequestId,
                     payload -> state.offerSseEvent("node", payload));
         }
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
@@ -197,7 +192,6 @@ public class AiUserInputService {
         return new RuntimeTarget(
                 threadId, thread.getActiveTurnId(), thread.getActiveItemId(),
                 thread::markWaitingForUserInput,
-                thread::bindActiveConfirmationRequestId,
                 payload -> thread.offerSseEvent("node", payload));
     }
 
@@ -384,10 +378,8 @@ public class AiUserInputService {
                                  String turnId,
                                  String itemId,
                                  Runnable markWaitingAction,
-                                 java.util.function.Consumer<String> bindConfirmationAction,
                                  java.util.function.Consumer<Map<String, Object>> emitter) {
         void markWaiting() { markWaitingAction.run(); }
-        void bindConfirmation(String requestId) { bindConfirmationAction.accept(requestId); }
         void emit(Map<String, Object> payload) { emitter.accept(payload); }
     }
 }

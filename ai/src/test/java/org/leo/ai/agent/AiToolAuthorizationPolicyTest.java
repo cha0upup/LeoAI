@@ -13,10 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
-import org.leo.ai.service.AiUserInputService;
-import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.User;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
@@ -31,8 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.anyLong;
 
 class AiToolAuthorizationPolicyTest {
 
@@ -107,73 +102,31 @@ class AiToolAuthorizationPolicyTest {
     }
 
     @Test
-    void destructiveToolRequiresAndConsumesExactConfirmation() {
+    void destructiveToolExecutesWithoutConfirmationGate() {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
         PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        state.bindActiveConfirmationRequestId("question-1");
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        AiUserInputRequest confirmation = confirmation("deleteRecord", "{\"id\":1}");
-        when(store.findUserInputRequest("question-1")).thenReturn(confirmation);
-        when(store.consumeConfirmation(
-                eq("question-1"), eq(PLATFORM_STATE_ID), eq("deleteRecord"),
-                eq(confirmation.getArgumentsHash()), anyLong()))
-                .thenReturn(true, false);
         AiToolCatalog catalog = new AiToolCatalog();
         register(catalog, new DestructiveTools());
         AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
         AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
-                users, new AiToolExecutionBoundary(), null, store,
-                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(store));
+                users, new AiToolExecutionBoundary(), null,
+                catalog, new AgentRuntimeResolver(), null);
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
         AiToolErrorHandler errors = new AiToolErrorHandler();
 
-        ToolExecutionResult first = ToolService.executeWithErrorHandling(
-                request("deleteRecord", "{\"id\":1}"), tool.toolExecutor(),
-                context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
-        ToolExecutionResult second = ToolService.executeWithErrorHandling(
-                request("deleteRecord", "{\"id\":1}"), tool.toolExecutor(),
-                context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
-
-        assertFalse(first.isError());
-        // 确认是一次性授权；消费后运行时清除绑定，后续调用由 Agent 重新判断风险。
-        assertFalse(second.isError());
-    }
-
-    @Test
-    void destructiveToolRejectsChangedArguments() {
-        UserService users = mock(UserService.class);
-        User normal = user("user-1", "normal");
-        when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
-        state.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        state.bindActiveConfirmationRequestId("question-1");
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.findUserInputRequest("question-1"))
-                .thenReturn(confirmation("deleteRecord", "{\"id\":1}"));
-        AiToolCatalog catalog = new AiToolCatalog();
-        register(catalog, new DestructiveTools());
-        AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
-        AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
-                users, new AiToolExecutionBoundary(), null, store,
-                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(store));
-        AiServiceTool tool = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
-                new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
-
         ToolExecutionResult result = ToolService.executeWithErrorHandling(
-                request("deleteRecord", "{\"id\":2}"), tool.toolExecutor(),
-                context(PLATFORM_STATE_ID), new AiToolErrorHandler()::handleArguments,
-                new AiToolErrorHandler()::handleExecution);
+                request("deleteRecord", "{\"id\":1}"), tool.toolExecutor(),
+                context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
 
-        assertTrue(result.isError());
-        assertTrue(result.resultText().contains("USER_CONFIRMATION_REQUIRED"));
+        assertFalse(result.isError());
+        // 高危确认仍由工具描述和系统提示引导模型发起，但不由后端门禁强制阻断。
+        assertTrue(result.resultText().contains("1"));
     }
 
     @Test
@@ -185,8 +138,8 @@ class AiToolAuthorizationPolicyTest {
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolCatalog catalog = new AiToolCatalog();
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
-                users, new AiToolExecutionBoundary(), null, null,
-                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(null));
+                users, new AiToolExecutionBoundary(), null,
+                catalog, new AgentRuntimeResolver(), null);
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new MutationTools()), PLATFORM_STATE_ID).get("mutate");
@@ -251,18 +204,6 @@ class AiToolAuthorizationPolicyTest {
                 .name(name)
                 .arguments(arguments)
                 .build();
-    }
-
-    private static AiUserInputRequest confirmation(String toolName, String arguments) {
-        AiUserInputRequest request = new AiUserInputRequest();
-        request.setRequestId("question-1");
-        request.setThreadId(PLATFORM_STATE_ID);
-        request.setRequestType(AiUserInputRequest.TYPE_CONFIRMATION);
-        request.setStatus(AiUserInputRequest.STATUS_ANSWERED);
-        request.setAnswer("确认执行");
-        request.setToolName(toolName);
-        request.setArgumentsHash(AiUserInputService.confirmationArgumentsHash(arguments));
-        return request;
     }
 
     private static User user(String userId, String privilege) {

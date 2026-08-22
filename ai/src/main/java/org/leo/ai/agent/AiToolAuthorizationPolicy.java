@@ -8,7 +8,6 @@ import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderResult;
 import dev.langchain4j.service.tool.ToolService;
-import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
@@ -47,55 +46,31 @@ public class AiToolAuthorizationPolicy {
     private final AiToolCatalog toolCatalog;
     private final AgentRuntimeResolver runtimeResolver;
     private final AiToolExposurePolicy exposurePolicy;
-    private final AiOperationGate operationGate;
 
     public AiToolAuthorizationPolicy(UserService userService) {
-        this(userService, new AiToolExecutionBoundary(), null, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
+        this(userService, new AiToolExecutionBoundary(), null,
+                new AiToolCatalog(), new AgentRuntimeResolver(), null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
-        this(userService, executionBoundary, archiveTools, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
+        this(userService, executionBoundary, archiveTools,
+                new AiToolCatalog(), new AgentRuntimeResolver(), null);
     }
 
-    public AiToolAuthorizationPolicy(UserService userService,
-                                     AiToolExecutionBoundary executionBoundary,
-                                     AiToolResultArchiveTools archiveTools,
-                                     AiConversationStoreService conversationStore) {
-        this(userService, executionBoundary, archiveTools, conversationStore,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
-    }
-
-    public AiToolAuthorizationPolicy(UserService userService,
-                                     AiToolExecutionBoundary executionBoundary,
-                                     AiToolResultArchiveTools archiveTools,
-                                     AiConversationStoreService conversationStore,
-                                     AiToolCatalog toolCatalog,
-                                     AgentRuntimeResolver runtimeResolver,
-                                     AiToolExposurePolicy exposurePolicy) {
-        this(userService, executionBoundary, archiveTools, conversationStore,
-                toolCatalog, runtimeResolver, exposurePolicy, (AiOperationGate) null);
-    }
-
-    /** Production wiring uses the already constructed singleton gate. */
     @Autowired
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
-                                     AiConversationStoreService conversationStore,
                                      AiToolCatalog toolCatalog,
                                      AgentRuntimeResolver runtimeResolver,
-                                     AiToolExposurePolicy exposurePolicy,
-                                     AiOperationGate operationGate) {
+                                     AiToolExposurePolicy exposurePolicy) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
         this.exposurePolicy = exposurePolicy;
-        this.operationGate = operationGate;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
@@ -133,7 +108,6 @@ public class AiToolAuthorizationPolicy {
     public void bindContext(AgentScope scope, Object memoryId) {
         AiToolContext.setFromMemoryId(memoryId);
         AiToolContext.setExecutionPolicy(resolvePolicy(scope, memoryId));
-        AiToolContext.setConfirmationRequestId(resolveConfirmationRequestId(scope, memoryId));
     }
 
     private List<SecuredTool> secureTools(AgentScope scope, Object... toolObjects) {
@@ -207,14 +181,9 @@ public class AiToolAuthorizationPolicy {
                                 "当前任务正在等待用户回答，不能继续执行其他工具。",
                                 "停止工具调用并等待用户回答；不要自行假设用户意图。");
                     }
-                    String consumedConfirmationRequestId =
-                            authorizeOperation(scope, memoryId, descriptor, request);
                     AiToolContext.setToolDescriptor(descriptor);
                     ToolExecutionResult result = executionBoundary.execute(
                             scope, descriptor, delegate, request, context);
-                    if (consumedConfirmationRequestId != null && !result.isError()) {
-                        clearConfirmation(scope, memoryId);
-                    }
                     if (descriptor.terminal() && !result.isError() && runtime != null) {
                         runtime.markTerminalControl(descriptor.name());
                     }
@@ -245,33 +214,6 @@ public class AiToolAuthorizationPolicy {
                         ? "" : "\n" + description))
                 .build();
         return tool.toBuilder().toolSpecification(specification).build();
-    }
-
-    private String authorizeOperation(AgentScope scope, Object memoryId,
-                                      AiToolDescriptor descriptor,
-                                      ToolExecutionRequest request) {
-        if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) return null;
-        if (operationGate == null) {
-            throw AiToolException.userActionRequired(
-                    "OPERATION_GATE_UNAVAILABLE",
-                    "业务操作门禁尚未初始化，暂不能执行变更工具。",
-                    "稍后重试；不要绕过变更确认流程。");
-        }
-        String confirmationRequestId = AiToolContext.getConfirmationRequestId();
-        operationGate.authorize(memoryId, descriptor, request, confirmationRequestId);
-        return confirmationRequestId == null || confirmationRequestId.isBlank()
-                ? null : confirmationRequestId;
-    }
-
-    private void clearConfirmation(AgentScope scope, Object memoryId) {
-        AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
-        if (runtime != null) runtime.clearActiveConfirmationRequestId();
-        AiToolContext.setConfirmationRequestId(null);
-    }
-
-    private String resolveConfirmationRequestId(AgentScope scope, Object memoryId) {
-        AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
-        return runtime != null ? runtime.getActiveConfirmationRequestId() : null;
     }
 
     AiExecutionPolicy resolvePolicy(AgentScope scope, Object memoryId) {

@@ -19,13 +19,11 @@ public final class AiToolContext {
     public record Snapshot(String sessionId, String threadId,
                            int planStepIndex,
                            AiExecutionPolicy executionPolicy,
-                           String confirmationRequestId,
                            AiToolDescriptor toolDescriptor) {}
 
     private static final ThreadLocal<Ctx> HOLDER = new ThreadLocal<>();
     private static final ThreadLocal<Integer> PLAN_STEP_INDEX = new ThreadLocal<>();
     private static final ThreadLocal<AiExecutionPolicy> EXECUTION_POLICY = new ThreadLocal<>();
-    private static final ThreadLocal<String> CONFIRMATION_REQUEST_ID = new ThreadLocal<>();
     private static final ThreadLocal<AiToolDescriptor> TOOL_DESCRIPTOR = new ThreadLocal<>();
 
     private AiToolContext() {}
@@ -52,7 +50,6 @@ public final class AiToolContext {
         HOLDER.remove();
         PLAN_STEP_INDEX.remove();
         EXECUTION_POLICY.remove();
-        CONFIRMATION_REQUEST_ID.remove();
         TOOL_DESCRIPTOR.remove();
     }
 
@@ -62,7 +59,7 @@ public final class AiToolContext {
                 ctx != null ? ctx.sessionId() : null,
                 ctx != null ? ctx.threadId() : null,
                 getPlanStepIndex(),
-                getExecutionPolicy(), getConfirmationRequestId(), getToolDescriptor());
+                getExecutionPolicy(), getToolDescriptor());
     }
 
     public static void restore(Snapshot snapshot) {
@@ -73,7 +70,6 @@ public final class AiToolContext {
         }
         setPlanStepIndex(snapshot.planStepIndex());
         setExecutionPolicy(snapshot.executionPolicy());
-        setConfirmationRequestId(snapshot.confirmationRequestId());
         setToolDescriptor(snapshot.toolDescriptor());
     }
 
@@ -121,15 +117,6 @@ public final class AiToolContext {
             throw new SecurityException("AI 工具调用缺少已认证的执行身份");
         }
         return policy;
-    }
-
-    public static void setConfirmationRequestId(String requestId) {
-        if (requestId == null || requestId.isBlank()) CONFIRMATION_REQUEST_ID.remove();
-        else CONFIRMATION_REQUEST_ID.set(requestId.trim());
-    }
-
-    public static String getConfirmationRequestId() {
-        return CONFIRMATION_REQUEST_ID.get();
     }
 
     public static void setToolDescriptor(AiToolDescriptor descriptor) {
