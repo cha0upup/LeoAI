@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 
@@ -43,6 +44,7 @@ public class ComponentService {
     private List<RequestLayer> requestLayers = new ArrayList<>();
     private List<ResponseLayer> responseLayers = new ArrayList<>();
     private PayloadCodec payloadCodec;
+    private final Map<String, PayloadCodec> layerPayloadCodecs = new ConcurrentHashMap<>();
 
     protected String hostId;
 
@@ -567,11 +569,11 @@ public class ComponentService {
     }
 
     private byte[] encodeLayer(RequestLayer layer, Map<String, Object> payload) throws Exception {
-        return layer.encodeTraffic(requirePayloadCodec().encode(payload));
+        return layer.encodeTraffic(payloadCodec(layer.getPayloadKey()).encode(payload));
     }
 
     private Map<String, Object> decodeLayer(ResponseLayer layer, byte[] body) throws Exception {
-        return requirePayloadCodec().decode(layer.decodeTraffic(body));
+        return payloadCodec(layer.getPayloadKey()).decode(layer.decodeTraffic(body));
     }
 
     private PayloadCodec requirePayloadCodec() {
@@ -579,6 +581,13 @@ public class ComponentService {
             throw new IllegalStateException("Java PayloadCodec 未配置");
         }
         return payloadCodec;
+    }
+
+    private PayloadCodec payloadCodec(String layerPayloadKey) {
+        if (layerPayloadKey == null || layerPayloadKey.trim().isEmpty()) {
+            return requirePayloadCodec();
+        }
+        return layerPayloadCodecs.computeIfAbsent(layerPayloadKey.trim(), PayloadCodec::new);
     }
 
     private record EncodedPayload(byte[] data, List<String> requestIds) { }

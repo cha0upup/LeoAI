@@ -82,6 +82,40 @@ class PhpRpcClientTest {
     }
 
     @Test
+    void usesDifferentPayloadKeysForInnerAndOuterRelayLayers() throws Exception {
+        Disguise portable = new PortableDisguise();
+        PhpPayloadCodec innerCodec = new PhpPayloadCodec("inner-php-key");
+        PhpPayloadCodec outerCodec = new PhpPayloadCodec("outer-php-key");
+        Communication communication = data -> {
+            Map<String, Object> relay = outerCodec.decode(data);
+            assertEquals("RELAY", relay.get("operation"));
+            Map<?, ?> relayParams = (Map<?, ?>) relay.get("params");
+            Map<String, Object> inner = innerCodec.decode((byte[]) relayParams.get("body"));
+            assertEquals("PING", inner.get("operation"));
+
+            byte[] innerResponse = innerCodec.encode(Map.of(
+                    "requestId", inner.get("requestId"),
+                    "code", 200,
+                    "data", Map.of("hostId", "child-php-host")));
+            return outerCodec.encode(Map.of(
+                    "requestId", relay.get("requestId"),
+                    "code", 200,
+                    "data", Map.of("body", innerResponse)));
+        };
+
+        PhpRpcClient client = new PhpRpcClient(communication,
+                List.of(new RequestLayer("/inner", Map.of(), portable, "inner-php-key"),
+                        new RequestLayer("/outer", Map.of(), portable, "outer-php-key")),
+                List.of(new ResponseLayer(portable, "outer-php-key"),
+                        new ResponseLayer(portable, "inner-php-key")), KEY);
+
+        Map<String, Object> result = client.ping();
+
+        assertEquals(200, result.get("code"));
+        assertEquals("child-php-host", result.get("hostId"));
+    }
+
+    @Test
     void rejectsResponseWithoutMatchingRequestId() {
         Disguise portable = new PortableDisguise();
         int[] calls = {0};

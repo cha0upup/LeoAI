@@ -284,6 +284,43 @@ class ComponentServiceEnvelopeTest {
     }
 
     @Test
+    void usesDifferentPayloadKeysForInnerAndOuterRelayLayers() throws Exception {
+        PortableDisguise disguise = new PortableDisguise();
+        PayloadCodec innerCodec = new PayloadCodec("inner-java-key");
+        PayloadCodec outerCodec = new PayloadCodec("outer-java-key");
+        Communication communication = data -> {
+            Map<String, Object> relay = outerCodec.decode(data);
+            assertEquals("RELAY", relay.get("operation"));
+            Map<?, ?> relayParams = (Map<?, ?>) relay.get("params");
+            Map<String, Object> inner = innerCodec.decode((byte[]) relayParams.get("body"));
+            assertEquals("PING", inner.get("operation"));
+
+            byte[] innerResponse = innerCodec.encode(Map.of(
+                    "requestId", inner.get("requestId"),
+                    "code", 200,
+                    "data", Map.of("hostId", "child-host")));
+            return outerCodec.encode(Map.of(
+                    "requestId", relay.get("requestId"),
+                    "code", 200,
+                    "data", Map.of("body", innerResponse)));
+        };
+
+        TestService service = new TestService(communication,
+                List.of(new RequestLayer("/inner", Map.of(), disguise, "inner-java-key"),
+                        new RequestLayer("/outer", Map.of(), disguise, "outer-java-key")),
+                List.of(new ResponseLayer(disguise, "outer-java-key"),
+                        new ResponseLayer(disguise, "inner-java-key")));
+        service.setHostId("child-host");
+        service.setMaxReqCount(1);
+
+        Map<String, Object> result = service.execute(
+                PuppetOperation.PING, null, null, new LinkedHashMap<>());
+
+        assertEquals(200, result.get("code"));
+        assertEquals("child-host", result.get("hostId"));
+    }
+
+    @Test
     void retriesWithBoundedBackoffAndKeepsRequestIdentity() {
         PortableDisguise disguise = new PortableDisguise();
         AtomicInteger attempts = new AtomicInteger();
@@ -386,10 +423,20 @@ class ComponentServiceEnvelopeTest {
             userAgents.add(exchange.getRequestHeaders().getFirst("User-Agent"));
             languages.add(exchange.getRequestHeaders().getFirst("Accept-Language"));
             traceIds.add(exchange.getRequestHeaders().getFirst("X-Trace-Id"));
-            Map<String, Object> request = WireCodec.decode(exchange.getRequestBody().readAllBytes());
-            byte[] response = WireCodec.encode(Map.of(
-                    "requestId", request.get("requestId"), "code", 200,
-                    "data", Map.of("hostId", "host-http")));
+            Map<String, Object> request = null;
+            try {
+                request = WireCodec.decode(exchange.getRequestBody().readAllBytes());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            byte[] response = null;
+            try {
+                response = WireCodec.encode(Map.of(
+                        "requestId", request.get("requestId"), "code", 200,
+                        "data", Map.of("hostId", "host-http")));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
             exchange.sendResponseHeaders(200, response.length);
             try (java.io.OutputStream output = exchange.getResponseBody()) { output.write(response); }
         });

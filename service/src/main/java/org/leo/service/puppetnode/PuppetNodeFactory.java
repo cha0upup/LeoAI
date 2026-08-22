@@ -185,7 +185,8 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
                 RequestLayer requestLayer = new RequestLayer(
                         tempPuppet.getConnLink(),
                         parseStringHeaders(tempPuppet.getHeaders()),
-                        reqDisguise);
+                        reqDisguise,
+                        requirePayloadKey(tempPuppet));
                 requestLayers.add(requestLayer);
             }
             String respDisguiseId = tempPuppet.getRespDisguiseId();
@@ -195,10 +196,20 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
                     throw new IllegalArgumentException("响应伪装不存在: " + respDisguiseId
                             + "（puppetId=" + tempPuppet.getPuppetId() + "）");
                 }
-                responseLayers.add(0, new ResponseLayer(respDisguise));
+                responseLayers.add(0, new ResponseLayer(respDisguise,
+                        requirePayloadKey(tempPuppet)));
             }
         }
         return new TransportLayers(requestLayers, responseLayers);
+    }
+
+    private String requirePayloadKey(Puppet puppet) {
+        String payloadKey = puppet.getPayloadKey();
+        if (payloadKey == null || payloadKey.trim().isEmpty()) {
+            throw new IllegalArgumentException("Puppet payloadKey 不能为空（puppetId="
+                    + puppet.getPuppetId() + "）");
+        }
+        return payloadKey.trim();
     }
 
     @SuppressWarnings("unchecked")
