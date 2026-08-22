@@ -45,6 +45,10 @@ public final class GenerationPlan {
             throw new IllegalArgumentException(
                     "JSP/JSPX WebShell 仅支持 http 或 httpchunk；websocket 请使用内存构建");
         }
+        if (isBlank(request.getHeaderName()) || isBlank(request.getHeaderValue())) {
+            throw new IllegalArgumentException(
+                    "JSP/JSPX WebShell 的 headerName 和 headerValue 不能为空");
+        }
         return new GenerationPlan(request, artifactKind, null, null, false);
     }
 

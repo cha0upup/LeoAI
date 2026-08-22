@@ -36,6 +36,7 @@ public final class ShellGenerationService {
         metadata.put("targetJavaVersion", result.getTargetJavaVersion().getValue());
         metadata.put("obfuscationSeed", Long.toString(result.getObfuscationSeed()));
         metadata.put("servletNamespace", result.getServletNamespace().getValue());
+        metadata.put("headerConfig", command.getHeaderConfig());
         addSizeMetadata(metadata, result.getContent());
         return new ShellGenerationOutcome(result, metadata);
     }

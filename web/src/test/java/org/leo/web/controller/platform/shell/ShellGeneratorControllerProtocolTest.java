@@ -129,6 +129,23 @@ class ShellGeneratorControllerProtocolTest {
     }
 
     @Test
+    void generatesWebShellWithHeaderGate() {
+        HashMap<String, Object> generated = controller.generateWebShell(params(
+                "protocol", "http",
+                "shellType", "JSP",
+                "payloadKey", "webshell-test-key",
+                "headerName", "X-Test",
+                "headerValue", "secret"
+        ));
+
+        assertEquals(200, generated.get("code"));
+        Map<?, ?> data = (Map<?, ?>) generated.get("data");
+        assertEquals("X-Test : secret", data.get("headerConfig"));
+        assertTrue(String.valueOf(data.get("shell")).contains(
+                "request.getHeader(\"X-Test\")"));
+    }
+
+    @Test
     void generatesTomcatListenerWithoutLegacyServletApiOnWebClasspath() {
         HashMap<String, Object> generated = controller.generateMemoryShell(params(
                 "protocol", "http",
@@ -175,6 +192,7 @@ class ShellGeneratorControllerProtocolTest {
         params.put("reqDisguiseId", "req");
         params.put("respDisguiseId", "resp");
         params.put("respCode", 200);
+        params.put("payloadKey", "controller-test-key");
         for (int i = 0; i < values.length; i += 2) {
             params.put(String.valueOf(values[i]), values[i + 1]);
         }

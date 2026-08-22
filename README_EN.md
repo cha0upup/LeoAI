@@ -252,13 +252,13 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-2.1.0.jar
+LeoAi-2.1.1.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.1.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -431,7 +431,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.1.0.jar --server.port=9090
+  LeoAi-2.1.1.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -440,7 +440,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.1.0.jar \
+  LeoAi-2.1.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -602,7 +602,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.1.jar
 ```
 
 ---

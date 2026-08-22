@@ -304,13 +304,13 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-2.1.0.jar
+LeoAi-2.1.1.jar
 ```
 
 ### 第二步：启动
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.1.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -485,7 +485,7 @@ LEOAI_PORT=9090 docker compose up -d
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.1.0.jar --server.port=9090
+  LeoAi-2.1.1.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -494,7 +494,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.1.0.jar \
+  LeoAi-2.1.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -672,7 +672,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.1.1.jar
 ```
 
 ---

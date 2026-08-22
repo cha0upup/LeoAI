@@ -65,6 +65,7 @@ class WebShellWrapperServiceTest {
                 .coreClassName("org.demo.GeneratedCore" + seed)
                 .targetJavaVersion("8")
                 .servletNamespace("javax")
+                .payloadKey("wrapper-test-key")
                 .obfuscationSeed(seed)
                 .build());
     }

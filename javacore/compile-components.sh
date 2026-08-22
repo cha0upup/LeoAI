@@ -25,12 +25,48 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC_DIR="$SCRIPT_DIR/src/main/java/org/leo/core/component"
 OUT_DIR="$SCRIPT_DIR/src/main/resources/component"
 TMP_DIR=$(mktemp -d)
-AUDIT_POM="$SCRIPT_DIR/component-api-audit/pom.xml"
 
 cleanup() {
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
+
+AUDIT_POM="$TMP_DIR/component-api-audit/pom.xml"
+
+# Animal Sniffer 需要一个 Maven project 才能执行。将这个仅用于审计的
+# 配置放入临时目录，避免编译流程依赖工作树中是否保留辅助 POM。
+mkdir -p "$(dirname "$AUDIT_POM")"
+cat > "$AUDIT_POM" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>org.leo.build</groupId>
+    <artifactId>component-api-audit</artifactId>
+    <version>1</version>
+    <properties>
+        <component.classes.dir>${project.basedir}/classes</component.classes.dir>
+    </properties>
+    <build>
+        <outputDirectory>${component.classes.dir}</outputDirectory>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>animal-sniffer-maven-plugin</artifactId>
+                <version>1.27</version>
+                <configuration>
+                    <signature>
+                        <groupId>org.codehaus.mojo.signature</groupId>
+                        <artifactId>java16</artifactId>
+                        <version>1.1</version>
+                    </signature>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+EOF
 
 resolve_java8_home() {
     if [ -n "${JAVA8_HOME:-}" ] && usable_java8_home "$JAVA8_HOME"; then

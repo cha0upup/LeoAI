@@ -188,6 +188,8 @@ public class ShellGeneratorController {
             String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
             String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
             String payloadKey = ControllerUtil.getOptionalStringParam(params, "payloadKey");
+            String headerName = ControllerUtil.getOptionalStringParam(params, "headerName");
+            String headerValue = ControllerUtil.getOptionalStringParam(params, "headerValue");
             Long obfuscationSeed = getOptionalLongParam(params, "obfuscationSeed");
             Integer respCode = getOptionalIntegerParam(params, "respCode");
             List<String> jspObfuscationSteps = getOptionalStringListParam(params, "jspObfuscationSteps");
@@ -199,6 +201,7 @@ public class ShellGeneratorController {
                             .targetJavaVersion(targetJavaVersion)
                             .servletNamespace(servletNamespace)
                             .payloadKey(payloadKey)
+                            .header(headerName, headerValue)
                             .responseCode(respCode)
                             .obfuscationSteps(jspObfuscationSteps)
                             .obfuscationSeed(obfuscationSeed)

