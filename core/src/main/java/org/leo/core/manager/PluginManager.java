@@ -73,6 +73,7 @@ public class PluginManager {
                 fileInputStream.read(fileBytes);
                 String b = AesUtil.decrypt(new String(fileBytes, "utf-8"), pluginEncryptKey);
                 Plugin componentPlugin = (Plugin) JsonUtil.fromJsonString(b, Plugin.class);
+                normalizeRuntime(componentPlugin);
                 this.plugins.put(componentPlugin.getPluginId(), componentPlugin);
                 logger.debug("插件加载成功: {}", f.getName());
             } catch (Exception e) {
@@ -91,8 +92,17 @@ public class PluginManager {
         logger.info("插件加载完成，共加载 {} 个插件", this.plugins.size());
     }
     public boolean inStallPlugin(Plugin plugin){
+        normalizeRuntime(plugin);
         this.plugins.put(plugin.getPluginId(),plugin);
         return true;
+    }
+
+    private void normalizeRuntime(Plugin plugin) {
+        if (plugin.getRuntime() == null || plugin.getRuntime().isBlank()) {
+            plugin.setRuntime("php".equalsIgnoreCase(plugin.getPluginType()) ? "php" : "java");
+            return;
+        }
+        plugin.setRuntime(plugin.resolveRuntime());
     }
 
     public Plugin getPluginById(String id){
