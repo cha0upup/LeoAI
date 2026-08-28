@@ -11,7 +11,6 @@ import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -660,6 +659,7 @@ public class BasicInfoComponent implements Runnable {
             processes.add(process);
         }
         return processes;
+
     }
 
     private boolean isDigits(String value) {
