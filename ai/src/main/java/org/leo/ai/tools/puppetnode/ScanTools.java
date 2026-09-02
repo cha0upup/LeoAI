@@ -15,9 +15,9 @@ import java.util.Map;
         operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ScanTools {
 
-    @Tool("在 puppet 侧启动端口扫描任务。scanHost 为目标 IP 或 CIDR，scanPorts 为端口数组，"
+    @Tool("在 puppet 侧启动端口扫描任务。scanHost 为目标 IP 或域名，scanPorts 为端口数组，"
             + "scanTimeout 为单端口超时毫秒，threadsNum 为并发线程数。"
-            + "返回 taskId，用 queryScanPortResult 轮询进度和开放端口。")
+            + "返回 taskId，用 queryScanPortResult 轮询进度、开放端口和轻量服务识别结果。")
     public Map<String, Object> startScanPort(String scanHost, int[] scanPorts, int scanTimeout, int threadsNum) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);

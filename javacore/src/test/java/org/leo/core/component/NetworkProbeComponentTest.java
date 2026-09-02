@@ -7,6 +7,9 @@ import org.leo.core.util.javassist.CloneWithJavassist;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -15,6 +18,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,6 +90,121 @@ class NetworkProbeComponentTest {
         assertEquals(2, snapshot.get("scannedCount"));
         assertEquals(2, snapshot.get("completedCount"));
         assertFalse(snapshot.containsKey("executor"));
+    }
+
+    @Test
+    void portQueryExposesStructuredServiceResultsAndUnifiedTargetMetadata() throws Exception {
+        String taskId = "structured-query-task";
+        HashMap<String, Object> task = new HashMap<>();
+        task.put("taskId", taskId);
+        task.put("status", "STOPPED");
+        task.put("portLength", 1);
+        task.put("completedCount", new AtomicInteger(1));
+        task.put("openPortList", new ArrayList<>(Arrays.asList(8080)));
+        task.put("serviceResults", new ArrayList<>(Collections.singletonList(
+                new HashMap<>(Map.of("host", "127.0.0.1", "port", 8080,
+                        "transport", "tcp", "state", "open", "service", "http")))));
+        task.put("resultVersion", 1);
+        task.put("scanKind", "discovery");
+        task.put("scanStage", "PORT_AND_SERVICE");
+        task.put("target", Map.of("host", "127.0.0.1", "protocol", "tcp"));
+        state("scanTasks").put(taskId, task);
+        state("taskLocks").put(taskId, new Object());
+
+        Map<String, Object> response = invoke(new PortScanComponent(),
+                params("methodName", "queryResult", "taskId", taskId));
+        Map<?, ?> snapshot = (Map<?, ?>) response.get("scanTaskInfo");
+
+        assertEquals(1, ((java.util.List<?>) snapshot.get("serviceResults")).size());
+        assertEquals(snapshot.get("serviceResults"), snapshot.get("results"));
+        assertEquals("discovery", snapshot.get("scanKind"));
+        assertEquals("PORT_AND_SERVICE", snapshot.get("scanStage"));
+        assertEquals("127.0.0.1", ((Map<?, ?>) snapshot.get("target")).get("host"));
+    }
+
+    @Test
+    void multiTargetScanKeepsOneTaskAndReportsTargetAwareProgress() throws Exception {
+        Map<String, Object> started = invoke(new PortScanComponent(), params(
+                "methodName", "startScan", "scanHosts", Arrays.asList("127.0.0.1", "localhost"),
+                "scanPorts", new int[]{1}, "scanTimeout", 1000, "threadsNum", 2,
+                "probeServices", false));
+        assertEquals(200, code(started));
+        String taskId = String.valueOf(started.get("taskId"));
+
+        Map<String, Object> response = invoke(new PortScanComponent(),
+                params("methodName", "queryResult", "taskId", taskId));
+        Map<?, ?> snapshot = (Map<?, ?>) response.get("scanTaskInfo");
+        assertEquals(2, snapshot.get("targetCount"));
+        assertEquals(1, snapshot.get("portsPerTarget"));
+        assertEquals(2, snapshot.get("portLength"));
+        assertEquals(2, ((java.util.List<?>) snapshot.get("targets")).size());
+        assertNotNull(snapshot.get("openPortResults"));
+
+        invoke(new PortScanComponent(), params("methodName", "stopScan", "taskId", taskId));
+    }
+
+    @Test
+    void oversizedPortBatchIsRejectedBeforeTaskRegistration() throws Exception {
+        int[] ports = new int[4097];
+        for (int i = 0; i < ports.length; i++) ports[i] = (i % 65535) + 1;
+        InvocationTargetException error = assertThrows(InvocationTargetException.class,
+                () -> invoke(new PortScanComponent(), params(
+                        "methodName", "startScan", "scanHost", "127.0.0.1",
+                        "scanPorts", ports)));
+        assertTrue(error.getCause() instanceof IllegalArgumentException);
+        assertTrue(state("scanTasks").isEmpty());
+    }
+
+    @Test
+    void portScanReadsARestrictedBannerIntoStructuredServiceResult() throws Exception {
+        ExecutorService responder = Executors.newSingleThreadExecutor();
+        try (ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"))) {
+            Future<?> responseFuture = responder.submit(() -> {
+                for (int connection = 0; connection < 2; connection++) {
+                    try (Socket client = server.accept()) {
+                        client.getOutputStream().write("SSH-2.0-OpenSSH_9.0\\r\\n".getBytes(StandardCharsets.ISO_8859_1));
+                        client.getOutputStream().flush();
+                    }
+                }
+                return null;
+            });
+
+            int port = server.getLocalPort();
+            Map<String, Object> started = invoke(new PortScanComponent(), params(
+                    "methodName", "startScan", "scanHost", "127.0.0.1",
+                    "scanPorts", new int[]{port}, "scanTimeout", 1000,
+                    "threadsNum", 1, "probeServices", true));
+            assertEquals(200, code(started));
+            String taskId = String.valueOf(started.get("taskId"));
+
+            Map<?, ?> snapshot = awaitStoppedTask(taskId, 5000L);
+            assertEquals("STOPPED", snapshot.get("status"));
+            assertEquals(1, ((java.util.List<?>) snapshot.get("openPortList")).size());
+            java.util.List<?> services = (java.util.List<?>) snapshot.get("serviceResults");
+            assertEquals(1, services.size());
+            Map<?, ?> service = (Map<?, ?>) services.get(0);
+            assertEquals("ssh", service.get("service"));
+            assertTrue(String.valueOf(service.get("banner")).startsWith("SSH-2.0-OpenSSH_9.0"));
+            responseFuture.get(2, TimeUnit.SECONDS);
+        } finally {
+            responder.shutdownNow();
+        }
+    }
+
+    @Test
+    void httpHeadersAreReducedToSafeServiceMetadata() throws Exception {
+        Method parser = PortScanComponent.class.getDeclaredMethod("parseHttpHeaders", HashMap.class, String.class);
+        parser.setAccessible(true);
+        HashMap<String, Object> result = new HashMap<>();
+
+        parser.invoke(null, result,
+                "HTTP/1.1 302 Found\r\nServer: test-server\r\nLocation: /login\r\n"
+                        + "Set-Cookie: ignored\r\n\r\n");
+
+        assertEquals(302, result.get("statusCode"));
+        assertEquals("test-server", result.get("server"));
+        assertEquals("/login", result.get("location"));
+        assertFalse(result.containsKey("set-cookie"));
     }
 
     @Test
@@ -175,6 +295,19 @@ class NetworkProbeComponentTest {
 
     private int code(Map<String, Object> response) {
         return ((Number) response.get("code")).intValue();
+    }
+
+    private Map<?, ?> awaitStoppedTask(String taskId, long timeoutMillis) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        Map<?, ?> snapshot = Collections.emptyMap();
+        while (System.currentTimeMillis() < deadline) {
+            Map<String, Object> response = invoke(new PortScanComponent(),
+                    params("methodName", "queryResult", "taskId", taskId));
+            snapshot = (Map<?, ?>) response.get("scanTaskInfo");
+            if (snapshot != null && "STOPPED".equals(snapshot.get("status"))) return snapshot;
+            Thread.sleep(20L);
+        }
+        throw new AssertionError("scan task did not finish: " + snapshot);
     }
 
     @SuppressWarnings("unchecked")

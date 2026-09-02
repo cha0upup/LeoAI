@@ -16,12 +16,32 @@ public class ScanService extends ComponentService {
     }
 
     public Map<String, Object> startScanPort(String scanHost, int[] scanPorts, int scanTimeout, int threadsNum) throws Exception {
+        return startScanPort(scanHost, scanPorts, scanTimeout, threadsNum, true);
+    }
+
+    public Map<String, Object> startScanPort(String scanHost, int[] scanPorts,
+                                             int scanTimeout, int threadsNum,
+                                             boolean probeServices) throws Exception {
         HashMap<String, Object> componentParams = new HashMap<String, Object>();
         componentParams.put("methodName", "startScan");
         componentParams.put("scanHost", scanHost);
         componentParams.put("scanPorts", scanPorts);
         componentParams.put("scanTimeout", scanTimeout);
         componentParams.put("threadsNum", threadsNum);
+        componentParams.put("probeServices", Boolean.valueOf(probeServices));
+        return invokeComponent("PortScanComponent", componentParams);
+    }
+
+    public Map<String, Object> startScanPort(List<String> scanHosts, int[] scanPorts,
+                                             int scanTimeout, int threadsNum,
+                                             boolean probeServices) throws Exception {
+        HashMap<String, Object> componentParams = new HashMap<String, Object>();
+        componentParams.put("methodName", "startScan");
+        componentParams.put("scanHosts", scanHosts);
+        componentParams.put("scanPorts", scanPorts);
+        componentParams.put("scanTimeout", scanTimeout);
+        componentParams.put("threadsNum", threadsNum);
+        componentParams.put("probeServices", Boolean.valueOf(probeServices));
         return invokeComponent("PortScanComponent", componentParams);
     }
 

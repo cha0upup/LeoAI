@@ -440,6 +440,20 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
+    public Map<String, Object> startScanPort(String scanHost, int[] scanPorts,
+                                              int scanTimeout, int threadsNum,
+                                              boolean probeServices) throws Exception {
+        return scanService.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum, probeServices);
+    }
+
+    @Override
+    public Map<String, Object> startScanPort(List<String> scanHosts, int[] scanPorts,
+                                              int scanTimeout, int threadsNum,
+                                              boolean probeServices) throws Exception {
+        return scanService.startScanPort(scanHosts, scanPorts, scanTimeout, threadsNum, probeServices);
+    }
+
+    @Override
     public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
         return scanService.queryScanPortResult(taskId);
     }
