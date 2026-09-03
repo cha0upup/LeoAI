@@ -30,6 +30,10 @@
         "maxBodyBytes": 512
       }
     ],
-    "script": "var b = String(raw || ''); b.indexOf('mysql_native_password') >= 0 || b.indexOf('caching_sha2_password') >= 0 || b.indexOf('mysql_old_password') >= 0"
+    "match": {"any": [
+      {"field": "raw", "operator": "contains", "value": "mysql_native_password"},
+      {"field": "raw", "operator": "contains", "value": "caching_sha2_password"},
+      {"field": "raw", "operator": "contains", "value": "mysql_old_password"}
+    ]}
   }
 }

@@ -45,7 +45,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
             "DatabaseComponent", "CompressComponent", "DecompressComponent", "PluginComponent",
             "HttpRequestComponent", "ProxyForwardComponent", "ReverseTunnelComponent",
             "ProcessComponent", "NetworkInfoComponent",
-            "NetworkConnectionComponent", "ScanComponent", "ServiceComponent",
+            "NetworkConnectionComponent", "NetworkProbeComponent", "ServiceComponent",
             "ScheduledTaskComponent", "RegistryComponent", "EventLogComponent",
             "FirewallComponent", "UserAccountComponent");
 
@@ -200,7 +200,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         requirements.put("ScheduledTaskComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
         requirements.put("RegistryComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
         requirements.put("FirewallComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
-        requirements.put("ScanComponent", Map.of(
+        requirements.put("NetworkProbeComponent", Map.of(
                 "functions", List.of("stream_socket_client"),
                 "functionsAnyOf", List.of("shell_exec", "exec", "popen")));
         requirements.put("ProxyForwardComponent", common);

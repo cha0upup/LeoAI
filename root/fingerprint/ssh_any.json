@@ -30,6 +30,6 @@
         "maxBodyBytes": 256
       }
     ],
-    "script": "var b = String(raw || ''); b.indexOf('SSH-') >= 0"
+    "match": {"field": "raw", "operator": "startswith", "value": "SSH-"}
   }
 }

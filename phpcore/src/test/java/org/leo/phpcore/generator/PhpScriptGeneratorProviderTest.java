@@ -79,7 +79,7 @@ class PhpScriptGeneratorProviderTest {
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ProcessComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkInfoComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkConnectionComponent"));
-        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ScanComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkProbeComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ServiceComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ScheduledTaskComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("RegistryComponent"));
@@ -99,7 +99,7 @@ class PhpScriptGeneratorProviderTest {
         assertEquals(List.of("shell_exec", "exec"),
                 ((Map<?, ?>) componentRequirements.get("ProcessComponent")).get("functionsAnyOf"));
         assertEquals(List.of("stream_socket_client"),
-                ((Map<?, ?>) componentRequirements.get("ScanComponent")).get("functions"));
+                ((Map<?, ?>) componentRequirements.get("NetworkProbeComponent")).get("functions"));
         assertEquals(List.of(), artifact.getMetadata().get("bundledComponents"));
         Map<?, ?> requirements = (Map<?, ?>) artifact.getMetadata().get("requirements");
         assertTrue(((List<?>) requirements.get("extensions")).containsAll(List.of("openssl", "zlib")));

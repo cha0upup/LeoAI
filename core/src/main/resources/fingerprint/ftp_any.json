@@ -30,6 +30,15 @@
         "maxBodyBytes": 512
       }
     ],
-    "script": "var b = String(raw || ''); b.indexOf('220') >= 0 && (b.toUpperCase().indexOf('FTP') >= 0 || b.indexOf('vsftpd') >= 0 || b.indexOf('ProFTPD') >= 0 || b.indexOf('Pure-FTPd') >= 0 || b.indexOf('FileZilla') >= 0)"
+    "match": {"all": [
+      {"field": "raw", "operator": "contains", "value": "220"},
+      {"any": [
+        {"field": "raw", "operator": "contains", "value": "FTP"},
+        {"field": "raw", "operator": "contains", "value": "vsftpd"},
+        {"field": "raw", "operator": "contains", "value": "ProFTPD"},
+        {"field": "raw", "operator": "contains", "value": "Pure-FTPd"},
+        {"field": "raw", "operator": "contains", "value": "FileZilla"}
+      ]}
+    ]}
   }
 }

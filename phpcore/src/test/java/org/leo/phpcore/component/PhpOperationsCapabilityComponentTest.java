@@ -7,6 +7,7 @@ import org.leo.core.util.json.PortableJsonCodec;
 
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -73,33 +74,71 @@ class PhpOperationsCapabilityComponentTest {
     }
 
     @Test
-    void runsPersistentPortScanWorkerAndReachabilityProbe() throws Exception {
+    void runsPersistentNetworkProbeWorker() throws Exception {
         try (ServerSocket server = new ServerSocket(0)) {
             int port = server.getLocalPort();
-            Map<String, Object> started = invoke("ScanComponent.php", "start",
-                    "array('scanHost'=>'127.0.0.1','scanPorts'=>array(" + port + "),'scanTimeout'=>500,'threadsNum'=>1)");
+            Map<String, Object> started = invoke("NetworkProbeComponent.php", "startTask",
+                    "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>" + port + ")),'stages'=>array('tcp-connect')))");
             assertEquals(200, code(started));
             String taskId = String.valueOf(started.get("taskId"));
             assertFalse(taskId.isBlank());
 
             Map<String, Object> queried = null;
             for (int attempt = 0; attempt < 50; attempt++) {
-                queried = invoke("ScanComponent.php", "query", "array('taskId'=>'" + taskId + "')");
-                Map<?, ?> info = assertInstanceOf(Map.class, queried.get("scanTaskInfo"));
+                queried = invoke("NetworkProbeComponent.php", "queryTask", "array('taskId'=>'" + taskId + "')");
+                Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
                 if ("STOPPED".equals(info.get("status"))) break;
                 Thread.sleep(50);
             }
             assertEquals(200, code(Objects.requireNonNull(queried)));
-            Map<?, ?> info = assertInstanceOf(Map.class, queried.get("scanTaskInfo"));
+            Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
             assertEquals("STOPPED", info.get("status"));
-            assertTrue(assertInstanceOf(List.class, info.get("openPortList")).stream()
-                    .anyMatch(value -> ((Number) value).intValue() == port));
+            assertTrue(assertInstanceOf(List.class, info.get("observations")).stream()
+                    .anyMatch(value -> "open".equals(((Map<?, ?>) value).get("state"))));
         }
+    }
 
-        Map<String, Object> reachable = invoke("ScanComponent.php", "reachable",
-                "array('scanHosts'=>array('127.0.0.1'),'scanTimeout'=>500)");
-        assertEquals(200, code(reachable));
-        assertEquals(1, ((Number) reachable.get("totalCount")).intValue());
+    @Test
+    void returnsSeparatedHttpHeadersAndBodyEvidence() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Thread responder = new Thread(() -> {
+                try (Socket socket = server.accept()) {
+                    socket.getOutputStream().write((
+                            "HTTP/1.1 200 OK\r\n" +
+                            "Server: php-probe-test\r\n" +
+                            "Content-Type: text/plain\r\n" +
+                            "Content-Length: 5\r\n\r\n" +
+                            "hello").getBytes(StandardCharsets.ISO_8859_1));
+                    socket.getOutputStream().flush();
+                } catch (IOException ignored) {
+                    // The worker may be stopped while the test is cleaning up.
+                }
+            }, "php-network-probe-responder");
+            responder.start();
+
+            Map<String, Object> started = invoke("NetworkProbeComponent.php", "startTask",
+                    "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>" + server.getLocalPort() + ",'protocol'=>'http','httpRequest'=>array('method'=>'GET','path'=>'/'))),'stages'=>array('http-request')))");
+            assertEquals(200, code(started));
+            String taskId = String.valueOf(started.get("taskId"));
+
+            Map<?, ?> info = null;
+            for (int attempt = 0; attempt < 50; attempt++) {
+                Map<String, Object> queried = invoke("NetworkProbeComponent.php", "queryTask",
+                        "array('taskId'=>'" + taskId + "')");
+                info = assertInstanceOf(Map.class, queried.get("result"));
+                if ("STOPPED".equals(info.get("status"))) break;
+                Thread.sleep(50);
+            }
+            responder.join(5000);
+            assertEquals("STOPPED", info.get("status"));
+            Map<?, ?> observation = assertInstanceOf(Map.class,
+                    assertInstanceOf(List.class, info.get("observations")).get(0));
+            Map<?, ?> evidence = assertInstanceOf(Map.class, observation.get("evidence"));
+            assertEquals(200, evidence.get("statusCode"));
+            assertTrue(String.valueOf(evidence.get("headers")).contains("Server: php-probe-test"));
+            assertEquals("hello", evidence.get("body"));
+            assertEquals(5, evidence.get("bodyLength"));
+        }
     }
 
     private Map<String, Object> invoke(String name, String action, String paramsExpression) throws Exception {

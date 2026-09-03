@@ -153,7 +153,7 @@ public class PuppetNodeSystemPromptProvider {
             ▸ 步骤字段说明
             createPlan 的每个 step 支持以下字段：
             - description（必填）— 清晰描述这一步要做什么，如"扫描 8080-9000 端口"
-            - toolHint — 建议使用的工具名，如"startScanPort"，帮助前端预览
+            - toolHint — 建议使用的工具名，如"startNetworkProbe"，帮助前端预览
             - parallel（true/false）— 标记此步骤是否可与其他 parallel 步骤并发执行。
               所有标记 parallel 的步骤可以在同一轮工具调用中一次性发出。
               例：步骤 1（查用户）、步骤 2（查网络）、步骤 3（查磁盘）互相独立 → 全部 parallel=true

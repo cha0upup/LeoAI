@@ -39,6 +39,11 @@
         "maxBodyBytes": 65536
       }
     ],
-    "script": "var h = String(headers || '').toLowerCase(); var b = String(body || '').toLowerCase(); h.indexOf('apache-coyote') >= 0 || h.indexOf('apache tomcat') >= 0 || b.indexOf('apache tomcat') >= 0 || b.indexOf('tomcat/') >= 0"
+    "match": {"any": [
+      {"field": "headers", "operator": "contains", "value": "apache-coyote"},
+      {"field": "headers", "operator": "contains", "value": "apache tomcat"},
+      {"field": "body", "operator": "contains", "value": "apache tomcat"},
+      {"field": "body", "operator": "contains", "value": "tomcat/"}
+    ]}
   }
 }

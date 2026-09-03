@@ -14,11 +14,11 @@ import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
 import org.leo.core.puppet.capability.LocalForwardCapable;
 import org.leo.core.puppet.capability.NetworkConnectionCapable;
 import org.leo.core.puppet.capability.NetworkInfoCapable;
+import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.puppet.capability.PluginCapable;
 import org.leo.core.puppet.capability.ProcessCapable;
 import org.leo.core.puppet.capability.RegistryCapable;
 import org.leo.core.puppet.capability.ReverseTunnelCapable;
-import org.leo.core.puppet.capability.ScanCapable;
 import org.leo.core.puppet.capability.ScheduledTaskCapable;
 import org.leo.core.puppet.capability.ScriptCapable;
 import org.leo.core.puppet.capability.ServiceCapable;
@@ -50,7 +50,7 @@ import java.util.function.Consumer;
 /** PHP implementation of the shared Puppet node and core capabilities. */
 public final class PhpPuppetNode extends AbstractPuppetNode implements
         BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable,
-        ProcessCapable, NetworkConnectionCapable, ScanCapable, ServiceCapable,
+        ProcessCapable, NetworkConnectionCapable, NetworkProbeCapable, ServiceCapable,
         ScheduledTaskCapable, RegistryCapable, EventLogCapable, FirewallCapable,
         UserAccountCapable, ScriptCapable, SqlCapable,
         ComponentInvokeCapable, ComponentManageCapable, PluginCapable,
@@ -272,37 +272,33 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> startScanPort(String scanHost, int[] scanPorts,
-                                             int scanTimeout, int threadsNum) throws Exception {
-        return invoke("ScanComponent", "start", Map.of("scanHost", scanHost, "scanPorts", scanPorts,
-                "scanTimeout", scanTimeout, "threadsNum", threadsNum));
+    public Map<String, Object> networkProbeCapabilities() throws Exception {
+        return invoke("NetworkProbeComponent", "capabilities", Map.of());
     }
 
     @Override
-    public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
-        return invoke("ScanComponent", "query", Map.of("taskId", taskId));
+    public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
+        return invoke("NetworkProbeComponent", "startTask", Map.of("plan", plan));
     }
 
     @Override
-    public Map<String, Object> pauseScanPort(String taskId) throws Exception {
-        return invoke("ScanComponent", "pause", Map.of("taskId", taskId));
+    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
+        return invoke("NetworkProbeComponent", "queryTask", Map.of("taskId", taskId));
     }
 
     @Override
-    public Map<String, Object> resumeScanPort(String taskId) throws Exception {
-        return invoke("ScanComponent", "resume", Map.of("taskId", taskId));
+    public Map<String, Object> pauseNetworkProbe(String taskId) throws Exception {
+        return invoke("NetworkProbeComponent", "pauseTask", Map.of("taskId", taskId));
     }
 
     @Override
-    public Map<String, Object> stopScanPort(String taskId) throws Exception {
-        return invoke("ScanComponent", "stop", Map.of("taskId", taskId));
+    public Map<String, Object> resumeNetworkProbe(String taskId) throws Exception {
+        return invoke("NetworkProbeComponent", "resumeTask", Map.of("taskId", taskId));
     }
 
     @Override
-    public Map<String, Object> scanReachableHost(ArrayList<String> scanHostsList,
-                                                  int scanTimeout) throws Exception {
-        return invoke("ScanComponent", "reachable", Map.of("scanHosts", scanHostsList,
-                "scanTimeout", scanTimeout));
+    public Map<String, Object> stopNetworkProbe(String taskId) throws Exception {
+        return invoke("NetworkProbeComponent", "stopTask", Map.of("taskId", taskId));
     }
 
     @Override

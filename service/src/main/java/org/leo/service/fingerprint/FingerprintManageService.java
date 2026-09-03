@@ -133,6 +133,7 @@ public class FingerprintManageService {
                                                            Object protocol, Object tags, String version) throws Exception {
         String normalizedName = requireNonBlank(name, "name 不能为空");
         String resolvedVersion = requireNonBlank(version, "version 不能为空");
+        validateRule(rule);
         String fingerprintId = generateFingerprintId(normalizedName, resolvedVersion);
         String safeName = getSafeFileName(fingerprintId);
 
@@ -161,6 +162,53 @@ public class FingerprintManageService {
         HashMap<String, Object> data = new HashMap<>();
         data.put("fingerprintId", fingerprintId);
         return data;
+    }
+
+    private void validateRule(Object ruleValue) {
+        if (!(ruleValue instanceof Map<?, ?> rule)) {
+            throw new IllegalArgumentException("rule 必须是 JSON 对象");
+        }
+        Object requestsValue = rule.get("requests");
+        if (!(requestsValue instanceof List<?> requests) || requests.isEmpty()) {
+            throw new IllegalArgumentException("rule.requests 必须是非空数组");
+        }
+        if (requests.size() > 16) throw new IllegalArgumentException("rule.requests 不能超过16个");
+        if (!(rule.get("match") instanceof Map<?, ?> match)) {
+            throw new IllegalArgumentException("rule.match 必须是声明式匹配对象");
+        }
+        validateMatch(match, 0);
+    }
+
+    private void validateMatch(Map<?, ?> match, int depth) {
+        if (depth > 8) throw new IllegalArgumentException("rule.match 嵌套不能超过8层");
+        Object children = match.containsKey("all") ? match.get("all") : match.get("any");
+        if (children != null) {
+            if (!(children instanceof List<?> list) || list.isEmpty()) {
+                throw new IllegalArgumentException("rule.match 的 all/any 必须是非空数组");
+            }
+            for (Object child : list) {
+                if (!(child instanceof Map<?, ?> childMap)) {
+                    throw new IllegalArgumentException("rule.match 子表达式必须是对象");
+                }
+                validateMatch(childMap, depth + 1);
+            }
+            return;
+        }
+        if (match.get("not") instanceof Map<?, ?> child) {
+            validateMatch(child, depth + 1);
+            return;
+        }
+        String field = match.get("field") == null ? "" : String.valueOf(match.get("field")).trim();
+        if (!List.of("status", "body", "headers", "raw", "bodyLength", "truncated", "error", "errorCode")
+                .contains(field)) {
+            throw new IllegalArgumentException("rule.match.field 不支持: " + field);
+        }
+        String operator = match.get("operator") == null
+                ? "contains" : String.valueOf(match.get("operator")).trim().toLowerCase();
+        if (!List.of("contains", "notcontains", "equals", "in", "exists", "startswith", "endswith")
+                .contains(operator)) {
+            throw new IllegalArgumentException("rule.match.operator 不支持: " + operator);
+        }
     }
 
     private Map<String, Object> toFingerprintSummary(File file) {

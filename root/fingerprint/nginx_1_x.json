@@ -18,6 +18,9 @@
         "maxBodyBytes": 65536
       }
     ],
-    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); h.indexOf('nginx') >= 0 || b.indexOf('welcome to nginx') >= 0"
+    "match": {"any": [
+      {"field": "headers", "operator": "contains", "value": "nginx"},
+      {"field": "body", "operator": "contains", "value": "welcome to nginx"}
+    ]}
   }
 }

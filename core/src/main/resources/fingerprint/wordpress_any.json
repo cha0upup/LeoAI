@@ -18,6 +18,10 @@
         "maxBodyBytes": 65536
       }
     ],
-    "script": "var b = String(body || '').toLowerCase(); var h = String(headers || '').toLowerCase(); b.indexOf('wordpress') >= 0 || b.indexOf('wp-login') >= 0 || h.indexOf('x-pingback') >= 0"
+    "match": {"any": [
+      {"field": "body", "operator": "contains", "value": "wordpress"},
+      {"field": "body", "operator": "contains", "value": "wp-login"},
+      {"field": "headers", "operator": "contains", "value": "x-pingback"}
+    ]}
   }
 }

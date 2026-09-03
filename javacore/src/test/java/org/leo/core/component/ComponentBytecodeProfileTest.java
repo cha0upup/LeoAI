@@ -25,9 +25,8 @@ class ComponentBytecodeProfileTest {
             "CredentialHarvestComponent", "DatabaseComponent", "DecompressComponent",
             "ExecCommandComponent", "ExecCommandSimpleComponent", "ExecScriptComponent",
             "FileComponent", "FileDownloadComponent", "FileEnhanceComponent",
-            "FileUploadComponent", "FingerprintComponent", "HostIsReachableComponent",
-            "HttpRequestComponent", "PluginComponent", "PortScanComponent",
-            "ProxyForwardComponent", "ReconScanComponent", "ResourceComponent",
+            "FileUploadComponent", "HttpRequestComponent", "NetworkProbeComponent", "PluginComponent",
+            "ProxyForwardComponent", "ResourceComponent",
             "ReverseTunnelComponent", "ScreenComponent", "GenericServletContainerManageComponent",
             "JavaWebFrameworkManageComponent", "SpringFrameworkManageComponent",
             "TomcatContainerManageComponent", "WeblogicContainerManageComponent"
@@ -73,10 +72,7 @@ class ComponentBytecodeProfileTest {
     @Test
     void transformedWorkerPoolsUseTheRuntimeClassProfile() throws Exception {
         String session = "host-a|https://example.test/api";
-        String[] components = {
-                "PortScanComponent", "FingerprintComponent",
-                "HostIsReachableComponent", "ReconScanComponent"
-        };
+        String[] components = {"NetworkProbeComponent"};
 
         BytecodeLoader loader = new BytecodeLoader();
         for (String component : components) {

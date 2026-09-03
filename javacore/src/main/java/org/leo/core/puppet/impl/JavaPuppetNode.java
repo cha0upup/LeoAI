@@ -28,6 +28,7 @@ import org.leo.core.puppet.capability.HostScopedCapable;
 import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
 import org.leo.core.puppet.capability.LocalForwardCapable;
 import org.leo.core.puppet.capability.NetworkConnectionCapable;
+import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.puppet.capability.NetworkInfoCapable;
 import org.leo.core.puppet.capability.NetworkShareCapable;
 import org.leo.core.puppet.capability.PersistenceCapable;
@@ -35,7 +36,6 @@ import org.leo.core.puppet.capability.ProcessCapable;
 import org.leo.core.puppet.capability.RegistryCapable;
 import org.leo.core.puppet.capability.ResourceCapable;
 import org.leo.core.puppet.capability.ReverseTunnelCapable;
-import org.leo.core.puppet.capability.ScanCapable;
 import org.leo.core.puppet.capability.ScheduledTaskCapable;
 import org.leo.core.puppet.capability.ScriptCapable;
 import org.leo.core.puppet.capability.ServiceCapable;
@@ -61,7 +61,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
-public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, SqlCapable, ScriptCapable, ResourceCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
+public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, SqlCapable, ScriptCapable, ResourceCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkProbeCapable, NetworkShareCapable, InstalledSoftwareCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
     /** 最大请求总数，包含首次请求。 */
     private int maxReqCount = Puppet.DEFAULT_MAX_REQUEST_COUNT;
@@ -82,7 +82,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     FileService fileService;
     SqlService sqlService;
     TestConnService testConnService;
-    ScanService scanService;
+    NetworkProbeService networkProbeService;
     ResourceService resourceService;
     WebRuntimeManageService webRuntimeManageService;
     ExecScriptService execScriptService;
@@ -170,7 +170,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         fileService=new FileService(communication,requestLayers,responseLayers);
         sqlService=new SqlService(communication,requestLayers,responseLayers);
         testConnService=new TestConnService(communication,requestLayers,responseLayers);
-        scanService=new ScanService(communication,requestLayers,responseLayers);
+        networkProbeService=new NetworkProbeService(communication,requestLayers,responseLayers);
         resourceService=new ResourceService(communication,requestLayers,responseLayers);
         webRuntimeManageService=new WebRuntimeManageService(communication,requestLayers,responseLayers);
         execScriptService=new ExecScriptService(communication,requestLayers,responseLayers);
@@ -194,7 +194,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
         serviceRegistry.replace(componentLoadRegistry,
                 basicInfoService, commandService, componentService, fileService,
-                sqlService, testConnService, scanService, resourceService,
+                sqlService, testConnService, networkProbeService, resourceService,
                 webRuntimeManageService, execScriptService, httpRequestService,
                 credentialHarvestService, networkInfoService, httpSenderService,
                 processService, registryService, scheduledTaskService,
@@ -435,47 +435,33 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> startScanPort(String scanHost, int[] scanPorts, int scanTimeout, int threadsNum) throws Exception {
-        return scanService.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum);
+    public Map<String, Object> networkProbeCapabilities() throws Exception {
+        return networkProbeService.networkProbeCapabilities();
     }
 
     @Override
-    public Map<String, Object> startScanPort(String scanHost, int[] scanPorts,
-                                              int scanTimeout, int threadsNum,
-                                              boolean probeServices) throws Exception {
-        return scanService.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum, probeServices);
+    public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
+        return networkProbeService.startNetworkProbe(plan);
     }
 
     @Override
-    public Map<String, Object> startScanPort(List<String> scanHosts, int[] scanPorts,
-                                              int scanTimeout, int threadsNum,
-                                              boolean probeServices) throws Exception {
-        return scanService.startScanPort(scanHosts, scanPorts, scanTimeout, threadsNum, probeServices);
+    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
+        return networkProbeService.queryNetworkProbe(taskId);
     }
 
     @Override
-    public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
-        return scanService.queryScanPortResult(taskId);
+    public Map<String, Object> pauseNetworkProbe(String taskId) throws Exception {
+        return networkProbeService.pauseNetworkProbe(taskId);
     }
 
     @Override
-    public Map<String, Object> pauseScanPort(String taskId) throws Exception {
-        return scanService.pauseScanPort(taskId);
+    public Map<String, Object> resumeNetworkProbe(String taskId) throws Exception {
+        return networkProbeService.resumeNetworkProbe(taskId);
     }
 
     @Override
-    public Map<String, Object> resumeScanPort(String taskId) throws Exception {
-        return scanService.resumeScanPort(taskId);
-    }
-
-    @Override
-    public Map<String, Object> stopScanPort(String taskId) throws Exception {
-        return scanService.stopScanPort(taskId);
-    }
-
-    @Override
-    public Map<String, Object> scanReachableHost(ArrayList<String> scanHostsList, int scanTimeout) throws Exception {
-        return scanService.scanReachableHost(scanHostsList, scanTimeout);
+    public Map<String, Object> stopNetworkProbe(String taskId) throws Exception {
+        return networkProbeService.stopNetworkProbe(taskId);
     }
 
     @Override

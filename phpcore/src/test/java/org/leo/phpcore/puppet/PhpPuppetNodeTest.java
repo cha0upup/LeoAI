@@ -16,7 +16,7 @@ import org.leo.core.puppet.capability.NetworkInfoCapable;
 import org.leo.core.puppet.capability.ProcessCapable;
 import org.leo.core.puppet.capability.RegistryCapable;
 import org.leo.core.puppet.capability.ReverseTunnelCapable;
-import org.leo.core.puppet.capability.ScanCapable;
+import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.puppet.capability.ScheduledTaskCapable;
 import org.leo.core.puppet.capability.ServiceCapable;
 import org.leo.core.puppet.capability.Socks5ProxyCapable;
@@ -125,24 +125,25 @@ class PhpPuppetNodeTest {
         PhpPuppetNode node = node(communication, portable);
 
         assertTrue(node instanceof NetworkConnectionCapable);
-        assertTrue(node instanceof ScanCapable);
+        assertTrue(node instanceof NetworkProbeCapable);
         assertTrue(node instanceof ServiceCapable);
         assertTrue(node instanceof ScheduledTaskCapable);
         node.listNetworkConnections("LISTEN", "TCP", "8080", "12", "php", "10.", true, 100);
         node.networkConnectionSummary();
-        node.startScanPort("127.0.0.1", new int[]{80, 443}, 500, 2);
-        node.queryScanPortResult("scan-task");
-        node.scanReachableHost(new ArrayList<>(List.of("127.0.0.1")), 500);
+        node.networkProbeCapabilities();
+        node.startNetworkProbe(Map.of("targets", List.of(Map.of("host", "127.0.0.1", "port", 80)),
+                "stages", List.of("tcp-connect")));
+        node.queryNetworkProbe("scan-task");
         node.listServices();
         node.createService("demo", "/opt/demo", "Demo", "auto");
         node.listScheduledTasks();
         node.createScheduledTaskLinux("*/5 * * * *", "/opt/demo --check");
 
         assertEquals(List.of("NetworkConnectionComponent", "NetworkConnectionComponent",
-                        "ScanComponent", "ScanComponent", "ScanComponent", "ServiceComponent",
+                        "NetworkProbeComponent", "NetworkProbeComponent", "NetworkProbeComponent", "ServiceComponent",
                         "ServiceComponent", "ScheduledTaskComponent", "ScheduledTaskComponent"),
                 invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
-        assertEquals(List.of("list", "summary", "start", "query", "reachable", "list",
+                assertEquals(List.of("list", "summary", "capabilities", "startTask", "queryTask", "list",
                         "create", "list", "createLinux"),
                 invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
         assertEquals(true, invokes.get(0).get("listeningOnly"));

@@ -28,6 +28,16 @@
         "maxBodyBytes": 512
       }
     ],
-    "script": "var b = String(raw || ''); b.indexOf('220') >= 0 && (b.indexOf('ESMTP') >= 0 || b.toUpperCase().indexOf('SMTP') >= 0 || b.indexOf('Postfix') >= 0 || b.indexOf('Exim') >= 0 || b.indexOf('Sendmail') >= 0 || b.indexOf('Exchange') >= 0)"
+    "match": {"all": [
+      {"field": "raw", "operator": "contains", "value": "220"},
+      {"any": [
+        {"field": "raw", "operator": "contains", "value": "ESMTP"},
+        {"field": "raw", "operator": "contains", "value": "SMTP"},
+        {"field": "raw", "operator": "contains", "value": "Postfix"},
+        {"field": "raw", "operator": "contains", "value": "Exim"},
+        {"field": "raw", "operator": "contains", "value": "Sendmail"},
+        {"field": "raw", "operator": "contains", "value": "Exchange"}
+      ]}
+    ]}
   }
 }

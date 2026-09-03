@@ -28,7 +28,7 @@ public final class PhpComponentArtifactRegistry {
             "DatabaseComponent", "CompressComponent", "DecompressComponent", "PluginComponent",
             "HttpRequestComponent", "ProxyForwardComponent", "ReverseTunnelComponent",
             "ProcessComponent", "NetworkInfoComponent",
-            "NetworkConnectionComponent", "ScanComponent", "ServiceComponent",
+            "NetworkConnectionComponent", "NetworkProbeComponent", "ServiceComponent",
             "ScheduledTaskComponent", "RegistryComponent", "EventLogComponent",
             "FirewallComponent", "UserAccountComponent");
 

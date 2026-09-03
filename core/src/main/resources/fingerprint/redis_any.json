@@ -29,6 +29,14 @@
         "maxBodyBytes": 256
       }
     ],
-    "script": "var b = String(raw || ''); b.indexOf('+PONG') >= 0 || b.indexOf('-NOAUTH') >= 0 || b.indexOf('WRONGPASS') >= 0 || b.indexOf('-ERR') >= 0 && b.indexOf('redis') >= 0"
+    "match": {"any": [
+      {"field": "raw", "operator": "contains", "value": "+PONG", "ignoreCase": false},
+      {"field": "raw", "operator": "contains", "value": "-NOAUTH"},
+      {"field": "raw", "operator": "contains", "value": "WRONGPASS"},
+      {"all": [
+        {"field": "raw", "operator": "contains", "value": "-ERR"},
+        {"field": "raw", "operator": "contains", "value": "redis"}
+      ]}
+    ]}
   }
 }

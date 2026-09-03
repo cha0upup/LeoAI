@@ -39,7 +39,7 @@ public final class PuppetNodeCapabilityRegistry {
             descriptor("localForward", LocalForwardCapable.class),
             descriptor("reverseTunnel", ReverseTunnelCapable.class),
             descriptor("socks5Proxy", Socks5ProxyCapable.class),
-            descriptor("scan", ScanCapable.class),
+            descriptor("networkProbe", NetworkProbeCapable.class),
             descriptor("componentInvoke", ComponentInvokeCapable.class),
             descriptor("componentManage", ComponentManageCapable.class),
             descriptor("webRuntimeManage", WebRuntimeManageCapable.class),

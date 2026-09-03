@@ -42,6 +42,9 @@
         "maxBodyBytes": 65536
       }
     ],
-    "script": "var headerStr = String(headers || '').toLowerCase(); headerStr.indexOf('rememberme=deleteme') >= 0"
+    "match": {"any": [
+      {"field": "headers", "operator": "contains", "value": "rememberme=deleteme"},
+      {"field": "headers", "operator": "contains", "value": "remember-me=delete"}
+    ]}
   }
 }

@@ -335,35 +335,19 @@ FileEnhanceComponent 使用数字 action：
 
 Java Database 的连接参数为 `driverClass, jdbcUrl, username, password, sql`；PHP 使用 PDO 参数结构。
 
-### 6.5 扫描任务
+### 6.5 统一网络探测任务
 
-PortScanComponent 的 `methodName`：
+NetworkProbeComponent 的 `methodName`：
 
 | methodName | 返回 |
 |---|---|
-| `startScan` | `code, taskId` |
-| `queryResult` | `code, scanTaskInfo` |
-| `pauseScan` / `resumeScan` / `stopScan` | `code, msg?` |
+| `capabilities` | `code, resultVersion, component, stages, limits` |
+| `startTask` | `code, taskId` |
+| `queryTask` | `code, result` |
+| `pauseTask` / `resumeTask` / `stopTask` | `code, status?` |
 
-`scanTaskInfo`：`taskId, status, portLength, scannedCount, completedCount, openPortList, createdAt, finishedAt?`。
-
-HostIsReachableComponent 返回：
-
-```text
-code, totalCount, reachableCount, unreachableCount, pendingCount,
-reachableHostList, unreachableHostList, timedOut, msg?
-```
-
-FingerprintComponent 和 ReconScanComponent 均使用：
-
-```text
-methodName = startScan | queryResult | pauseScan | resumeScan | stopScan
-```
-
-- start：`code, taskId`
-- query：`code, result`
-- 生命周期操作：`code`
-- `result` 包含任务的 `taskId, status, total, completed, createdAt, finishedAt?, results, errors` 等字段。
+`result` 包含 `taskId, status, total, completed, progress, targets, plan, observations, errors, createdAt, finishedAt?`。
+节点只返回受限网络证据；指纹和侦察规则由服务侧的声明式 `rule.match` 在 `result.analysis` 中聚合。
 
 ### 6.6 凭据结果
 

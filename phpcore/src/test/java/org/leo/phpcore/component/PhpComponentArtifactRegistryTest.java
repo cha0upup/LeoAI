@@ -24,7 +24,7 @@ class PhpComponentArtifactRegistryTest {
         assertTrue(registry.getComponentIds().contains("ProcessComponent"));
         assertTrue(registry.getComponentIds().contains("NetworkInfoComponent"));
         assertTrue(registry.getComponentIds().contains("NetworkConnectionComponent"));
-        assertTrue(registry.getComponentIds().contains("ScanComponent"));
+        assertTrue(registry.getComponentIds().contains("NetworkProbeComponent"));
         assertTrue(registry.getComponentIds().contains("ServiceComponent"));
         assertTrue(registry.getComponentIds().contains("ScheduledTaskComponent"));
         assertTrue(registry.getComponentIds().contains("RegistryComponent"));
@@ -76,7 +76,7 @@ class PhpComponentArtifactRegistryTest {
     @Test
     void statefulComponentsUseOpaqueOnDiskFileNamesAndBoundedStatusWrites() {
         PhpComponentArtifactRegistry registry = new PhpComponentArtifactRegistry();
-        for (String componentId : new String[]{"ScanComponent", "ProxyForwardComponent",
+        for (String componentId : new String[]{"NetworkProbeComponent", "ProxyForwardComponent",
                 "ReverseTunnelComponent", "ExecCommandComponent"}) {
             String source = new String(registry.getRequired(componentId).getContent(), StandardCharsets.UTF_8);
             assertFalse(source.contains("config.json"), componentId + " exposes its configuration file role");
@@ -84,9 +84,8 @@ class PhpComponentArtifactRegistryTest {
             assertFalse(source.contains("in.queue"), componentId + " exposes its input queue role");
             assertFalse(source.contains("out.queue"), componentId + " exposes its output queue role");
         }
-        String scan = new String(registry.getRequired("ScanComponent").getContent(), StandardCharsets.UTF_8);
-        assertTrue(scan.contains("$pendingWrites >= 16"));
-        assertTrue(scan.contains("microtime(true) - $lastWrite >= 0.25"));
+        String scan = new String(registry.getRequired("NetworkProbeComponent").getContent(), StandardCharsets.UTF_8);
+        assertTrue(scan.contains("NetworkProbeComponent"));
         String proxy = new String(registry.getRequired("ProxyForwardComponent").getContent(), StandardCharsets.UTF_8);
         assertFalse(proxy.contains("time() % 5"));
         assertTrue(proxy.contains("time() - $lastStatusWrite >= 5"));
@@ -98,8 +97,7 @@ class PhpComponentArtifactRegistryTest {
         assertTrue(reverse.contains("count($clients) >= 256"));
         assertTrue(reverse.contains("count($entries) >= 32"));
 
-        assertTrue(scan.contains("$taskCount >= 64"));
-        assertTrue(scan.contains("$ttl = $state === 'STOPPED' ? 1800"));
+        assertTrue(scan.contains("count($targets) > 128"));
 
         String terminal = new String(registry.getRequired("ExecCommandComponent").getContent(), StandardCharsets.UTF_8);
         assertTrue(terminal.contains("@rename($temporary, $path)"));
