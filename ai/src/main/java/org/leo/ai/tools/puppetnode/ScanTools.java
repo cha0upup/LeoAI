@@ -28,10 +28,17 @@ public class ScanTools {
         return node().startNetworkProbe(plan);
     }
 
-    @Tool("查询统一网络探测任务进度、原始 observations 和服务侧 analysis。")
+    @Tool("分页查询统一网络探测任务的增量 observations。cursor 为上次确认位置；服务端已持久化后可调用 ackNetworkProbe。")
     @AiToolPolicy(kind = AiToolKind.QUERY, operation = AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
-        return node().queryNetworkProbe(taskId);
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+                                                 int maxItems, int maxBytes,
+                                                 boolean includeEvidence) throws Exception {
+        return node().queryNetworkProbe(taskId, cursor, maxItems, maxBytes, includeEvidence);
+    }
+
+    @Tool("确认统一网络探测任务已持久化到指定游标。")
+    public Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception {
+        return node().ackNetworkProbe(taskId, cursor);
     }
 
     @Tool("暂停统一网络探测任务。")

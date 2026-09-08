@@ -85,7 +85,7 @@ class AiToolCatalogContractTest {
         List<Declaration> declarations = declarations();
         Set<String> names = new HashSet<>();
 
-        assertEquals(101, declarations.size(),
+        assertEquals(102, declarations.size(),
                 "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
         for (Declaration declaration : declarations) {
             assertTrue(names.add(declaration.name()),

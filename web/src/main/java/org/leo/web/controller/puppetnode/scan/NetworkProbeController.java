@@ -1,44 +1,67 @@
 package org.leo.web.controller.puppetnode.scan;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.util.ApiResponse;
-import org.leo.web.service.NetworkProbeAnalysisService;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ExecutionConfig;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.FingerprintConfig;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.PreviewResponse;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ResolvedTarget;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ScanConfig;
+import org.leo.web.service.NetworkProbeResultStore;
+import org.leo.web.service.NetworkProbeWorkflowService;
+import org.leo.web.service.discovery.PortPolicyResolver;
+import org.leo.web.service.discovery.NetworkProbeLimits;
+import org.leo.web.service.discovery.ScanPreviewService;
+import org.leo.web.service.discovery.TargetResolver;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Entry point for the unified node-side network probe plan.
  *
- * <p>The service validates the bounded plan before it reaches a node. The
- * node still repeats these limits because component calls may originate from
- * other trusted service paths.</p>
+ * <p>The service expands the logical scan and the orchestration layer splits
+ * it into transport-safe node batches. The node still validates each batch
+ * because component calls may originate from other trusted service paths.</p>
  */
 @RestController
 @RequestMapping("/puppet-node/network-probe")
 public class NetworkProbeController {
 
-    private static final int MAX_TARGETS = 128;
-    private static final int MAX_STAGES = 8;
-    private static final int MAX_THREADS = 64;
-    private static final int MAX_TIMEOUT_MS = 300000;
-    private static final int MAX_READ_BYTES = 8192;
-    private static final int MAX_HEADERS = 32;
-    private static final int MAX_REQUEST_CHARS = 8192;
+    private final NetworkProbeWorkflowService workflowService;
+    private final ScanPreviewService previewService;
+    private final TargetResolver targetResolver;
+    private final PortPolicyResolver portPolicyResolver;
+    private final ObjectMapper objectMapper;
+    private NetworkProbeResultStore resultStore;
 
-    private final NetworkProbeAnalysisService analysisService;
+    public NetworkProbeController(NetworkProbeWorkflowService workflowService,
+                                  ScanPreviewService previewService,
+                                  TargetResolver targetResolver,
+                                  PortPolicyResolver portPolicyResolver,
+                                  ObjectMapper objectMapper) {
+        this.workflowService = workflowService;
+        this.previewService = previewService;
+        this.targetResolver = targetResolver;
+        this.portPolicyResolver = portPolicyResolver;
+        this.objectMapper = objectMapper;
+    }
 
-    public NetworkProbeController(NetworkProbeAnalysisService analysisService) {
-        this.analysisService = analysisService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setResultStore(NetworkProbeResultStore resultStore) {
+        this.resultStore = resultStore;
     }
 
     @RequestMapping(value = "/capabilities", method = RequestMethod.POST)
@@ -47,287 +70,290 @@ public class NetworkProbeController {
                 "获取网络探测能力失败", NetworkProbeCapable::networkProbeCapabilities);
     }
 
-    @RequestMapping(value = "/start", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> start(@RequestBody java.util.HashMap<String, Object> params) {
+    @RequestMapping(value = "/workflow/start", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> startWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
         try {
-            NetworkProbeAnalysisService.PreparedScan prepared = params != null && params.get("scan") != null
-                    ? analysisService.prepare(params.get("scan")) : null;
-            final Map<String, Object> plan = normalizePlan(prepared != null
-                    ? prepared.plan() : params == null ? null : params.get("plan"));
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            // Validate access before parsing user-controlled CIDR, DNS or range inputs.
+            ControllerUtil.requireCapability(params, NetworkProbeCapable.class);
+            Map<String, Object> workflow = buildWorkflow(parseScanConfig(params.get("scan")));
             return ControllerUtil.handleCapabilityCall(params, NetworkProbeCapable.class,
-                    "启动网络探测失败", node -> {
-                        Map<String, Object> result = node.startNetworkProbe(plan);
-                        if (prepared != null && result != null && result.get("taskId") != null) {
-                            analysisService.register(String.valueOf(result.get("taskId")), prepared);
-                        }
-                        return result;
-                    });
+                    "启动扫描工作流失败", node -> workflowService.start(sessionId, node, workflow));
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
         } catch (Exception error) {
-            return ApiResponse.error("启动网络探测失败: " + error.getMessage());
+            return ApiResponse.error("启动扫描工作流失败: " + error.getMessage());
         }
     }
 
-    @RequestMapping(value = "/query", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> query(@RequestBody java.util.HashMap<String, Object> params) {
+    @RequestMapping(value = "/workflow/preview", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> previewWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
         try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            // Preview is a server-side calculation and remains available while the node is offline.
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            PreviewResponse response = previewService.preview(parseScanConfig(params.get("scan")));
+            return ApiResponse.success(response);
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        } catch (Exception error) {
+            return ApiResponse.error("预览扫描工作流失败: " + error.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/workflow/query", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> queryWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
+        try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
-            return ControllerUtil.handleCapabilityCall(params, NetworkProbeCapable.class,
-                    "查询网络探测任务失败", node -> {
-                        Map<String, Object> result = node.queryNetworkProbe(taskId);
-                        analysisService.enrich(taskId, result);
-                        return result;
-                    });
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            Map<String, Object> live = workflowService.querySummaryIfPresent(sessionId, taskId);
+            if (!live.isEmpty()) {
+                Map<String, Object> persisted = resultStore == null
+                        ? Collections.emptyMap() : resultStore.summaryCounts(sessionId, taskId);
+                if (!persisted.isEmpty()) {
+                    for (String key : List.of("openCount", "serviceCount", "errorCount")) {
+                        if (persisted.get(key) != null) live.put(key, persisted.get(key));
+                    }
+                }
+                return ApiResponse.success(live);
+            }
+            if (resultStore != null) {
+                Map<String, Object> persisted = resultStore.summary(sessionId, taskId);
+                if (!persisted.isEmpty()) return ApiResponse.success(persisted);
+            }
+            return ApiResponse.notFound("扫描工作流任务不存在或不属于当前会话");
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
         }
     }
 
-    @RequestMapping(value = "/pause", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> pause(@RequestBody java.util.HashMap<String, Object> params) {
-        return taskOperation(params, "暂停网络探测失败", NetworkProbeCapable::pauseNetworkProbe);
+    @RequestMapping(value = "/workflow/tasks", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> listWorkflows(@RequestBody java.util.HashMap<String, Object> params) {
+        try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            if (resultStore != null) return ApiResponse.success(Map.of("tasks", resultStore.list(sessionId)));
+            return ApiResponse.success(Map.of("tasks", workflowService.listSummaries(sessionId)));
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        }
     }
 
-    @RequestMapping(value = "/resume", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> resume(@RequestBody java.util.HashMap<String, Object> params) {
-        return taskOperation(params, "继续网络探测失败", NetworkProbeCapable::resumeNetworkProbe);
+    @RequestMapping(value = "/workflow/pause", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> pauseWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
+        return workflowOperation(params, "暂停扫描工作流失败", workflowService::pause);
     }
 
-    @RequestMapping(value = "/stop", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> stop(@RequestBody java.util.HashMap<String, Object> params) {
-        return taskOperation(params, "终止网络探测失败", NetworkProbeCapable::stopNetworkProbe);
+    @RequestMapping(value = "/workflow/resume", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> resumeWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
+        return workflowOperation(params, "继续扫描工作流失败", workflowService::resume);
     }
 
-    private java.util.HashMap<String, Object> taskOperation(
+    @RequestMapping(value = "/workflow/stop", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> stopWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
+        return workflowOperation(params, "终止扫描工作流失败", workflowService::stop);
+    }
+
+    @RequestMapping(value = "/workflow/results/query", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> queryWorkflowResults(
+            @RequestBody java.util.HashMap<String, Object> params) {
+        try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            if (resultStore == null) return ApiResponse.error("扫描结果存储未初始化");
+            Map<String, Object> result = resultStore.queryResults(sessionId, taskId, params);
+            if (result.isEmpty()) return ApiResponse.notFound("扫描任务不存在或不属于当前会话");
+            return ApiResponse.success(result);
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/workflow/evidence/query", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> queryWorkflowEvidence(
+            @RequestBody java.util.HashMap<String, Object> params) {
+        try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
+            String endpointId = ControllerUtil.getRequiredStringParam(params, "endpointId").trim();
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            if (resultStore == null) return ApiResponse.error("扫描结果存储未初始化");
+            Map<String, Object> result = resultStore.queryEvidence(sessionId, taskId, endpointId);
+            if (result.isEmpty()) return ApiResponse.notFound("扫描任务不存在或不属于当前会话");
+            return ApiResponse.success(result);
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        }
+    }
+
+    private java.util.HashMap<String, Object> workflowOperation(
             java.util.HashMap<String, Object> params,
             String errorPrefix,
             TaskOperation taskOperation) {
         try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
-            return ControllerUtil.handleCapabilityCall(params, NetworkProbeCapable.class,
-                    errorPrefix, node -> taskOperation.apply(node, taskId));
+            ControllerUtil.requireCapability(params, NetworkProbeCapable.class);
+            Map<String, Object> result = new LinkedHashMap<>(taskOperation.apply(sessionId, taskId));
+            result.remove("code");
+            return ApiResponse.success(result);
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
+        } catch (Exception error) {
+            return ApiResponse.error(errorPrefix + ": " + error.getMessage());
         }
     }
 
-    private Map<String, Object> normalizePlan(Object value) {
-        if (!(value instanceof Map<?, ?> rawPlan)) {
-            throw new IllegalArgumentException("plan必须是对象");
-        }
-        Map<String, Object> plan = new LinkedHashMap<>();
-        plan.put("targets", normalizeTargets(rawPlan.get("targets")));
-        plan.put("stages", normalizeStages(rawPlan.get("stages")));
-
-        Object limitsValue = rawPlan.get("limits");
-        if (limitsValue != null && !(limitsValue instanceof Map<?, ?>)) {
-            throw new IllegalArgumentException("plan.limits必须是对象");
-        }
-        if (limitsValue instanceof Map<?, ?> rawLimits) {
-            Map<String, Object> limits = new LinkedHashMap<>();
-            if (rawLimits.containsKey("threads")) {
-                limits.put("threads", Integer.valueOf(getInt(rawLimits.get("threads"), "limits.threads", 1, MAX_THREADS)));
-            }
-            if (rawLimits.containsKey("timeout")) {
-                limits.put("timeout", Integer.valueOf(getInt(rawLimits.get("timeout"), "limits.timeout", 100, MAX_TIMEOUT_MS)));
-            }
-            if (rawLimits.containsKey("maxReadBytes")) {
-                limits.put("maxReadBytes", Integer.valueOf(getInt(rawLimits.get("maxReadBytes"),
-                        "limits.maxReadBytes", 256, MAX_READ_BYTES)));
-            }
-            plan.put("limits", limits);
-        }
-        return plan;
-    }
-
-    private List<Map<String, Object>> normalizeTargets(Object value) {
-        if (!(value instanceof List<?> rawTargets) || rawTargets.isEmpty()) {
-            throw new IllegalArgumentException("plan.targets必须是非空数组");
-        }
-        if (rawTargets.size() > MAX_TARGETS) {
-            throw new IllegalArgumentException("plan.targets不能超过" + MAX_TARGETS + "个");
-        }
-        List<Map<String, Object>> targets = new ArrayList<>();
-        for (int index = 0; index < rawTargets.size(); index++) {
-            Object valueAtIndex = rawTargets.get(index);
-            if (!(valueAtIndex instanceof Map<?, ?> rawTarget)) {
-                throw new IllegalArgumentException("plan.targets[" + index + "]必须是对象");
-            }
-            Map<String, Object> target = new LinkedHashMap<>();
-            String host = text(rawTarget.get("host"));
-            String baseUrl = text(rawTarget.get("baseUrl"));
-            String protocol = text(rawTarget.get("protocol")).toLowerCase(Locale.ROOT);
-            if (!baseUrl.isEmpty()) {
-                try {
-                    URL url = new URL(baseUrl);
-                    if (!("http".equalsIgnoreCase(url.getProtocol())
-                            || "https".equalsIgnoreCase(url.getProtocol()))) {
-                        throw new IllegalArgumentException("仅支持 http/https baseUrl");
-                    }
-                    if (url.getUserInfo() != null) {
-                        throw new IllegalArgumentException("baseUrl不能包含用户信息");
-                    }
-                    if (host.isEmpty()) host = url.getHost();
-                } catch (java.net.MalformedURLException error) {
-                    throw new IllegalArgumentException("plan.targets[" + index + "].baseUrl格式无效");
-                }
-            }
-            if (host.isEmpty()) {
-                throw new IllegalArgumentException("plan.targets[" + index + "]需要host或baseUrl");
-            }
-            validateHost(host, index);
-            if (protocol.isEmpty()) protocol = baseUrl.isEmpty() ? "tcp" : baseUrl.substring(0, baseUrl.indexOf(':')).toLowerCase(Locale.ROOT);
-            if (!("tcp".equals(protocol) || "http".equals(protocol) || "https".equals(protocol))) {
-                throw new IllegalArgumentException("plan.targets[" + index + "].protocol不支持");
-            }
-            target.put("host", host);
-            target.put("protocol", protocol);
-            if (!baseUrl.isEmpty()) target.put("baseUrl", baseUrl);
-            if (rawTarget.containsKey("port")) {
-                target.put("port", Integer.valueOf(getInt(rawTarget.get("port"),
-                        "plan.targets[" + index + "].port", 1, 65535)));
-            }
-            if (rawTarget.containsKey("request")) {
-                String request = rawTarget.get("request") == null ? "" : String.valueOf(rawTarget.get("request"));
-                if (request.length() > MAX_REQUEST_CHARS || request.indexOf('\0') >= 0) {
-                    throw new IllegalArgumentException("plan.targets[" + index + "].request过长");
-                }
-                target.put("request", request);
-            }
-            if (rawTarget.containsKey("headers")) target.put("headers", normalizeHeaders(rawTarget.get("headers"), index));
-            copyMetadata(rawTarget, target, index);
-            if (rawTarget.containsKey("httpRequest")) {
-                target.put("httpRequest", normalizeHttpRequest(rawTarget.get("httpRequest"), index));
-            }
-            targets.add(target);
-        }
-        return targets;
-    }
-
-    private List<String> normalizeStages(Object value) {
-        List<String> stages = new ArrayList<>();
-        if (value == null) {
-            stages.add("tcp-connect");
-            return stages;
-        }
-        if (!(value instanceof List<?> rawStages) || rawStages.isEmpty()) {
-            throw new IllegalArgumentException("plan.stages必须是非空数组");
-        }
-        if (rawStages.size() > MAX_STAGES) throw new IllegalArgumentException("plan.stages不能超过" + MAX_STAGES + "个");
-        for (Object stageValue : rawStages) {
-            String stage = text(stageValue).toLowerCase(Locale.ROOT);
-            if (!("tcp-connect".equals(stage) || "tcp-exchange".equals(stage)
-                    || "http-head".equals(stage) || "http-request".equals(stage)
-                    || "tls-handshake".equals(stage))) {
-                throw new IllegalArgumentException("plan.stages包含不支持的阶段: " + stage);
-            }
-            if (!stages.contains(stage)) stages.add(stage);
-        }
-        return stages;
-    }
-
-    private Map<String, String> normalizeHeaders(Object value, int index) {
-        if (!(value instanceof Map<?, ?> rawHeaders)) {
-            throw new IllegalArgumentException("plan.targets[" + index + "].headers必须是对象");
-        }
-        if (rawHeaders.size() > MAX_HEADERS) throw new IllegalArgumentException("headers不能超过" + MAX_HEADERS + "个");
-        Map<String, String> headers = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : rawHeaders.entrySet()) {
-            String name = text(entry.getKey());
-            String headerValue = text(entry.getValue());
-            if (name.isEmpty() || name.indexOf('\r') >= 0 || name.indexOf('\n') >= 0
-                    || headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
-                throw new IllegalArgumentException("headers包含无效字符");
-            }
-            headers.put(name, headerValue);
-        }
-        return headers;
-    }
-
-    private void copyMetadata(Map<?, ?> rawTarget, Map<String, Object> target, int index) {
-        for (String field : List.of("targetId", "probeId", "ruleId")) {
-            String value = text(rawTarget.get(field));
-            if (value.length() > 128) {
-                throw new IllegalArgumentException("plan.targets[" + index + "]." + field + "过长");
-            }
-            if (!value.isEmpty()) target.put(field, value);
-        }
-        if (rawTarget.containsKey("requestIndex")) {
-            target.put("requestIndex", Integer.valueOf(getInt(rawTarget.get("requestIndex"),
-                    "plan.targets[" + index + "].requestIndex", 0, 255)));
-        }
-        String stage = text(rawTarget.get("stage")).toLowerCase(Locale.ROOT);
-        if (!stage.isEmpty()) {
-            if (!List.of("tcp-connect", "tcp-exchange", "http-head", "http-request", "tls-handshake").contains(stage)) {
-                throw new IllegalArgumentException("plan.targets[" + index + "].stage不支持");
-            }
-            target.put("stage", stage);
-        }
-        if (rawTarget.containsKey("timeout")) {
-            target.put("timeout", Integer.valueOf(getInt(rawTarget.get("timeout"),
-                    "plan.targets[" + index + "].timeout", 100, MAX_TIMEOUT_MS)));
-        }
-        if (rawTarget.containsKey("maxReadBytes")) {
-            target.put("maxReadBytes", Integer.valueOf(getInt(rawTarget.get("maxReadBytes"),
-                    "plan.targets[" + index + "].maxReadBytes", 256, MAX_READ_BYTES)));
-        }
-    }
-
-    private Map<String, Object> normalizeHttpRequest(Object value, int index) {
-        if (!(value instanceof Map<?, ?> rawRequest)) {
-            throw new IllegalArgumentException("plan.targets[" + index + "].httpRequest必须是对象");
-        }
-        Map<String, Object> request = new LinkedHashMap<>();
-        String method = text(rawRequest.get("method")).toUpperCase(Locale.ROOT);
-        if (method.isEmpty()) method = "GET";
-        if (!List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS").contains(method)) {
-            throw new IllegalArgumentException("plan.targets[" + index + "].httpRequest.method不支持");
-        }
-        String path = text(rawRequest.get("path"));
-        if (path.isEmpty()) path = text(rawRequest.get("uri"));
-        if (path.isEmpty()) path = "/";
-        if (path.length() > MAX_REQUEST_CHARS || path.indexOf('\r') >= 0 || path.indexOf('\n') >= 0) {
-            throw new IllegalArgumentException("plan.targets[" + index + "].httpRequest.path格式无效");
-        }
-        request.put("method", method);
-        request.put("path", path);
-        String charset = text(rawRequest.get("charset"));
-        request.put("charset", charset.isEmpty() ? "UTF-8" : charset);
-        if (rawRequest.containsKey("body")) {
-            String body = rawRequest.get("body") == null ? "" : String.valueOf(rawRequest.get("body"));
-            if (body.length() > MAX_REQUEST_CHARS || body.indexOf('\0') >= 0) {
-                throw new IllegalArgumentException("plan.targets[" + index + "].httpRequest.body过长");
-            }
-            request.put("body", body);
-        }
-        if (rawRequest.containsKey("headers")) {
-            request.put("headers", normalizeHeaders(rawRequest.get("headers"), index));
-        }
-        return request;
-    }
-
-    private void validateHost(String host, int index) {
-        if (host.length() > 253 || host.indexOf('\r') >= 0 || host.indexOf('\n') >= 0) {
-            throw new IllegalArgumentException("plan.targets[" + index + "].host格式无效");
-        }
-        for (int i = 0; i < host.length(); i++) {
-            if (Character.isWhitespace(host.charAt(i))) {
-                throw new IllegalArgumentException("plan.targets[" + index + "].host不能包含空白字符");
-            }
-        }
-    }
-
-    private int getInt(Object value, String field, int min, int max) {
-        if (value == null) throw new IllegalArgumentException(field + "不能为空");
-        final int result;
+    private ScanConfig parseScanConfig(Object value) {
+        if (value == null) throw new IllegalArgumentException("scan必须是对象");
         try {
-            result = value instanceof Number number ? number.intValue() : Integer.parseInt(String.valueOf(value).trim());
-        } catch (NumberFormatException error) {
-            throw new IllegalArgumentException(field + "必须是整数");
+            ScanConfig scan = objectMapper.convertValue(value, ScanConfig.class);
+            if (scan == null || scan.targets() == null) {
+                throw new IllegalArgumentException("scan.targets不能为空");
+            }
+            return scan;
+        } catch (IllegalArgumentException error) {
+            String message = error.getMessage();
+            if (message != null && message.startsWith("scan.")) throw error;
+            throw new IllegalArgumentException("scan配置格式无效", error);
         }
-        if (result < min || result > max) throw new IllegalArgumentException(field + "必须在" + min + "到" + max + "之间");
-        return result;
+    }
+
+    private Map<String, Object> buildWorkflow(ScanConfig scan) {
+        List<ResolvedTarget> resolvedTargets = targetResolver.resolve(scan.targets());
+        List<Integer> policyPorts = portPolicyResolver.resolve(scan.portPolicy());
+        LinkedHashSet<String> hosts = new LinkedHashSet<>();
+        Map<String, Set<Integer>> explicitPortsByHost = new LinkedHashMap<>();
+        Set<String> hostsUsingPolicy = new LinkedHashSet<>();
+        Set<Integer> policyPortSet = new LinkedHashSet<>(policyPorts);
+        Map<String, LinkedHashSet<Integer>> reachabilityPortsByHost = new LinkedHashMap<>();
+        long reachabilityCount = 0L;
+
+        for (ResolvedTarget resolved : resolvedTargets) {
+            String host = text(resolved.ip());
+            if (host.isEmpty()) continue;
+            hosts.add(host);
+            if (resolved.port() == null) {
+                hostsUsingPolicy.add(host);
+                LinkedHashSet<Integer> reachabilityPorts = reachabilityPortsByHost
+                        .computeIfAbsent(host, ignored -> new LinkedHashSet<>());
+                for (Integer port : NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS) {
+                    if (reachabilityPorts.add(port)) reachabilityCount++;
+                }
+                for (Integer port : policyPorts) {
+                    if (reachabilityPorts.size() >= NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) break;
+                    if (reachabilityPorts.add(port)) reachabilityCount++;
+                }
+            } else {
+                explicitPortsByHost.computeIfAbsent(host, ignored -> new LinkedHashSet<>()).add(resolved.port());
+                LinkedHashSet<Integer> reachabilityPorts = reachabilityPortsByHost
+                        .computeIfAbsent(host, ignored -> new LinkedHashSet<>());
+                if (reachabilityPorts.size() >= NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST
+                        && !reachabilityPorts.contains(resolved.port())) {
+                    throw new IllegalArgumentException("单台主机的探活端口不能超过"
+                            + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
+                }
+                if (reachabilityPorts.add(resolved.port())) reachabilityCount++;
+            }
+            if (reachabilityCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
+                throw new IllegalArgumentException("探活目标数不能超过"
+                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个，请缩小主机范围或减少探活端口");
+            }
+        }
+        if (hosts.isEmpty()) throw new IllegalArgumentException("扫描目标展开后为空");
+        if (hosts.size() > NetworkProbeLimits.MAX_RESOLVED_HOSTS) {
+            throw new IllegalArgumentException("扫描主机数不能超过"
+                    + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
+        }
+
+        long combinationCount = 0L;
+        for (String host : hosts) {
+            Set<Integer> explicitPorts = explicitPortsByHost.getOrDefault(host, Set.of());
+            long hostCombinations = explicitPorts.size();
+            if (hostsUsingPolicy.contains(host)) {
+                long policyCombinations = policyPortSet.size();
+                for (Integer port : explicitPorts) {
+                    if (policyPortSet.contains(port)) policyCombinations--;
+                }
+                hostCombinations += policyCombinations;
+            }
+            combinationCount += hostCombinations;
+            if (combinationCount > NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS) {
+                throw new IllegalArgumentException("扫描组合数不能超过"
+                        + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
+            }
+        }
+
+        LinkedHashSet<Integer> ports = new LinkedHashSet<>();
+        LinkedHashSet<String> endpointKeys = new LinkedHashSet<>();
+        LinkedHashSet<String> reachabilityKeys = new LinkedHashSet<>();
+        List<Map<String, Object>> targets = new ArrayList<>();
+        List<Map<String, Object>> reachabilityTargets = new ArrayList<>();
+
+        for (Map.Entry<String, LinkedHashSet<Integer>> entry : reachabilityPortsByHost.entrySet()) {
+            String host = entry.getKey();
+            for (Integer port : entry.getValue()) {
+                String key = host + ":" + port;
+                if (reachabilityKeys.add(key)) {
+                    Map<String, Object> target = new LinkedHashMap<>();
+                    target.put("host", host);
+                    target.put("port", port);
+                    target.put("protocol", "tcp");
+                    reachabilityTargets.add(target);
+                }
+            }
+        }
+
+        for (ResolvedTarget resolved : resolvedTargets) {
+            String host = text(resolved.ip());
+            if (host.isEmpty()) continue;
+            Collection<Integer> targetPorts = resolved.port() == null
+                    ? policyPorts : Collections.singletonList(resolved.port());
+            for (Integer port : targetPorts) {
+                String key = host + ":" + port;
+                if (!endpointKeys.add(key)) continue;
+                Map<String, Object> target = new LinkedHashMap<>();
+                target.put("host", host);
+                target.put("port", port);
+                target.put("protocol", "tcp");
+                target.put("targetId", resolved.targetId());
+                if ("url".equalsIgnoreCase(resolved.source())) {
+                    target.put("baseUrl", resolved.rawTarget());
+                }
+                targets.add(target);
+                ports.add(port);
+            }
+        }
+
+        if (targets.isEmpty()) throw new IllegalArgumentException("扫描目标展开后为空");
+        ExecutionConfig execution = scan.execution();
+        FingerprintConfig fingerprint = scan.fingerprint();
+
+        Map<String, Object> selector = new LinkedHashMap<>();
+        if (fingerprint != null) {
+            if (fingerprint.tags() != null && !fingerprint.tags().isEmpty()) {
+                selector.put("tags", new ArrayList<>(fingerprint.tags()));
+            }
+            if (fingerprint.ids() != null && !fingerprint.ids().isEmpty()) {
+                selector.put("fingerprintIds", new ArrayList<>(fingerprint.ids()));
+            }
+        }
+
+        Map<String, Object> workflow = new LinkedHashMap<>();
+        workflow.put("hosts", new ArrayList<>(hosts));
+        workflow.put("ports", new ArrayList<>(ports));
+        workflow.put("targets", targets);
+        workflow.put("reachabilityTargets", reachabilityTargets);
+        workflow.put("timeout", execution != null && execution.timeoutMs() != null
+                ? execution.timeoutMs() : Integer.valueOf(3000));
+        workflow.put("threads", execution != null && execution.workers() != null
+                ? execution.workers() : Integer.valueOf(32));
+        workflow.put("probeServices", Boolean.TRUE);
+        workflow.put("ruleSelector", selector);
+        if (scan.name() != null && !scan.name().isBlank()) workflow.put("name", scan.name().trim());
+        return workflow;
     }
 
     private String text(Object value) {
@@ -336,6 +362,6 @@ public class NetworkProbeController {
 
     @FunctionalInterface
     private interface TaskOperation {
-        Map<String, Object> apply(NetworkProbeCapable node, String taskId) throws Exception;
+        Map<String, Object> apply(String sessionId, String taskId) throws Exception;
     }
 }

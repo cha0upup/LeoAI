@@ -27,6 +27,18 @@ $write = static function ($file, $value) {
     @chmod($temporary, 0600);
     return @rename($temporary, $file);
 };
+$statusUpdate = static function ($file, $callback) use ($read, $write) {
+    $lock = @fopen($file . '.lock', 'c');
+    if (!is_resource($lock) || !@flock($lock, LOCK_EX)) {
+        if (is_resource($lock)) @fclose($lock);
+        return false;
+    }
+    $status = $read($file);
+    $result = is_array($status) ? $callback($status) : false;
+    $saved = $result === false ? false : $write($file, $status);
+    @flock($lock, LOCK_UN); @fclose($lock);
+    return $saved ? $result : false;
+};
 $launch = static function ($directory) use ($workerToken) {
     $php = defined('PHP_BINARY') && PHP_BINARY !== '' ? PHP_BINARY : 'php';
     $runner = escapeshellarg($php) . ' ' . escapeshellarg(__FILE__) . ' ' .
@@ -46,6 +58,9 @@ $sanitize = static function ($value, $limit = 4096) {
     $value = (string)$value;
     if (strlen($value) > $limit) $value = substr($value, 0, $limit);
     return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value);
+};
+$hostForUrl = static function ($host) {
+    return strpos($host, ':') !== false && strpos($host, '[') !== 0 ? '[' . $host . ']' : $host;
 };
 $readBytes = static function ($stream, $max) use ($sanitize) {
     $data = '';
@@ -71,11 +86,11 @@ $observation = static function ($target, $stage, $state, $started, $error = '', 
     if (is_array($evidence) && $evidence) $result['evidence'] = $evidence;
     return $result;
 };
-$probe = static function ($target, $stage, $timeout, $maxRead) use ($observation, $readBytes, $sanitize) {
+$probe = static function ($target, $stage, $timeout, $maxRead) use ($observation, $readBytes, $sanitize, $hostForUrl) {
     $started = (int)round(microtime(true) * 1000);
     $host = (string)($target['host'] ?? ''); $port = (int)($target['port'] ?? 0);
     $scheme = strtolower((string)($target['protocol'] ?? 'tcp')) === 'https' ? 'ssl' : 'tcp';
-    $address = $scheme . '://' . $host . ':' . $port;
+    $address = $scheme . '://' . $hostForUrl($host) . ':' . $port;
     $context = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);
     $errno = 0; $error = '';
     $stream = @stream_socket_client($address, $errno, $error, max(0.05, $timeout / 1000.0), STREAM_CLIENT_CONNECT, $context);
@@ -101,7 +116,7 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
         $method = strtoupper((string)($request['method'] ?? ($stage === 'http-head' ? 'HEAD' : 'GET')));
         $pathValue = (string)($request['path'] ?? '/'); if ($pathValue === '') $pathValue = '/';
         $headers = is_array($request['headers'] ?? null) ? $request['headers'] : [];
-        $headers['Host'] = $headers['Host'] ?? $host;
+        $headers['Host'] = $headers['Host'] ?? $hostForUrl($host);
         $headers['Connection'] = $headers['Connection'] ?? 'close';
         $raw = $method . ' ' . $pathValue . " HTTP/1.1\r\n";
         foreach ($headers as $name => $value) {
@@ -135,7 +150,7 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
         return $observation($target, $stage, $status > 0 ? 'open' : 'error', $started, '', $evidence);
     } finally { fclose($stream); }
 };
-$worker = static function ($directory) use ($read, $write, $stateName, $probe, $now) {
+$worker = static function ($directory) use ($read, $statusUpdate, $stateName, $probe, $now) {
     $config = $read($directory . DIRECTORY_SEPARATOR . $stateName('config'));
     $statusFile = $directory . DIRECTORY_SEPARATOR . $stateName('status');
     if (!is_array($config)) return 2;
@@ -151,15 +166,41 @@ $worker = static function ($directory) use ($read, $write, $stateName, $probe, $
             usleep(250000);
         }
         $targetStages = !empty($target['stage']) ? [(string)$target['stage']] : $stages;
+        $pending = [];
         foreach ($targetStages as $stage) {
-            $status['observations'][] = $probe($target, $stage, (int)($target['timeout'] ?? $timeout),
+            $pending[] = $probe($target, $stage, (int)($target['timeout'] ?? $timeout),
                 (int)($target['maxReadBytes'] ?? $maxRead));
         }
-        $status['completed'] = (int)($status['completed'] ?? 0) + 1;
-        $status['updatedAt'] = $now(); $write($statusFile, $status);
+        $committed = $statusUpdate($statusFile, static function (&$latest) use ($pending, $now) {
+            if (($latest['status'] ?? '') === 'STOPPED') return false;
+            $observations = is_array($latest['observations'] ?? null) ? $latest['observations'] : [];
+            $errors = is_array($latest['errors'] ?? null) ? $latest['errors'] : [];
+            foreach ($pending as $observation) {
+                $observations[] = $observation;
+                if (($observation['state'] ?? '') === 'error') {
+                    $errors[] = [
+                        'target' => $observation['target'] ?? '',
+                        'stage' => $observation['stage'] ?? '',
+                        'errorCode' => $observation['errorCode'] ?? '',
+                        'error' => $observation['error'] ?? ''
+                    ];
+                }
+            }
+            $latest['observations'] = $observations;
+            $latest['errors'] = $errors;
+            $latest['completed'] = (int)($latest['completed'] ?? 0) + 1;
+            $latest['updatedAt'] = $now();
+            return true;
+        });
+        if ($committed === false) return 0;
     }
-    $status['status'] = 'STOPPED'; $status['finishedAt'] = $now(); $status['updatedAt'] = $status['finishedAt'];
-    $write($statusFile, $status); return 0;
+    $statusUpdate($statusFile, static function (&$latest) use ($now) {
+        if (($latest['status'] ?? '') === 'STOPPED') return true;
+        $latest['status'] = 'STOPPED'; $latest['outcome'] = 'COMPLETED';
+        $latest['finishedAt'] = $now(); $latest['updatedAt'] = $latest['finishedAt'];
+        return true;
+    });
+    return 0;
 };
 if (PHP_SAPI === 'cli' && isset($argv[1]) && hash_equals($workerToken, (string)$argv[1])) {
     exit($worker(isset($argv[2]) ? $argv[2] : ''));
@@ -182,7 +223,7 @@ return [
     'id' => 'NetworkProbeComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use ($get, $base, $path, $stateName, $read, $write, $launch, $cleanup, $now) {
         $cleanup();
-        if ($action === 'capabilities') return ['code' => 200, 'resultVersion' => 1,
+        if ($action === 'capabilities') return ['code' => 200,
             'component' => 'NetworkProbeComponent', 'transports' => ['tcp'],
             'stages' => ['tcp-connect', 'tcp-exchange', 'http-head', 'http-request', 'tls-handshake'],
             'maxTargets' => 128, 'maxThreads' => 64, 'maxReadBytes' => 8192];
@@ -203,21 +244,105 @@ return [
             $time = $now(); $config = ['targets' => $normalized, 'stages' => $stages,
                 'timeout' => max(100, min(300000, (int)$get($get($plan, 'limits', []), 'timeout', 3000))),
                 'maxReadBytes' => max(256, min(8192, (int)$get($get($plan, 'limits', []), 'maxReadBytes', 8192)))];
-            $status = ['taskId' => $taskId, 'resultVersion' => 1, 'scanKind' => 'network-probe', 'status' => 'RUNNING',
+            $status = ['taskId' => $taskId, 'scanKind' => 'network-probe', 'status' => 'RUNNING', 'outcome' => 'RUNNING',
                 'total' => count($normalized), 'completed' => 0, 'targets' => $normalized, 'plan' => $config,
-                'observations' => [], 'errors' => [], 'createdAt' => $time, 'updatedAt' => $time];
+                'observations' => [], 'errors' => [], 'observationOffset' => 0,
+                'createdAt' => $time, 'updatedAt' => $time];
             $write($directory . DIRECTORY_SEPARATOR . $stateName('config'), $config); $write($directory . DIRECTORY_SEPARATOR . $stateName('status'), $status);
             if (!$launch($directory)) { foreach ((array)glob($directory . DIRECTORY_SEPARATOR . '*') as $file) @unlink($file); @rmdir($directory); return ['code' => 503, 'msg' => 'worker unavailable']; }
             return ['code' => 200, 'taskId' => $taskId];
         }
         $taskId = (string)$get($params, 'taskId', ''); $directory = $path($taskId); $statusFile = $directory . DIRECTORY_SEPARATOR . $stateName('status');
         $status = $read($statusFile); if (!is_array($status)) return ['code' => 404, 'msg' => 'task not found'];
-        if ($action === 'queryTask') return ['code' => 200, 'result' => $status];
-        if ($action === 'pauseTask' || $action === 'resumeTask') {
-            $expected = $action === 'pauseTask' ? 'RUNNING' : 'PAUSED'; if (($status['status'] ?? '') !== $expected) return ['code' => 409, 'msg' => 'invalid task state'];
-            $status['status'] = $action === 'pauseTask' ? 'PAUSED' : 'RUNNING'; $status['updatedAt'] = $now(); $write($statusFile, $status); return ['code' => 200, 'status' => $status['status']];
+        if ($action === 'queryTask') {
+            $cursor = max(0, (int)$get($params, 'cursor', 0));
+            $maxItems = max(1, min(512, (int)$get($params, 'maxItems', 128)));
+            $maxBytes = max(4096, min(1048576, (int)$get($params, 'maxBytes', 524288)));
+            $includeEvidence = $get($params, 'includeEvidence', true) !== false;
+            $base = max(0, (int)($status['observationOffset'] ?? 0));
+            $observations = is_array($status['observations'] ?? null) ? $status['observations'] : [];
+            $requested = max($cursor, $base);
+            $start = max(0, min(count($observations), $requested - $base));
+            $page = []; $bytes = 0; $index = $start;
+            while ($index < count($observations) && count($page) < $maxItems) {
+                $item = is_array($observations[$index]) ? $observations[$index] : [];
+                if (!$includeEvidence) unset($item['evidence']);
+                $estimate = strlen((string)json_encode($item));
+                if ($page && $bytes + $estimate > $maxBytes) break;
+                $page[] = $item; $bytes += $estimate; $index++;
+            }
+            $snapshot = [
+                'taskId' => $status['taskId'] ?? $taskId,
+                'scanKind' => $status['scanKind'] ?? 'network-probe',
+                'status' => $status['status'] ?? 'RUNNING',
+                'outcome' => $status['outcome'] ?? 'RUNNING',
+                'total' => (int)($status['total'] ?? 0),
+                'completed' => (int)($status['completed'] ?? 0),
+                'progress' => (int)($status['total'] ?? 0) > 0
+                    ? min(100, (int)($status['completed'] ?? 0) * 100 / (int)$status['total']) : 0,
+                'cursor' => $cursor,
+                'nextCursor' => $base + $index,
+                'hasMore' => $index < count($observations),
+                'incremental' => true,
+                'observations' => $page,
+                'errors' => array_slice(is_array($status['errors'] ?? null) ? $status['errors'] : [], 0, $maxItems),
+                'createdAt' => $status['createdAt'] ?? null,
+                'finishedAt' => $status['finishedAt'] ?? null
+            ];
+            return ['code' => 200, 'result' => $snapshot];
         }
-        if ($action === 'stopTask') { $status['status'] = 'STOPPED'; $status['finishedAt'] = $now(); $status['updatedAt'] = $status['finishedAt']; $write($statusFile, $status); return ['code' => 200, 'status' => 'STOPPED']; }
+        if ($action === 'ackTask') {
+            $cursor = max(0, (int)$get($params, 'cursor', 0));
+            $result = $statusUpdate($statusFile, static function (&$latest) use ($cursor, $now) {
+                $base = max(0, (int)($latest['observationOffset'] ?? 0));
+                $observations = is_array($latest['observations'] ?? null) ? $latest['observations'] : [];
+                $bounded = min($cursor, $base + count($observations));
+                $remove = max(0, $bounded - $base);
+                if ($remove > 0) {
+                    $latest['observations'] = array_slice($observations, $remove);
+                    $latest['observationOffset'] = $bounded;
+                    $latest['updatedAt'] = $now();
+                }
+                return ['code' => 200, 'cursor' => $bounded];
+            });
+            return $result === false ? ['code' => 500, 'msg' => 'task acknowledgement failed'] : $result;
+        }
+        if ($action === 'pauseTask' || $action === 'resumeTask') {
+            $expected = $action === 'pauseTask' ? 'RUNNING' : 'PAUSED';
+            $result = $statusUpdate($statusFile, static function (&$latest) use ($expected, $action, $now) {
+                if (($latest['status'] ?? '') !== $expected) return ['code' => 409, 'msg' => 'invalid task state'];
+                $latest['status'] = $action === 'pauseTask' ? 'PAUSED' : 'RUNNING';
+                $latest['updatedAt'] = $now();
+                return ['code' => 200, 'status' => $latest['status']];
+            });
+            return $result === false ? ['code' => 500, 'msg' => 'task state update failed'] : $result;
+        }
+        if ($action === 'stopTask') {
+            $result = $statusUpdate($statusFile, static function (&$latest) use ($now) {
+                if (($latest['status'] ?? '') !== 'STOPPED') {
+                    $latest['status'] = 'STOPPED'; $latest['outcome'] = 'CANCELLED';
+                    $latest['finishedAt'] = $now(); $latest['updatedAt'] = $latest['finishedAt'];
+                }
+                return ['code' => 200, 'status' => 'STOPPED'];
+            });
+            return $result === false ? ['code' => 500, 'msg' => 'task stop failed'] : $result;
+        }
+        if ($action === 'releaseTask') {
+            $lock = @fopen($statusFile . '.lock', 'c');
+            if (!is_resource($lock) || !@flock($lock, LOCK_EX)) {
+                if (is_resource($lock)) @fclose($lock);
+                return ['code' => 500, 'msg' => 'task release lock unavailable'];
+            }
+            $latest = $read($statusFile);
+            if (!is_array($latest) || ($latest['status'] ?? '') !== 'STOPPED') {
+                @flock($lock, LOCK_UN); @fclose($lock);
+                return ['code' => 409, 'msg' => 'network probe task is still active'];
+            }
+            foreach ((array)glob($directory . DIRECTORY_SEPARATOR . '*') as $file) @unlink($file);
+            $released = !@rmdir($directory) && is_dir($directory) ? false : true;
+            @flock($lock, LOCK_UN); @fclose($lock);
+            return $released ? ['code' => 200] : ['code' => 500, 'msg' => 'task release failed'];
+        }
         return ['code' => 400, 'msg' => 'unsupported network probe action'];
     }
 ];

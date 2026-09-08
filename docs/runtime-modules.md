@@ -171,8 +171,9 @@ Web Runtime 返回稳定的 `runtimeId/contextId/componentId`，并把
 
 完整制品分组如下：
 
-- Java/PHP 共有的基础能力：`BasicInfo`、`Compress`、`Database`、`Decompress`、`ExecCommand`、`ExecCommandSimple`、`ExecScript`、`File`、`FileDownload`、`FileUpload`、`HttpRequest`、`Plugin`、`ProxyForward`、`ReverseTunnel`；PHP 另外以独立 component 交付 `Process`、`NetworkInfo`、`NetworkConnection`、`Scan`、`Service`、`ScheduledTask`、`Registry`、`EventLog`、`Firewall`、`UserAccount`，Java 则通过运行时服务或专用 payload 实现同名 capability。
-- Java 专有的容器与系统能力：`CredentialHarvest`、`FileEnhance`、`Fingerprint`、`HostIsReachable`、`PortScan`、`ReconScan`、`Resource`、`Screen`、`SpringFrameworkManage`、`JavaWebFrameworkManage`、`GenericServletContainerManage`、`TomcatContainerManage`、`WeblogicContainerManage`。
+- Java/PHP 共有的基础能力：`BasicInfo`、`Compress`、`Database`、`Decompress`、`ExecCommand`、`ExecCommandSimple`、`ExecScript`、`File`、`FileDownload`、`FileUpload`、`HttpRequest`、`Plugin`、`ProxyForward`、`ReverseTunnel`；PHP 另外以独立 component 交付 `Process`、`NetworkInfo`、`NetworkConnection`、`Service`、`ScheduledTask`、`Registry`、`EventLog`、`Firewall`、`UserAccount`，Java 则通过运行时服务或专用 payload 实现同名 capability。
+- Java/PHP 统一网络探测能力：`NetworkProbe` 负责主机探活、端口扫描、服务识别和指纹侦察；服务端工作流统一编排阶段，节点侧只保留一个组件入口。
+- Java 专有的容器与系统能力：`CredentialHarvest`、`FileEnhance`、`Resource`、`Screen`、`SpringFrameworkManage`、`JavaWebFrameworkManage`、`GenericServletContainerManage`、`TomcatContainerManage`、`WeblogicContainerManage`。
 - Java 启动制品：`LeoCore` 动态生成 Core 字节码，配合 7 个 HTTP shell 模板和 9 个格式化/加载模板。各模板按目标容器、入口格式和 JDK 边界分别生成。
 - PHP 启动制品：`php-core.php.txt` 与 `php-puppet.php.txt`，分别承载 RPC 内核和单文件 HTTP 入口。
 

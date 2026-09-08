@@ -85,7 +85,7 @@ class PhpOperationsCapabilityComponentTest {
 
             Map<String, Object> queried = null;
             for (int attempt = 0; attempt < 50; attempt++) {
-                queried = invoke("NetworkProbeComponent.php", "queryTask", "array('taskId'=>'" + taskId + "')");
+                queried = invoke("NetworkProbeComponent.php", "queryTask", "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)");
                 Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
                 if ("STOPPED".equals(info.get("status"))) break;
                 Thread.sleep(50);
@@ -95,6 +95,10 @@ class PhpOperationsCapabilityComponentTest {
             assertEquals("STOPPED", info.get("status"));
             assertTrue(assertInstanceOf(List.class, info.get("observations")).stream()
                     .anyMatch(value -> "open".equals(((Map<?, ?>) value).get("state"))));
+            assertEquals(200, code(invoke("NetworkProbeComponent.php", "releaseTask",
+                    "array('taskId'=>'" + taskId + "')")));
+            assertEquals(404, code(invoke("NetworkProbeComponent.php", "queryTask",
+                    "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)")));
         }
     }
 
@@ -124,7 +128,7 @@ class PhpOperationsCapabilityComponentTest {
             Map<?, ?> info = null;
             for (int attempt = 0; attempt < 50; attempt++) {
                 Map<String, Object> queried = invoke("NetworkProbeComponent.php", "queryTask",
-                        "array('taskId'=>'" + taskId + "')");
+                        "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)");
                 info = assertInstanceOf(Map.class, queried.get("result"));
                 if ("STOPPED".equals(info.get("status"))) break;
                 Thread.sleep(50);

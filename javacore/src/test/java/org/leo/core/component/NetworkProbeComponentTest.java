@@ -76,16 +76,37 @@ class NetworkProbeComponentTest {
             assertEquals(200, code(started));
             Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
             assertEquals("STOPPED", snapshot.get("status"));
+            assertEquals("COMPLETED", snapshot.get("outcome"));
             assertEquals(1, snapshot.get("completed"));
             List<?> observations = (List<?>) snapshot.get("observations");
             assertTrue(observations.stream().anyMatch(value -> "tcp-connect".equals(((Map<?, ?>) value).get("stage"))));
             Map<?, ?> exchange = observations.stream().map(value -> (Map<?, ?>) value)
                     .filter(value -> "tcp-exchange".equals(value.get("stage"))).findFirst().orElseThrow();
             assertEquals("SSH-2.0-Leo", ((Map<?, ?>) exchange.get("evidence")).get("banner"));
+            String taskId = String.valueOf(started.get("taskId"));
+            assertEquals(200, code(invoke(new NetworkProbeComponent(), params(
+                    "methodName", "releaseTask", "taskId", taskId))));
+            assertEquals(404, code(invoke(new NetworkProbeComponent(), params(
+                    "methodName", "queryTask", "taskId", taskId,
+                    "cursor", 0L, "maxItems", 128, "maxBytes", 524288,
+                    "includeEvidence", true))));
             responseFuture.get(2, TimeUnit.SECONDS);
         } finally {
             responder.shutdownNow();
         }
+    }
+
+    @Test
+    void keepsProbeErrorsAsPartialResults() throws Exception {
+        Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+                "methodName", "startTask", "plan", plan(
+                        Collections.singletonList(target(80, "tcp")),
+                        Collections.singletonList("http-request"))));
+
+        Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
+
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertTrue(((List<?>) snapshot.get("errors")).size() > 0);
     }
 
     @Test
@@ -126,7 +147,9 @@ class NetworkProbeComponentTest {
         Map<?, ?> snapshot = Collections.emptyMap();
         while (System.currentTimeMillis() < deadline) {
             Map<String, Object> response = invoke(new NetworkProbeComponent(), params(
-                    "methodName", "queryTask", "taskId", taskId));
+                    "methodName", "queryTask", "taskId", taskId,
+                    "cursor", 0L, "maxItems", 128, "maxBytes", 524288,
+                    "includeEvidence", true));
             snapshot = (Map<?, ?>) response.get("result");
             if (snapshot != null && "STOPPED".equals(snapshot.get("status"))) return snapshot;
             Thread.sleep(20L);

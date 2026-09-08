@@ -445,8 +445,15 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
-        return networkProbeService.queryNetworkProbe(taskId);
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+                                                  int maxItems, int maxBytes,
+                                                  boolean includeEvidence) throws Exception {
+        return networkProbeService.queryNetworkProbe(taskId, cursor, maxItems, maxBytes, includeEvidence);
+    }
+
+    @Override
+    public Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception {
+        return networkProbeService.ackNetworkProbe(taskId, cursor);
     }
 
     @Override
@@ -462,6 +469,11 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public Map<String, Object> stopNetworkProbe(String taskId) throws Exception {
         return networkProbeService.stopNetworkProbe(taskId);
+    }
+
+    @Override
+    public Map<String, Object> releaseNetworkProbe(String taskId) throws Exception {
+        return networkProbeService.releaseNetworkProbe(taskId);
     }
 
     @Override

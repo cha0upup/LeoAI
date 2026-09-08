@@ -282,8 +282,21 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
-        return invoke("NetworkProbeComponent", "queryTask", Map.of("taskId", taskId));
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+                                                  int maxItems, int maxBytes,
+                                                  boolean includeEvidence) throws Exception {
+        return invoke("NetworkProbeComponent", "queryTask", Map.of(
+                "taskId", taskId,
+                "cursor", Long.valueOf(cursor),
+                "maxItems", Integer.valueOf(maxItems),
+                "maxBytes", Integer.valueOf(maxBytes),
+                "includeEvidence", Boolean.valueOf(includeEvidence)));
+    }
+
+    @Override
+    public Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception {
+        return invoke("NetworkProbeComponent", "ackTask", Map.of(
+                "taskId", taskId, "cursor", Long.valueOf(cursor)));
     }
 
     @Override
@@ -299,6 +312,11 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     @Override
     public Map<String, Object> stopNetworkProbe(String taskId) throws Exception {
         return invoke("NetworkProbeComponent", "stopTask", Map.of("taskId", taskId));
+    }
+
+    @Override
+    public Map<String, Object> releaseNetworkProbe(String taskId) throws Exception {
+        return invoke("NetworkProbeComponent", "releaseTask", Map.of("taskId", taskId));
     }
 
     @Override

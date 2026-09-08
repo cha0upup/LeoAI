@@ -3,7 +3,7 @@ package org.leo.core.payload;
 import org.leo.core.net.TransportLimits;
 
 import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -20,16 +20,15 @@ import java.util.zip.GZIPOutputStream;
 
 /**
  * Fixed Java payload pipeline:
- * HashMap serialization -> GZIP -> AES-GCM.
+ * HashMap serialization -> GZIP -> AES-CBC with a random IV.
  *
  * <p>The user supplied key is never put on the wire. Both endpoints must be
- * configured with the same key. The encoded format is versioned and contains
- * a fresh nonce for every payload.</p>
+ * configured with the same key. The encoded payload is the IV followed by the
+ * ciphertext.</p>
  */
 public final class PayloadCodec {
-    private static final byte[] MAGIC = new byte[]{'L', 'P', 1};
-    private static final int NONCE_BYTES = 12;
-    private static final int TAG_BITS = 128;
+    private static final int IV_BYTES = 16;
+    private static final int AES_BLOCK_BYTES = 16;
     private static final int AES_KEY_BYTES = 16;
     private static final int BUFFER_BYTES = 8192;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -55,16 +54,15 @@ public final class PayloadCodec {
         byte[] compressed = gzip(serialized);
         TransportLimits.requireMessageSize(compressed);
 
-        byte[] nonce = new byte[NONCE_BYTES];
-        RANDOM.nextBytes(nonce);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, nonce));
+        byte[] iv = new byte[IV_BYTES];
+        RANDOM.nextBytes(iv);
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
         byte[] encrypted = cipher.doFinal(compressed);
 
         ByteArrayOutputStream output = new ByteArrayOutputStream(
-                MAGIC.length + nonce.length + encrypted.length);
-        output.write(MAGIC);
-        output.write(nonce);
+                iv.length + encrypted.length);
+        output.write(iv);
         output.write(encrypted);
         byte[] result = output.toByteArray();
         TransportLimits.requireMessageSize(result);
@@ -72,18 +70,16 @@ public final class PayloadCodec {
     }
 
     public Map<String, Object> decode(byte[] encoded) throws Exception {
-        if (encoded == null || encoded.length < MAGIC.length + NONCE_BYTES + 16) {
+        if (encoded == null || encoded.length < IV_BYTES + AES_BLOCK_BYTES
+                || (encoded.length - IV_BYTES) % AES_BLOCK_BYTES != 0) {
             throw new IllegalArgumentException("PayloadCodec 数据长度无效");
         }
         TransportLimits.requireMessageSize(encoded);
-        for (int i = 0; i < MAGIC.length; i++) {
-            if (encoded[i] != MAGIC[i]) throw new IllegalArgumentException("PayloadCodec 版本不匹配");
-        }
 
-        byte[] nonce = Arrays.copyOfRange(encoded, MAGIC.length, MAGIC.length + NONCE_BYTES);
-        byte[] encrypted = Arrays.copyOfRange(encoded, MAGIC.length + NONCE_BYTES, encoded.length);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, nonce));
+        byte[] iv = Arrays.copyOfRange(encoded, 0, IV_BYTES);
+        byte[] encrypted = Arrays.copyOfRange(encoded, IV_BYTES, encoded.length);
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
         byte[] compressed = cipher.doFinal(encrypted);
         byte[] serialized = gunzip(compressed);
 

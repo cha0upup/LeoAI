@@ -23,9 +23,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Semaphore;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -50,6 +52,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private static final int MAX_TASKS = 32;
     private static final int MAX_TARGETS = 128;
     private static final int MAX_THREADS = 64;
+    private static final int WORK_QUEUE_CAPACITY = MAX_TASKS * MAX_TARGETS;
     private static final int MAX_STAGES = 8;
     private static final int MAX_TIMEOUT_MS = 300000;
     private static final int MAX_READ_BYTES = 8192;
@@ -60,6 +63,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
     private static final Map TASKS = new ConcurrentHashMap();
     private static final Map TASK_LOCKS = new ConcurrentHashMap();
+    private static final ExecutorService WORK_EXECUTOR = new ThreadPoolExecutor(
+            MAX_THREADS, MAX_THREADS, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue(WORK_QUEUE_CAPACITY), new NetworkProbeComponent(),
+            new ThreadPoolExecutor.CallerRunsPolicy());
     private static volatile SSLSocketFactory TRUST_ALL_FACTORY;
 
     private HashMap params;
@@ -121,13 +128,17 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             results.put("taskId", startTask(params));
             results.put("code", Integer.valueOf(200));
         } else if ("queryTask".equals(method)) {
-            queryTask(stringValue(params.get("taskId")));
+            queryTask(params);
+        } else if ("ackTask".equals(method)) {
+            ackTask(stringValue(params.get("taskId")), longValue(params.get("cursor"), 0L));
         } else if ("pauseTask".equals(method)) {
             updateTaskState(stringValue(params.get("taskId")), "PAUSED");
         } else if ("resumeTask".equals(method)) {
             updateTaskState(stringValue(params.get("taskId")), "RUNNING");
         } else if ("stopTask".equals(method)) {
             stopTask(stringValue(params.get("taskId")));
+        } else if ("releaseTask".equals(method)) {
+            releaseTask(stringValue(params.get("taskId")));
         } else {
             throw new IllegalArgumentException("Unknown network probe method: " + method);
         }
@@ -135,7 +146,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
     private void writeCapabilities() {
         results.put("code", Integer.valueOf(200));
-        results.put("resultVersion", Integer.valueOf(1));
         results.put("component", "NetworkProbeComponent");
         results.put("transports", new ArrayList(Collections.singletonList("tcp")));
         ArrayList stages = new ArrayList();
@@ -151,9 +161,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private String startTask(Map input) {
-        if (TASKS.size() >= MAX_TASKS) {
-            throw new IllegalStateException("too many network probe tasks, max=" + MAX_TASKS);
-        }
         Map sourcePlan = asMap(input.get("plan"));
         if (sourcePlan == null) sourcePlan = input;
         List rawTargets = asList(sourcePlan.get("targets"));
@@ -186,36 +193,38 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         String id = UUID.randomUUID().toString();
         HashMap task = new HashMap();
         task.put("taskId", id);
-        task.put("resultVersion", Integer.valueOf(1));
         task.put("scanKind", "network-probe");
         task.put("status", "RUNNING");
+        task.put("outcome", "RUNNING");
         task.put("total", Integer.valueOf(normalizedTargets.size()));
         task.put("completed", new AtomicInteger(0));
         task.put("targets", normalizedTargets);
         task.put("plan", normalizedPlan);
         task.put("observations", Collections.synchronizedList(new ArrayList()));
         task.put("errors", Collections.synchronizedList(new ArrayList()));
+        task.put("observationOffset", Integer.valueOf(0));
         task.put("createdAt", Long.valueOf(System.currentTimeMillis()));
+        task.put("permits", new Semaphore(threads));
 
         Object lock = new Object();
-        TASKS.put(id, task);
-        TASK_LOCKS.put(id, lock);
+        synchronized (TASKS) {
+            if (TASKS.size() >= MAX_TASKS) {
+                throw new IllegalStateException("too many network probe tasks, max=" + MAX_TASKS);
+            }
+            TASKS.put(id, task);
+            TASK_LOCKS.put(id, lock);
+        }
         threadSeed = stringValue(input.get("hostId")) + "|" + id;
-        ExecutorService executor = null;
         try {
-            executor = Executors.newFixedThreadPool(threads, this);
-            task.put("executor", executor);
             for (int i = 0; i < normalizedTargets.size(); i++) {
-                executor.execute(new NetworkProbeComponent(id,
+                WORK_EXECUTOR.execute(new NetworkProbeComponent(id,
                         (Map) normalizedTargets.get(i), normalizedPlan));
             }
         } catch (RuntimeException error) {
-            if (executor != null) executor.shutdownNow();
             TASKS.remove(id);
             TASK_LOCKS.remove(id);
             throw error;
         }
-        executor.shutdown();
         return id;
     }
 
@@ -405,12 +414,20 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         Map task = (Map) TASKS.get(taskId);
         if (task == null) return;
         Object lock = TASK_LOCKS.get(taskId);
+        Semaphore permits = (Semaphore) task.get("permits");
+        boolean acquired = false;
         try {
+            if (!waitIfRunning(task, lock)) return;
+            while (!acquired) {
+                if (!waitIfRunning(task, lock)) return;
+                acquired = permits == null || permits.tryAcquire(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
             if (!waitIfRunning(task, lock)) return;
             probeTarget(task, target, plan);
         } catch (Throwable error) {
             addError(task, targetKey(target), "WORKER", errorCode(error), messageOf(error));
         } finally {
+            if (acquired && permits != null) permits.release();
             AtomicInteger completed = (AtomicInteger) task.get("completed");
             int count = completed == null ? 0 : completed.incrementAndGet();
             if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
@@ -496,7 +513,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             String baseUrl = stringValue(target.get("baseUrl"));
             if (baseUrl.length() == 0) {
                 baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
-                        + target.get("host") + ":" + target.get("port") + "/";
+                        + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
             }
             connection = (HttpURLConnection) new URL(baseUrl).openConnection();
             connection.setConnectTimeout(timeout);
@@ -545,7 +562,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             String baseUrl = stringValue(target.get("baseUrl"));
             if (baseUrl.length() == 0) {
                 baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
-                        + target.get("host") + ":" + target.get("port") + "/";
+                        + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
             }
             String path = stringValue(request.get("path"));
             String url = buildProbeUrl(baseUrl, path);
@@ -696,9 +713,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (list instanceof List) {
             synchronized (list) { ((List) list).add(observation); }
         }
-        Object evidence = observation.get("evidence");
-        if (evidence instanceof Map) {
-            // evidence is already bounded by each probe; retaining this branch keeps the response shape explicit.
+        if ("error".equals(String.valueOf(observation.get("state")))) {
+            addError(task, stringValue(observation.get("target")),
+                    stringValue(observation.get("stage")), stringValue(observation.get("errorCode")),
+                    stringValue(observation.get("error")));
         }
     }
 
@@ -714,32 +732,93 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         }
     }
 
-    private void queryTask(String id) {
+    private void queryTask(Map input) {
+        String id = stringValue(input.get("taskId"));
         Map task = (Map) TASKS.get(id);
         if (task == null) {
             results.put("code", Integer.valueOf(404));
             results.put("msg", "network probe task not found: " + id);
             return;
         }
+        long cursor = Math.max(0L, longValue(input.get("cursor"), 0L));
+        int maxItems = boundedInt(input.get("maxItems"), 128, 1, 512);
+        int maxBytes = boundedInt(input.get("maxBytes"), 524288, 4096, 1048576);
+        boolean includeEvidence = !Boolean.FALSE.equals(input.get("includeEvidence"));
+        int base;
+        List observations = (List) task.get("observations");
+        Object lock = TASK_LOCKS.get(id);
+        HashMap snapshot;
+        synchronized (lock == null ? task : lock) {
+            snapshot = baseSnapshot(task);
+            synchronized (observations) {
+                base = intValue(task.get("observationOffset"), 0);
+                long requested = Math.max(cursor, (long) base);
+                int start = requested > Integer.MAX_VALUE ? observations.size() : (int) requested - base;
+                if (start < 0) start = 0;
+                if (start > observations.size()) start = observations.size();
+                ArrayList page = new ArrayList();
+                int bytes = 0;
+                int index = start;
+                while (index < observations.size() && page.size() < maxItems) {
+                    Object value = observations.get(index);
+                    if (!(value instanceof Map)) { index++; continue; }
+                    HashMap copy = new HashMap((Map) value);
+                    if (!includeEvidence) copy.remove("evidence");
+                    int estimate = String.valueOf(copy).length();
+                    if (!page.isEmpty() && bytes + estimate > maxBytes) break;
+                    page.add(copy);
+                    bytes += estimate;
+                    index++;
+                }
+                long nextCursor = (long) base + index;
+                snapshot.put("cursor", Long.valueOf(cursor));
+                snapshot.put("nextCursor", Long.valueOf(nextCursor));
+                snapshot.put("hasMore", Boolean.valueOf(index < observations.size()));
+                snapshot.put("observations", page);
+            }
+        }
+        snapshot.put("incremental", Boolean.TRUE);
+        snapshot.put("errors", copyListLimited(task.get("errors"), maxItems));
+        results.put("code", Integer.valueOf(200));
+        results.put("result", snapshot);
+    }
+
+    private HashMap baseSnapshot(Map task) {
         HashMap snapshot = new HashMap();
         snapshot.put("taskId", task.get("taskId"));
-        snapshot.put("resultVersion", task.get("resultVersion"));
         snapshot.put("scanKind", task.get("scanKind"));
         snapshot.put("status", task.get("status"));
+        snapshot.put("outcome", task.get("outcome"));
         int total = intValue(task.get("total"), 0);
         AtomicInteger completed = (AtomicInteger) task.get("completed");
         int count = completed == null ? 0 : completed.get();
         snapshot.put("total", Integer.valueOf(total));
         snapshot.put("completed", Integer.valueOf(count));
         snapshot.put("progress", Integer.valueOf(total == 0 ? 0 : Math.min(100, count * 100 / total)));
-        snapshot.put("targets", copyTargetSummaries(task.get("targets")));
-        snapshot.put("plan", task.get("plan"));
-        snapshot.put("observations", copyList(task.get("observations")));
-        snapshot.put("errors", copyList(task.get("errors")));
         snapshot.put("createdAt", task.get("createdAt"));
         snapshot.put("finishedAt", task.get("finishedAt"));
+        return snapshot;
+    }
+
+    private void ackTask(String id, long cursor) {
+        Map task = (Map) TASKS.get(id);
+        if (task == null) {
+            results.put("code", Integer.valueOf(404));
+            results.put("msg", "network probe task not found: " + id);
+            return;
+        }
+        List observations = (List) task.get("observations");
+        synchronized (observations) {
+            int base = intValue(task.get("observationOffset"), 0);
+            long bounded = Math.max((long) base, Math.min(cursor, (long) base + observations.size()));
+            int remove = (int) (bounded - base);
+            if (remove > 0) {
+                observations.subList(0, remove).clear();
+                task.put("observationOffset", Integer.valueOf((int) bounded));
+            }
+            results.put("cursor", Long.valueOf(bounded));
+        }
         results.put("code", Integer.valueOf(200));
-        results.put("result", snapshot);
     }
 
     private void updateTaskState(String id, String state) {
@@ -758,9 +837,26 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         Map task = (Map) TASKS.get(id);
         if (task == null) throw new IllegalArgumentException("network probe task not found: " + id);
         finishTask(task, true);
-        Object executor = task.get("executor");
-        if (executor instanceof ExecutorService) ((ExecutorService) executor).shutdownNow();
-        task.remove("executor");
+        results.put("code", Integer.valueOf(200));
+    }
+
+    private void releaseTask(String id) {
+        Map task = (Map) TASKS.get(id);
+        if (task == null) {
+            results.put("code", Integer.valueOf(404));
+            results.put("msg", "network probe task not found: " + id);
+            return;
+        }
+        Object lock = TASK_LOCKS.get(id);
+        synchronized (lock == null ? task : lock) {
+            if (!"STOPPED".equals(task.get("status"))) {
+                results.put("code", Integer.valueOf(409));
+                results.put("msg", "network probe task is still active: " + id);
+                return;
+            }
+            TASKS.remove(id);
+            TASK_LOCKS.remove(id);
+        }
         results.put("code", Integer.valueOf(200));
     }
 
@@ -780,6 +876,11 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         Object monitor = lock == null ? task : lock;
         synchronized (monitor) {
             task.put("status", "STOPPED");
+            if (force) {
+                task.put("outcome", "CANCELLED");
+            } else if (!"CANCELLED".equals(task.get("outcome"))) {
+                task.put("outcome", "COMPLETED");
+            }
             if (force || task.get("finishedAt") == null) task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
             monitor.notifyAll();
         }
@@ -890,34 +991,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return value instanceof List ? (List) value : null;
     }
 
-    private static List copyList(Object value) {
+    private static List copyListLimited(Object value, int limit) {
         if (!(value instanceof List)) return new ArrayList();
-        synchronized (value) { return new ArrayList((List) value); }
-    }
-
-    private static List copyTargetSummaries(Object value) {
-        ArrayList summaries = new ArrayList();
-        if (!(value instanceof List)) return summaries;
         synchronized (value) {
-            Iterator iterator = ((List) value).iterator();
-            while (iterator.hasNext()) {
-                Object item = iterator.next();
-                if (!(item instanceof Map)) continue;
-                Map target = (Map) item;
-                HashMap summary = new HashMap();
-                summary.put("target", targetKey(target));
-                summary.put("host", target.get("host"));
-                summary.put("port", target.get("port"));
-                summary.put("protocol", target.get("protocol"));
-                if (target.get("targetId") != null) summary.put("targetId", target.get("targetId"));
-                if (target.get("probeId") != null) summary.put("probeId", target.get("probeId"));
-                if (target.get("ruleId") != null) summary.put("ruleId", target.get("ruleId"));
-                if (target.get("requestIndex") != null) summary.put("requestIndex", target.get("requestIndex"));
-                if (target.get("stage") != null) summary.put("stage", target.get("stage"));
-                summaries.add(summary);
-            }
+            List source = (List) value;
+            int end = Math.min(source.size(), Math.max(0, limit));
+            return new ArrayList(source.subList(0, end));
         }
-        return summaries;
     }
 
     private static void validateHost(String host, int index) {
@@ -929,6 +1009,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 throw new IllegalArgumentException("targets[" + index + "] host contains whitespace");
             }
         }
+    }
+
+    private static String hostForUrl(String host) {
+        return host.indexOf(':') >= 0 && !host.startsWith("[") ? "[" + host + "]" : host;
     }
 
     private static void closeQuietly(Object value) {

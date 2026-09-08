@@ -1,12 +1,14 @@
 package org.leo.web.service;
 
 import org.leo.service.fingerprint.FingerprintManageService;
+import org.leo.web.service.discovery.NetworkProbeLimits;
 import org.springframework.stereotype.Service;
 
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -19,10 +21,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class NetworkProbeAnalysisService {
 
-    private static final int MAX_PROBES = 128;
     private static final int MAX_RULES = 64;
     private static final int MAX_READ_BYTES = 8192;
     private static final long CONTEXT_TTL_MS = 2L * 60L * 60L * 1000L;
+    private static final List<Integer> REACHABILITY_PORTS = NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS;
 
     private final FingerprintManageService fingerprintManageService;
     private final Map<String, ScanContext> contexts = new ConcurrentHashMap<>();
@@ -36,11 +38,15 @@ public class NetworkProbeAnalysisService {
             throw new IllegalArgumentException("scan必须是对象");
         }
         String kind = text(rawScan.get("kind")).toLowerCase(Locale.ROOT);
+        if ("reachability".equals(kind)) {
+            return prepareReachability(rawScan);
+        }
         if (!("fingerprint".equals(kind) || "recon".equals(kind))) {
-            throw new IllegalArgumentException("scan.kind必须是fingerprint或recon");
+            throw new IllegalArgumentException("scan.kind必须是reachability、fingerprint或recon");
         }
         List<Map<String, Object>> sourceTargets = mapList(rawScan.get("targets"), "scan.targets");
         if (sourceTargets.isEmpty()) throw new IllegalArgumentException("scan.targets不能为空");
+        boolean explicitReconRules = "recon".equals(kind) && hasExplicitRuleIds(rawScan.get("ruleSelector"));
         List<RuleDefinition> rules = "fingerprint".equals(kind)
                 ? resolveFingerprintRules(rawScan.get("fingerprintIds"))
                 : resolveReconRules(rawScan.get("ruleSelector"));
@@ -62,17 +68,24 @@ public class NetworkProbeAnalysisService {
             String targetProtocol = targetProtocol(target);
             for (RuleDefinition rule : rules) {
                 if (!compatibleProtocol(targetProtocol, rule.protocol())) continue;
+                if ("recon".equals(kind) && !explicitReconRules && !relevantToService(target, rule)) continue;
                 groups.add(new WorkGroup(targetId, rule.id(), rule.requests().size()));
                 ruleIds.add(rule.id());
                 for (int requestIndex = 0; requestIndex < rule.requests().size(); requestIndex++) {
-                    probes.add(buildProbe(target, targetId, rule, requestIndex));
-                    if (probes.size() > MAX_PROBES) {
-                        throw new IllegalArgumentException("目标与指纹请求组合不能超过" + MAX_PROBES + "个");
+                    if (probes.size() >= NetworkProbeLimits.MAX_FINGERPRINT_PROBES) {
+                        throw new IllegalArgumentException("指纹探测请求数不能超过"
+                                + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + "个");
                     }
+                    probes.add(buildProbe(target, targetId, rule, requestIndex));
                 }
             }
         }
-        if (probes.isEmpty()) throw new IllegalArgumentException("目标协议与所选指纹规则不匹配");
+        if (probes.isEmpty()) {
+            String message = "recon".equals(kind) && !explicitReconRules
+                    ? "没有适用于已识别服务的指纹规则"
+                    : "目标协议与所选指纹规则不匹配";
+            throw new IllegalArgumentException(message);
+        }
 
         Map<String, Object> limits = new LinkedHashMap<>();
         limits.put("threads", Integer.valueOf(Math.min(threads, probes.size())));
@@ -80,14 +93,121 @@ public class NetworkProbeAnalysisService {
         limits.put("maxReadBytes", Integer.valueOf(maxReadBytes(probes)));
         Map<String, Object> plan = new LinkedHashMap<>();
         plan.put("targets", probes);
-        plan.put("stages", List.of("tcp-exchange", "http-request"));
+        plan.put("stages", stageList("tcp-exchange", "http-request"));
         plan.put("limits", limits);
 
         Map<String, RuleDefinition> rulesById = new LinkedHashMap<>();
         for (RuleDefinition rule : rules) rulesById.put(rule.id(), rule);
         ScanContext context = new ScanContext(kind, rulesById, groups,
-                targetsById.keySet(), ruleIds, System.currentTimeMillis());
+                targetsById.keySet(), ruleIds, Collections.emptyMap(), System.currentTimeMillis());
         return new PreparedScan(plan, context);
+    }
+
+    private PreparedScan prepareReachability(Map<?, ?> rawScan) {
+        if (!(rawScan.get("hosts") instanceof List<?> rawHosts)) {
+            throw new IllegalArgumentException("scan.hosts必须是数组");
+        }
+        Set<String> hosts = new LinkedHashSet<>();
+        for (Object value : rawHosts) {
+            String host = text(value);
+            if (host.isEmpty()) throw new IllegalArgumentException("scan.hosts必须是非空字符串数组");
+            hosts.add(host);
+        }
+        if (hosts.isEmpty()) throw new IllegalArgumentException("scan.hosts不能为空");
+        if (hosts.size() > NetworkProbeLimits.MAX_RESOLVED_HOSTS) {
+            throw new IllegalArgumentException("scan.hosts不能超过"
+                    + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
+        }
+        List<Map<String, Object>> probes = new ArrayList<>();
+        Object rawTargets = rawScan.get("targets");
+        if (rawTargets instanceof List<?> targets && !targets.isEmpty()) {
+            if (targets.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
+                throw new IllegalArgumentException("scan.targets不能超过"
+                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个");
+            }
+            Set<String> seen = new LinkedHashSet<>();
+            Map<String, Integer> probesByHost = new LinkedHashMap<>();
+            for (Object value : targets) {
+                if (!(value instanceof Map<?, ?> rawTarget)) {
+                    throw new IllegalArgumentException("scan.targets中的项目必须是对象");
+                }
+                Map<String, Object> target = castMap(rawTarget);
+                String host = text(target.get("host"));
+                int port = boundedInt(target.get("port"), -1, -1, 65535);
+                if (host.isEmpty() || port < 1) {
+                    throw new IllegalArgumentException("scan.targets包含无效host/port");
+                }
+                if (!hosts.contains(host)) {
+                    throw new IllegalArgumentException("scan.targets包含不在scan.hosts中的主机");
+                }
+                if (seen.add(host + "\u0000" + port)) {
+                    int hostProbeCount = probesByHost.getOrDefault(host, 0) + 1;
+                    if (hostProbeCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
+                        throw new IllegalArgumentException("单台主机的探活端口不能超过"
+                                + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
+                    }
+                    probesByHost.put(host, hostProbeCount);
+                    Map<String, Object> probe = new LinkedHashMap<>();
+                    probe.put("host", host);
+                    probe.put("port", Integer.valueOf(port));
+                    probe.put("protocol", "tcp");
+                    probe.put("targetId", host);
+                    probes.add(probe);
+                }
+            }
+        } else {
+            List<Integer> ports = reachabilityPorts(rawScan.get("ports"));
+            long probeCount = (long) hosts.size() * (long) ports.size();
+            if (probeCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
+                throw new IllegalArgumentException("探活目标数不能超过"
+                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个");
+            }
+            for (String host : hosts) {
+                for (Integer port : ports) {
+                    Map<String, Object> probe = new LinkedHashMap<>();
+                    probe.put("host", host);
+                    probe.put("port", port);
+                    probe.put("protocol", "tcp");
+                    probe.put("targetId", host);
+                    probes.add(probe);
+                }
+            }
+        }
+        if (probes.isEmpty()) throw new IllegalArgumentException("scan.targets不能为空");
+        int timeout = boundedInt(rawScan.get("timeout"), 3000, 100, 300000);
+        int threads = boundedInt(rawScan.get("threads"), 32, 1, 64);
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("targets", probes);
+        plan.put("stages", stageList("tcp-connect"));
+        Map<String, Object> limits = new LinkedHashMap<>();
+        limits.put("threads", Integer.valueOf(Math.min(threads, probes.size())));
+        limits.put("timeout", Integer.valueOf(timeout));
+        plan.put("limits", limits);
+        Map<String, Integer> expectedByHost = new LinkedHashMap<>();
+        for (Map<String, Object> probe : probes) {
+            expectedByHost.merge(text(probe.get("host")), Integer.valueOf(1), Integer::sum);
+        }
+        ScanContext context = new ScanContext("reachability", new LinkedHashMap<>(), new ArrayList<>(),
+                hosts, new LinkedHashSet<>(), expectedByHost, System.currentTimeMillis());
+        return new PreparedScan(plan, context);
+    }
+
+    private List<Integer> reachabilityPorts(Object value) {
+        if (!(value instanceof Collection<?> collection) || collection.isEmpty()) {
+            return REACHABILITY_PORTS;
+        }
+        if (collection.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
+            throw new IllegalArgumentException("单台主机的探活端口不能超过"
+                    + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
+        }
+        Set<Integer> ports = new LinkedHashSet<>();
+        for (Object item : collection) {
+            int port = boundedInt(item, -1, -1, 65535);
+            if (port < 1) throw new IllegalArgumentException("scan.ports包含无效端口");
+            ports.add(port);
+        }
+        if (ports.isEmpty()) throw new IllegalArgumentException("scan.ports不能为空");
+        return new ArrayList<>(ports);
     }
 
     public void register(String taskId, PreparedScan prepared) {
@@ -102,15 +222,25 @@ public class NetworkProbeAnalysisService {
         Object snapshotValue = componentResult.get("result");
         if (!(snapshotValue instanceof Map<?, ?> rawSnapshot)) return;
         Map<String, Object> snapshot = castMap(rawSnapshot);
-        List<Map<String, Object>> observations = mapListOrEmpty(snapshot.get("observations"));
-        Map<String, Map<Integer, Map<String, Object>>> grouped = groupObservations(observations);
+        List<Map<String, Object>> observations = context.remember(mapListOrEmpty(snapshot.get("observations")));
+        if ("reachability".equals(context.kind())) {
+            enrichReachability(context, snapshot, observations);
+            componentResult.put("result", snapshot);
+            if ("STOPPED".equals(String.valueOf(snapshot.get("status")))) {
+                context.finishedAt = System.currentTimeMillis();
+            }
+            cleanup();
+            return;
+        }
+        context.rememberGrouped(observations);
+        Map<String, Map<Integer, Map<String, Object>>> grouped = context.groupedObservations();
 
         List<Map<String, Object>> matches = new ArrayList<>();
         int completed = 0;
         int hitCount = 0;
         for (WorkGroup group : context.groups()) {
             String key = groupKey(group.targetId(), group.ruleId());
-            Map<Integer, Map<String, Object>> groupObservations = grouped.getOrDefault(key, Map.of());
+            Map<Integer, Map<String, Object>> groupObservations = grouped.getOrDefault(key, Collections.emptyMap());
             boolean complete = groupObservations.size() >= group.requestCount();
             boolean matched = false;
             String matchError = null;
@@ -127,6 +257,9 @@ public class NetworkProbeAnalysisService {
             Map<String, Object> match = new LinkedHashMap<>();
             match.put("targetId", group.targetId());
             match.put("ruleId", group.ruleId());
+            RuleDefinition rule = context.rulesById().get(group.ruleId());
+            match.put("ruleName", rule == null ? "" : rule.name());
+            match.put("protocol", rule == null ? "" : rule.protocol());
             match.put("complete", Boolean.valueOf(complete));
             match.put("matched", Boolean.valueOf(matched));
             match.put("evidenceCount", Integer.valueOf(groupObservations.size()));
@@ -148,11 +281,48 @@ public class NetworkProbeAnalysisService {
         cleanup();
     }
 
+    private void enrichReachability(ScanContext context, Map<String, Object> snapshot,
+                                    List<Map<String, Object>> observations) {
+        for (Map<String, Object> observation : observations) {
+            if (!"tcp-connect".equals(text(observation.get("stage")))) continue;
+            String host = text(observation.get("host"));
+            if (host.isEmpty()) continue;
+            context.completedByHost.merge(host, Integer.valueOf(1), Integer::sum);
+            if ("open".equalsIgnoreCase(text(observation.get("state")))) context.reachableHosts.add(host);
+        }
+
+        List<String> reachable = new ArrayList<>();
+        List<String> unreachable = new ArrayList<>();
+        List<String> pending = new ArrayList<>();
+        for (String host : context.targetIds()) {
+            if (context.reachableHosts.contains(host)) {
+                reachable.add(host);
+            } else if (context.completedByHost.getOrDefault(host, Integer.valueOf(0))
+                    >= context.expectedByHost.getOrDefault(host, Integer.valueOf(REACHABILITY_PORTS.size()))) {
+                unreachable.add(host);
+            } else {
+                pending.add(host);
+            }
+        }
+
+        Map<String, Object> analysis = new LinkedHashMap<>();
+        analysis.put("kind", "reachability");
+        analysis.put("total", Integer.valueOf(context.targetIds().size()));
+        analysis.put("completed", Integer.valueOf(reachable.size() + unreachable.size()));
+        analysis.put("targetCount", Integer.valueOf(context.targetIds().size()));
+        analysis.put("hitCount", Integer.valueOf(reachable.size()));
+        analysis.put("reachableHostList", reachable);
+        analysis.put("unreachableHostList", unreachable);
+        analysis.put("pendingHostList", pending);
+        snapshot.put("scanKind", "host-reachability");
+        snapshot.put("analysis", analysis);
+    }
+
     private List<RuleDefinition> resolveFingerprintRules(Object value) throws Exception {
         List<?> ids;
-        if (value instanceof List<?> list) ids = list;
-        else if (value == null) ids = List.of();
-        else ids = List.of(value);
+        if (value instanceof Collection<?> collection) ids = new ArrayList<>(collection);
+        else if (value == null) ids = Collections.emptyList();
+        else ids = Collections.singletonList(value);
         List<RuleDefinition> result = new ArrayList<>();
         for (Object idValue : ids) {
             String id = text(idValue);
@@ -163,9 +333,9 @@ public class NetworkProbeAnalysisService {
     }
 
     private List<RuleDefinition> resolveReconRules(Object value) throws Exception {
-        Map<?, ?> selector = value instanceof Map<?, ?> map ? map : Map.of();
+        Map<?, ?> selector = value instanceof Map<?, ?> map ? map : Collections.emptyMap();
         Object idsValue = selector.get("fingerprintIds");
-        if (idsValue instanceof List<?> ids && !ids.isEmpty()) return resolveFingerprintRules(ids);
+        if (idsValue instanceof Collection<?> ids && !ids.isEmpty()) return resolveFingerprintRules(ids);
         String protocol = text(selector.get("protocol")).toLowerCase(Locale.ROOT);
         Set<String> tags = textSet(selector.get("tags"));
         List<Map<String, Object>> summaries = protocol.isEmpty()
@@ -179,6 +349,30 @@ public class NetworkProbeAnalysisService {
         return result;
     }
 
+    private boolean hasExplicitRuleIds(Object value) {
+        if (!(value instanceof Map<?, ?> selector)) return false;
+        return selector.get("fingerprintIds") instanceof Collection<?> ids && !ids.isEmpty();
+    }
+
+    private boolean relevantToService(Map<String, Object> target, RuleDefinition rule) {
+        String service = text(target.get("service")).toLowerCase(Locale.ROOT);
+        if (service.isEmpty() || "unknown".equals(service)) return true;
+        if ("http".equals(service) || "https".equals(service)) return "http".equals(rule.protocol());
+        if (!"tcp".equals(rule.protocol())) return false;
+        if (containsToken(rule.id(), service) || containsToken(rule.name(), service)) return true;
+        for (String tag : rule.tags()) if (containsToken(tag, service)) return true;
+        return false;
+    }
+
+    private boolean containsToken(String value, String token) {
+        String normalized = text(value).toLowerCase(Locale.ROOT);
+        return normalized.equals(token)
+                || normalized.startsWith(token + "_")
+                || normalized.endsWith("_" + token)
+                || normalized.contains("-" + token)
+                || normalized.contains(token + "-");
+    }
+
     private RuleDefinition toRule(Map<String, Object> fingerprint) {
         String id = text(fingerprint.get("fingerprintId"));
         String protocol = text(fingerprint.get("protocol")).toLowerCase(Locale.ROOT);
@@ -190,7 +384,8 @@ public class NetworkProbeAnalysisService {
         if (!(rawRule.get("match") instanceof Map<?, ?> rawMatch)) {
             throw new IllegalArgumentException("指纹缺少声明式match: " + id);
         }
-        return new RuleDefinition(id, protocol, requests, castMap(rawMatch));
+        return new RuleDefinition(id, text(fingerprint.get("name")), protocol,
+                textSet(fingerprint.get("tags")), requests, castMap(rawMatch));
     }
 
     private Map<String, Object> buildProbe(Map<String, Object> source, String targetId,
@@ -227,19 +422,6 @@ public class NetworkProbeAnalysisService {
         return probe;
     }
 
-    private Map<String, Map<Integer, Map<String, Object>>> groupObservations(List<Map<String, Object>> observations) {
-        Map<String, Map<Integer, Map<String, Object>>> grouped = new LinkedHashMap<>();
-        for (Map<String, Object> observation : observations) {
-            String targetId = text(observation.get("targetId"));
-            String ruleId = text(observation.get("ruleId"));
-            if (targetId.isEmpty() || ruleId.isEmpty()) continue;
-            int requestIndex = boundedInt(observation.get("requestIndex"), 0, 0, 255);
-            grouped.computeIfAbsent(groupKey(targetId, ruleId), ignored -> new LinkedHashMap<>())
-                    .put(requestIndex, observation);
-        }
-        return grouped;
-    }
-
     private List<Map<String, Object>> responses(Map<Integer, Map<String, Object>> observations, int count) {
         List<Map<String, Object>> responses = new ArrayList<>();
         for (int index = 0; index < count; index++) {
@@ -251,7 +433,7 @@ public class NetworkProbeAnalysisService {
                 response.put("errorCode", observation.get("errorCode"));
             }
             Map<String, Object> evidence = observation.get("evidence") instanceof Map<?, ?> map
-                    ? castMap(map) : Map.of();
+                    ? castMap(map) : Collections.emptyMap();
             String stage = text(observation.get("stage"));
             if ("tcp-exchange".equals(stage)) {
                 response.put("raw", defaultText(evidence.get("banner"), ""));
@@ -339,6 +521,8 @@ public class NetworkProbeAnalysisService {
     }
 
     private String targetId(Map<String, Object> target) {
+        String explicit = text(target.get("targetId"));
+        if (!explicit.isEmpty()) return explicit;
         String protocol = targetProtocol(target);
         if (!"tcp".equals(protocol)) {
             String baseUrl = text(target.get("baseUrl"));
@@ -411,19 +595,40 @@ public class NetworkProbeAnalysisService {
     }
 
     private static List<Map<String, Object>> mapListOrEmpty(Object value) {
-        return value instanceof List<?> ? mapList(value, "observations") : List.of();
+        return value instanceof List<?> ? mapList(value, "observations") : new ArrayList<>();
     }
 
     private static Map<String, Object> castMap(Map<?, ?> source) {
         Map<String, Object> result = new LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : source.entrySet()) {
-            if (entry.getKey() != null) result.put(String.valueOf(entry.getKey()), entry.getValue());
+            if (entry.getKey() != null) result.put(String.valueOf(entry.getKey()), wireValue(entry.getValue()));
         }
         return result;
     }
 
     private static void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
-        if (source.containsKey(key) && source.get(key) != null) target.put(key, source.get(key));
+        if (source.containsKey(key) && source.get(key) != null) target.put(key, wireValue(source.get(key)));
+    }
+
+    private static List<String> stageList(String... values) {
+        List<String> result = new ArrayList<>();
+        result.addAll(Arrays.asList(values));
+        return result;
+    }
+
+    private static Object wireValue(Object value) {
+        if (value instanceof Map<?, ?> source) return castMap(source);
+        if (value instanceof Set<?> source) {
+            Set<Object> result = new LinkedHashSet<>();
+            for (Object item : source) result.add(wireValue(item));
+            return result;
+        }
+        if (value instanceof Collection<?> source) {
+            List<Object> result = new ArrayList<>();
+            for (Object item : source) result.add(wireValue(item));
+            return result;
+        }
+        return value;
     }
 
     private static int boundedInt(Object value, int fallback, int min, int max) {
@@ -452,8 +657,8 @@ public class NetworkProbeAnalysisService {
 
     public record PreparedScan(Map<String, Object> plan, ScanContext context) { }
 
-    public record RuleDefinition(String id, String protocol, List<Map<String, Object>> requests,
-                                 Map<String, Object> match) { }
+    public record RuleDefinition(String id, String name, String protocol, Set<String> tags,
+                                 List<Map<String, Object>> requests, Map<String, Object> match) { }
 
     public record WorkGroup(String targetId, String ruleId, int requestCount) { }
 
@@ -463,18 +668,65 @@ public class NetworkProbeAnalysisService {
         private final List<WorkGroup> groups;
         private final Set<String> targetIds;
         private final Set<String> ruleIds;
+        private final Map<String, Integer> expectedByHost;
+        private final Map<String, Integer> completedByHost = new LinkedHashMap<>();
+        private final Set<String> reachableHosts = new LinkedHashSet<>();
+        private final Set<String> seenObservationKeys = new LinkedHashSet<>();
+        private final Map<String, Map<Integer, Map<String, Object>>> groupedObservations = new LinkedHashMap<>();
         private final long createdAt;
         private volatile long finishedAt;
 
         private ScanContext(String kind, Map<String, RuleDefinition> rulesById,
                             List<WorkGroup> groups, Set<String> targetIds,
-                            Set<String> ruleIds, long createdAt) {
+                            Set<String> ruleIds, Map<String, Integer> expectedByHost,
+                            long createdAt) {
             this.kind = kind;
-            this.rulesById = Map.copyOf(rulesById);
-            this.groups = List.copyOf(groups);
-            this.targetIds = Set.copyOf(targetIds);
-            this.ruleIds = Set.copyOf(ruleIds);
+            this.rulesById = Collections.unmodifiableMap(new LinkedHashMap<>(rulesById));
+            this.groups = Collections.unmodifiableList(new ArrayList<>(groups));
+            this.targetIds = Collections.unmodifiableSet(new LinkedHashSet<>(targetIds));
+            this.ruleIds = Collections.unmodifiableSet(new LinkedHashSet<>(ruleIds));
+            this.expectedByHost = Collections.unmodifiableMap(new LinkedHashMap<>(expectedByHost));
             this.createdAt = createdAt;
+        }
+
+        private synchronized List<Map<String, Object>> remember(List<Map<String, Object>> values) {
+            List<Map<String, Object>> fresh = new ArrayList<>();
+            for (Map<String, Object> value : values) {
+                String key = observationKey(value);
+                if (seenObservationKeys.add(key)) fresh.add(new LinkedHashMap<>(value));
+            }
+            return fresh;
+        }
+
+        private synchronized void rememberGrouped(List<Map<String, Object>> values) {
+            for (Map<String, Object> observation : values) {
+                String targetId = text(observation.get("targetId"));
+                String ruleId = text(observation.get("ruleId"));
+                if (targetId.isEmpty() || ruleId.isEmpty()) continue;
+                int requestIndex = boundedInt(observation.get("requestIndex"), 0, 0, 255);
+                groupedObservations.computeIfAbsent(groupKey(targetId, ruleId),
+                                ignored -> new LinkedHashMap<>())
+                        .put(requestIndex, new LinkedHashMap<>(observation));
+            }
+        }
+
+        private synchronized Map<String, Map<Integer, Map<String, Object>>> groupedObservations() {
+            Map<String, Map<Integer, Map<String, Object>>> copy = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<Integer, Map<String, Object>>> entry : groupedObservations.entrySet()) {
+                copy.put(entry.getKey(), new LinkedHashMap<>(entry.getValue()));
+            }
+            return copy;
+        }
+
+        private static String observationKey(Map<String, Object> observation) {
+            String probeId = text(observation.get("probeId"));
+            if (!probeId.isEmpty()) return "probe\u0000" + probeId;
+            return text(observation.get("host")) + "\u0000"
+                    + text(observation.get("port")) + "\u0000"
+                    + text(observation.get("stage")) + "\u0000"
+                    + text(observation.get("targetId")) + "\u0000"
+                    + text(observation.get("ruleId")) + "\u0000"
+                    + text(observation.get("requestIndex"));
         }
 
         public String kind() { return kind; }

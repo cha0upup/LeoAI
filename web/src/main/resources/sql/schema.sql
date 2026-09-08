@@ -217,6 +217,92 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation
 CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON audit_logs(status);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip);
 
+-- =====================================================
+-- 网络资产发现结果（增量结果面）
+-- =====================================================
+CREATE TABLE IF NOT EXISTS scan_tasks (
+    task_id VARCHAR(100) PRIMARY KEY,
+    session_id VARCHAR(100) NOT NULL,
+    name VARCHAR(200),
+    status VARCHAR(20) NOT NULL DEFAULT 'RUNNING',
+    outcome VARCHAR(20) NOT NULL DEFAULT 'RUNNING',
+    current_stage VARCHAR(40),
+    progress INTEGER NOT NULL DEFAULT 0,
+    target_count INTEGER NOT NULL DEFAULT 0,
+    open_count INTEGER NOT NULL DEFAULT 0,
+    service_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    stage_json TEXT,
+    config_json TEXT,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    finished_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_scan_tasks_session_created
+    ON scan_tasks(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS scan_endpoint_results (
+    result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id VARCHAR(100) NOT NULL,
+    endpoint_id VARCHAR(300) NOT NULL,
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    protocol VARCHAR(20) NOT NULL,
+    state VARCHAR(20),
+    service VARCHAR(100),
+    banner TEXT,
+    title TEXT,
+    status_code INTEGER,
+    server VARCHAR(255),
+    location TEXT,
+    content_type VARCHAR(255),
+    fingerprint_json TEXT,
+    confidence REAL,
+    response_time INTEGER,
+    evidence_id VARCHAR(100),
+    discovered_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE(task_id, endpoint_id),
+    FOREIGN KEY (task_id) REFERENCES scan_tasks(task_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_scan_endpoint_task_result
+    ON scan_endpoint_results(task_id, result_id);
+CREATE INDEX IF NOT EXISTS idx_scan_endpoint_task_host_port
+    ON scan_endpoint_results(task_id, host, port);
+CREATE INDEX IF NOT EXISTS idx_scan_endpoint_task_service_state
+    ON scan_endpoint_results(task_id, service, state);
+
+CREATE TABLE IF NOT EXISTS scan_observations (
+    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id VARCHAR(100) NOT NULL,
+    dedupe_key VARCHAR(128) NOT NULL,
+    stage VARCHAR(40),
+    host VARCHAR(255),
+    port INTEGER,
+    protocol VARCHAR(20),
+    state VARCHAR(20),
+    observation_json TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE(task_id, dedupe_key),
+    FOREIGN KEY (task_id) REFERENCES scan_tasks(task_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_scan_observations_task_id
+    ON scan_observations(task_id, observation_id);
+
+CREATE TABLE IF NOT EXISTS scan_evidence (
+    evidence_id VARCHAR(100) PRIMARY KEY,
+    task_id VARCHAR(100) NOT NULL,
+    endpoint_id VARCHAR(300) NOT NULL,
+    content_json TEXT NOT NULL,
+    content_bytes INTEGER NOT NULL DEFAULT 0,
+    sha256 VARCHAR(64),
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES scan_tasks(task_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_scan_evidence_task_endpoint
+    ON scan_evidence(task_id, endpoint_id);
+
 -- 8. AI 供应商与模型配置
 CREATE TABLE IF NOT EXISTS ai_providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

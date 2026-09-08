@@ -16,7 +16,6 @@ public final class PhpPayloadSource {
             throw new IllegalStateException("派生 PHP PayloadCodec 密钥失败", e);
         }
         String encryptionKey = hex(digest, 0, 16);
-        String authenticationKey = hex(digest, 16, 32);
         return "function leo_payload_encode($payload) {\n"
                 + "    if (!is_array($payload)) { throw new InvalidArgumentException('Payload root must be an array'); }\n"
                 + "    $json = json_encode(leo_wire_encode($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);\n"
@@ -27,20 +26,12 @@ public final class PhpPayloadSource {
                 + "    if ($iv === false || strlen($iv) !== 16 || !$strong) { throw new RuntimeException('Secure IV generation failed'); }\n"
                 + "    $ciphertext = openssl_encrypt($compressed, 'AES-128-CBC', pack('H*', '" + encryptionKey + "'), OPENSSL_RAW_DATA, $iv);\n"
                 + "    if ($ciphertext === false) { throw new RuntimeException('Payload encryption failed'); }\n"
-                + "    $frame = 'LPH' . chr(1) . $iv . $ciphertext;\n"
-                + "    $mac = hash_hmac('sha256', $frame, pack('H*', '" + authenticationKey + "'), true);\n"
-                + "    return $frame . $mac;\n"
+                + "    return $iv . $ciphertext;\n"
                 + "}\n"
                 + "function leo_payload_decode($encoded) {\n"
-                + "    if (!is_string($encoded) || strlen($encoded) < 68 || strlen($encoded) > 16777216) { throw new InvalidArgumentException('Invalid payload size'); }\n"
-                + "    if (substr($encoded, 0, 4) !== 'LPH' . chr(1)) { throw new InvalidArgumentException('Payload version mismatch'); }\n"
-                + "    $macOffset = strlen($encoded) - 32;\n"
-                + "    $signed = substr($encoded, 0, $macOffset);\n"
-                + "    $actualMac = substr($encoded, $macOffset);\n"
-                + "    $expectedMac = hash_hmac('sha256', $signed, pack('H*', '" + authenticationKey + "'), true);\n"
-                + "    if (!hash_equals($expectedMac, $actualMac)) { throw new InvalidArgumentException('Payload authentication failed'); }\n"
-                + "    $iv = substr($encoded, 4, 16);\n"
-                + "    $ciphertext = substr($encoded, 20, $macOffset - 20);\n"
+                + "    if (!is_string($encoded) || strlen($encoded) < 32 || strlen($encoded) > 16777216 || (strlen($encoded) - 16) % 16 !== 0) { throw new InvalidArgumentException('Invalid payload size'); }\n"
+                + "    $iv = substr($encoded, 0, 16);\n"
+                + "    $ciphertext = substr($encoded, 16);\n"
                 + "    $compressed = openssl_decrypt($ciphertext, 'AES-128-CBC', pack('H*', '" + encryptionKey + "'), OPENSSL_RAW_DATA, $iv);\n"
                 + "    if ($compressed === false) { throw new InvalidArgumentException('Payload decryption failed'); }\n"
                 + "    $json = gzdecode($compressed);\n"

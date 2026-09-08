@@ -28,8 +28,23 @@ public class NetworkProbeService extends ComponentService {
         return invokeComponent(COMPONENT, params);
     }
 
-    public Map<String, Object> queryNetworkProbe(String taskId) throws Exception {
-        return invokeTask("queryTask", taskId);
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+                                                 int maxItems, int maxBytes,
+                                                 boolean includeEvidence) throws Exception {
+        HashMap<String, Object> params = params("queryTask");
+        params.put("taskId", taskId);
+        params.put("cursor", Long.valueOf(cursor));
+        params.put("maxItems", Integer.valueOf(maxItems));
+        params.put("maxBytes", Integer.valueOf(maxBytes));
+        params.put("includeEvidence", Boolean.valueOf(includeEvidence));
+        return invokeComponent(COMPONENT, params);
+    }
+
+    public Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception {
+        HashMap<String, Object> params = params("ackTask");
+        params.put("taskId", taskId);
+        params.put("cursor", Long.valueOf(cursor));
+        return invokeComponent(COMPONENT, params);
     }
 
     public Map<String, Object> pauseNetworkProbe(String taskId) throws Exception {
@@ -42,6 +57,10 @@ public class NetworkProbeService extends ComponentService {
 
     public Map<String, Object> stopNetworkProbe(String taskId) throws Exception {
         return invokeTask("stopTask", taskId);
+    }
+
+    public Map<String, Object> releaseNetworkProbe(String taskId) throws Exception {
+        return invokeTask("releaseTask", taskId);
     }
 
     private Map<String, Object> invokeTask(String method, String taskId) throws Exception {

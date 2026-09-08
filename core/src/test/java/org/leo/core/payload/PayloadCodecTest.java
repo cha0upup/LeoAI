@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PayloadCodecTest {
     private static final String KEY = "payload-test-key";
@@ -21,9 +22,8 @@ class PayloadCodecTest {
         byte[] first = codec.encode(payload);
         byte[] second = codec.encode(payload);
 
-        assertEquals(0x4c, first[0]);
-        assertEquals(0x50, first[1]);
-        assertEquals(1, first[2]);
+        assertTrue(first.length >= 32);
+        assertEquals(0, (first.length - 16) % 16);
         org.junit.jupiter.api.Assertions.assertFalse(java.util.Arrays.equals(first, second));
         assertEquals(payload, codec.decode(first));
     }

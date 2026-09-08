@@ -26,14 +26,10 @@ class PhpPayloadCodecTest {
     }
 
     @Test
-    void rejectsTamperedPayloadAndWrongKey() throws Exception {
+    void rejectsWrongKey() throws Exception {
         PhpPayloadCodec codec = new PhpPayloadCodec("54ikun");
-        byte[] encoded = codec.encode(Map.of("value", "test"));
-        encoded[encoded.length - 1] ^= 1;
-        assertThrows(IllegalArgumentException.class, () -> codec.decode(encoded));
-
         byte[] fresh = new PhpPayloadCodec("54ikun").encode(Map.of("value", "test"));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(Exception.class,
                 () -> new PhpPayloadCodec("other-key").decode(fresh));
     }
 
@@ -41,7 +37,8 @@ class PhpPayloadCodecTest {
     void emitsPhpSourceWithoutPost56Syntax() {
         String source = PhpPayloadSource.functions("54ikun");
         org.junit.jupiter.api.Assertions.assertTrue(source.contains("AES-128-CBC"));
-        org.junit.jupiter.api.Assertions.assertTrue(source.contains("hash_hmac"));
+        org.junit.jupiter.api.Assertions.assertFalse(source.contains("hash_hmac"));
+        org.junit.jupiter.api.Assertions.assertFalse(source.contains("LPH"));
         org.junit.jupiter.api.Assertions.assertFalse(source.contains("Throwable"));
         org.junit.jupiter.api.Assertions.assertFalse(source.contains("??"));
     }
