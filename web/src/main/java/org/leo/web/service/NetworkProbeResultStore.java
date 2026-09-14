@@ -43,6 +43,7 @@ public final class NetworkProbeResultStore {
     public void markInterruptedTasks() {
         ensureTaskErrorColumn();
         ensureFingerprintColumn();
+        ensureResponseSizeColumn();
         ensureStageColumn();
         String now = Instant.now().toString();
         try (Connection connection = dataSource.getConnection();
@@ -281,13 +282,14 @@ public final class NetworkProbeResultStore {
             String sortField = value(request == null ? null : map(request.get("sort")).get("field"), "discoveredAt");
             String sortColumn = switch (sortField) {
                 case "host" -> "host"; case "port" -> "port"; case "state" -> "state";
-                case "service" -> "service"; case "responseTime" -> "response_time";
+                case "service" -> "service"; case "statusCode" -> "status_code";
+                case "responseSize" -> "response_size"; case "responseTime" -> "response_time";
                 default -> "discovered_at";
             };
             String sortOrder = "asc".equalsIgnoreCase(value(request == null ? null : map(request.get("sort")).get("order"), "desc"))
                     ? "ASC" : "DESC";
             String sql = "SELECT endpoint_id, host, port, protocol, state, service, banner, title, "
-                    + "status_code, server, location, content_type, fingerprint_json, confidence, response_time, evidence_id, discovered_at "
+                    + "status_code, response_size, server, location, content_type, fingerprint_json, confidence, response_time, evidence_id, discovered_at "
                     + "FROM scan_endpoint_results " + query.where
                     + " ORDER BY " + sortColumn + " " + sortOrder + ", result_id DESC LIMIT ? OFFSET ?";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -331,46 +333,32 @@ public final class NetworkProbeResultStore {
         }
     }
 
-    public Map<String, Object> queryEvidence(String sessionId, String taskId, String endpointId) {
-        if (!ownsTask(sessionId, taskId)) return Map.of();
-        if (!ownsEndpoint(taskId, endpointId)) return Map.of();
-        List<Map<String, Object>> evidence = new ArrayList<>();
+    /** Removes a task and all of its endpoint, observation and evidence rows. */
+    public boolean deleteTask(String sessionId, String taskId) {
+        if (sessionId == null || sessionId.isBlank() || taskId == null || taskId.isBlank()) return false;
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "SELECT evidence_id, endpoint_id, content_json, content_bytes, sha256 "
-                             + "FROM scan_evidence WHERE task_id=? AND endpoint_id=? ORDER BY created_at DESC")) {
-            statement.setString(1, taskId);
-            statement.setString(2, endpointId);
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("evidenceId", rows.getString("evidence_id"));
-                    item.put("endpointId", rows.getString("endpoint_id"));
-                    item.put("contentBytes", rows.getInt("content_bytes"));
-                    item.put("sha256", rows.getString("sha256"));
-                    item.put("content", parseJson(rows.getString("content_json")));
-                    evidence.add(item);
-                }
-            }
+                     "DELETE FROM scan_tasks WHERE task_id=? AND session_id=?")) {
+            statement.setString(1, taskId.trim());
+            statement.setString(2, sessionId.trim());
+            return statement.executeUpdate() > 0;
         } catch (SQLException error) {
-            logger.warn("Unable to query evidence for network endpoint {}", endpointId, error);
+            logger.warn("Unable to delete network scan task {}", taskId, error);
+            return false;
         }
-        return Map.of("endpointId", endpointId, "evidence", evidence);
     }
 
-    private boolean ownsEndpoint(String taskId, String endpointId) {
+    /** Deletes every persisted network scan owned by a destroyed session. */
+    public int deleteTasksBySession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return 0;
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "SELECT 1 FROM scan_endpoint_results "
-                             + "WHERE task_id=? AND endpoint_id=? AND LOWER(state)='open'")) {
-            statement.setString(1, taskId);
-            statement.setString(2, endpointId);
-            try (ResultSet rows = statement.executeQuery()) {
-                return rows.next();
-            }
+                     "DELETE FROM scan_tasks WHERE session_id=?")) {
+            statement.setString(1, sessionId.trim());
+            return statement.executeUpdate();
         } catch (SQLException error) {
-            logger.warn("Unable to verify network endpoint {}", endpointId, error);
-            return false;
+            logger.warn("Unable to delete network scan tasks for session {}", sessionId, error);
+            return 0;
         }
     }
 
@@ -427,31 +415,36 @@ public final class NetworkProbeResultStore {
         endpointStatement.setString(8, text(evidence.get("banner")));
         endpointStatement.setString(9, text(evidence.get("title")));
         endpointStatement.setObject(10, number(evidence.get("statusCode")));
-        endpointStatement.setString(11, text(evidence.get("server")));
-        endpointStatement.setString(12, text(evidence.get("location")));
-        endpointStatement.setString(13, text(evidence.get("contentType")));
-        endpointStatement.setString(14, jsonOrNull(evidence.get("fingerprint")));
-        endpointStatement.setObject(15, decimal(observation.get("confidence")));
-        endpointStatement.setObject(16, number(observation.get("latencyMs")));
-        endpointStatement.setString(17, evidenceId);
-        endpointStatement.setString(18, now);
+        Object responseSize = evidence.get("responseSize");
+        if (responseSize == null) responseSize = evidence.get("bodyLength");
+        endpointStatement.setObject(11, number(responseSize));
+        endpointStatement.setString(12, text(evidence.get("server")));
+        endpointStatement.setString(13, text(evidence.get("location")));
+        endpointStatement.setString(14, text(evidence.get("contentType")));
+        endpointStatement.setString(15, jsonOrNull(evidence.get("fingerprint")));
+        endpointStatement.setObject(16, decimal(observation.get("confidence")));
+        endpointStatement.setObject(17, number(observation.get("latencyMs")));
+        endpointStatement.setString(18, evidenceId);
         endpointStatement.setString(19, now);
+        endpointStatement.setString(20, now);
         endpointStatement.addBatch();
     }
 
     private String endpointSql() {
         return "INSERT INTO scan_endpoint_results "
-                + "(task_id, endpoint_id, host, port, protocol, state, service, banner, title, status_code, "
+                + "(task_id, endpoint_id, host, port, protocol, state, service, banner, title, status_code, response_size, "
                 + "server, location, content_type, fingerprint_json, confidence, response_time, evidence_id, discovered_at, updated_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 + "ON CONFLICT(task_id, endpoint_id) DO UPDATE SET state=CASE "
                 + "WHEN excluded.state='open' THEN 'open' "
                 + "WHEN scan_endpoint_results.state='open' THEN scan_endpoint_results.state "
                 + "ELSE excluded.state END, "
                 + "service=COALESCE(excluded.service, scan_endpoint_results.service), "
                 + "banner=COALESCE(excluded.banner, scan_endpoint_results.banner), "
-                + "title=COALESCE(excluded.title, scan_endpoint_results.title), "
+                + "title=CASE WHEN excluded.title IS NOT NULL AND excluded.title <> '' "
+                + "THEN excluded.title ELSE scan_endpoint_results.title END, "
                 + "status_code=COALESCE(excluded.status_code, scan_endpoint_results.status_code), "
+                + "response_size=COALESCE(excluded.response_size, scan_endpoint_results.response_size), "
                 + "server=COALESCE(excluded.server, scan_endpoint_results.server), "
                 + "location=COALESCE(excluded.location, scan_endpoint_results.location), "
                 + "content_type=COALESCE(excluded.content_type, scan_endpoint_results.content_type), "
@@ -567,6 +560,7 @@ public final class NetworkProbeResultStore {
         result.put("banner", row.getString("banner"));
         result.put("title", row.getString("title"));
         result.put("statusCode", row.getObject("status_code"));
+        result.put("responseSize", row.getObject("response_size"));
         result.put("server", row.getString("server"));
         result.put("location", row.getString("location"));
         result.put("contentType", row.getString("content_type"));
@@ -588,6 +582,8 @@ public final class NetworkProbeResultStore {
     }
 
     private Map<String, Object> reachableHostSummary(Connection connection, String taskId) throws SQLException {
+        // workflowStage is stored in the observation JSON; the escaped quote
+        // form would search for literal backslashes and never match SQLite JSON.
         String marker = "%\"workflowStage\":\"REACHABILITY\"%";
         int count = 0;
         try (PreparedStatement statement = connection.prepareStatement(
@@ -627,6 +623,17 @@ public final class NetworkProbeResultStore {
             String message = error.getMessage();
             if (message == null || !message.toLowerCase().contains("duplicate column")) {
                 logger.warn("Unable to ensure network fingerprint result column", error);
+            }
+        }
+    }
+
+    private void ensureResponseSizeColumn() {
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("ALTER TABLE scan_endpoint_results ADD COLUMN response_size INTEGER");
+        } catch (SQLException error) {
+            String message = error.getMessage();
+            if (message == null || !message.toLowerCase().contains("duplicate column")) {
+                logger.warn("Unable to ensure network response size result column", error);
             }
         }
     }

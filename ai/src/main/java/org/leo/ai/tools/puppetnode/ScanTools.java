@@ -16,13 +16,7 @@ import java.util.Map;
 @AiToolPolicy(kind = AiToolKind.COMMAND, operation = AiToolOperation.WRITE)
 public class ScanTools {
 
-    @Tool("查询节点支持的网络探测原子阶段。")
-    @AiToolPolicy(kind = AiToolKind.QUERY, operation = AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> networkProbeCapabilities() throws Exception {
-        return node().networkProbeCapabilities();
-    }
-
-    @Tool("提交统一网络探测计划。plan.targets 为目标对象数组，plan.stages 可选 tcp-connect、tcp-exchange、http-head、http-request、tls-handshake，返回 taskId。")
+    @Tool("提交统一网络探测计划。plan.targets 为目标对象数组，plan.stages 可选 tcp-connect、tcp-exchange、http-head、http-request，返回 taskId。")
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         if (plan == null || plan.isEmpty()) throw new IllegalArgumentException("plan 不能为空");
         return node().startNetworkProbe(plan);

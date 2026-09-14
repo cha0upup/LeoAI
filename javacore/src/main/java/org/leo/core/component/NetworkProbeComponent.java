@@ -5,22 +5,23 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.nio.charset.Charset;
 import java.security.SecureRandom;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -32,9 +33,7 @@ import java.util.concurrent.Semaphore;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
-import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
@@ -50,15 +49,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         java.lang.reflect.InvocationHandler {
 
     private static final int MAX_TASKS = 32;
-    private static final int MAX_TARGETS = 128;
-    private static final int MAX_THREADS = 64;
-    private static final int WORK_QUEUE_CAPACITY = MAX_TASKS * MAX_TARGETS;
-    private static final int MAX_STAGES = 8;
-    private static final int MAX_TIMEOUT_MS = 300000;
+    private static final int MAX_THREADS = 256;
+    private static final int WORK_QUEUE_CAPACITY = MAX_TASKS * MAX_THREADS;
     private static final int MAX_READ_BYTES = 8192;
     private static final int MAX_EVIDENCE_CHARS = 4096;
-    private static final int MAX_HEADERS = 32;
-    private static final int MAX_REQUEST_CHARS = 8192;
+    private static final int MAX_TITLE_CHARS = 512;
+    private static final Pattern TITLE_PATTERN = Pattern.compile(
+            "<title\\b[^>]*>(.*?)</title\\s*>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
     private static final Map TASKS = new ConcurrentHashMap();
@@ -122,9 +119,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private void invokeNonCleanup(String method) throws Exception {
-        if ("capabilities".equals(method)) {
-            writeCapabilities();
-        } else if ("startTask".equals(method)) {
+        if ("startTask".equals(method)) {
             results.put("taskId", startTask(params));
             results.put("code", Integer.valueOf(200));
         } else if ("queryTask".equals(method)) {
@@ -144,40 +139,17 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         }
     }
 
-    private void writeCapabilities() {
-        results.put("code", Integer.valueOf(200));
-        results.put("component", "NetworkProbeComponent");
-        results.put("transports", new ArrayList(Collections.singletonList("tcp")));
-        ArrayList stages = new ArrayList();
-        stages.add("tcp-connect");
-        stages.add("tcp-exchange");
-        stages.add("http-head");
-        stages.add("http-request");
-        stages.add("tls-handshake");
-        results.put("stages", stages);
-        results.put("maxTargets", Integer.valueOf(MAX_TARGETS));
-        results.put("maxThreads", Integer.valueOf(MAX_THREADS));
-        results.put("maxReadBytes", Integer.valueOf(MAX_READ_BYTES));
-    }
-
     private String startTask(Map input) {
         Map sourcePlan = asMap(input.get("plan"));
         if (sourcePlan == null) sourcePlan = input;
         List rawTargets = asList(sourcePlan.get("targets"));
-        if (rawTargets == null || rawTargets.isEmpty()) {
-            throw new IllegalArgumentException("plan.targets cannot be empty");
-        }
-        if (rawTargets.size() > MAX_TARGETS) {
-            throw new IllegalArgumentException("too many targets, max=" + MAX_TARGETS);
-        }
 
         Map limits = asMap(sourcePlan.get("limits"));
-        int timeout = boundedInt(limits == null ? null : limits.get("timeout"), 3000, 100, MAX_TIMEOUT_MS);
-        int maxRead = boundedInt(limits == null ? null : limits.get("maxReadBytes"), MAX_READ_BYTES, 256, MAX_READ_BYTES);
-        int threads = boundedInt(limits == null ? null : limits.get("threads"), 8, 1, MAX_THREADS);
-        if (threads > rawTargets.size()) threads = rawTargets.size();
+        int timeout = intValue(limits == null ? null : limits.get("timeout"), 3000);
+        int maxRead = intValue(limits == null ? null : limits.get("maxReadBytes"), MAX_READ_BYTES);
+        int threads = intValue(limits == null ? null : limits.get("threads"), MAX_THREADS);
 
-        List stages = normalizeStages(sourcePlan.get("stages"));
+        List stages = copyStages(sourcePlan.get("stages"));
         if (stages.isEmpty()) stages.add("tcp-connect");
         Map normalizedPlan = new HashMap();
         normalizedPlan.put("stages", stages);
@@ -187,7 +159,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
         ArrayList normalizedTargets = new ArrayList();
         for (int i = 0; i < rawTargets.size(); i++) {
-            normalizedTargets.add(normalizeTarget(rawTargets.get(i), i));
+            normalizedTargets.add(normalizeTarget(rawTargets.get(i)));
         }
 
         String id = UUID.randomUUID().toString();
@@ -205,6 +177,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         task.put("observationOffset", Integer.valueOf(0));
         task.put("createdAt", Long.valueOf(System.currentTimeMillis()));
         task.put("permits", new Semaphore(threads));
+        task.put("nextIndex", new AtomicInteger(0));
 
         Object lock = new Object();
         synchronized (TASKS) {
@@ -216,9 +189,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         }
         threadSeed = stringValue(input.get("hostId")) + "|" + id;
         try {
-            for (int i = 0; i < normalizedTargets.size(); i++) {
+            int workerCount = Math.min(threads, normalizedTargets.size());
+            for (int i = 0; i < workerCount; i++) {
                 WORK_EXECUTOR.execute(new NetworkProbeComponent(id,
-                        (Map) normalizedTargets.get(i), normalizedPlan));
+                        null, normalizedPlan));
             }
         } catch (RuntimeException error) {
             TASKS.remove(id);
@@ -228,132 +202,87 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return id;
     }
 
-    private Map normalizeTarget(Object value, int index) {
+    private Map normalizeTarget(Object value) {
         Map source = asMap(value);
-        if (source == null) throw new IllegalArgumentException("targets[" + index + "] must be an object");
         HashMap target = new HashMap();
         String protocol = stringValue(source.get("protocol")).toLowerCase(Locale.ENGLISH);
         String baseUrl = stringValue(source.get("baseUrl"));
         String host = stringValue(source.get("host"));
-        int port = boundedInt(source.get("port"), -1, -1, 65535);
+        int port = intValue(source.get("port"), -1);
         URL parsedUrl = null;
         if (baseUrl.length() > 0) {
             try {
                 parsedUrl = new URL(baseUrl);
-                if (!("http".equalsIgnoreCase(parsedUrl.getProtocol())
-                        || "https".equalsIgnoreCase(parsedUrl.getProtocol()))) {
-                    throw new IllegalArgumentException("targets[" + index + "].baseUrl must use http or https");
-                }
-                if (parsedUrl.getUserInfo() != null) {
-                    throw new IllegalArgumentException("targets[" + index + "].baseUrl cannot contain user info");
-                }
                 if (host.length() == 0) host = parsedUrl.getHost();
                 if (port <= 0) port = parsedUrl.getPort() > 0 ? parsedUrl.getPort()
                         : ("https".equalsIgnoreCase(parsedUrl.getProtocol()) ? 443 : 80);
             } catch (Exception error) {
-                if (error instanceof IllegalArgumentException) throw (IllegalArgumentException) error;
-                throw new IllegalArgumentException("targets[" + index + "].baseUrl is invalid");
             }
-            if (protocol.length() == 0) protocol = "https".equalsIgnoreCase(parsedUrl.getProtocol()) ? "https" : "http";
+            if (protocol.length() == 0 && parsedUrl != null) {
+                protocol = "https".equalsIgnoreCase(parsedUrl.getProtocol()) ? "https" : "http";
+            }
         }
         if (protocol.length() == 0) protocol = "tcp";
-        if (!("tcp".equals(protocol) || "http".equals(protocol) || "https".equals(protocol))) {
-            throw new IllegalArgumentException("targets[" + index + "].protocol is unsupported");
-        }
-        if (host.length() == 0) throw new IllegalArgumentException("targets[" + index + "] requires host or baseUrl");
-        validateHost(host, index);
         if (port <= 0) {
             if ("https".equals(protocol)) port = 443;
             else if ("http".equals(protocol)) port = 80;
         }
-        if (port <= 0 || port > 65535) throw new IllegalArgumentException("targets[" + index + "] port is invalid");
         target.put("host", host);
         target.put("port", Integer.valueOf(port));
         target.put("protocol", protocol);
         if (baseUrl.length() > 0) target.put("baseUrl", baseUrl);
-        copyTargetMetadata(source, target, index);
+        copyTargetMetadata(source, target);
         if (source.get("request") != null) {
             String request = stringValue(source.get("request"));
-            if (request.length() > MAX_REQUEST_CHARS || request.indexOf('\0') >= 0) {
-                throw new IllegalArgumentException("targets[" + index + "].request is invalid or too long");
-            }
             target.put("request", request);
         }
         if (source.get("headers") != null) {
-            if (!(source.get("headers") instanceof Map)) {
-                throw new IllegalArgumentException("targets[" + index + "].headers must be an object");
-            }
             Map sourceHeaders = (Map) source.get("headers");
-            if (sourceHeaders.size() > MAX_HEADERS) {
-                throw new IllegalArgumentException("targets[" + index + "].headers cannot exceed " + MAX_HEADERS);
-            }
             HashMap headers = new HashMap();
             Iterator headerIterator = sourceHeaders.entrySet().iterator();
             while (headerIterator.hasNext()) {
                 Map.Entry entry = (Map.Entry) headerIterator.next();
                 String name = stringValue(entry.getKey());
                 String headerValue = stringValue(entry.getValue());
-                if (name.length() == 0 || name.indexOf('\r') >= 0 || name.indexOf('\n') >= 0
-                        || headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
-                    throw new IllegalArgumentException("targets[" + index + "].headers contains invalid characters");
-                }
                 headers.put(name, headerValue);
             }
             target.put("headers", headers);
         }
         if (source.get("httpRequest") != null) {
-            target.put("httpRequest", normalizeHttpRequest(source.get("httpRequest"), index));
+            target.put("httpRequest", normalizeHttpRequest(source.get("httpRequest")));
         }
         return target;
     }
 
-    private void copyTargetMetadata(Map source, Map target, int index) {
+    private void copyTargetMetadata(Map source, Map target) {
         String targetId = stringValue(source.get("targetId"));
         String probeId = stringValue(source.get("probeId"));
         String ruleId = stringValue(source.get("ruleId"));
-        int requestIndex = boundedInt(source.get("requestIndex"), -1, -1, 255);
-        if (targetId.length() > 128 || probeId.length() > 128 || ruleId.length() > 128) {
-            throw new IllegalArgumentException("targets[" + index + "] metadata is too long");
-        }
+        int requestIndex = intValue(source.get("requestIndex"), -1);
         if (targetId.length() > 0) target.put("targetId", targetId);
         if (probeId.length() > 0) target.put("probeId", probeId);
         if (ruleId.length() > 0) target.put("ruleId", ruleId);
         if (requestIndex >= 0) target.put("requestIndex", Integer.valueOf(requestIndex));
         String stage = stringValue(source.get("stage")).toLowerCase(Locale.ENGLISH);
         if (stage.length() > 0) {
-            if (!("tcp-connect".equals(stage) || "tcp-exchange".equals(stage)
-                    || "http-head".equals(stage) || "http-request".equals(stage)
-                    || "tls-handshake".equals(stage))) {
-                throw new IllegalArgumentException("targets[" + index + "].stage is unsupported");
-            }
             target.put("stage", stage);
         }
         if (source.get("timeout") != null) {
-            target.put("timeout", Integer.valueOf(boundedInt(source.get("timeout"), 3000, 100, MAX_TIMEOUT_MS)));
+            target.put("timeout", Integer.valueOf(intValue(source.get("timeout"), 3000)));
         }
         if (source.get("maxReadBytes") != null) {
-            target.put("maxReadBytes", Integer.valueOf(boundedInt(source.get("maxReadBytes"),
-                    MAX_READ_BYTES, 256, MAX_READ_BYTES)));
+            target.put("maxReadBytes", Integer.valueOf(intValue(source.get("maxReadBytes"), MAX_READ_BYTES)));
         }
     }
 
-    private Map normalizeHttpRequest(Object value, int index) {
+    private Map normalizeHttpRequest(Object value) {
         Map source = asMap(value);
-        if (source == null) throw new IllegalArgumentException("targets[" + index + "].httpRequest must be an object");
         HashMap request = new HashMap();
         String method = stringValue(source.get("method")).toUpperCase(Locale.ENGLISH);
         if (method.length() == 0) method = "GET";
-        if (!("GET".equals(method) || "HEAD".equals(method) || "POST".equals(method)
-                || "PUT".equals(method) || "PATCH".equals(method) || "DELETE".equals(method)
-                || "OPTIONS".equals(method))) {
-            throw new IllegalArgumentException("targets[" + index + "].httpRequest.method is unsupported");
-        }
         String path = stringValue(source.get("path"));
         if (path.length() == 0) path = stringValue(source.get("uri"));
         if (path.length() == 0) path = "/";
-        if (path.length() > MAX_REQUEST_CHARS || path.indexOf('\r') >= 0 || path.indexOf('\n') >= 0) {
-            throw new IllegalArgumentException("targets[" + index + "].httpRequest.path is invalid or too long");
-        }
         request.put("method", method);
         request.put("path", path);
         String charset = stringValue(source.get("charset"));
@@ -361,30 +290,17 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         request.put("charset", charset);
         if (source.get("body") != null) {
             String body = String.valueOf(source.get("body"));
-            if (body.length() > MAX_REQUEST_CHARS || body.indexOf('\0') >= 0) {
-                throw new IllegalArgumentException("targets[" + index + "].httpRequest.body is invalid or too long");
-            }
             request.put("body", body);
         }
         Object headersValue = source.get("headers");
         if (headersValue != null) {
-            if (!(headersValue instanceof Map)) {
-                throw new IllegalArgumentException("targets[" + index + "].httpRequest.headers must be an object");
-            }
             Map sourceHeaders = (Map) headersValue;
-            if (sourceHeaders.size() > MAX_HEADERS) {
-                throw new IllegalArgumentException("targets[" + index + "].httpRequest.headers cannot exceed " + MAX_HEADERS);
-            }
             HashMap headers = new HashMap();
             Iterator iterator = sourceHeaders.entrySet().iterator();
             while (iterator.hasNext()) {
                 Map.Entry entry = (Map.Entry) iterator.next();
                 String name = stringValue(entry.getKey());
                 String headerValue = stringValue(entry.getValue());
-                if (name.length() == 0 || name.indexOf('\r') >= 0 || name.indexOf('\n') >= 0
-                        || headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
-                    throw new IllegalArgumentException("targets[" + index + "].httpRequest.headers contains invalid characters");
-                }
                 headers.put(name, headerValue);
             }
             request.put("headers", headers);
@@ -392,20 +308,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return request;
     }
 
-    private List normalizeStages(Object value) {
+    private List copyStages(Object value) {
         ArrayList stages = new ArrayList();
-        Set seen = new HashSet();
         List raw = asList(value);
         if (raw == null) return stages;
-        if (raw.size() > MAX_STAGES) throw new IllegalArgumentException("plan.stages cannot exceed " + MAX_STAGES);
         for (int i = 0; i < raw.size(); i++) {
             String stage = stringValue(raw.get(i)).toLowerCase(Locale.ENGLISH);
-            if (!("tcp-connect".equals(stage) || "tcp-exchange".equals(stage)
-                    || "http-head".equals(stage) || "http-request".equals(stage)
-                    || "tls-handshake".equals(stage))) {
-                throw new IllegalArgumentException("unsupported probe stage: " + stage);
-            }
-            if (seen.add(stage)) stages.add(stage);
+            stages.add(stage);
         }
         return stages;
     }
@@ -415,22 +324,30 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (task == null) return;
         Object lock = TASK_LOCKS.get(taskId);
         Semaphore permits = (Semaphore) task.get("permits");
-        boolean acquired = false;
-        try {
+        AtomicInteger nextIndex = (AtomicInteger) task.get("nextIndex");
+        List targets = (List) task.get("targets");
+        if (nextIndex == null || targets == null) return;
+        while (true) {
             if (!waitIfRunning(task, lock)) return;
-            while (!acquired) {
+            int index = nextIndex.getAndIncrement();
+            if (index >= targets.size()) return;
+            Map currentTarget = (Map) targets.get(index);
+            boolean acquired = false;
+            try {
+                while (!acquired) {
+                    if (!waitIfRunning(task, lock)) return;
+                    acquired = permits == null || permits.tryAcquire(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
+                }
                 if (!waitIfRunning(task, lock)) return;
-                acquired = permits == null || permits.tryAcquire(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
+                probeTarget(task, currentTarget, plan);
+            } catch (Throwable error) {
+                addError(task, targetKey(currentTarget), "WORKER", errorCode(error), messageOf(error));
+            } finally {
+                if (acquired && permits != null) permits.release();
+                AtomicInteger completed = (AtomicInteger) task.get("completed");
+                int count = completed == null ? 0 : completed.incrementAndGet();
+                if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
             }
-            if (!waitIfRunning(task, lock)) return;
-            probeTarget(task, target, plan);
-        } catch (Throwable error) {
-            addError(task, targetKey(target), "WORKER", errorCode(error), messageOf(error));
-        } finally {
-            if (acquired && permits != null) permits.release();
-            AtomicInteger completed = (AtomicInteger) task.get("completed");
-            int count = completed == null ? 0 : completed.incrementAndGet();
-            if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
         }
     }
 
@@ -452,8 +369,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 addObservation(task, observation);
             } else if ("tcp-exchange".equals(stage)) {
                 if (!connectAttempted || connected) addObservation(task, probeTcpExchange(target, timeout, maxRead));
-            } else if ("tls-handshake".equals(stage)) {
-                addObservation(task, probeTls(target, timeout));
             } else if ("http-head".equals(stage)) {
                 addObservation(task, probeHttp(target, timeout, maxRead));
             } else if ("http-request".equals(stage)) {
@@ -466,7 +381,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         long started = System.currentTimeMillis();
         Socket socket = null;
         try {
-            socket = new Socket();
+            socket = new Socket(Proxy.NO_PROXY);
             socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
             return baseObservation(target, "tcp-connect", "open", started, null, null, null);
         } catch (Throwable error) {
@@ -482,7 +397,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         InputStream input = null;
         OutputStream output = null;
         try {
-            socket = new Socket();
+            socket = new Socket(Proxy.NO_PROXY);
             socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
             socket.setSoTimeout(timeout);
             String request = rawString(target.get("request"));
@@ -509,13 +424,14 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private Map probeHttp(Map target, int timeout, int maxRead) {
         long started = System.currentTimeMillis();
         HttpURLConnection connection = null;
+        InputStream input = null;
         try {
             String baseUrl = stringValue(target.get("baseUrl"));
             if (baseUrl.length() == 0) {
                 baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
                         + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
             }
-            connection = (HttpURLConnection) new URL(baseUrl).openConnection();
+            connection = (HttpURLConnection) new URL(baseUrl).openConnection(Proxy.NO_PROXY);
             connection.setConnectTimeout(timeout);
             connection.setReadTimeout(timeout);
             connection.setUseCaches(false);
@@ -526,7 +442,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 https.setHostnameVerifier((HostnameVerifier) java.lang.reflect.Proxy.newProxyInstance(
                         Thread.currentThread().getContextClassLoader(), new Class[]{HostnameVerifier.class}, this));
             }
-            connection.setRequestMethod("HEAD");
+            // The stage name remains http-head for wire compatibility with
+            // existing plans. A small GET is required to extract the page title.
+            connection.setRequestMethod("GET");
             connection.setRequestProperty("User-Agent", "LeoAi-NetworkProbe/1.0");
             Map headers = (Map) target.get("headers");
             if (headers != null) {
@@ -538,17 +456,65 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 }
             }
             int status = connection.getResponseCode();
+            input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            byte[] bytes = input == null ? new byte[0] : readBytes(input, maxRead, false);
+            String contentType = connection.getHeaderField("Content-Type");
             HashMap evidence = new HashMap();
             evidence.put("statusCode", Integer.valueOf(status));
+            int contentLength = connection.getContentLength();
+            evidence.put("responseSize", Integer.valueOf(contentLength >= 0 ? contentLength : bytes.length));
             addHeader(evidence, "server", connection.getHeaderField("Server"), maxRead);
             addHeader(evidence, "location", connection.getHeaderField("Location"), maxRead);
-            addHeader(evidence, "contentType", connection.getHeaderField("Content-Type"), maxRead);
+            addHeader(evidence, "contentType", contentType, maxRead);
+            evidence.put("bodyLength", Integer.valueOf(bytes.length));
+            String title = extractTitle(decodeHttpBody(bytes, contentType));
+            if (title.length() > 0) evidence.put("title", title);
             return baseObservation(target, "http-head", "open", started, null, null, evidence);
         } catch (Throwable error) {
             return baseObservation(target, "http-head", "error", started, errorCode(error), messageOf(error), null);
         } finally {
+            closeQuietly(input);
             if (connection != null) connection.disconnect();
         }
+    }
+
+    private static String decodeHttpBody(byte[] bytes, String contentType) {
+        if (bytes == null || bytes.length == 0) return "";
+        String charsetName = "UTF-8";
+        String value = contentType == null ? "" : contentType;
+        String lower = value.toLowerCase(Locale.ENGLISH);
+        int marker = lower.indexOf("charset=");
+        if (marker >= 0) {
+            int start = marker + 8;
+            int end = start;
+            while (end < value.length()) {
+                char ch = value.charAt(end);
+                if (ch == ';' || ch == ' ' || ch == '\t' || ch == '\"' || ch == '\'') break;
+                end++;
+            }
+            if (end > start) charsetName = value.substring(start, end).trim();
+        }
+        try {
+            return new String(bytes, Charset.forName(charsetName));
+        } catch (Exception ignored) {
+            try { return new String(bytes, "UTF-8"); }
+            catch (Exception impossible) { return ""; }
+        }
+    }
+
+    private static String extractTitle(String body) {
+        if (body == null || body.length() == 0) return "";
+        Matcher matcher = TITLE_PATTERN.matcher(body);
+        if (!matcher.find()) return "";
+        String title = matcher.group(1).replaceAll("<[^>]*>", "")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replaceAll("\\s+", " ").trim();
+        title = sanitize(title);
+        return title.length() > MAX_TITLE_CHARS ? title.substring(0, MAX_TITLE_CHARS) : title;
     }
 
     private Map probeHttpRequest(Map target, int timeout, int maxRead) {
@@ -566,7 +532,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             }
             String path = stringValue(request.get("path"));
             String url = buildProbeUrl(baseUrl, path);
-            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
             connection.setConnectTimeout(timeout);
             connection.setReadTimeout(timeout);
             connection.setUseCaches(false);
@@ -648,38 +614,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return baseUrl + normalized;
     }
 
-    private Map probeTls(Map target, int timeout) {
-        long started = System.currentTimeMillis();
-        SSLSocket socket = null;
-        try {
-            SSLSocketFactory factory = trustAllFactory();
-            socket = (SSLSocket) factory.createSocket();
-            socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
-            socket.setSoTimeout(timeout);
-            socket.startHandshake();
-            SSLSession session = socket.getSession();
-            HashMap evidence = new HashMap();
-            evidence.put("protocol", session.getProtocol());
-            evidence.put("cipherSuite", session.getCipherSuite());
-            try {
-                Certificate[] certificates = session.getPeerCertificates();
-                evidence.put("certificateCount", Integer.valueOf(certificates.length));
-                if (certificates.length > 0 && certificates[0] instanceof X509Certificate) {
-                    X509Certificate certificate = (X509Certificate) certificates[0];
-                    evidence.put("subject", sanitize(String.valueOf(certificate.getSubjectDN().getName())));
-                    evidence.put("issuer", sanitize(String.valueOf(certificate.getIssuerDN().getName())));
-                    evidence.put("notAfter", Long.valueOf(certificate.getNotAfter().getTime()));
-                }
-            } catch (SSLPeerUnverifiedException ignored) {
-            }
-            return baseObservation(target, "tls-handshake", "open", started, null, null, evidence);
-        } catch (Throwable error) {
-            return baseObservation(target, "tls-handshake", "error", started, errorCode(error), messageOf(error), null);
-        } finally {
-            closeQuietly(socket);
-        }
-    }
-
     private Map baseObservation(Map target, String stage, String state, long started,
                                 String errorCode, String errorMessage, Map evidence) {
         HashMap observation = new HashMap();
@@ -740,9 +674,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             results.put("msg", "network probe task not found: " + id);
             return;
         }
-        long cursor = Math.max(0L, longValue(input.get("cursor"), 0L));
-        int maxItems = boundedInt(input.get("maxItems"), 128, 1, 512);
-        int maxBytes = boundedInt(input.get("maxBytes"), 524288, 4096, 1048576);
+        long cursor = longValue(input.get("cursor"), 0L);
+        int maxItems = intValue(input.get("maxItems"), 128);
+        int maxBytes = intValue(input.get("maxBytes"), 524288);
         boolean includeEvidence = !Boolean.FALSE.equals(input.get("includeEvidence"));
         int base;
         List observations = (List) task.get("observations");
@@ -752,10 +686,8 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             snapshot = baseSnapshot(task);
             synchronized (observations) {
                 base = intValue(task.get("observationOffset"), 0);
-                long requested = Math.max(cursor, (long) base);
+                long requested = cursor;
                 int start = requested > Integer.MAX_VALUE ? observations.size() : (int) requested - base;
-                if (start < 0) start = 0;
-                if (start > observations.size()) start = observations.size();
                 ArrayList page = new ArrayList();
                 int bytes = 0;
                 int index = start;
@@ -953,20 +885,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return result.toString().trim();
     }
 
-    private static int boundedInt(Object value, int fallback, int min, int max) {
-        int result = fallback;
-        if (value instanceof Number) result = ((Number) value).intValue();
-        else if (value != null) {
-            try { result = Integer.parseInt(String.valueOf(value).trim()); }
-            catch (RuntimeException ignored) { result = fallback; }
-        }
-        if (result < min) return min;
-        if (result > max) return max;
-        return result;
-    }
-
     private static int intValue(Object value, int fallback) {
-        return value instanceof Number ? ((Number) value).intValue() : boundedInt(value, fallback, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        if (value instanceof Number) return ((Number) value).intValue();
+        if (value != null) {
+            try { return Integer.parseInt(String.valueOf(value).trim()); }
+            catch (RuntimeException ignored) { }
+        }
+        return fallback;
     }
 
     private static long longValue(Object value, long fallback) {
@@ -997,17 +922,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             List source = (List) value;
             int end = Math.min(source.size(), Math.max(0, limit));
             return new ArrayList(source.subList(0, end));
-        }
-    }
-
-    private static void validateHost(String host, int index) {
-        if (host.length() > 253 || host.indexOf('\r') >= 0 || host.indexOf('\n') >= 0) {
-            throw new IllegalArgumentException("targets[" + index + "] host is invalid");
-        }
-        for (int i = 0; i < host.length(); i++) {
-            if (Character.isWhitespace(host.charAt(i))) {
-                throw new IllegalArgumentException("targets[" + index + "] host contains whitespace");
-            }
         }
     }
 

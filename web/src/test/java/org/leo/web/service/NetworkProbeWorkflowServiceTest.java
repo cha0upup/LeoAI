@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
+import org.leo.web.exception.ApiException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,8 +17,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NetworkProbeWorkflowServiceTest {
@@ -38,7 +41,7 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
-    void runsReachabilityPortServiceAndReconAsOneTask() throws Exception {
+    void runsReachabilityPortAndServiceIdentificationAsOneTask() throws Exception {
         WorkflowNode node = new WorkflowNode();
         String taskId = String.valueOf(service.start("session-1", node, Map.of(
                 "hosts", List.of("host-a"),
@@ -52,14 +55,42 @@ class NetworkProbeWorkflowServiceTest {
         List<?> stages = (List<?>) snapshot.get("stages");
 
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
-        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "RECON"),
+        assertEquals(NetworkProbeWorkflowService.KIND, snapshot.get("scanKind"));
+        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"),
                 stages.stream().map(stage -> ((Map<?, ?>) stage).get("name")).toList());
         assertTrue(stages.stream().allMatch(stage -> "COMPLETED".equals(((Map<?, ?>) stage).get("status"))));
-        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "RECON"), node.startedStages);
+        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "SERVICE_PROBE"),
+                node.startedStages);
         assertEquals(List.of("host-a"), snapshot.get("reachableHostList"));
         assertEquals(1, ((List<?>) snapshot.get("openPortResults")).size());
         assertEquals("http", ((Map<?, ?>) ((List<?>) snapshot.get("openPortResults")).get(0)).get("service"));
-        assertEquals(1, ((Map<?, ?>) snapshot.get("reconAnalysis")).get("hitCount"));
+    }
+
+    @Test
+    void probesUnknownNonStandardPortsForHttpAndSkipsKnownTcpServices() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        node.openPorts = Set.of(80, 18080, 5432);
+        String taskId = String.valueOf(service.start("session-1", node, Map.of(
+                "hosts", List.of("host-a"),
+                "ports", List.of(80, 18080, 5432),
+                "probeServices", true,
+                "ruleSelector", Map.of())).get("taskId"));
+
+        Map<String, Object> snapshot = awaitTerminal(taskId);
+        List<Map<String, Object>> openPorts = (List<Map<String, Object>>) snapshot.get("openPortResults");
+
+        Map<String, Object> web = openPorts.stream()
+                .filter(endpoint -> Integer.valueOf(18080).equals(endpoint.get("port")))
+                .findFirst().orElseThrow();
+        Map<String, Object> postgres = openPorts.stream()
+                .filter(endpoint -> Integer.valueOf(5432).equals(endpoint.get("port")))
+                .findFirst().orElseThrow();
+        assertEquals("https", web.get("service"));
+        assertEquals(200, web.get("statusCode"));
+        assertEquals("postgresql", postgres.get("service"));
+        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "SERVICE_PROBE",
+                        "SERVICE_PROBE"),
+                node.startedStages);
     }
 
     @Test
@@ -79,12 +110,11 @@ class NetworkProbeWorkflowServiceTest {
         assertEquals("COMPLETED", ((Map<?, ?>) stages.get(0)).get("status"));
         assertEquals("SKIPPED", ((Map<?, ?>) stages.get(1)).get("status"));
         assertEquals("SKIPPED", ((Map<?, ?>) stages.get(2)).get("status"));
-        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(3)).get("status"));
         assertTrue(node.startedStages.size() == 1);
     }
 
     @Test
-    void quickDepthSkipsServiceAndReconStages() throws Exception {
+    void quickDepthSkipsServiceIdentification() throws Exception {
         WorkflowNode node = new WorkflowNode();
         String taskId = String.valueOf(service.start("session-1", node, Map.of(
                 "hosts", List.of("host-a"),
@@ -98,7 +128,46 @@ class NetworkProbeWorkflowServiceTest {
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
         assertEquals(List.of("REACHABILITY", "PORT_SCAN"), node.startedStages);
         assertEquals("SKIPPED", ((Map<?, ?>) stages.get(2)).get("status"));
-        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(3)).get("status"));
+    }
+
+    @Test
+    void acceptsDerivedOpenPortResultsFromCompletedPortStage() throws Exception {
+        Method method = NetworkProbeWorkflowService.class.getDeclaredMethod("openEndpoints", Map.class);
+        method.setAccessible(true);
+        Map<String, Object> result = Map.of("openPortResults", List.of(Map.of(
+                "host", "host-a", "port", 8080, "state", "open")));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> endpoints = (List<Map<String, Object>>) method.invoke(service, result);
+        assertEquals(1, endpoints.size());
+        assertEquals("host-a", endpoints.get(0).get("host"));
+        assertEquals(8080, endpoints.get(0).get("port"));
+    }
+
+    @Test
+    void identifiesBinaryMysqlHandshakeWithoutMysqlWord() throws Exception {
+        Method method = NetworkProbeWorkflowService.class
+                .getDeclaredMethod("detectService", String.class, int.class);
+        method.setAccessible(true);
+        String handshake = "J\n8.0.43\u0000\u0010\u0000caching_sha2_password";
+        assertEquals("mysql", method.invoke(null, handshake, 3306));
+    }
+
+    @Test
+    void deletesCompletedWorkflowFromLiveRegistry() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        String taskId = String.valueOf(service.start("session-1", node, Map.of(
+                "hosts", List.of("host-a"),
+                "ports", List.of(80),
+                "probeServices", false,
+                "ruleSelector", Map.of())).get("taskId"));
+
+        awaitTerminal(taskId);
+
+        assertEquals("DELETED", service.delete("session-1", taskId).get("status"));
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.query("session-1", taskId));
+        assertEquals(404, error.getCode());
     }
 
     @Test
@@ -173,12 +242,8 @@ class NetworkProbeWorkflowServiceTest {
     private static final class WorkflowNode implements NetworkProbeCapable {
         private final Map<String, Map<String, Object>> tasks = new LinkedHashMap<>();
         private final List<String> startedStages = new ArrayList<>();
+        private Set<Integer> openPorts = Set.of(80);
         private boolean reachable = true;
-
-        @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
 
         @Override
         @SuppressWarnings("unchecked")
@@ -186,6 +251,7 @@ class NetworkProbeWorkflowServiceTest {
             List<Map<String, Object>> targets = (List<Map<String, Object>>) plan.get("targets");
             List<String> stages = (List<String>) plan.get("stages");
             String stage = stages.contains("http-request") ? "RECON"
+                    : stages.contains("http-head") ? "SERVICE_PROBE"
                     : stages.contains("tcp-exchange") ? "SERVICE_PROBE"
                     : targets.get(0).containsKey("targetId") ? "REACHABILITY" : "PORT_SCAN";
             startedStages.add(stage);
@@ -219,10 +285,27 @@ class NetworkProbeWorkflowServiceTest {
                     }
                 } else if ("PORT_SCAN".equals(stage)) {
                     observation.put("stage", "tcp-connect");
-                    observation.put("state", Integer.valueOf(80).equals(target.get("port")) ? "open" : "closed");
+                    observation.put("state", openPorts.contains(target.get("port")) ? "open" : "closed");
                 } else if ("SERVICE_PROBE".equals(stage)) {
-                    observation.put("stage", "tcp-exchange");
-                    observation.put("evidence", Map.of("statusCode", 200, "server", "nginx"));
+                    if ("http-head".equals(target.get("stage"))) {
+                        observation.put("stage", "http-head");
+                        if (Integer.valueOf(18080).equals(target.get("port"))
+                                && "http".equals(target.get("protocol"))) {
+                            observation.put("state", "error");
+                            observation.put("error", "plaintext request rejected");
+                        } else {
+                            observation.put("evidence", Map.of(
+                                    "statusCode", "https".equals(target.get("protocol")) ? 200 : 405,
+                                    "server", "test-server"));
+                        }
+                    } else {
+                        observation.put("stage", "tcp-exchange");
+                        if (Integer.valueOf(5432).equals(target.get("port"))) {
+                            observation.put("evidence", Map.of("banner", "PostgreSQL 16.0"));
+                        } else if (Integer.valueOf(80).equals(target.get("port"))) {
+                            observation.put("evidence", Map.of("statusCode", 200, "server", "test-server"));
+                        }
+                    }
                 } else {
                     observation.put("stage", "http-request");
                     observation.put("evidence", Map.of("statusCode", 200, "body", "nginx"));
@@ -252,11 +335,6 @@ class NetworkProbeWorkflowServiceTest {
         private final AtomicInteger resumeCalls = new AtomicInteger();
         private final AtomicInteger stopCalls = new AtomicInteger();
         private volatile boolean stopped;
-
-        @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
 
         @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
@@ -311,11 +389,6 @@ class NetworkProbeWorkflowServiceTest {
         private final List<String> startedStages = new ArrayList<>();
 
         @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
-        @Override
         @SuppressWarnings("unchecked")
         public synchronized Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             List<String> stages = (List<String>) plan.get("stages");
@@ -344,7 +417,7 @@ class NetworkProbeWorkflowServiceTest {
 
     private static final class StubFingerprintManageService extends FingerprintManageService {
         private final Map<String, HashMap<String, Object>> fingerprints = Map.of(
-                "nginx_any", fingerprint("nginx_any", "nginx", "http", List.of("web", "server")));
+                "web_any", fingerprint("web_any", "nginx", "http", List.of("web", "server")));
 
         @Override
         public List<Map<String, Object>> listFingerprints() {

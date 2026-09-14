@@ -18,10 +18,6 @@ public class NetworkProbeService extends ComponentService {
         super(communication, requestLayers, responseLayers);
     }
 
-    public Map<String, Object> networkProbeCapabilities() throws Exception {
-        return invokeComponent(COMPONENT, params("capabilities"));
-    }
-
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         HashMap<String, Object> params = params("startTask");
         params.put("plan", plan);

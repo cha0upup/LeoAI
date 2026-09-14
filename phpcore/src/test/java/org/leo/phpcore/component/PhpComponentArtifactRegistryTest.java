@@ -97,7 +97,7 @@ class PhpComponentArtifactRegistryTest {
         assertTrue(reverse.contains("count($clients) >= 256"));
         assertTrue(reverse.contains("count($entries) >= 32"));
 
-        assertTrue(scan.contains("count($targets) > 128"));
+        assertFalse(scan.contains("count($targets) > 128"));
 
         String terminal = new String(registry.getRequired("ExecCommandComponent").getContent(), StandardCharsets.UTF_8);
         assertTrue(terminal.contains("@rename($temporary, $path)"));

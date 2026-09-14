@@ -121,7 +121,7 @@ public class AiToolExposurePolicy {
         add(result, "terminal", "queryTask", "stopTask");
         add(result, "file", "startDownloadTask", "startUploadTask",
                 "stageRemoteFileToWorkspace", "queryRemoteFileStage", "readTextFile");
-        add(result, "networkProbe", "networkProbeCapabilities", "startNetworkProbe",
+        add(result, "networkProbe", "startNetworkProbe",
                 "queryNetworkProbe", "pauseNetworkProbe", "resumeNetworkProbe", "stopNetworkProbe");
         add(result, "credentialHarvest", "harvestAll");
         add(result, "webRuntimeManage", "inspectWebRuntime", "removeWebRuntimeComponent");

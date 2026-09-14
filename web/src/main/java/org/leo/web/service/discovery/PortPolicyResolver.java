@@ -46,7 +46,7 @@ public class PortPolicyResolver {
      */
     public List<Integer> resolve(PortPolicy policy) {
         if (policy == null) {
-            return toList(STANDARD_PORTS);
+            return toList(QUICK_PORTS);
         }
 
         Set<Integer> ports = new LinkedHashSet<>();

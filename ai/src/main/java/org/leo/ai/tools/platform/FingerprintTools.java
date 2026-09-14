@@ -22,14 +22,11 @@ public class FingerprintTools {
         this.fingerprintManageService = fingerprintManageService;
     }
 
-    @Tool("列出平台指纹摘要。protocol 可选；为空返回全部指纹。每项返回 fingerprintId、protocol、name、tags、info。")
+    @Tool("列出平台全部 HTTP 指纹摘要。每项返回 fingerprintId、protocol、name、tags、info。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Map<String, Object>> listFingerprints(
-            @P(value = "可选协议类型，如 http、tcp", required = false) String protocol) {
-        return protocol == null || protocol.isBlank()
-                ? fingerprintManageService.listFingerprints()
-                : fingerprintManageService.getFingerprintsByProtocol(protocol.trim());
+    public List<Map<String, Object>> listFingerprints() {
+        return fingerprintManageService.listFingerprints();
     }
 
     @Tool("根据 fingerprintId 获取指纹完整配置，返回完整对象，包括 rule。")
@@ -45,10 +42,9 @@ public class FingerprintTools {
             @P("指纹名称") String name,
             @P("匹配规则 JSON") String ruleJson,
             @P(value = "指纹信息 JSON；可包含 version", required = false) String infoJson,
-            @P(value = "协议类型，如 http、tcp", required = false) String protocol,
             @P(value = "标签数组 JSON", required = false) String tagsJson,
             @P(value = "版本；省略时尝试从 infoJson.version 读取", required = false) String version) throws Exception {
-        return fingerprintManageService.saveFingerprint(userId, name, ruleJson, infoJson, protocol, tagsJson, version);
+        return fingerprintManageService.saveFingerprint(userId, name, ruleJson, infoJson, tagsJson, version);
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,

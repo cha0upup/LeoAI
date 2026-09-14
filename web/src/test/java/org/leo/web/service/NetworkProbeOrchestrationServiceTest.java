@@ -50,12 +50,11 @@ class NetworkProbeOrchestrationServiceTest {
         assertEquals(260, snapshot.get("total"));
         assertEquals(260, snapshot.get("completed"));
         assertEquals(100, snapshot.get("progress"));
-        assertEquals(3, snapshot.get("batchCount"));
-        assertEquals(List.of(128, 128, 4), node.batchSizes);
-        assertEquals(3, node.released.size());
+        assertEquals(1, snapshot.get("batchCount"));
+        assertEquals(List.of(260), node.batchSizes);
+        assertEquals(1, node.released.size());
         assertEquals(260, ((List<?>) snapshot.get("observations")).size());
         assertEquals(64, ((Map<?, ?>) node.startedPlans.get(0).get("limits")).get("threads"));
-        assertEquals(4, ((Map<?, ?>) node.startedPlans.get(2).get("limits")).get("threads"));
     }
 
     @Test
@@ -165,11 +164,6 @@ class NetworkProbeOrchestrationServiceTest {
         private final Map<String, List<Map<String, Object>>> tasks = new LinkedHashMap<>();
 
         @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
-        @Override
         @SuppressWarnings("unchecked")
         public synchronized Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             List<Map<String, Object>> targets = (List<Map<String, Object>>) plan.get("targets");
@@ -234,11 +228,6 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
-        @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             started.countDown();
             return Map.of("code", 200, "taskId", "child-1");
@@ -289,11 +278,6 @@ class NetworkProbeOrchestrationServiceTest {
 
     private static final class FailedNode implements NetworkProbeCapable {
         @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
-        @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "failed-child");
         }
@@ -334,11 +318,6 @@ class NetworkProbeOrchestrationServiceTest {
 
     private static final class CancelledNode implements NetworkProbeCapable {
         @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
-        @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "cancelled-child");
         }
@@ -363,11 +342,6 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class IncrementalNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> networkProbeCapabilities() {
-            return Map.of("code", 200);
-        }
-
         @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "incremental-child");

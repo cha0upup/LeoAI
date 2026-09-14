@@ -10,8 +10,6 @@ import java.util.Map;
  */
 public interface NetworkProbeCapable {
 
-    Map<String, Object> networkProbeCapabilities() throws Exception;
-
     Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception;
 
     /**

@@ -19,6 +19,7 @@ public final class NetworkDiscoveryDtos {
             TargetInput targets,
             PortPolicy portPolicy,
             ExecutionConfig execution,
+            /** Reserved for the later fingerprint phase; ignored by the service-only workflow. */
             FingerprintConfig fingerprint
     ) {}
 
@@ -66,7 +67,7 @@ public final class NetworkDiscoveryDtos {
             String host,               // 原始域名或地址
             String ip,                 // 实际解析地址
             Integer port,              // 目标端口
-            String protocol,           // tcp/http/https/udp
+            String protocol,           // tcp/http/https
             String source,             // 来源：手工、CIDR、文件等
             String rawTarget           // 原始输入，用于保留 URL 主机、路径和协议
     ) {}

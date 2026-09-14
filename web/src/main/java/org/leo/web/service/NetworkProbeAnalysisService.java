@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class NetworkProbeAnalysisService {
 
     private static final int MAX_RULES = 64;
-    private static final int MAX_READ_BYTES = 8192;
+    private static final int MAX_READ_BYTES = NetworkProbeLimits.NODE_MAX_READ_BYTES;
     private static final long CONTEXT_TTL_MS = 2L * 60L * 60L * 1000L;
     private static final List<Integer> REACHABILITY_PORTS = NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS;
 
@@ -50,10 +50,17 @@ public class NetworkProbeAnalysisService {
         List<RuleDefinition> rules = "fingerprint".equals(kind)
                 ? resolveFingerprintRules(rawScan.get("fingerprintIds"))
                 : resolveReconRules(rawScan.get("ruleSelector"));
+        // The workflow's RECON stage is intentionally HTTP-only. TCP Banner
+        // detection remains part of SERVICE_PROBE and is handled by the
+        // built-in service classifier, not by configurable fingerprint rules.
+        rules = rules.stream()
+                .filter(rule -> "http".equalsIgnoreCase(rule.protocol()))
+                .toList();
         if (rules.isEmpty()) throw new IllegalArgumentException("没有匹配到可执行的指纹规则");
         if (rules.size() > MAX_RULES) throw new IllegalArgumentException("一次最多执行" + MAX_RULES + "条指纹规则");
 
-        int threads = boundedInt(rawScan.get("threads"), 10, 1, 64);
+        int threads = boundedInt(rawScan.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
+                1, NetworkProbeLimits.NODE_MAX_THREADS);
         Map<String, Map<String, Object>> targetsById = new LinkedHashMap<>();
         for (Map<String, Object> target : sourceTargets) {
             targetsById.putIfAbsent(targetId(target), target);
@@ -93,7 +100,7 @@ public class NetworkProbeAnalysisService {
         limits.put("maxReadBytes", Integer.valueOf(maxReadBytes(probes)));
         Map<String, Object> plan = new LinkedHashMap<>();
         plan.put("targets", probes);
-        plan.put("stages", stageList("tcp-exchange", "http-request"));
+        plan.put("stages", stageList("http-request"));
         plan.put("limits", limits);
 
         Map<String, RuleDefinition> rulesById = new LinkedHashMap<>();
@@ -174,8 +181,9 @@ public class NetworkProbeAnalysisService {
             }
         }
         if (probes.isEmpty()) throw new IllegalArgumentException("scan.targets不能为空");
-        int timeout = boundedInt(rawScan.get("timeout"), 3000, 100, 300000);
-        int threads = boundedInt(rawScan.get("threads"), 32, 1, 64);
+        int timeout = boundedInt(rawScan.get("timeout"), NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS, 100, 300000);
+        int threads = boundedInt(rawScan.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
+                1, NetworkProbeLimits.NODE_MAX_THREADS);
         Map<String, Object> plan = new LinkedHashMap<>();
         plan.put("targets", probes);
         plan.put("stages", stageList("tcp-connect"));
@@ -336,11 +344,8 @@ public class NetworkProbeAnalysisService {
         Map<?, ?> selector = value instanceof Map<?, ?> map ? map : Collections.emptyMap();
         Object idsValue = selector.get("fingerprintIds");
         if (idsValue instanceof Collection<?> ids && !ids.isEmpty()) return resolveFingerprintRules(ids);
-        String protocol = text(selector.get("protocol")).toLowerCase(Locale.ROOT);
         Set<String> tags = textSet(selector.get("tags"));
-        List<Map<String, Object>> summaries = protocol.isEmpty()
-                ? fingerprintManageService.listFingerprints()
-                : fingerprintManageService.getFingerprintsByProtocol(protocol);
+        List<Map<String, Object>> summaries = fingerprintManageService.listFingerprints();
         List<RuleDefinition> result = new ArrayList<>();
         for (Map<String, Object> summary : summaries) {
             if (!tags.isEmpty() && disjoint(tags, textSet(summary.get("tags")))) continue;
@@ -357,20 +362,8 @@ public class NetworkProbeAnalysisService {
     private boolean relevantToService(Map<String, Object> target, RuleDefinition rule) {
         String service = text(target.get("service")).toLowerCase(Locale.ROOT);
         if (service.isEmpty() || "unknown".equals(service)) return true;
-        if ("http".equals(service) || "https".equals(service)) return "http".equals(rule.protocol());
-        if (!"tcp".equals(rule.protocol())) return false;
-        if (containsToken(rule.id(), service) || containsToken(rule.name(), service)) return true;
-        for (String tag : rule.tags()) if (containsToken(tag, service)) return true;
+        if ("http".equals(service) || "https".equals(service)) return true;
         return false;
-    }
-
-    private boolean containsToken(String value, String token) {
-        String normalized = text(value).toLowerCase(Locale.ROOT);
-        return normalized.equals(token)
-                || normalized.startsWith(token + "_")
-                || normalized.endsWith("_" + token)
-                || normalized.contains("-" + token)
-                || normalized.contains(token + "-");
     }
 
     private RuleDefinition toRule(Map<String, Object> fingerprint) {
@@ -400,25 +393,20 @@ public class NetworkProbeAnalysisService {
         probe.put("probeId", targetId + "|" + rule.id() + "|" + requestIndex);
         probe.put("ruleId", rule.id());
         probe.put("requestIndex", Integer.valueOf(requestIndex));
-        probe.put("timeout", Integer.valueOf(boundedInt(request.get("timeout"), 3000, 100, 300000)));
+        probe.put("timeout", Integer.valueOf(boundedInt(request.get("timeout"),
+                    NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS, 100, 300000)));
         probe.put("maxReadBytes", Integer.valueOf(boundedInt(request.get("maxBodyBytes"),
                 MAX_READ_BYTES, 256, MAX_READ_BYTES)));
-        if ("tcp".equals(rule.protocol())) {
-            probe.put("protocol", "tcp");
-            probe.put("stage", "tcp-exchange");
-            if (request.containsKey("body")) probe.put("request", rawText(request.get("body")));
-        } else {
-            probe.put("stage", "http-request");
-            Map<String, Object> httpRequest = new LinkedHashMap<>();
-            httpRequest.put("method", defaultText(request.get("method"), "GET"));
-            String path = text(request.get("uri"));
-            if (path.isEmpty()) path = defaultText(request.get("path"), "/");
-            httpRequest.put("path", path);
-            httpRequest.put("charset", defaultText(request.get("charset"), "UTF-8"));
-            copyIfPresent(request, httpRequest, "headers");
-            copyIfPresent(request, httpRequest, "body");
-            probe.put("httpRequest", httpRequest);
-        }
+        probe.put("stage", "http-request");
+        Map<String, Object> httpRequest = new LinkedHashMap<>();
+        httpRequest.put("method", defaultText(request.get("method"), "GET"));
+        String path = text(request.get("uri"));
+        if (path.isEmpty()) path = defaultText(request.get("path"), "/");
+        httpRequest.put("path", path);
+        httpRequest.put("charset", defaultText(request.get("charset"), "UTF-8"));
+        copyIfPresent(request, httpRequest, "headers");
+        copyIfPresent(request, httpRequest, "body");
+        probe.put("httpRequest", httpRequest);
         return probe;
     }
 
@@ -434,18 +422,11 @@ public class NetworkProbeAnalysisService {
             }
             Map<String, Object> evidence = observation.get("evidence") instanceof Map<?, ?> map
                     ? castMap(map) : Collections.emptyMap();
-            String stage = text(observation.get("stage"));
-            if ("tcp-exchange".equals(stage)) {
-                response.put("raw", defaultText(evidence.get("banner"), ""));
-                response.put("bodyLength", evidence.getOrDefault("bytes", Integer.valueOf(0)));
-                response.put("truncated", evidence.getOrDefault("truncated", Boolean.FALSE));
-            } else {
-                response.put("status", evidence.get("statusCode"));
-                response.put("body", defaultText(evidence.get("body"), ""));
-                response.put("bodyLength", evidence.getOrDefault("bodyLength", Integer.valueOf(0)));
-                response.put("truncated", evidence.getOrDefault("truncated", Boolean.FALSE));
-                response.put("headers", defaultText(evidence.get("headers"), ""));
-            }
+            response.put("status", evidence.get("statusCode"));
+            response.put("body", defaultText(evidence.get("body"), ""));
+            response.put("bodyLength", evidence.getOrDefault("bodyLength", Integer.valueOf(0)));
+            response.put("truncated", evidence.getOrDefault("truncated", Boolean.FALSE));
+            response.put("headers", defaultText(evidence.get("headers"), ""));
             responses.add(response);
         }
         return responses;
@@ -645,10 +626,6 @@ public class NetworkProbeAnalysisService {
     private static String defaultText(Object value, String fallback) {
         String result = text(value);
         return result.isEmpty() ? fallback : result;
-    }
-
-    private static String rawText(Object value) {
-        return value == null ? "" : String.valueOf(value);
     }
 
     private static String text(Object value) {

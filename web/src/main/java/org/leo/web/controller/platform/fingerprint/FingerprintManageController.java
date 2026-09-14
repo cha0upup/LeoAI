@@ -47,18 +47,6 @@ public class FingerprintManageController {
         }
     }
 
-    @RequestMapping(value = "/fingerprints/by-protocol", method = RequestMethod.POST)
-    public HashMap<String, Object> getFingerprintsByProtocol(@RequestBody HashMap<String, Object> params) {
-        try {
-            String protocol = ControllerUtil.getRequiredStringParam(params, "protocol");
-            return ApiResponse.success(fingerprintManageService.getFingerprintsByProtocol(protocol));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (Exception e) {
-            return ApiResponse.error("按协议获取指纹失败: " + e.getMessage());
-        }
-    }
-
     @RequestMapping(value = "/fingerprints/get", method = RequestMethod.POST)
     public HashMap<String, Object> getFingerprint(@RequestBody HashMap<String, Object> params) {
         try {

@@ -341,7 +341,6 @@ NetworkProbeComponent 的 `methodName`：
 
 | methodName | 返回 |
 |---|---|
-| `capabilities` | `code, component, stages, limits` |
 | `startTask` | `code, taskId` |
 | `queryTask` | `code, result`；请求 `taskId, cursor, maxItems, maxBytes, includeEvidence`，返回 `incremental, cursor, nextCursor, hasMore, observations[]` |
 | `ackTask` | `code, cursor`；仅在服务端完成持久化后确认游标，节点才可回收已确认页 |
@@ -352,18 +351,18 @@ NetworkProbeComponent 的 `methodName`：
 
 主机探活不再使用单独的原子接口。调用方通过
 `/puppet-node/network-probe/workflow/start` 提交 `scan.targets.items[]`、
-`scan.portPolicy`、`scan.execution` 和 `scan.depth`，再复用 workflow 的
+`scan.portPolicy` 和 `scan.execution`，再复用 workflow 的
 `query / pause / resume / stop` 生命周期。服务端负责目标解析、端口策略展开和阶段编排。
 
 逻辑任务的 `result` 包含 `taskId, scanKind, status, outcome, total, completed, progress, batchCount, batchIndex, targets, plan, observations, errors, createdAt, finishedAt?`。`status` 供任务控制使用，取值为 `RUNNING / PAUSED / STOPPED`；`outcome` 表示最终结果，取值为 `RUNNING / COMPLETED / CANCELLED / FAILED`。`batchIndex` 是已启动的批次数，`batchCount` 是总批次数。节点 observations 通过游标增量页传输并在服务端持久化，前端不得依赖完整结果数组。
 
 ### 6.5.1 单任务多阶段扫描工作流
 
-工作流 API 将探活、端口扫描、服务识别和指纹侦察串联为一个用户可见任务：
+工作流 API 将探活、端口扫描和服务识别串联为一个用户可见任务。HTTP 指纹和漏洞验证暂不属于该工作流：
 
 | API | 请求关键字段 | 返回 |
 |---|---|---|
-| `POST /puppet-node/network-probe/workflow/start` | `sessionId, scan.targets.items[], scan.portPolicy, scan.execution?, scan.depth?, scan.fingerprint?` | `code:200, taskId` |
+| `POST /puppet-node/network-probe/workflow/start` | `sessionId, scan.targets.items[], scan.portPolicy, scan.execution?` | `code:200, taskId` |
 | `POST /puppet-node/network-probe/workflow/query` | `sessionId, taskId` | `code:200, result` |
 | `POST /puppet-node/network-probe/workflow/pause` | `sessionId, taskId` | `code:200, status:PAUSED` |
 | `POST /puppet-node/network-probe/workflow/resume` | `sessionId, taskId` | `code:200, status:RUNNING` |
@@ -372,13 +371,13 @@ NetworkProbeComponent 的 `methodName`：
 | `POST /puppet-node/network-probe/workflow/results/query` | `sessionId, taskId, page, pageSize, filter?, sort?` | `code:200, total, page, pageSize, hasMore, endpoints[]` |
 | `POST /puppet-node/network-probe/workflow/evidence/query` | `sessionId, taskId, endpointId` | `code:200, endpointId, evidence[]`；证据按需读取 |
 
-工作流 `result` 包含 `scanKind=network-workflow`、`status`、`outcome`、`progress`、`currentStage`、`stageCount`、`completedStageCount`、`stages[]`、`reachableHostList`、`openPortResults`、`serviceResults` 和 `reconAnalysis`。`stages[]` 的阶段名固定为 `REACHABILITY`、`PORT_SCAN`、`SERVICE_PROBE`、`RECON`，每个阶段包含 `status`、`progress`、`total`、`completed`，因前置阶段无结果时可标记为 `SKIPPED` 并返回 `reason`。
+工作流 `result` 包含 `scanKind=network-workflow`、`status`、`outcome`、`progress`、`currentStage`、`stageCount`、`completedStageCount`、`stages[]`、`reachableHostList`、`openPortResults` 和 `serviceResults`。`stages[]` 的阶段名固定为 `REACHABILITY`、`PORT_SCAN`、`SERVICE_PROBE`，每个阶段包含 `status`、`progress`、`total`、`completed`，因前置阶段无结果时可标记为 `SKIPPED` 并返回 `reason`。
 
 工作流只在服务侧做阶段编排和结果聚合，底层网络连接、读取和节点任务生命周期仍复用 NetworkProbeComponent；`probeServices=false` 时跳过服务识别阶段，未发现存活主机或开放端口时自动跳过后续阶段。
 
 结果面采用“节点游标分页 + 服务端 SQLite 持久化 + 前端服务端分页”。单页同时受条数和字节数上限约束，ACK 丢失时允许重放并由服务端去重；大证据默认不随列表返回，只通过 evidence API 按端点读取。
 
-节点只返回受限网络证据；指纹和侦察规则由服务侧的声明式 `rule.match` 在 `result.analysis` 中聚合。
+节点只返回受限网络证据；当前工作流只聚合端口和服务识别结果。
 探活任务的 `result.analysis` 额外包含 `kind=reachability, total, completed,
 reachableHostList, unreachableHostList, pendingHostList, hitCount`。运行期间仅完成全部探测且未开放端口的主机进入 `unreachableHostList`，未完成主机不会被误报为不可达。
 

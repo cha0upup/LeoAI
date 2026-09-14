@@ -39,21 +39,10 @@ public class FingerprintManageService {
             return list;
         }
         for (File file : files) {
-            list.add(toFingerprintSummary(file));
+            Map<String, Object> summary = toFingerprintSummary(file);
+            if (isHttpFingerprint(summary)) list.add(summary);
         }
         return list;
-    }
-
-    public List<Map<String, Object>> getFingerprintsByProtocol(String protocol) {
-        String targetProtocol = requireNonBlank(protocol, "protocol 不能为空").toLowerCase();
-        ArrayList<Map<String, Object>> results = new ArrayList<>();
-        for (Map<String, Object> item : listFingerprints()) {
-            Object itemProtocol = item.get("protocol");
-            if (itemProtocol != null && targetProtocol.equalsIgnoreCase(String.valueOf(itemProtocol))) {
-                results.add(item);
-            }
-        }
-        return results;
     }
 
     public HashMap<String, Object> getFingerprintById(String fingerprintId) throws Exception {
@@ -63,12 +52,20 @@ public class FingerprintManageService {
             throw new FingerprintNotFoundException("指纹不存在: " + fingerprintId);
         }
         normalizeFingerprintId(content, safeName);
+        if (!isHttpFingerprint(content)) {
+            throw new FingerprintNotFoundException("HTTP 指纹不存在: " + fingerprintId);
+        }
         return content;
     }
 
     public HashMap<String, Object> saveFingerprint(HashMap<String, Object> params, User user) throws Exception {
         ensureLoggedIn(user);
         String name = requireString(params, "name");
+        Object protocol = params.get("protocol");
+        if (protocol != null && !isBlank(String.valueOf(protocol))
+                && !"http".equalsIgnoreCase(String.valueOf(protocol).trim())) {
+            throw new IllegalArgumentException("仅支持 HTTP 指纹");
+        }
         Object rule = params.get("rule");
         if (rule == null) {
             throw new IllegalArgumentException("缺少必需参数: rule");
@@ -77,11 +74,11 @@ public class FingerprintManageService {
         if (isBlank(version)) {
             throw new IllegalArgumentException("缺少必需参数: info.version 或 version");
         }
-        return saveFingerprintContent(name, rule, params.get("info"), params.get("protocol"), params.get("tags"), version);
+        return saveFingerprintContent(name, rule, params.get("info"), params.get("tags"), version);
     }
 
     public Map<String, Object> saveFingerprint(String userId, String name, String ruleJson,
-                                               String infoJson, String protocol, String tagsJson,
+                                               String infoJson, String tagsJson,
                                                String version) throws Exception {
         requireNonBlank(userId, "userId 不能为空");
         String normalizedName = requireNonBlank(name, "name 不能为空");
@@ -90,7 +87,7 @@ public class FingerprintManageService {
         String resolvedVersion = resolveVersion(info, version);
         Object tags = isBlank(tagsJson) ? null : parseJson(tagsJson);
 
-        HashMap<String, Object> data = saveFingerprintContent(normalizedName, rule, info, protocol, tags, resolvedVersion);
+        HashMap<String, Object> data = saveFingerprintContent(normalizedName, rule, info, tags, resolvedVersion);
         data.put("status", "saved");
         data.put("name", normalizedName);
         return data;
@@ -130,7 +127,7 @@ public class FingerprintManageService {
     }
 
     private HashMap<String, Object> saveFingerprintContent(String name, Object rule, Object infoObj,
-                                                           Object protocol, Object tags, String version) throws Exception {
+                                                           Object tags, String version) throws Exception {
         String normalizedName = requireNonBlank(name, "name 不能为空");
         String resolvedVersion = requireNonBlank(version, "version 不能为空");
         validateRule(rule);
@@ -141,9 +138,7 @@ public class FingerprintManageService {
         content.put("fingerprintId", fingerprintId);
         content.put("name", normalizedName);
         content.put("rule", rule);
-        if (protocol != null && !isBlank(String.valueOf(protocol))) {
-            content.put("protocol", String.valueOf(protocol).trim());
-        }
+        content.put("protocol", "http");
         if (tags != null) {
             content.put("tags", tags);
         }
@@ -238,6 +233,10 @@ public class FingerprintManageService {
         }
         item.put("fingerprintId", fileId);
         return item;
+    }
+
+    private boolean isHttpFingerprint(Map<String, Object> fingerprint) {
+        return fingerprint != null && "http".equalsIgnoreCase(String.valueOf(fingerprint.get("protocol")));
     }
 
     private HashMap<String, Object> loadFingerprintFile(String safeFileName) throws Exception {
@@ -486,6 +485,9 @@ public class FingerprintManageService {
         if (version == null || version.isBlank()) {
             return new ImportResult(name, null, "failed", "缺少 version");
         }
+        if (!"http".equalsIgnoreCase(String.valueOf(rec.getOrDefault("protocol", "http")))) {
+            return new ImportResult(name, null, "failed", "仅支持 HTTP 指纹");
+        }
 
         String fingerprintId = generateFingerprintId(name, version);
         boolean conflict = existingIds.contains(fingerprintId);
@@ -515,13 +517,10 @@ public class FingerprintManageService {
         }
 
         try {
-            HashMap<String, Object> params = new HashMap<>(rec);
-            params.put("version", version);
             saveFingerprintContent(
                     name,
                     rec.get("rule"),
                     rec.get("info"),
-                    rec.get("protocol"),
                     rec.get("tags"),
                     version
             );

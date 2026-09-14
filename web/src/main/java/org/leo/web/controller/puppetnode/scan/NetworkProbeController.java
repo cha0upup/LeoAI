@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ExecutionConfig;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.FingerprintConfig;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.PreviewResponse;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ResolvedTarget;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ScanConfig;
@@ -33,8 +32,8 @@ import java.util.Set;
  * Entry point for the unified node-side network probe plan.
  *
  * <p>The service expands the logical scan and the orchestration layer splits
- * it into transport-safe node batches. The node still validates each batch
- * because component calls may originate from other trusted service paths.</p>
+ * it into transport-safe node batches. Validation and policy decisions are
+ * completed before a batch is sent to the node.</p>
  */
 @RestController
 @RequestMapping("/puppet-node/network-probe")
@@ -62,12 +61,6 @@ public class NetworkProbeController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setResultStore(NetworkProbeResultStore resultStore) {
         this.resultStore = resultStore;
-    }
-
-    @RequestMapping(value = "/capabilities", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> capabilities(@RequestBody java.util.HashMap<String, Object> params) {
-        return ControllerUtil.handleCapabilityCall(params, NetworkProbeCapable.class,
-                "获取网络探测能力失败", NetworkProbeCapable::networkProbeCapabilities);
     }
 
     @RequestMapping(value = "/workflow/start", method = RequestMethod.POST)
@@ -155,6 +148,30 @@ public class NetworkProbeController {
         return workflowOperation(params, "终止扫描工作流失败", workflowService::stop);
     }
 
+    @RequestMapping(value = "/workflow/delete", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> deleteWorkflow(@RequestBody java.util.HashMap<String, Object> params) {
+        try {
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
+            // Deleting a completed history item must remain possible when the
+            // selected puppet is offline; only the session ownership check is
+            // needed before removing durable rows.
+            ControllerUtil.getPuppetNodeSession(sessionId);
+            Map<String, Object> result = workflowService.delete(sessionId, taskId);
+            if (resultStore != null && !resultStore.deleteTask(sessionId, taskId)) {
+                return ApiResponse.error("删除扫描结果失败");
+            }
+            return ApiResponse.success(result);
+        } catch (org.leo.web.exception.ApiException error) {
+            // Preserve ownership and not-found HTTP semantics for callers.
+            throw error;
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        } catch (Exception error) {
+            return ApiResponse.error("删除扫描工作流失败: " + error.getMessage());
+        }
+    }
+
     @RequestMapping(value = "/workflow/results/query", method = RequestMethod.POST)
     public java.util.HashMap<String, Object> queryWorkflowResults(
             @RequestBody java.util.HashMap<String, Object> params) {
@@ -164,23 +181,6 @@ public class NetworkProbeController {
             ControllerUtil.getPuppetNodeSession(sessionId);
             if (resultStore == null) return ApiResponse.error("扫描结果存储未初始化");
             Map<String, Object> result = resultStore.queryResults(sessionId, taskId, params);
-            if (result.isEmpty()) return ApiResponse.notFound("扫描任务不存在或不属于当前会话");
-            return ApiResponse.success(result);
-        } catch (IllegalArgumentException error) {
-            return ApiResponse.badRequest(error.getMessage());
-        }
-    }
-
-    @RequestMapping(value = "/workflow/evidence/query", method = RequestMethod.POST)
-    public java.util.HashMap<String, Object> queryWorkflowEvidence(
-            @RequestBody java.util.HashMap<String, Object> params) {
-        try {
-            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
-            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
-            String endpointId = ControllerUtil.getRequiredStringParam(params, "endpointId").trim();
-            ControllerUtil.getPuppetNodeSession(sessionId);
-            if (resultStore == null) return ApiResponse.error("扫描结果存储未初始化");
-            Map<String, Object> result = resultStore.queryEvidence(sessionId, taskId, endpointId);
             if (result.isEmpty()) return ApiResponse.notFound("扫描任务不存在或不属于当前会话");
             return ApiResponse.success(result);
         } catch (IllegalArgumentException error) {
@@ -329,29 +329,16 @@ public class NetworkProbeController {
 
         if (targets.isEmpty()) throw new IllegalArgumentException("扫描目标展开后为空");
         ExecutionConfig execution = scan.execution();
-        FingerprintConfig fingerprint = scan.fingerprint();
-
-        Map<String, Object> selector = new LinkedHashMap<>();
-        if (fingerprint != null) {
-            if (fingerprint.tags() != null && !fingerprint.tags().isEmpty()) {
-                selector.put("tags", new ArrayList<>(fingerprint.tags()));
-            }
-            if (fingerprint.ids() != null && !fingerprint.ids().isEmpty()) {
-                selector.put("fingerprintIds", new ArrayList<>(fingerprint.ids()));
-            }
-        }
-
         Map<String, Object> workflow = new LinkedHashMap<>();
         workflow.put("hosts", new ArrayList<>(hosts));
         workflow.put("ports", new ArrayList<>(ports));
         workflow.put("targets", targets);
         workflow.put("reachabilityTargets", reachabilityTargets);
         workflow.put("timeout", execution != null && execution.timeoutMs() != null
-                ? execution.timeoutMs() : Integer.valueOf(3000));
+                ? execution.timeoutMs() : Integer.valueOf(NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS));
         workflow.put("threads", execution != null && execution.workers() != null
-                ? execution.workers() : Integer.valueOf(32));
+                ? execution.workers() : Integer.valueOf(NetworkProbeLimits.NODE_DEFAULT_THREADS));
         workflow.put("probeServices", Boolean.TRUE);
-        workflow.put("ruleSelector", selector);
         if (scan.name() != null && !scan.name().isBlank()) workflow.put("name", scan.name().trim());
         return workflow;
     }

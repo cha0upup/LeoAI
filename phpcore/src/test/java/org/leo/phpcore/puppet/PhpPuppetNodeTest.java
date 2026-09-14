@@ -130,7 +130,6 @@ class PhpPuppetNodeTest {
         assertTrue(node instanceof ScheduledTaskCapable);
         node.listNetworkConnections("LISTEN", "TCP", "8080", "12", "php", "10.", true, 100);
         node.networkConnectionSummary();
-        node.networkProbeCapabilities();
         node.startNetworkProbe(Map.of("targets", List.of(Map.of("host", "127.0.0.1", "port", 80)),
                 "stages", List.of("tcp-connect")));
         node.queryNetworkProbe("scan-task", 0L, 50, 524288, true);
@@ -141,15 +140,15 @@ class PhpPuppetNodeTest {
         node.createScheduledTaskLinux("*/5 * * * *", "/opt/demo --check");
 
         assertEquals(List.of("NetworkConnectionComponent", "NetworkConnectionComponent",
-                        "NetworkProbeComponent", "NetworkProbeComponent", "NetworkProbeComponent", "NetworkProbeComponent", "ServiceComponent",
+                        "NetworkProbeComponent", "NetworkProbeComponent", "NetworkProbeComponent", "ServiceComponent",
                         "ServiceComponent", "ScheduledTaskComponent", "ScheduledTaskComponent"),
                 invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
-                assertEquals(List.of("list", "summary", "capabilities", "startTask", "queryTask", "releaseTask", "list",
+                assertEquals(List.of("list", "summary", "startTask", "queryTask", "releaseTask", "list",
                         "create", "list", "createLinux"),
                 invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
         assertEquals(true, invokes.get(0).get("listeningOnly"));
         assertEquals(100, invokes.get(0).get("maxEntries"));
-        assertEquals("*/5 * * * *", invokes.get(9).get("cronExpression"));
+        assertEquals("*/5 * * * *", invokes.get(8).get("cronExpression"));
     }
 
     @Test

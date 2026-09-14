@@ -1,6 +1,6 @@
 package org.leo.web.config;
 
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.web.service.SessionLifecycleManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,6 +21,11 @@ import java.util.List;
 public class PuppetNodeSessionCleanup {
 
     private static final Logger log = LoggerFactory.getLogger(PuppetNodeSessionCleanup.class);
+    private final SessionLifecycleManager sessionLifecycleManager;
+
+    public PuppetNodeSessionCleanup(SessionLifecycleManager sessionLifecycleManager) {
+        this.sessionLifecycleManager = sessionLifecycleManager;
+    }
 
     /** 最大空闲时长：12 小时。 */
     private static final long MAX_IDLE_MS = 12 * 60 * 60 * 1000L;
@@ -30,7 +35,7 @@ public class PuppetNodeSessionCleanup {
      */
     @Scheduled(fixedDelay = 30 * 60 * 1000L, initialDelay = 30 * 60 * 1000L)
     public void evictExpiredSessions() {
-        List<String> evicted = PuppetNodeSessionContainer.evictExpired(MAX_IDLE_MS);
+        List<String> evicted = sessionLifecycleManager.evictExpired(MAX_IDLE_MS);
         if (!evicted.isEmpty()) {
             log.info("[PuppetNodeSession] 清理过期会话 {} 个：{}", evicted.size(), evicted);
         }

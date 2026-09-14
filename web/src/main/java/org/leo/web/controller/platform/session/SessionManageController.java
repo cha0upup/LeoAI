@@ -6,13 +6,13 @@ import org.leo.core.entity.User;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.service.PuppetService;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkChainResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkItem;
 import org.leo.web.dto.platform.session.SessionDtos.SessionInfo;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.service.SessionLifecycleManager;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,10 +44,13 @@ import java.util.stream.Collectors;
 public class SessionManageController {
 
     private final PuppetService puppetService;
+    private final SessionLifecycleManager sessionLifecycleManager;
 
     @Autowired
-    public SessionManageController(PuppetService puppetService) {
+    public SessionManageController(PuppetService puppetService,
+                                   SessionLifecycleManager sessionLifecycleManager) {
         this.puppetService = puppetService;
+        this.sessionLifecycleManager = sessionLifecycleManager;
     }
 
     /**
@@ -78,10 +81,11 @@ public class SessionManageController {
     public HashMap<String, Object> deleteSession(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
         ControllerUtil.getPuppetNodeSession(sessionId);
-        if (!PuppetNodeSessionWorkDirUtil.deleteSessionWorkDir(sessionId)) {
-            throw ApiException.serverError("删除会话目录失败: " + sessionId);
+        try {
+            sessionLifecycleManager.destroy(sessionId, true);
+        } catch (IllegalStateException error) {
+            throw ApiException.serverError(error.getMessage());
         }
-        PuppetNodeSessionContainer.removeSession(sessionId);
         return ApiResponse.success();
     }
 

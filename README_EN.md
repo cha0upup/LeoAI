@@ -135,7 +135,7 @@ The exact PHP feature set depends on the target environment: database operations
 
 #### Network & Scanning
 - **Port Scanner**: TCP port scanning, host discovery (Ping Sweep)
-- **Fingerprint Identification**: HTTP/TCP service fingerprinting with a built-in rule library and support for custom rules
+- **Fingerprint Identification**: Web service identification from HTTP request and response evidence, with support for custom rules
 - **Reconnaissance Scanning**: Concurrent multi-target, multi-rule recon with results automatically aggregated into AI context
 - **HTTP Requester**: Repeater (single request) and Fuzzer (bulk fuzzing)
 - **Proxy & Tunneling**: Open HTTP proxy, SOCKS5 proxy, local port forwarding (ssh -L), or reverse tunnel (ssh -R) on target nodes — with connection count and traffic monitoring
@@ -183,9 +183,9 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 
 ### Fingerprint & Identification Rules
 
-- **Built-in Rule Library**: 10 pre-configured HTTP/TCP fingerprint rules for common services (Nginx, Tomcat, Redis, MySQL, Shiro, SSH, FTP, SMTP, Spring Boot Actuator, WordPress, etc.)
+- **Built-in Rule Library**: HTTP fingerprint rules that can match request data, response headers, status codes, and response bodies
 - **Custom Rules**: Add, edit, enable/disable fingerprint rules via the "Identification Rules" page
-- **Rule Tags**: Supports protocol filtering and tag grouping for selective use during scanning
+- **Rule Tags**: Supports tag grouping for selective use during scanning
 - **Import/Export**: Export individual rules or batch-export as `.json` / `.zip`; import with conflict policies (skip/overwrite/rename) to easily share rule libraries across teams
 
 ### Plugins & Script Execution

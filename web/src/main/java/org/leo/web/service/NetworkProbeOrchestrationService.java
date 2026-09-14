@@ -3,6 +3,7 @@ package org.leo.web.service;
 import jakarta.annotation.PreDestroy;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
+import org.leo.web.service.discovery.NetworkProbeLimits;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -22,27 +23,28 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Runs one logical network probe as a sequence of bounded node-side tasks.
  *
- * <p>A node accepts at most 128 targets per task. This service owns that
+ * <p>A node accepts at most {@value NetworkProbeLimits#NODE_BATCH_SIZE} targets per task. This service owns that
  * transport detail, aggregates progress and evidence, and releases every
  * terminal child task after collecting its final snapshot.</p>
  */
 @Service
 public final class NetworkProbeOrchestrationService implements AutoCloseable {
 
-    private static final int NODE_BATCH_SIZE = 128;
     private static final int MAX_ACTIVE_TASKS = 36;
-    private static final int RESULT_PAGE_ITEMS = 256;
-    private static final int RESULT_PAGE_BYTES = 512 * 1024;
+    private static final int RESULT_PAGE_ITEMS = 512;
+    private static final int RESULT_PAGE_BYTES = 1024 * 1024;
     private static final long RPC_TIMEOUT_MS = 15_000L;
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
-    private static final long DEFAULT_POLL_INTERVAL_MS = 100L;
+    private static final long DEFAULT_POLL_INTERVAL_MS = 2000L;
 
     private final Map<String, LogicalTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<NetworkProbeCapable, Semaphore> nodeLeases = new java.util.concurrent.ConcurrentHashMap<>();
     private final ExecutorService executor;
     private final ExecutorService rpcExecutor;
     private final long pollIntervalMs;
@@ -179,10 +181,18 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     }
 
     private void run(LogicalTask task) {
+        Semaphore lease = nodeLeases.computeIfAbsent(task.node,
+                ignored -> new Semaphore(NetworkProbeLimits.NODE_MAX_THREADS));
+        boolean acquired = false;
         try {
-            for (int offset = 0; offset < task.targets.size(); offset += NODE_BATCH_SIZE) {
+            while (!task.cancelRequested && !lease.tryAcquire(task.requestedThreads, 250L, TimeUnit.MILLISECONDS)) {
+                // Wait for this node's shared concurrency budget without blocking stop().
+            }
+            if (task.cancelRequested) return;
+            acquired = true;
+            for (int offset = 0; offset < task.targets.size(); offset += NetworkProbeLimits.NODE_BATCH_SIZE) {
                 if (!awaitRunnable(task)) break;
-                int end = Math.min(task.targets.size(), offset + NODE_BATCH_SIZE);
+                int end = Math.min(task.targets.size(), offset + NetworkProbeLimits.NODE_BATCH_SIZE);
                 Map<String, Object> childPlan = childPlan(task.plan, task.targets.subList(offset, end));
                 Map<String, Object> started = invoke(task, () -> task.node.startNetworkProbe(childPlan));
                 String childTaskId = text(started.get("taskId"));
@@ -229,6 +239,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             fail(task, messageOf(error));
             stopAndReleaseActiveChild(task);
         } finally {
+            if (acquired) lease.release(task.requestedThreads);
             task.finished.countDown();
         }
     }
@@ -520,7 +531,9 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         plan.put("targets", safeTargets);
         if (source.get("limits") instanceof Map<?, ?> rawLimits) {
             Map<String, Object> limits = map(rawLimits);
-            int threads = Math.max(1, Math.min(targets.size(), integer(limits.get("threads"), 8)));
+            int threads = Math.max(1, Math.min(targets.size(), integer(
+                    limits.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS)));
+            threads = Math.min(threads, NetworkProbeLimits.NODE_MAX_THREADS);
             limits.put("threads", Integer.valueOf(threads));
             plan.put("limits", limits);
         }
@@ -659,6 +672,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         private final Map<String, Object> plan;
         private final List<Map<String, Object>> targets;
         private final int batchCount;
+        private final int requestedThreads;
         private final long createdAt = System.currentTimeMillis();
         private final Object monitor = new Object();
         private final Object nodeCallMonitor = new Object();
@@ -683,9 +697,13 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             this.sessionId = sessionId;
             this.node = node;
             this.plan = wireMap(plan);
+            Map<String, Object> limits = map(this.plan.get("limits"));
+            this.requestedThreads = Math.max(1, Math.min(NetworkProbeLimits.NODE_MAX_THREADS,
+                    integer(limits.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS)));
             this.targets = new ArrayList<>();
             for (Map<String, Object> target : targets) this.targets.add(wireMap(target));
-            this.batchCount = (targets.size() + NODE_BATCH_SIZE - 1) / NODE_BATCH_SIZE;
+            this.batchCount = (targets.size() + NetworkProbeLimits.NODE_BATCH_SIZE - 1)
+                    / NetworkProbeLimits.NODE_BATCH_SIZE;
         }
 
         private boolean terminal() {

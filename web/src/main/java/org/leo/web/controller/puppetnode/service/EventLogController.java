@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import jakarta.annotation.PreDestroy;
 import org.leo.core.puppet.capability.EventLogCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
@@ -26,12 +27,21 @@ import java.util.concurrent.atomic.AtomicLong;
 @RequestMapping("/puppet-node/event-log")
 public class EventLogController {
 
-    /** SSE 跟随用的定时调度池(全控制器共享,daemon 线程) */
-    private static final ScheduledExecutorService FOLLOW_SCHEDULER = Executors.newScheduledThreadPool(4, r -> {
+    private static final long DEFAULT_FOLLOW_INTERVAL_MS = 1_500L;
+    private static final long MIN_FOLLOW_INTERVAL_MS = 500L;
+    private static final long MAX_FOLLOW_INTERVAL_MS = 60_000L;
+
+    /** SSE 跟随用的定时调度池(控制器实例共享,daemon 线程) */
+    private final ScheduledExecutorService followScheduler = Executors.newScheduledThreadPool(4, r -> {
         Thread t = new Thread(r, "event-log-follow");
         t.setDaemon(true);
         return t;
     });
+
+    @PreDestroy
+    public void shutdownFollowScheduler() {
+        followScheduler.shutdownNow();
+    }
 
     @RequestMapping(value = "/list-sources", method = RequestMethod.POST)
     public HashMap<String, Object> listSources(@RequestBody HashMap<String, Object> params) {
@@ -125,7 +135,10 @@ public class EventLogController {
             emitter.complete();
             return emitter;
         }
-        long period = (intervalMs == null || intervalMs.longValue() < 500L) ? 1500L : intervalMs.longValue();
+        long period = intervalMs == null
+                ? DEFAULT_FOLLOW_INTERVAL_MS
+                : Math.max(MIN_FOLLOW_INTERVAL_MS,
+                        Math.min(MAX_FOLLOW_INTERVAL_MS, intervalMs.longValue()));
 
         final EventLogCapable node;
         try {
@@ -176,7 +189,7 @@ public class EventLogController {
             }
         };
 
-        holder[0] = FOLLOW_SCHEDULER.scheduleWithFixedDelay(poller, 0L, period, TimeUnit.MILLISECONDS);
+        holder[0] = followScheduler.scheduleWithFixedDelay(poller, 0L, period, TimeUnit.MILLISECONDS);
 
         Runnable cancel = () -> {
             if (holder[0] != null) holder[0].cancel(false);

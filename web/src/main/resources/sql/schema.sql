@@ -254,6 +254,7 @@ CREATE TABLE IF NOT EXISTS scan_endpoint_results (
     banner TEXT,
     title TEXT,
     status_code INTEGER,
+    response_size INTEGER,
     server VARCHAR(255),
     location TEXT,
     content_type VARCHAR(255),

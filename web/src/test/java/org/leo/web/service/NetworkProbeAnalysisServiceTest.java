@@ -121,23 +121,21 @@ class NetworkProbeAnalysisServiceTest {
                 "ruleSelector", Map.of()));
 
         List<?> probes = (List<?>) prepared.plan().get("targets");
-        assertEquals(3, probes.size());
-        assertEquals(Set.of("ssh_any", "redis_any", "nginx_any"), prepared.context().ruleIds());
+        assertEquals(1, probes.size());
+        assertEquals(List.of("http-request"), prepared.plan().get("stages"));
+        assertEquals(Set.of("web_any"), prepared.context().ruleIds());
     }
 
     @Test
-    void explicitReconRulesOverrideServiceSelection() throws Exception {
+    void httpReconRulesAreRejectedForTcpTargets() {
         NetworkProbeAnalysisService analysisService =
                 new NetworkProbeAnalysisService(new StubFingerprintManageService());
 
-        NetworkProbeAnalysisService.PreparedScan prepared = analysisService.prepare(Map.of(
+        assertThrows(IllegalArgumentException.class, () -> analysisService.prepare(Map.of(
                 "kind", "recon",
                 "targets", List.of(
                         Map.of("host", "host-a", "port", 22, "protocol", "tcp", "service", "ssh")),
-                "ruleSelector", Map.of("fingerprintIds", List.of("mysql_any"))));
-
-        assertEquals(1, ((List<?>) prepared.plan().get("targets")).size());
-        assertEquals(Set.of("mysql_any"), prepared.context().ruleIds());
+                "ruleSelector", Map.of("fingerprintIds", List.of("web_any")))));
     }
 
     @Test
@@ -166,10 +164,7 @@ class NetworkProbeAnalysisServiceTest {
 
     private static final class StubFingerprintManageService extends FingerprintManageService {
         private final Map<String, HashMap<String, Object>> fingerprints = Map.of(
-                "ssh_any", fingerprint("ssh_any", "ssh", "tcp", List.of("protocol", "remote")),
-                "redis_any", fingerprint("redis_any", "redis", "tcp", List.of("database", "redis")),
-                "mysql_any", fingerprint("mysql_any", "mysql", "tcp", List.of("database", "mysql")),
-                "nginx_any", fingerprint("nginx_any", "nginx", "http", List.of("web", "server")));
+                "web_any", fingerprint("web_any", "web-server", "http", List.of("web", "server")));
 
         @Override
         public List<Map<String, Object>> listFingerprints() {

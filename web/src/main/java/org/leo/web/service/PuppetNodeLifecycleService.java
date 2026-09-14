@@ -42,18 +42,31 @@ public class PuppetNodeLifecycleService {
     private final PuppetNodeAiThreadService aiThreadService;
     private final PuppetCacheService cacheService;
     private final PuppetReconRepository reconRepository;
+    private final SessionLifecycleManager sessionLifecycleManager;
 
     @Autowired
     public PuppetNodeLifecycleService(PuppetService puppetService,
                                       PuppetNodeFactory puppetNodeFactory,
                                       PuppetNodeAiThreadService aiThreadService,
                                       PuppetCacheService cacheService,
-                                      PuppetReconRepository reconRepository) {
+                                      PuppetReconRepository reconRepository,
+                                      SessionLifecycleManager sessionLifecycleManager) {
         this.puppetService = puppetService;
         this.puppetNodeFactory = puppetNodeFactory;
         this.aiThreadService = aiThreadService;
         this.cacheService = cacheService;
         this.reconRepository = reconRepository;
+        this.sessionLifecycleManager = sessionLifecycleManager;
+    }
+
+    /** Compatibility constructor for lightweight unit tests and integrations. */
+    PuppetNodeLifecycleService(PuppetService puppetService,
+                               PuppetNodeFactory puppetNodeFactory,
+                               PuppetNodeAiThreadService aiThreadService,
+                               PuppetCacheService cacheService,
+                               PuppetReconRepository reconRepository) {
+        this(puppetService, puppetNodeFactory, aiThreadService, cacheService,
+                reconRepository, new SessionLifecycleManager());
     }
 
     public PuppetInitResponse initLiveSession(Puppet puppet, User user) throws Exception {
@@ -248,7 +261,7 @@ public class PuppetNodeLifecycleService {
     }
 
     void registerSessionWithInitialAiThread(PuppetNodeSession session, String puppetId) {
-        PuppetNodeSessionContainer.addSession(session.getSessionId(), session);
+        sessionLifecycleManager.register(session);
         try {
             // 与 /puppet-node/ai/thread/create 完全复用同一条创建链路：
             // 内存线程、数据库记录、模型配置和会话预热保持一致。

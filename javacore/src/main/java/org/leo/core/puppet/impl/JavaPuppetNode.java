@@ -435,11 +435,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> networkProbeCapabilities() throws Exception {
-        return networkProbeService.networkProbeCapabilities();
-    }
-
-    @Override
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         return networkProbeService.startNetworkProbe(plan);
     }

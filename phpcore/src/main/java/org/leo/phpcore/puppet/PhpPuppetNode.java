@@ -272,11 +272,6 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> networkProbeCapabilities() throws Exception {
-        return invoke("NetworkProbeComponent", "capabilities", Map.of());
-    }
-
-    @Override
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         return invoke("NetworkProbeComponent", "startTask", Map.of("plan", plan));
     }
