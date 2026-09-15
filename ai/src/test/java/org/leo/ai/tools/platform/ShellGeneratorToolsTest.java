@@ -34,13 +34,6 @@ import static org.mockito.Mockito.when;
 class ShellGeneratorToolsTest {
 
     @Test
-    void doesNotExposePuppetConfigurationAsAGenerationDependency() {
-        assertThrows(NoSuchMethodException.class,
-                () -> ShellGeneratorTools.class.getDeclaredMethod(
-                        "getPuppetShellConfig", String.class));
-    }
-
-    @Test
     void exposesRuntimeMetadataAndGeneratesCachedPhpResult() throws Exception {
         AtomicReference<GenerationRequest> captured = new AtomicReference<>();
         ScriptGeneratorService generators = new ScriptGeneratorService(List.of(

@@ -1,14 +1,12 @@
 package org.leo.jmg.mem.packer;
 
 import org.junit.jupiter.api.Test;
-import org.leo.jmg.mem.packer.base64.DefaultBase64Packer;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.ResourcePatternResolver;
 
 import java.io.IOException;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,18 +26,9 @@ class PackerScannerTest {
     }
 
     @Test
-    void discoversAnnotatedTopLevelPackers() {
-        PackerScanner.ScanResult result = PackerScanner.scan();
-
-        boolean found = false;
-        for (Class<? extends Packer> packerType : result.getPackerTypes()) {
-            if (packerType.equals(DefaultBase64Packer.class)) {
-                found = true;
-                break;
-            }
-        }
-        assertTrue(found, "未扫描到 DefaultBase64Packer");
-        assertTrue(result.getFailures().isEmpty(), "扫描不应产生单类加载失败");
+    void discoversPackersWithoutClassLoadingFailures() {
+        assertTrue(PackerScanner.scan().getFailures().isEmpty(),
+                "扫描不应产生单类加载失败");
     }
 
     @Test

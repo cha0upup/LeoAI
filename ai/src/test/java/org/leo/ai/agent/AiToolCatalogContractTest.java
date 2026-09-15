@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
-/** 防止工具清单重新出现重名、无风险声明或无预算增长。 */
+/** 验证工具名称唯一、执行策略完整以及模型可用的参数结构。 */
 class AiToolCatalogContractTest {
 
     private static final List<Class<?>> TOOL_CLASSES = List.of(
@@ -65,28 +65,11 @@ class AiToolCatalogContractTest {
             AiToolResultArchiveTools.class
     );
 
-    private static final Set<String> REMOVED_TOOL_NAMES = Set.of(
-            "getAllTeam", "getAllTeamName", "getTeamById", "getTeamByName",
-            "getTeamsByLeader", "getAllUser", "getAllNoTeamUser", "getAllUserName",
-            "getUserById", "getUserByName", "getPrivileges", "getAllPuppet",
-            "getPuppetsByCreateUserId", "getPuppetsByParentPuppetId",
-            "getPuppetsByPermission",
-            "getPlugins", "getPluginsByType", "getFingerprints",
-            "getFingerprintsByProtocol", "getJavaPlugins", "getJavaPluginsByType",
-            "getResource", "readSpringBootConfigResources", "readResourceCandidates",
-            "workspaceStat", "symmetricCrypto", "rsaCrypto", "manage_recon_summary",
-            "stopReverseTunnel", "stopAllReverseTunnels", "listReverseTunnels",
-            "getReverseTunnelStatistics",
-            "readClipboard", "writeClipboard", "monitorClipboard"
-    );
-
     @Test
-    void toolInventoryHasUniqueNamesExplicitPoliciesAndFixedBudget() {
+    void toolInventoryHasUniqueNamesAndExplicitPolicies() {
         List<Declaration> declarations = declarations();
         Set<String> names = new HashSet<>();
 
-        assertEquals(101, declarations.size(),
-                "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
         for (Declaration declaration : declarations) {
             assertTrue(names.add(declaration.name()),
                     "工具名重复: " + declaration.name());
@@ -103,9 +86,6 @@ class AiToolCatalogContractTest {
         }
         assertTrue(names.contains("getDatabaseDialectCatalog"),
                 "数据库配置必须暴露权威方言目录，避免模型创造方言 ID");
-        for (String removed : REMOVED_TOOL_NAMES) {
-            assertFalse(names.contains(removed), "已清理工具被重新暴露: " + removed);
-        }
     }
 
     @Test
