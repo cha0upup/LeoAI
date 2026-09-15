@@ -28,12 +28,10 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.Semaphore;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
@@ -59,33 +57,25 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
     private static final Map TASKS = new ConcurrentHashMap();
-    private static final Map TASK_LOCKS = new ConcurrentHashMap();
     private static final ExecutorService WORK_EXECUTOR = new ThreadPoolExecutor(
             MAX_THREADS, MAX_THREADS, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue(WORK_QUEUE_CAPACITY), new NetworkProbeComponent(),
-            new ThreadPoolExecutor.CallerRunsPolicy());
+            new ThreadPoolExecutor.AbortPolicy());
     private static volatile SSLSocketFactory TRUST_ALL_FACTORY;
 
     private HashMap params;
     private HashMap results;
     private String taskId;
-    private Map target;
-    private Map plan;
-    private boolean workerMode;
-    private String threadSeed;
 
     public NetworkProbeComponent() {
     }
 
-    private NetworkProbeComponent(String taskId, Map target, Map plan) {
+    private NetworkProbeComponent(String taskId) {
         this.taskId = taskId;
-        this.target = target;
-        this.plan = plan;
-        this.workerMode = true;
     }
 
     public void run() {
-        if (workerMode) {
+        if (taskId != null) {
             runWorker();
             return;
         }
@@ -143,11 +133,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         Map sourcePlan = asMap(input.get("plan"));
         if (sourcePlan == null) sourcePlan = input;
         List rawTargets = asList(sourcePlan.get("targets"));
+        if (rawTargets == null) throw new IllegalArgumentException("targets must be a list");
 
         Map limits = asMap(sourcePlan.get("limits"));
-        int timeout = intValue(limits == null ? null : limits.get("timeout"), 3000);
-        int maxRead = intValue(limits == null ? null : limits.get("maxReadBytes"), MAX_READ_BYTES);
-        int threads = intValue(limits == null ? null : limits.get("threads"), MAX_THREADS);
+        int timeout = boundedInt(limits == null ? null : limits.get("timeout"), 3000, 100, 300000);
+        int maxRead = boundedInt(limits == null ? null : limits.get("maxReadBytes"), MAX_READ_BYTES, 256, MAX_READ_BYTES);
+        int threads = boundedInt(limits == null ? null : limits.get("threads"), MAX_THREADS, 1, MAX_THREADS);
 
         List stages = copyStages(sourcePlan.get("stages"));
         if (stages.isEmpty()) stages.add("tcp-connect");
@@ -169,34 +160,29 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         task.put("status", "RUNNING");
         task.put("outcome", "RUNNING");
         task.put("total", Integer.valueOf(normalizedTargets.size()));
-        task.put("completed", new AtomicInteger(0));
+        task.put("completed", Integer.valueOf(0));
         task.put("targets", normalizedTargets);
         task.put("plan", normalizedPlan);
-        task.put("observations", Collections.synchronizedList(new ArrayList()));
-        task.put("errors", Collections.synchronizedList(new ArrayList()));
+        task.put("observations", new ArrayList());
+        task.put("errors", new ArrayList());
         task.put("observationOffset", Integer.valueOf(0));
         task.put("createdAt", Long.valueOf(System.currentTimeMillis()));
-        task.put("permits", new Semaphore(threads));
-        task.put("nextIndex", new AtomicInteger(0));
-
-        Object lock = new Object();
+        task.put("nextIndex", Integer.valueOf(0));
         synchronized (TASKS) {
             if (TASKS.size() >= MAX_TASKS) {
                 throw new IllegalStateException("too many network probe tasks, max=" + MAX_TASKS);
             }
             TASKS.put(id, task);
-            TASK_LOCKS.put(id, lock);
         }
-        threadSeed = stringValue(input.get("hostId")) + "|" + id;
+        if (normalizedTargets.isEmpty()) finishTask(task, false);
         try {
             int workerCount = Math.min(threads, normalizedTargets.size());
             for (int i = 0; i < workerCount; i++) {
-                WORK_EXECUTOR.execute(new NetworkProbeComponent(id,
-                        null, normalizedPlan));
+                WORK_EXECUTOR.execute(new NetworkProbeComponent(id));
             }
         } catch (RuntimeException error) {
+            finishTask(task, true);
             TASKS.remove(id);
-            TASK_LOCKS.remove(id);
             throw error;
         }
         return id;
@@ -204,6 +190,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
     private Map normalizeTarget(Object value) {
         Map source = asMap(value);
+        if (source == null) throw new IllegalArgumentException("target must be a map");
         HashMap target = new HashMap();
         String protocol = stringValue(source.get("protocol")).toLowerCase(Locale.ENGLISH);
         String baseUrl = stringValue(source.get("baseUrl"));
@@ -217,6 +204,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 if (port <= 0) port = parsedUrl.getPort() > 0 ? parsedUrl.getPort()
                         : ("https".equalsIgnoreCase(parsedUrl.getProtocol()) ? 443 : 80);
             } catch (Exception error) {
+                throw new IllegalArgumentException("invalid baseUrl: " + baseUrl);
             }
             if (protocol.length() == 0 && parsedUrl != null) {
                 protocol = "https".equalsIgnoreCase(parsedUrl.getProtocol()) ? "https" : "http";
@@ -227,27 +215,19 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             if ("https".equals(protocol)) port = 443;
             else if ("http".equals(protocol)) port = 80;
         }
+        if (host.length() == 0 || port < 1 || port > 65535) {
+            throw new IllegalArgumentException("target requires a host and valid port");
+        }
         target.put("host", host);
         target.put("port", Integer.valueOf(port));
         target.put("protocol", protocol);
         if (baseUrl.length() > 0) target.put("baseUrl", baseUrl);
         copyTargetMetadata(source, target);
         if (source.get("request") != null) {
-            String request = stringValue(source.get("request"));
+            String request = rawString(source.get("request"));
             target.put("request", request);
         }
-        if (source.get("headers") != null) {
-            Map sourceHeaders = (Map) source.get("headers");
-            HashMap headers = new HashMap();
-            Iterator headerIterator = sourceHeaders.entrySet().iterator();
-            while (headerIterator.hasNext()) {
-                Map.Entry entry = (Map.Entry) headerIterator.next();
-                String name = stringValue(entry.getKey());
-                String headerValue = stringValue(entry.getValue());
-                headers.put(name, headerValue);
-            }
-            target.put("headers", headers);
-        }
+        if (source.get("headers") != null) target.put("headers", copyHeaders(source.get("headers")));
         if (source.get("httpRequest") != null) {
             target.put("httpRequest", normalizeHttpRequest(source.get("httpRequest")));
         }
@@ -268,15 +248,16 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             target.put("stage", stage);
         }
         if (source.get("timeout") != null) {
-            target.put("timeout", Integer.valueOf(intValue(source.get("timeout"), 3000)));
+            target.put("timeout", Integer.valueOf(boundedInt(source.get("timeout"), 3000, 100, 300000)));
         }
         if (source.get("maxReadBytes") != null) {
-            target.put("maxReadBytes", Integer.valueOf(intValue(source.get("maxReadBytes"), MAX_READ_BYTES)));
+            target.put("maxReadBytes", Integer.valueOf(boundedInt(source.get("maxReadBytes"), MAX_READ_BYTES, 256, MAX_READ_BYTES)));
         }
     }
 
     private Map normalizeHttpRequest(Object value) {
         Map source = asMap(value);
+        if (source == null) throw new IllegalArgumentException("httpRequest must be a map");
         HashMap request = new HashMap();
         String method = stringValue(source.get("method")).toUpperCase(Locale.ENGLISH);
         if (method.length() == 0) method = "GET";
@@ -292,20 +273,20 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             String body = String.valueOf(source.get("body"));
             request.put("body", body);
         }
-        Object headersValue = source.get("headers");
-        if (headersValue != null) {
-            Map sourceHeaders = (Map) headersValue;
-            HashMap headers = new HashMap();
-            Iterator iterator = sourceHeaders.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Map.Entry entry = (Map.Entry) iterator.next();
-                String name = stringValue(entry.getKey());
-                String headerValue = stringValue(entry.getValue());
-                headers.put(name, headerValue);
-            }
-            request.put("headers", headers);
-        }
+        if (source.get("headers") != null) request.put("headers", copyHeaders(source.get("headers")));
         return request;
+    }
+
+    private Map copyHeaders(Object value) {
+        Map source = asMap(value);
+        if (source == null) throw new IllegalArgumentException("headers must be a map");
+        HashMap headers = new HashMap();
+        Iterator iterator = source.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry entry = (Map.Entry) iterator.next();
+            headers.put(stringValue(entry.getKey()), stringValue(entry.getValue()));
+        }
+        return headers;
     }
 
     private List copyStages(Object value) {
@@ -319,34 +300,34 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return stages;
     }
 
+    // The task itself is the monitor for its state, counters and result buffer.
+    // Each submitted worker claims targets from that task; no second permit pool is needed.
     private void runWorker() {
         Map task = (Map) TASKS.get(taskId);
         if (task == null) return;
-        Object lock = TASK_LOCKS.get(taskId);
-        Semaphore permits = (Semaphore) task.get("permits");
-        AtomicInteger nextIndex = (AtomicInteger) task.get("nextIndex");
         List targets = (List) task.get("targets");
-        if (nextIndex == null || targets == null) return;
+        Map plan = (Map) task.get("plan");
         while (true) {
-            if (!waitIfRunning(task, lock)) return;
-            int index = nextIndex.getAndIncrement();
-            if (index >= targets.size()) return;
-            Map currentTarget = (Map) targets.get(index);
-            boolean acquired = false;
+            Map currentTarget;
+            synchronized (task) {
+                if (!waitIfRunning(task)) return;
+                int index = intValue(task.get("nextIndex"), 0);
+                if (index >= targets.size()) return;
+                task.put("nextIndex", Integer.valueOf(index + 1));
+                currentTarget = (Map) targets.get(index);
+            }
             try {
-                while (!acquired) {
-                    if (!waitIfRunning(task, lock)) return;
-                    acquired = permits == null || permits.tryAcquire(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
-                }
-                if (!waitIfRunning(task, lock)) return;
                 probeTarget(task, currentTarget, plan);
-            } catch (Throwable error) {
+            } catch (Exception error) {
                 addError(task, targetKey(currentTarget), "WORKER", errorCode(error), messageOf(error));
             } finally {
-                if (acquired && permits != null) permits.release();
-                AtomicInteger completed = (AtomicInteger) task.get("completed");
-                int count = completed == null ? 0 : completed.incrementAndGet();
-                if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
+                synchronized (task) {
+                    if (!"STOPPED".equals(task.get("status"))) {
+                        int count = intValue(task.get("completed"), 0) + 1;
+                        task.put("completed", Integer.valueOf(count));
+                        if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
+                    }
+                }
             }
         }
     }
@@ -360,7 +341,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         boolean connected = false;
         boolean connectAttempted = false;
         for (int i = 0; i < stages.size(); i++) {
-            if (!waitIfRunning(task, TASK_LOCKS.get(taskId))) return;
+            if (!waitIfRunning(task)) return;
             String stage = String.valueOf(stages.get(i));
             if ("tcp-connect".equals(stage)) {
                 connectAttempted = true;
@@ -373,6 +354,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 addObservation(task, probeHttp(target, timeout, maxRead));
             } else if ("http-request".equals(stage)) {
                 addObservation(task, probeHttpRequest(target, timeout, maxRead));
+            } else {
+                addObservation(task, baseObservation(target, stage, "error", System.currentTimeMillis(),
+                        "UNSUPPORTED", "unsupported probe stage", null));
             }
         }
     }
@@ -431,17 +415,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
                         + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
             }
-            connection = (HttpURLConnection) new URL(baseUrl).openConnection(Proxy.NO_PROXY);
-            connection.setConnectTimeout(timeout);
-            connection.setReadTimeout(timeout);
-            connection.setUseCaches(false);
-            connection.setInstanceFollowRedirects(false);
-            if (connection instanceof HttpsURLConnection) {
-                HttpsURLConnection https = (HttpsURLConnection) connection;
-                https.setSSLSocketFactory(trustAllFactory());
-                https.setHostnameVerifier((HostnameVerifier) java.lang.reflect.Proxy.newProxyInstance(
-                        Thread.currentThread().getContextClassLoader(), new Class[]{HostnameVerifier.class}, this));
-            }
+            connection = openHttpConnection(baseUrl, timeout);
             // The stage name remains http-head for wire compatibility with
             // existing plans. A small GET is required to extract the page title.
             connection.setRequestMethod("GET");
@@ -532,17 +506,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             }
             String path = stringValue(request.get("path"));
             String url = buildProbeUrl(baseUrl, path);
-            connection = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
-            connection.setConnectTimeout(timeout);
-            connection.setReadTimeout(timeout);
-            connection.setUseCaches(false);
-            connection.setInstanceFollowRedirects(false);
-            if (connection instanceof HttpsURLConnection) {
-                HttpsURLConnection https = (HttpsURLConnection) connection;
-                https.setSSLSocketFactory(trustAllFactory());
-                https.setHostnameVerifier((HostnameVerifier) java.lang.reflect.Proxy.newProxyInstance(
-                        Thread.currentThread().getContextClassLoader(), new Class[]{HostnameVerifier.class}, this));
-            }
+            connection = openHttpConnection(url, timeout);
             String method = stringValue(request.get("method"));
             if (method.length() == 0) method = "GET";
             connection.setRequestMethod(method);
@@ -605,6 +569,21 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         }
     }
 
+    private HttpURLConnection openHttpConnection(String url, int timeout) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
+        connection.setConnectTimeout(timeout);
+        connection.setReadTimeout(timeout);
+        connection.setUseCaches(false);
+        connection.setInstanceFollowRedirects(false);
+        if (connection instanceof HttpsURLConnection) {
+            HttpsURLConnection https = (HttpsURLConnection) connection;
+            https.setSSLSocketFactory(trustAllFactory());
+            https.setHostnameVerifier((HostnameVerifier) java.lang.reflect.Proxy.newProxyInstance(
+                    Thread.currentThread().getContextClassLoader(), new Class[]{HostnameVerifier.class}, this));
+        }
+        return connection;
+    }
+
     private static String buildProbeUrl(String baseUrl, String path) {
         String normalized = path == null || path.length() == 0 ? "/" : path;
         String lower = normalized.toLowerCase(Locale.ENGLISH);
@@ -643,74 +622,69 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private void addObservation(Map task, Map observation) {
-        Object list = task.get("observations");
-        if (list instanceof List) {
-            synchronized (list) { ((List) list).add(observation); }
-        }
-        if ("error".equals(String.valueOf(observation.get("state")))) {
-            addError(task, stringValue(observation.get("target")),
-                    stringValue(observation.get("stage")), stringValue(observation.get("errorCode")),
-                    stringValue(observation.get("error")));
+        synchronized (task) {
+            if ("STOPPED".equals(task.get("status"))) return;
+            ((List) task.get("observations")).add(observation);
+            if ("error".equals(observation.get("state"))) {
+                addError(task, stringValue(observation.get("target")),
+                        stringValue(observation.get("stage")), stringValue(observation.get("errorCode")),
+                        stringValue(observation.get("error")));
+            }
         }
     }
 
     private void addError(Map task, String target, String stage, String code, String message) {
-        HashMap error = new HashMap();
-        error.put("target", target);
-        error.put("stage", stage);
-        error.put("errorCode", code);
-        error.put("error", sanitize(message));
-        Object list = task.get("errors");
-        if (list instanceof List) {
-            synchronized (list) { ((List) list).add(error); }
+        synchronized (task) {
+            if ("STOPPED".equals(task.get("status"))) return;
+            HashMap error = new HashMap();
+            error.put("target", target);
+            error.put("stage", stage);
+            error.put("errorCode", code);
+            error.put("error", sanitize(message));
+            ((List) task.get("errors")).add(error);
         }
     }
 
-    private void queryTask(Map input) {
-        String id = stringValue(input.get("taskId"));
+    private Map findTask(String id) {
         Map task = (Map) TASKS.get(id);
         if (task == null) {
             results.put("code", Integer.valueOf(404));
             results.put("msg", "network probe task not found: " + id);
-            return;
         }
-        long cursor = longValue(input.get("cursor"), 0L);
-        int maxItems = intValue(input.get("maxItems"), 128);
-        int maxBytes = intValue(input.get("maxBytes"), 524288);
+        return task;
+    }
+
+    private void queryTask(Map input) {
+        Map task = findTask(stringValue(input.get("taskId")));
+        if (task == null) return;
+        long cursor = Math.max(0L, longValue(input.get("cursor"), 0L));
+        int maxItems = boundedInt(input.get("maxItems"), 128, 1, 512);
+        int maxBytes = boundedInt(input.get("maxBytes"), 524288, 4096, 1048576);
         boolean includeEvidence = !Boolean.FALSE.equals(input.get("includeEvidence"));
-        int base;
-        List observations = (List) task.get("observations");
-        Object lock = TASK_LOCKS.get(id);
         HashMap snapshot;
-        synchronized (lock == null ? task : lock) {
+        synchronized (task) {
             snapshot = baseSnapshot(task);
-            synchronized (observations) {
-                base = intValue(task.get("observationOffset"), 0);
-                long requested = cursor;
-                int start = requested > Integer.MAX_VALUE ? observations.size() : (int) requested - base;
-                ArrayList page = new ArrayList();
-                int bytes = 0;
-                int index = start;
-                while (index < observations.size() && page.size() < maxItems) {
-                    Object value = observations.get(index);
-                    if (!(value instanceof Map)) { index++; continue; }
-                    HashMap copy = new HashMap((Map) value);
-                    if (!includeEvidence) copy.remove("evidence");
-                    int estimate = String.valueOf(copy).length();
-                    if (!page.isEmpty() && bytes + estimate > maxBytes) break;
-                    page.add(copy);
-                    bytes += estimate;
-                    index++;
-                }
-                long nextCursor = (long) base + index;
-                snapshot.put("cursor", Long.valueOf(cursor));
-                snapshot.put("nextCursor", Long.valueOf(nextCursor));
-                snapshot.put("hasMore", Boolean.valueOf(index < observations.size()));
-                snapshot.put("observations", page);
+            List observations = (List) task.get("observations");
+            int base = intValue(task.get("observationOffset"), 0);
+            int index = (int) Math.max(0L, Math.min(cursor - base, (long) observations.size()));
+            ArrayList page = new ArrayList();
+            int bytes = 0;
+            while (index < observations.size() && page.size() < maxItems) {
+                HashMap copy = new HashMap((Map) observations.get(index));
+                if (!includeEvidence) copy.remove("evidence");
+                int estimate = String.valueOf(copy).length();
+                if (!page.isEmpty() && bytes + estimate > maxBytes) break;
+                page.add(copy);
+                bytes += estimate;
+                index++;
             }
+            snapshot.put("cursor", Long.valueOf(cursor));
+            snapshot.put("nextCursor", Long.valueOf((long) base + index));
+            snapshot.put("hasMore", Boolean.valueOf(index < observations.size()));
+            snapshot.put("observations", page);
+            snapshot.put("errors", copyListLimited(task.get("errors"), maxItems));
         }
         snapshot.put("incremental", Boolean.TRUE);
-        snapshot.put("errors", copyListLimited(task.get("errors"), maxItems));
         results.put("code", Integer.valueOf(200));
         results.put("result", snapshot);
     }
@@ -722,25 +696,20 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         snapshot.put("status", task.get("status"));
         snapshot.put("outcome", task.get("outcome"));
         int total = intValue(task.get("total"), 0);
-        AtomicInteger completed = (AtomicInteger) task.get("completed");
-        int count = completed == null ? 0 : completed.get();
+        int count = intValue(task.get("completed"), 0);
         snapshot.put("total", Integer.valueOf(total));
         snapshot.put("completed", Integer.valueOf(count));
-        snapshot.put("progress", Integer.valueOf(total == 0 ? 0 : Math.min(100, count * 100 / total)));
+        snapshot.put("progress", Integer.valueOf(total == 0 ? 0 : (int) Math.min(100L, (long) count * 100L / total)));
         snapshot.put("createdAt", task.get("createdAt"));
         snapshot.put("finishedAt", task.get("finishedAt"));
         return snapshot;
     }
 
     private void ackTask(String id, long cursor) {
-        Map task = (Map) TASKS.get(id);
-        if (task == null) {
-            results.put("code", Integer.valueOf(404));
-            results.put("msg", "network probe task not found: " + id);
-            return;
-        }
-        List observations = (List) task.get("observations");
-        synchronized (observations) {
+        Map task = findTask(id);
+        if (task == null) return;
+        synchronized (task) {
+            List observations = (List) task.get("observations");
             int base = intValue(task.get("observationOffset"), 0);
             long bounded = Math.max((long) base, Math.min(cursor, (long) base + observations.size()));
             int remove = (int) (bounded - base);
@@ -754,83 +723,73 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private void updateTaskState(String id, String state) {
-        Map task = (Map) TASKS.get(id);
-        if (task == null) throw new IllegalArgumentException("network probe task not found: " + id);
-        Object lock = TASK_LOCKS.get(id);
-        synchronized (lock == null ? task : lock) {
-            if ("STOPPED".equals(task.get("status"))) throw new IllegalStateException("network probe task already stopped");
+        Map task = findTask(id);
+        if (task == null) return;
+        synchronized (task) {
+            String expected = "PAUSED".equals(state) ? "RUNNING" : "PAUSED";
+            if (!expected.equals(task.get("status"))) {
+                results.put("code", Integer.valueOf(409));
+                results.put("msg", "invalid task state");
+                return;
+            }
             task.put("status", state);
-            if ("RUNNING".equals(state)) (lock == null ? task : lock).notifyAll();
+            task.notifyAll();
         }
         results.put("code", Integer.valueOf(200));
     }
 
     private void stopTask(String id) {
-        Map task = (Map) TASKS.get(id);
-        if (task == null) throw new IllegalArgumentException("network probe task not found: " + id);
+        Map task = findTask(id);
+        if (task == null) return;
         finishTask(task, true);
         results.put("code", Integer.valueOf(200));
     }
 
     private void releaseTask(String id) {
-        Map task = (Map) TASKS.get(id);
-        if (task == null) {
-            results.put("code", Integer.valueOf(404));
-            results.put("msg", "network probe task not found: " + id);
-            return;
-        }
-        Object lock = TASK_LOCKS.get(id);
-        synchronized (lock == null ? task : lock) {
+        Map task = findTask(id);
+        if (task == null) return;
+        synchronized (task) {
             if (!"STOPPED".equals(task.get("status"))) {
                 results.put("code", Integer.valueOf(409));
                 results.put("msg", "network probe task is still active: " + id);
                 return;
             }
             TASKS.remove(id);
-            TASK_LOCKS.remove(id);
         }
         results.put("code", Integer.valueOf(200));
     }
 
-    private boolean waitIfRunning(Map task, Object lock) {
-        Object monitor = lock == null ? task : lock;
-        synchronized (monitor) {
+    private boolean waitIfRunning(Map task) {
+        synchronized (task) {
             while ("PAUSED".equals(task.get("status"))) {
-                try { monitor.wait(1000L); }
+                try { task.wait(); }
                 catch (InterruptedException error) { Thread.currentThread().interrupt(); return false; }
             }
             return !"STOPPED".equals(task.get("status")) && !Thread.currentThread().isInterrupted();
         }
     }
 
-    private void finishTask(Map task, boolean force) {
-        Object lock = TASK_LOCKS.get(task.get("taskId"));
-        Object monitor = lock == null ? task : lock;
-        synchronized (monitor) {
+    private void finishTask(Map task, boolean cancelled) {
+        synchronized (task) {
+            if ("STOPPED".equals(task.get("status"))) return;
             task.put("status", "STOPPED");
-            if (force) {
-                task.put("outcome", "CANCELLED");
-            } else if (!"CANCELLED".equals(task.get("outcome"))) {
-                task.put("outcome", "COMPLETED");
-            }
-            if (force || task.get("finishedAt") == null) task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-            monitor.notifyAll();
+            task.put("outcome", cancelled ? "CANCELLED" : "COMPLETED");
+            task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            task.notifyAll();
         }
     }
 
     private int cleanupExpiredTasks() {
         long now = System.currentTimeMillis();
         int removed = 0;
-        Iterator iterator = TASKS.keySet().iterator();
+        Iterator iterator = TASKS.values().iterator();
         while (iterator.hasNext()) {
-            Object id = iterator.next();
-            Map task = (Map) TASKS.get(id);
-            if (task == null || !"STOPPED".equals(task.get("status"))) continue;
-            long finished = longValue(task.get("finishedAt"), 0L);
-            if (finished > 0L && now - finished > TASK_TTL_MS) {
-                TASKS.remove(id);
-                TASK_LOCKS.remove(id);
-                removed++;
+            Map task = (Map) iterator.next();
+            synchronized (task) {
+                long finished = longValue(task.get("finishedAt"), 0L);
+                if ("STOPPED".equals(task.get("status")) && finished > 0L && now - finished > TASK_TTL_MS) {
+                    if (TASKS.remove(task.get("taskId")) != null) removed++;
+                }
             }
         }
         return removed;
@@ -885,6 +844,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return result.toString().trim();
     }
 
+    private static int boundedInt(Object value, int fallback, int min, int max) {
+        return Math.max(min, Math.min(max, intValue(value, fallback)));
+    }
+
     private static int intValue(Object value, int fallback) {
         if (value instanceof Number) return ((Number) value).intValue();
         if (value != null) {
@@ -918,11 +881,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
     private static List copyListLimited(Object value, int limit) {
         if (!(value instanceof List)) return new ArrayList();
-        synchronized (value) {
-            List source = (List) value;
-            int end = Math.min(source.size(), Math.max(0, limit));
-            return new ArrayList(source.subList(0, end));
-        }
+        List source = (List) value;
+        int end = Math.min(source.size(), Math.max(0, limit));
+        return new ArrayList(source.subList(0, end));
     }
 
     private static String hostForUrl(String host) {
@@ -955,7 +916,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     public Thread newThread(Runnable task) {
-        Thread thread = new Thread(task, "worker-" + Integer.toHexString(String.valueOf(threadSeed).hashCode())
+        Thread thread = new Thread(task, "worker-" + Integer.toHexString(getClass().getName().hashCode())
                 + "-" + THREAD_SEQUENCE.incrementAndGet());
         thread.setDaemon(true);
         return thread;

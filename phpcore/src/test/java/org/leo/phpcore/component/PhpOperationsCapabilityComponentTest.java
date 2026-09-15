@@ -3,11 +3,20 @@ package org.leo.phpcore.component;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import org.leo.core.util.json.PortableJsonCodec;
 
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.CompletableFuture;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PhpOperationsCapabilityComponentTest {
 
@@ -83,15 +93,7 @@ class PhpOperationsCapabilityComponentTest {
             String taskId = String.valueOf(started.get("taskId"));
             assertFalse(taskId.isBlank());
 
-            Map<String, Object> queried = null;
-            for (int attempt = 0; attempt < 50; attempt++) {
-                queried = invoke("NetworkProbeComponent.php", "queryTask", "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)");
-                Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
-                if ("STOPPED".equals(info.get("status"))) break;
-                Thread.sleep(50);
-            }
-            assertEquals(200, code(Objects.requireNonNull(queried)));
-            Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
+            Map<?, ?> info = awaitNetworkProbeTask(taskId);
             assertEquals("STOPPED", info.get("status"));
             assertTrue(assertInstanceOf(List.class, info.get("observations")).stream()
                     .anyMatch(value -> "open".equals(((Map<?, ?>) value).get("state"))));
@@ -102,17 +104,23 @@ class PhpOperationsCapabilityComponentTest {
         }
     }
 
-    @Test
-    void returnsSeparatedHttpHeadersAndBodyEvidence() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"http-head", "http-request"})
+    void returnsHttpEvidenceForBothStages(String stage) throws Exception {
         try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<String> requestLine = new CompletableFuture<>();
             Thread responder = new Thread(() -> {
                 try (Socket socket = server.accept()) {
+                    socket.setSoTimeout(2000);
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                    requestLine.complete(reader.readLine());
+                    while (!reader.readLine().isEmpty()) { }
                     socket.getOutputStream().write((
                             "HTTP/1.1 200 OK\r\n" +
                             "Server: php-probe-test\r\n" +
                             "Content-Type: text/plain\r\n" +
-                            "Content-Length: 5\r\n\r\n" +
-                            "hello").getBytes(StandardCharsets.ISO_8859_1));
+                            "Content-Length: 24\r\n\r\n" +
+                            "<title>Console</title>ok").getBytes(StandardCharsets.ISO_8859_1));
                     socket.getOutputStream().flush();
                 } catch (IOException ignored) {
                     // The worker may be stopped while the test is cleaning up.
@@ -121,28 +129,126 @@ class PhpOperationsCapabilityComponentTest {
             responder.start();
 
             Map<String, Object> started = invoke("NetworkProbeComponent.php", "startTask",
-                    "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>" + server.getLocalPort() + ",'protocol'=>'http','httpRequest'=>array('method'=>'GET','path'=>'/'))),'stages'=>array('http-request')))");
+                    "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>" + server.getLocalPort()
+                            + ",'protocol'=>'http','baseUrl'=>'http://127.0.0.1:" + server.getLocalPort()
+                            + "/console?view=1','httpRequest'=>array('method'=>'GET','path'=>'/console?view=1'))),'stages'=>array('" + stage + "')))");
             assertEquals(200, code(started));
             String taskId = String.valueOf(started.get("taskId"));
 
-            Map<?, ?> info = null;
-            for (int attempt = 0; attempt < 50; attempt++) {
-                Map<String, Object> queried = invoke("NetworkProbeComponent.php", "queryTask",
-                        "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)");
-                info = assertInstanceOf(Map.class, queried.get("result"));
-                if ("STOPPED".equals(info.get("status"))) break;
-                Thread.sleep(50);
-            }
+            Map<?, ?> info = awaitNetworkProbeTask(taskId);
             responder.join(5000);
             assertEquals("STOPPED", info.get("status"));
             Map<?, ?> observation = assertInstanceOf(Map.class,
                     assertInstanceOf(List.class, info.get("observations")).get(0));
             Map<?, ?> evidence = assertInstanceOf(Map.class, observation.get("evidence"));
             assertEquals(200, evidence.get("statusCode"));
-            assertTrue(String.valueOf(evidence.get("headers")).contains("Server: php-probe-test"));
-            assertEquals("hello", evidence.get("body"));
-            assertEquals(5, evidence.get("bodyLength"));
+            assertEquals("GET /console?view=1 HTTP/1.1", requestLine.get(2, TimeUnit.SECONDS));
+            assertEquals("Console", evidence.get("title"));
+            assertEquals(24, evidence.get("bodyLength"));
+            if ("http-request".equals(stage)) {
+                assertTrue(String.valueOf(evidence.get("headers")).contains("Server: php-probe-test"));
+                assertEquals("<title>Console</title>ok", evidence.get("body"));
+            } else {
+                assertFalse(evidence.containsKey("headers"));
+                assertFalse(evidence.containsKey("body"));
+            }
+            assertEquals(200, code(invoke("NetworkProbeComponent.php", "releaseTask",
+                    "array('taskId'=>'" + taskId + "')")));
         }
+    }
+
+    @Test
+    void persistsBinaryBannerAndKeepsAcknowledgementMonotonic() throws Exception {
+        ExecutorService responder = Executors.newSingleThreadExecutor();
+        try (ServerSocket server = new ServerSocket(0)) {
+            Future<?> response = responder.submit(() -> {
+                try (Socket socket = server.accept()) {
+                    socket.getOutputStream().write(new byte[]{0, (byte) 255, 'X'});
+                }
+                return null;
+            });
+            Map<String, Object> started = invoke("NetworkProbeComponent.php", "startTask",
+                    "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>"
+                            + server.getLocalPort() + ")),'stages'=>array('tcp-exchange'),'limits'=>array('threads'=>1)))");
+            assertEquals(200, code(started));
+            String taskId = String.valueOf(started.get("taskId"));
+            try {
+                Map<?, ?> info = awaitNetworkProbeTask(taskId);
+                response.get(2, TimeUnit.SECONDS);
+                Map<?, ?> observation = (Map<?, ?>) ((List<?>) info.get("observations")).get(0);
+                Map<?, ?> evidence = (Map<?, ?>) observation.get("evidence");
+                assertEquals(3, evidence.get("bytes"));
+                assertEquals("ÿX", evidence.get("banner"));
+                assertEquals(200, code(invoke("NetworkProbeComponent.php", "ackTask",
+                        "array('taskId'=>'" + taskId + "','cursor'=>1)")));
+                Map<String, Object> oldAck = invoke("NetworkProbeComponent.php", "ackTask",
+                        "array('taskId'=>'" + taskId + "','cursor'=>0)");
+                assertEquals(1, oldAck.get("cursor"));
+                Map<?, ?> drained = awaitNetworkProbeTask(taskId);
+                assertEquals(List.of(), drained.get("observations"));
+                assertEquals(1, drained.get("nextCursor"));
+            } finally {
+                invoke("NetworkProbeComponent.php", "stopTask", "array('taskId'=>'" + taskId + "')");
+                invoke("NetworkProbeComponent.php", "releaseTask", "array('taskId'=>'" + taskId + "')");
+            }
+        } finally {
+            responder.shutdownNow();
+        }
+    }
+
+    @Test
+    void releasedWorkerDoesNotProbeRemainingTargets() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            server.setSoTimeout(3000);
+            String target = "array('host'=>'127.0.0.1','port'=>" + server.getLocalPort() + ")";
+            Map<String, Object> started = invoke("NetworkProbeComponent.php", "startTask",
+                    "array('plan'=>array('targets'=>array(" + target + "," + target
+                            + "),'stages'=>array('tcp-exchange'),'limits'=>array('threads'=>1,'timeout'=>3000)))");
+            assertEquals(200, code(started));
+            String taskId = String.valueOf(started.get("taskId"));
+            try (Socket socket = server.accept()) {
+                assertEquals(200, code(invoke("NetworkProbeComponent.php", "stopTask", "array('taskId'=>'" + taskId + "')")));
+                assertEquals(200, code(invoke("NetworkProbeComponent.php", "releaseTask", "array('taskId'=>'" + taskId + "')")));
+                socket.shutdownOutput();
+                server.setSoTimeout(1000);
+                assertThrows(SocketTimeoutException.class, () -> {
+                    try (Socket unexpected = server.accept()) {
+                        throw new AssertionError("released worker opened another connection");
+                    }
+                });
+                assertEquals(404, code(invoke("NetworkProbeComponent.php", "queryTask", "array('taskId'=>'" + taskId + "')")));
+            } finally {
+                invoke("NetworkProbeComponent.php", "stopTask", "array('taskId'=>'" + taskId + "')");
+                invoke("NetworkProbeComponent.php", "releaseTask", "array('taskId'=>'" + taskId + "')");
+            }
+        }
+    }
+
+    @Test
+    void emptyPlanCompletesWithoutLaunchingAProcess() throws Exception {
+        Map<String, Object> started = invokeWithDisabledCommands("NetworkProbeComponent.php", "startTask",
+                "array('plan'=>array('targets'=>array()))");
+        assertEquals(200, code(started));
+        String taskId = String.valueOf(started.get("taskId"));
+        try {
+            Map<?, ?> info = awaitNetworkProbeTask(taskId);
+            assertEquals("COMPLETED", info.get("outcome"));
+            assertEquals(0, info.get("completed"));
+        } finally {
+            invoke("NetworkProbeComponent.php", "releaseTask", "array('taskId'=>'" + taskId + "')");
+        }
+    }
+
+    private Map<?, ?> awaitNetworkProbeTask(String taskId) throws Exception {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            Map<String, Object> queried = invoke("NetworkProbeComponent.php", "queryTask",
+                    "array('taskId'=>'" + taskId + "','cursor'=>0,'maxItems'=>128,'maxBytes'=>524288,'includeEvidence'=>true)");
+            assertEquals(200, code(queried));
+            Map<?, ?> info = assertInstanceOf(Map.class, queried.get("result"));
+            if ("STOPPED".equals(info.get("status"))) return info;
+            Thread.sleep(50);
+        }
+        throw new AssertionError("network probe task did not finish: " + taskId);
     }
 
     private Map<String, Object> invoke(String name, String action, String paramsExpression) throws Exception {

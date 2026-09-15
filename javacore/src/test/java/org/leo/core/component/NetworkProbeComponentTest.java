@@ -29,13 +29,11 @@ class NetworkProbeComponentTest {
 
     @AfterEach
     void clearStaticState() throws Exception {
-        Map<?, ?> tasks = state("TASKS");
-        for (Object value : tasks.values()) {
-            Object executor = ((Map<?, ?>) value).get("executor");
-            if (executor instanceof ExecutorService service) service.shutdownNow();
+        Map<Object, Object> tasks = state("TASKS");
+        for (Object id : tasks.keySet()) {
+            invoke(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", id));
         }
         tasks.clear();
-        state("TASK_LOCKS").clear();
     }
 
     @Test
@@ -66,6 +64,18 @@ class NetworkProbeComponentTest {
                     .filter(value -> "tcp-exchange".equals(value.get("stage"))).findFirst().orElseThrow();
             assertEquals("SSH-2.0-Leo", ((Map<?, ?>) exchange.get("evidence")).get("banner"));
             String taskId = String.valueOf(started.get("taskId"));
+            invoke(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", taskId));
+            Map<?, ?> stopped = awaitTask(taskId, 1000L);
+            assertEquals("COMPLETED", stopped.get("outcome"));
+            assertEquals(snapshot.get("finishedAt"), stopped.get("finishedAt"));
+            invoke(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", 1L));
+            Map<?, ?> remaining = awaitTask(taskId, 1000L); // cursor zero may lag the acknowledged offset
+            assertEquals(1, ((List<?>) remaining.get("observations")).size());
+            assertEquals(2L, remaining.get("nextCursor"));
+            invoke(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", Long.MAX_VALUE));
+            Map<?, ?> drained = awaitTask(taskId, 1000L);
+            assertTrue(((List<?>) drained.get("observations")).isEmpty());
+            assertEquals(2L, drained.get("nextCursor"));
             assertEquals(200, code(invoke(new NetworkProbeComponent(), params(
                     "methodName", "releaseTask", "taskId", taskId))));
             assertEquals(404, code(invoke(new NetworkProbeComponent(), params(
@@ -180,6 +190,40 @@ class NetworkProbeComponentTest {
 
         assertEquals("COMPLETED", snapshot.get("outcome"));
         assertTrue(((List<?>) snapshot.get("errors")).size() > 0);
+    }
+
+    @Test
+    void preservesTcpRequestTerminators() throws Exception {
+        ExecutorService responder = Executors.newSingleThreadExecutor();
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            Future<String> received = responder.submit(() -> {
+                try (Socket client = server.accept()) {
+                    client.setSoTimeout(1000);
+                    byte[] bytes = client.getInputStream().readNBytes(6);
+                    client.getOutputStream().write("+PONG\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                    return new String(bytes, StandardCharsets.ISO_8859_1);
+                }
+            });
+            Map<String, Object> target = target(server.getLocalPort(), "tcp");
+            target.put("request", "PING\r\n");
+            Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+                    "methodName", "startTask", "plan", plan(List.of(target), List.of("tcp-exchange"))));
+            Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
+            assertEquals("PING\r\n", received.get(2, TimeUnit.SECONDS));
+            Map<?, ?> observation = (Map<?, ?>) ((List<?>) snapshot.get("observations")).get(0);
+            assertEquals("+PONG", ((Map<?, ?>) observation.get("evidence")).get("banner"));
+        } finally {
+            responder.shutdownNow();
+        }
+    }
+
+    @Test
+    void emptyPlanCompletesWithoutSchedulingWorkers() throws Exception {
+        Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+                "methodName", "startTask", "plan", plan(List.of(), List.of("tcp-connect"))));
+        Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 1000L);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertEquals(0, snapshot.get("completed"));
     }
 
     @Test
