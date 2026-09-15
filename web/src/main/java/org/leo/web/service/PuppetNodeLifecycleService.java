@@ -7,7 +7,6 @@ import org.leo.core.puppet.capability.HostScopedCapable;
 import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.service.PuppetService;
 import org.leo.service.puppetnode.PuppetNodeFactory;
@@ -15,7 +14,6 @@ import org.leo.web.dto.puppetnode.PuppetInitResponse;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.lang.reflect.Array;
@@ -29,8 +27,9 @@ import java.util.UUID;
 /**
  * Puppet 会话生命周期服务。
  *
- * <p>把连接构建、会话创建、AI 初始线程等流程从 Controller 中拆出，
+ * <p>把连接构建、会话创建等流程从 Controller 中拆出，
  * Controller 只保留 HTTP 参数和响应编排。
+ * AI 对话按需创建，避免每次连接都持久化一个空对话。
  */
 @Service
 public class PuppetNodeLifecycleService {
@@ -39,34 +38,20 @@ public class PuppetNodeLifecycleService {
 
     private final PuppetService puppetService;
     private final PuppetNodeFactory puppetNodeFactory;
-    private final PuppetNodeAiThreadService aiThreadService;
     private final PuppetCacheService cacheService;
     private final PuppetReconRepository reconRepository;
     private final SessionLifecycleManager sessionLifecycleManager;
 
-    @Autowired
     public PuppetNodeLifecycleService(PuppetService puppetService,
                                       PuppetNodeFactory puppetNodeFactory,
-                                      PuppetNodeAiThreadService aiThreadService,
                                       PuppetCacheService cacheService,
                                       PuppetReconRepository reconRepository,
                                       SessionLifecycleManager sessionLifecycleManager) {
         this.puppetService = puppetService;
         this.puppetNodeFactory = puppetNodeFactory;
-        this.aiThreadService = aiThreadService;
         this.cacheService = cacheService;
         this.reconRepository = reconRepository;
         this.sessionLifecycleManager = sessionLifecycleManager;
-    }
-
-    /** Compatibility constructor for lightweight unit tests and integrations. */
-    PuppetNodeLifecycleService(PuppetService puppetService,
-                               PuppetNodeFactory puppetNodeFactory,
-                               PuppetNodeAiThreadService aiThreadService,
-                               PuppetCacheService cacheService,
-                               PuppetReconRepository reconRepository) {
-        this(puppetService, puppetNodeFactory, aiThreadService, cacheService,
-                reconRepository, new SessionLifecycleManager());
     }
 
     public PuppetInitResponse initLiveSession(Puppet puppet, User user) throws Exception {
@@ -138,7 +123,7 @@ public class PuppetNodeLifecycleService {
             logger.warn("缓存模式回填数据失败, puppetId={}: {}", puppetId, ex.getMessage());
         }
 
-        registerSessionWithInitialAiThread(session, puppetId);
+        sessionLifecycleManager.register(session);
 
         logger.info("缓存模式 session 已创建, puppetId={}, sessionId={}", puppetId, sessionId);
         return new PuppetInitResponse(sessionId, projectId, true, session.getCapabilities());
@@ -146,7 +131,6 @@ public class PuppetNodeLifecycleService {
 
     private boolean doInitConn(AbstractPuppetNode node, String sessionId,
                                String userId, String projectId, String selectedHostId) throws Exception {
-        Puppet puppet = node.getPuppet();
         Map<String, Object> result = node.testConnection();
         if (!isConnectionSuccess(result)) return false;
 
@@ -169,8 +153,7 @@ public class PuppetNodeLifecycleService {
         session.setProjectId(projectId);
         if (boundHostId != null) session.bindHostId(boundHostId);
         loadPersistedReconSummary(session, node, userId);
-        registerSessionWithInitialAiThread(
-                session, puppet != null ? puppet.getPuppetId() : null);
+        sessionLifecycleManager.register(session);
 
         logger.debug("测试连接成功，hostId: {}, sessionId: {}", hostId, sessionId);
         return true;
@@ -257,18 +240,6 @@ public class PuppetNodeLifecycleService {
             }
         } catch (Exception ex) {
             logger.warn("回填侦察摘要失败, sessionId={}: {}", session.getSessionId(), ex.getMessage());
-        }
-    }
-
-    void registerSessionWithInitialAiThread(PuppetNodeSession session, String puppetId) {
-        sessionLifecycleManager.register(session);
-        try {
-            // 与 /puppet-node/ai/thread/create 完全复用同一条创建链路：
-            // 内存线程、数据库记录、模型配置和会话预热保持一致。
-            aiThreadService.createThread(session, "对话 1", null);
-        } catch (Exception ex) {
-            logger.warn("创建初始 AI 线程失败, puppetId={}, sessionId={}: {}",
-                    puppetId, session.getSessionId(), ex.getMessage());
         }
     }
 

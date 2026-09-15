@@ -9,6 +9,10 @@ import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.repository.session.PuppetAiCheckpointRepository;
 
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,6 +24,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PuppetNodeAiThreadServiceTest {
+
+    @Test
+    void createsAndPersistsFirstThreadOnDemand() {
+        Fixture fixture = fixture();
+        PuppetNodeSession session = cacheSession();
+
+        Map<String, Object> info = fixture.service.createThread(session, null, null);
+
+        AiThread thread = session.getAiThread((String) info.get("threadId"));
+        assertNotNull(thread);
+        assertEquals(1, session.listAiThreads().size());
+        assertSame(thread, session.getActiveThread());
+        assertEquals("对话 1", thread.getTitle());
+        verify(fixture.conversationStore).createPuppetThread(
+                eq("user-1"), eq("puppet-1"), eq("session-1"), same(thread), isNull());
+        verify(fixture.conversationStore).attachEventJournal(thread.getThreadId(), thread);
+        verify(fixture.sessionWarmupService).warmupAsync("session-1");
+    }
 
     @Test
     void persistsTransientInMemoryThreadBeforeFirstUse() {
