@@ -80,6 +80,15 @@ public class FileComponent implements Runnable {
         capabilities.put("transactionalUpload", Boolean.TRUE);
         capabilities.put("rangeRead", Boolean.TRUE);
         capabilities.put("checksum", Boolean.TRUE);
+        capabilities.put("grep", Boolean.TRUE);
+        capabilities.put("touch", Boolean.TRUE);
+        capabilities.put("pack", Boolean.TRUE);
+        capabilities.put("rename", Boolean.TRUE);
+        capabilities.put("chmod", Boolean.valueOf(!windows));
+        capabilities.put("copyDirectory", Boolean.FALSE);
+        capabilities.put("compressionFormats", java.util.Arrays.asList(new String[]{"zip"}));
+        capabilities.put("extractionFormats", java.util.Arrays.asList(new String[]{"zip", "gzip", "tar", "tar.gz"}));
+        capabilities.put("maxUploadChunkBytes", Integer.valueOf(1048576));
 
         results.put("code", Integer.valueOf(200));
         results.put("osFamily", windows ? "WINDOWS" : "POSIX");

@@ -20,7 +20,8 @@ public final class NetworkDiscoveryDtos {
             PortPolicy portPolicy,
             ExecutionConfig execution,
             /** Reserved for the later fingerprint phase; ignored by the service-only workflow. */
-            FingerprintConfig fingerprint
+            FingerprintConfig fingerprint,
+            List<String> stages        // REACHABILITY / PORT_SCAN / SERVICE_PROBE; null = all
     ) {}
 
     /**
@@ -83,7 +84,8 @@ public final class NetworkDiscoveryDtos {
             Integer reachabilityProbeCount, // 探活请求数
             Integer serviceProbeCount, // 预计服务识别请求数
             String estimatedSize,      // 预计结果规模
-            List<String> warnings      // 警告信息
+            List<String> warnings,     // 警告信息
+            List<String> stages        // 实际执行阶段（固定依赖顺序）
     ) {}
 
     /**

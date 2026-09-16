@@ -272,7 +272,7 @@ public class FileEnhanceComponent implements Runnable {
 
     private int touchRecursive(File file, long timestamp, int depth) {
         int count = 0;
-        if (file == null || depth > 256) {
+        if (file == null || depth > 256 || isSymbolicLink(file)) {
             return 0;
         }
         if (file.isDirectory()) {
@@ -579,38 +579,48 @@ public class FileEnhanceComponent implements Runnable {
         results.put("mode", modeClean);
     }
 
-    /**
-     * 使用 Java File API 做有限的权限映射（Windows / 无 chmod 环境回退）。
-     * 仅支持 owner 读/写/执行三位（取八进制 mode 最后三位的 owner 位）。
-     */
+    /** 无系统 chmod 时仅使用精确的 POSIX 权限设置；旧 JVM/非 POSIX 文件系统明确失败。 */
     private boolean applyChmodJava(File target, String mode, boolean recursive, int depth) {
-        if (target == null || depth > 256) return false;
-        int octal;
+        if (target == null || depth > 256 || isSymbolicLink(target)) return false;
         try {
-            octal = Integer.parseInt(mode, 8);
-        } catch (Exception e) {
-            return false;
-        }
-        int ownerBits = (octal >> 6) & 7;
-        boolean r = (ownerBits & 4) != 0;
-        boolean w = (ownerBits & 2) != 0;
-        boolean x = (ownerBits & 1) != 0;
-        applyBits(target, r, w, x);
-        if (recursive && target.isDirectory()) {
-            File[] children = target.listFiles();
-            if (children != null) {
+            int octal = Integer.parseInt(mode, 8);
+            if ((octal & ~0777) != 0) return false;
+            StringBuilder bits = new StringBuilder();
+            String labels = "rwxrwxrwx";
+            for (int i = 0; i < 9; i++) {
+                bits.append((octal & (1 << (8 - i))) != 0 ? labels.charAt(i) : '-');
+            }
+            // 反射保留 Java 6 字节码/API 基线，不把不支持的权限近似映射给所有用户。
+            Class pathType = Class.forName("java.nio.file.Path");
+            Class permissionsType = Class.forName("java.nio.file.attribute.PosixFilePermissions");
+            Object path = File.class.getMethod("toPath").invoke(target);
+            Object permissions = permissionsType.getMethod("fromString", String.class).invoke(null, bits.toString());
+            Class.forName("java.nio.file.Files").getMethod("setPosixFilePermissions", pathType, Set.class)
+                    .invoke(null, path, permissions);
+            boolean success = true;
+            if (recursive && target.isDirectory()) {
+                File[] children = target.listFiles();
+                if (children == null) return false;
                 for (int i = 0; i < children.length; i++) {
-                    applyChmodJava(children[i], mode, true, depth + 1);
+                    if (!isSymbolicLink(children[i])) {
+                        success = applyChmodJava(children[i], mode, true, depth + 1) && success;
+                    }
                 }
             }
+            return success;
+        } catch (Exception unsupported) {
+            return false;
         }
-        return true;
     }
 
-    private void applyBits(File f, boolean r, boolean w, boolean x) {
-        f.setReadable(r, false);
-        f.setWritable(w, false);
-        f.setExecutable(x, false);
+    private boolean isSymbolicLink(File file) {
+        try {
+            File parent = file.getParentFile();
+            File resolved = parent == null ? file : new File(parent.getCanonicalFile(), file.getName());
+            return !resolved.getCanonicalPath().equals(resolved.getAbsolutePath());
+        } catch (IOException error) {
+            return true;
+        }
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────

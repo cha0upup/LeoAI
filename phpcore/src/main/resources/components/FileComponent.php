@@ -51,7 +51,12 @@ return [
                     'windowsAttributes' => $windows,
                     'transactionalUpload' => true,
                     'rangeRead' => true,
-                    'checksum' => true
+                    'checksum' => true,
+                    'grep' => false, 'touch' => false, 'pack' => false, 'rename' => false, 'chmod' => false,
+                    'copyDirectory' => false,
+                    'compressionFormats' => class_exists('ZipArchive') ? ['zip'] : [],
+                    'extractionFormats' => class_exists('ZipArchive') ? ['zip'] : [],
+                    'maxUploadChunkBytes' => 1048576
                 ]
             ];
         }

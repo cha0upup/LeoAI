@@ -27,7 +27,7 @@ class ScanPreviewServiceTest {
                 "explicit ports",
                 new TargetInput(List.of("127.0.0.1:80", "127.0.0.2:443"), List.of()),
                 new PortPolicy("custom", List.of(), List.of(80, 443, 8080), List.of()),
-                null, null);
+                null, null, null);
 
         PreviewResponse response = service.preview(scan);
 
@@ -47,7 +47,7 @@ class ScanPreviewServiceTest {
                 "large reachability",
                 new TargetInput(List.of("192.0.0.0/20"), List.of()),
                 new PortPolicy("custom", List.of(), ports, List.of()),
-                null, null));
+                null, null, null));
 
         assertTrue(response.preview() == null);
         assertTrue(response.errors().stream().anyMatch(error -> error.contains("探活目标数")));
@@ -57,9 +57,9 @@ class ScanPreviewServiceTest {
     void mixedTargetsReserveExplicitPortsRegardlessOfInputOrder() {
         PortPolicy policy = new PortPolicy("custom", List.of("1-100"), List.of(), List.of());
         var first = planner.plan(new ScanConfig("mixed", new TargetInput(
-                List.of("127.0.0.1", "127.0.0.1:45678"), List.of()), policy, null, null));
+                List.of("127.0.0.1", "127.0.0.1:45678"), List.of()), policy, null, null, null));
         ScanConfig reversed = new ScanConfig("mixed", new TargetInput(
-                List.of("127.0.0.1:45678", "127.0.0.1"), List.of()), policy, null, null);
+                List.of("127.0.0.1:45678", "127.0.0.1"), List.of()), policy, null, null, null);
         var second = planner.plan(reversed);
 
         assertEquals(Set.copyOf(first.reachabilityTargets()), Set.copyOf(second.reachabilityTargets()));
@@ -74,7 +74,7 @@ class ScanPreviewServiceTest {
     void deduplicatesEndpointsWithoutLosingTheExplicitUrl() {
         var plan = planner.plan(new ScanConfig("url", new TargetInput(
                 List.of("127.0.0.1", "http://127.0.0.1:8080/app"), List.of()),
-                new PortPolicy("custom", List.of(), List.of(8080), List.of()), null, null));
+                new PortPolicy("custom", List.of(), List.of(8080), List.of()), null, null, null));
 
         assertEquals(1, plan.targets().size());
         assertEquals("http://127.0.0.1:8080/app", plan.targets().get(0).get("baseUrl"));
@@ -84,9 +84,56 @@ class ScanPreviewServiceTest {
     @Test
     void previewAndExecutionRejectTheSameInvalidConfiguration() {
         ScanConfig invalid = new ScanConfig("invalid", new TargetInput(List.of("127.0.0.1"), List.of()),
-                null, new ExecutionConfig(257, 1000), null);
+                null, new ExecutionConfig(257, 1000), null, null);
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
         assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
         assertNull(service.preview(null).preview());
     }
+    @Test
+    void reachabilityOnlyIgnoresPortPolicyAndDoesNotExpandPortScanTargets() {
+        ScanConfig scan = new ScanConfig("alive", new TargetInput(List.of("192.0.2.0/24"), List.of()),
+                new PortPolicy("custom", List.of("1-65535"), List.of(), List.of()),
+                null, null, List.of("REACHABILITY"));
+        var plan = planner.plan(scan);
+        var preview = service.preview(scan).preview();
+        assertTrue(plan.targets().isEmpty());
+        assertTrue(plan.ports().isEmpty());
+        assertEquals(plan.hosts().size() * NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size(), plan.reachabilityTargets().size());
+        assertEquals(0, preview.combinationCount());
+        assertEquals(0, preview.serviceProbeCount());
+        assertEquals(List.of("REACHABILITY"), plan.workflowRequest().get("stages"));
+    }
+
+    @Test
+    void skippingDiscoveryAvoidsReachabilityLimitsButStillBoundsPortWork() {
+        List<String> endpoints = java.util.stream.IntStream.rangeClosed(1, 40)
+                .mapToObj(port -> "127.0.0.1:" + port).toList();
+        ScanConfig scan = new ScanConfig("ports", new TargetInput(endpoints, List.of()),
+                null, null, null, List.of("PORT_SCAN"));
+        var plan = planner.plan(scan);
+        var preview = service.preview(scan).preview();
+        assertEquals(40, plan.targets().size());
+        assertTrue(plan.reachabilityTargets().isEmpty());
+        assertEquals(0, preview.reachabilityProbeCount());
+        assertEquals(0, preview.serviceProbeCount());
+        ScanConfig oversized = new ScanConfig("too many", new TargetInput(List.of("192.0.2.0/24"), List.of()),
+                new PortPolicy("custom", List.of("1-65535"), List.of(), List.of()),
+                null, null, List.of("PORT_SCAN"));
+        assertTrue(service.preview(oversized).errors().get(0).contains("扫描组合数"));
+    }
+
+    @Test
+    void validatesStageSelectionsAndKeepsLegacyJsonDefault() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        ScanConfig legacy = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
+        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).workflowRequest().get("stages"));
+        for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("UNKNOWN"))) {
+            ScanConfig invalid = new ScanConfig("invalid", legacy.targets(), null, null, null, stages);
+            var failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
+            assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
+        }
+        ScanConfig onlyAlive = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]},\"stages\":[\"REACHABILITY\"]}", ScanConfig.class);
+        assertEquals(List.of("REACHABILITY"), planner.plan(onlyAlive).workflowRequest().get("stages"));
+    }
+
 }

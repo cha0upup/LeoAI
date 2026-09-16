@@ -31,6 +31,7 @@ public class CompressComponent implements Runnable {
     private File sourceRoot;
     private String sourceRootCanonical;
     private String destinationCanonical;
+    private String temporaryCanonical;
     private HashSet visitedDirectories;
 
     @Override
@@ -65,6 +66,11 @@ public class CompressComponent implements Runnable {
         
         // 验证目标路径
         File zipFileObj = new File(zipFile);
+        File absoluteTarget = zipFileObj.getAbsoluteFile();
+        File canonicalParent = absoluteTarget.getParentFile().getCanonicalFile();
+        if (!new File(canonicalParent, absoluteTarget.getName()).equals(absoluteTarget.getCanonicalFile())) {
+            throw new IOException("目标 ZIP 不能是符号链接");
+        }
         String sourceCanonical = sourceFile.getCanonicalPath();
         destinationCanonical = zipFileObj.getCanonicalPath();
         if (sourceCanonical.equals(destinationCanonical)) {
@@ -83,23 +89,80 @@ public class CompressComponent implements Runnable {
         sourceRootCanonical = sourceRoot == null ? null : sourceRoot.getCanonicalPath();
         visitedDirectories = new HashSet();
         
+        File temporary = File.createTempFile(".leo-compress-", ".tmp", zipFileObj.getAbsoluteFile().getParentFile());
+        temporaryCanonical = temporary.getCanonicalPath();
         ZipOutputStream zos = null;
+        boolean committed = false;
         try {
-            zos = new ZipOutputStream(new FileOutputStream(zipFile));
+            zos = new ZipOutputStream(new FileOutputStream(temporary));
             if (sourceFile.isDirectory()) {
                 compressDirectory(sourceFile, sourceFile.getName(), zos);
             } else if (!shouldExclude(sourceFile, sourceFile.getName())) {
                 compressFile(sourceFile, zos, "");
             }
+            // ZIP 中央目录在 close 时写入，关闭失败也不能提交目标文件。
+            zos.close();
+            zos = null;
+            replaceArchive(temporary, zipFileObj);
+            committed = true;
         } finally {
             closeStream(zos);
+            if (!committed) temporary.delete();
         }
-        
+
         results.put("code", 200);
         results.put("msg", "ZIP压缩完成: " + sourcePath + " -> " + zipFile);
         results.put("sourcePath", sourcePath);
         results.put("zipFile", zipFile);
         results.put("format", "zip");
+    }
+
+    private void replaceArchive(File temporary, File target) throws IOException {
+        File backup = null;
+        if (target.exists()) {
+            if (!target.isFile()) throw new IOException("目标不是普通文件: " + target);
+            preservePermissions(target, temporary);
+            backup = File.createTempFile(".leo-compress-backup-", ".tmp", target.getAbsoluteFile().getParentFile());
+            if (!backup.delete() || !target.renameTo(backup)) {
+                throw new IOException("无法备份原归档: " + target);
+            }
+        }
+        if (!temporary.renameTo(target)) {
+            if (backup != null && !backup.renameTo(target)) {
+                throw new IOException("归档提交失败，原文件保留于: " + backup);
+            }
+            throw new IOException("无法提交归档: " + target);
+        }
+        if (backup != null && !backup.delete()) backup.deleteOnExit();
+    }
+
+    private void preservePermissions(File source, File temporary) throws IOException {
+        try {
+            Class filesClass = Class.forName("java.nio.file.Files");
+            Class pathClass = Class.forName("java.nio.file.Path");
+            Class optionClass = Class.forName("java.nio.file.LinkOption");
+            Object options = java.lang.reflect.Array.newInstance(optionClass, 0);
+            Object sourcePath = File.class.getMethod("toPath", new Class[0]).invoke(source, new Object[0]);
+            Object temporaryPath = File.class.getMethod("toPath", new Class[0]).invoke(temporary, new Object[0]);
+            Object permissions = filesClass.getMethod("getPosixFilePermissions", new Class[]{pathClass, options.getClass()})
+                    .invoke(null, new Object[]{sourcePath, options});
+            filesClass.getMethod("setPosixFilePermissions", new Class[]{pathClass, java.util.Set.class})
+                    .invoke(null, new Object[]{temporaryPath, permissions});
+            return;
+        } catch (java.lang.reflect.InvocationTargetException error) {
+            if (error.getCause() instanceof UnsupportedOperationException) return; // 非 POSIX 文件系统使用目录继承权限。
+            throw new IOException("无法保留归档权限: " + error.getCause());
+        } catch (ClassNotFoundException legacyJvm) {
+            // Java 6 无精确 POSIX 权限 API，限制为当前用户，避免扩大原归档访问范围。
+        } catch (Exception error) {
+            throw new IOException("无法保留归档权限: " + error);
+        }
+        if (!temporary.setReadable(false, false) || !temporary.setWritable(false, false)
+                || !temporary.setExecutable(false, false)
+                || !temporary.setReadable(source.canRead(), true) || !temporary.setWritable(source.canWrite(), true)
+                || !temporary.setExecutable(source.canExecute(), true)) {
+            throw new IOException("无法设置归档权限");
+        }
     }
 
     /**
@@ -178,7 +241,7 @@ public class CompressComponent implements Runnable {
         try {
             if (sourceRoot != null) {
                 String filePath = file.getCanonicalPath();
-                if (filePath.equals(destinationCanonical)) {
+                if (filePath.equals(destinationCanonical) || filePath.equals(temporaryCanonical)) {
                     return true;
                 }
                 String rootPath = sourceRootCanonical;

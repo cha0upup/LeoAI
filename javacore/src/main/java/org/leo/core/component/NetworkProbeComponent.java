@@ -146,7 +146,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         normalizedPlan.put("stages", stages);
         normalizedPlan.put("timeout", Integer.valueOf(timeout));
         normalizedPlan.put("maxReadBytes", Integer.valueOf(maxRead));
-        normalizedPlan.put("threads", Integer.valueOf(threads));
 
         ArrayList normalizedTargets = new ArrayList();
         for (int i = 0; i < rawTargets.size(); i++) {
@@ -335,7 +334,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private void probeTarget(Map task, Map target, Map plan) {
         List stages = (List) plan.get("stages");
         String targetStage = stringValue(target.get("stage"));
-        if (targetStage.length() > 0) stages = new ArrayList(Collections.singletonList(targetStage));
+        if (targetStage.length() > 0) stages = Collections.singletonList(targetStage);
         int timeout = intValue(target.get("timeout"), intValue(plan.get("timeout"), 3000));
         int maxRead = intValue(target.get("maxReadBytes"), intValue(plan.get("maxReadBytes"), MAX_READ_BYTES));
         boolean connected = false;
@@ -345,15 +344,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             String stage = String.valueOf(stages.get(i));
             if ("tcp-connect".equals(stage)) {
                 connectAttempted = true;
-                Map observation = probeTcpConnect(target, timeout);
+                Map observation = probeTcp(target, stage, timeout, maxRead);
                 connected = "open".equals(observation.get("state"));
                 addObservation(task, observation);
             } else if ("tcp-exchange".equals(stage)) {
-                if (!connectAttempted || connected) addObservation(task, probeTcpExchange(target, timeout, maxRead));
-            } else if ("http-head".equals(stage)) {
-                addObservation(task, probeHttp(target, timeout, maxRead));
-            } else if ("http-request".equals(stage)) {
-                addObservation(task, probeHttpRequest(target, timeout, maxRead));
+                if (!connectAttempted || connected) addObservation(task, probeTcp(target, stage, timeout, maxRead));
+            } else if ("http-head".equals(stage) || "http-request".equals(stage)) {
+                addObservation(task, probeHttp(target, stage, timeout, maxRead));
             } else {
                 addObservation(task, baseObservation(target, stage, "error", System.currentTimeMillis(),
                         "UNSUPPORTED", "unsupported probe stage", null));
@@ -361,66 +358,59 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         }
     }
 
-    private Map probeTcpConnect(Map target, int timeout) {
+    private Map probeTcp(Map target, String stage, int timeout, int maxRead) {
         long started = System.currentTimeMillis();
+        boolean exchange = "tcp-exchange".equals(stage);
         Socket socket = null;
         try {
             socket = new Socket(Proxy.NO_PROXY);
             socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
-            return baseObservation(target, "tcp-connect", "open", started, null, null, null);
-        } catch (Throwable error) {
-            return baseObservation(target, "tcp-connect", "closed", started, errorCode(error), messageOf(error), null);
-        } finally {
-            closeQuietly(socket);
-        }
-    }
-
-    private Map probeTcpExchange(Map target, int timeout, int maxRead) {
-        long started = System.currentTimeMillis();
-        Socket socket = null;
-        InputStream input = null;
-        OutputStream output = null;
-        try {
-            socket = new Socket(Proxy.NO_PROXY);
-            socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
+            if (!exchange) return baseObservation(target, stage, "open", started, null, null, null);
             socket.setSoTimeout(timeout);
             String request = rawString(target.get("request"));
             if (request.length() > 0) {
-                output = socket.getOutputStream();
+                OutputStream output = socket.getOutputStream();
                 output.write(request.getBytes("ISO-8859-1"));
                 output.flush();
             }
-            input = socket.getInputStream();
-            byte[] bytes = readBytes(input, maxRead, true);
+            byte[] bytes = readBytes(socket.getInputStream(), maxRead, true);
             HashMap evidence = new HashMap();
             evidence.put("bytes", Integer.valueOf(bytes.length));
             if (bytes.length > 0) evidence.put("banner", sanitize(new String(bytes, "ISO-8859-1")));
-            return baseObservation(target, "tcp-exchange", "open", started, null, null, evidence);
+            return baseObservation(target, stage, "open", started, null, null, evidence);
         } catch (Throwable error) {
-            return baseObservation(target, "tcp-exchange", "error", started, errorCode(error), messageOf(error), null);
+            return baseObservation(target, stage, exchange ? "error" : "closed", started,
+                    errorCode(error), messageOf(error), null);
         } finally {
-            closeQuietly(output);
-            closeQuietly(input);
+            // Closing a socket also closes both of its streams.
             closeQuietly(socket);
         }
     }
 
-    private Map probeHttp(Map target, int timeout, int maxRead) {
+    private Map probeHttp(Map target, String stage, int timeout, int maxRead) {
         long started = System.currentTimeMillis();
         HttpURLConnection connection = null;
         InputStream input = null;
+        OutputStream output = null;
         try {
+            Map request = null;
+            if ("http-request".equals(stage)) {
+                request = asMap(target.get("httpRequest"));
+                if (request == null) throw new IllegalArgumentException("httpRequest is required");
+            }
             String baseUrl = stringValue(target.get("baseUrl"));
             if (baseUrl.length() == 0) {
                 baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
                         + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
             }
-            connection = openHttpConnection(baseUrl, timeout);
-            // The stage name remains http-head for wire compatibility with
-            // existing plans. A small GET is required to extract the page title.
-            connection.setRequestMethod("GET");
+            String url = request == null ? baseUrl : buildProbeUrl(baseUrl, stringValue(request.get("path")));
+            connection = openHttpConnection(url, timeout);
+            // http-head retains its wire name; GET supplies the page title.
+            String method = request == null ? "GET" : stringValue(request.get("method"));
+            if (method.length() == 0) method = "GET";
+            connection.setRequestMethod(method);
             connection.setRequestProperty("User-Agent", "LeoAi-NetworkProbe/1.0");
-            Map headers = (Map) target.get("headers");
+            Map headers = asMap((request == null ? target : request).get("headers"));
             if (headers != null) {
                 Iterator iterator = headers.keySet().iterator();
                 while (iterator.hasNext()) {
@@ -429,27 +419,71 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                     if (key != null && value != null) connection.setRequestProperty(String.valueOf(key), String.valueOf(value));
                 }
             }
+            String charset = request == null ? "UTF-8" : stringValue(request.get("charset"));
+            if (charset.length() == 0) charset = "UTF-8";
+            String body = request == null ? "" : rawString(request.get("body"));
+            if (body.length() > 0 && ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method))) {
+                connection.setDoOutput(true);
+                byte[] bytes = body.getBytes(charset);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                output = connection.getOutputStream();
+                output.write(bytes);
+                output.flush();
+            }
             int status = connection.getResponseCode();
             input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             byte[] bytes = input == null ? new byte[0] : readBytes(input, maxRead, false);
-            String contentType = connection.getHeaderField("Content-Type");
-            HashMap evidence = new HashMap();
+            Map evidence = request == null ? httpSummary(connection, bytes, maxRead)
+                    : httpResponse(connection, bytes, charset, maxRead);
             evidence.put("statusCode", Integer.valueOf(status));
-            int contentLength = connection.getContentLength();
-            evidence.put("responseSize", Integer.valueOf(contentLength >= 0 ? contentLength : bytes.length));
-            addHeader(evidence, "server", connection.getHeaderField("Server"), maxRead);
-            addHeader(evidence, "location", connection.getHeaderField("Location"), maxRead);
-            addHeader(evidence, "contentType", contentType, maxRead);
             evidence.put("bodyLength", Integer.valueOf(bytes.length));
-            String title = extractTitle(decodeHttpBody(bytes, contentType));
-            if (title.length() > 0) evidence.put("title", title);
-            return baseObservation(target, "http-head", "open", started, null, null, evidence);
+            return baseObservation(target, stage, "open", started, null, null, evidence);
         } catch (Throwable error) {
-            return baseObservation(target, "http-head", "error", started, errorCode(error), messageOf(error), null);
+            return baseObservation(target, stage, "error", started, errorCode(error), messageOf(error), null);
         } finally {
+            closeQuietly(output);
             closeQuietly(input);
             if (connection != null) connection.disconnect();
         }
+    }
+
+    private Map httpSummary(HttpURLConnection connection, byte[] bytes, int maxRead) {
+        HashMap evidence = new HashMap();
+        int contentLength = connection.getContentLength();
+        evidence.put("responseSize", Integer.valueOf(contentLength >= 0 ? contentLength : bytes.length));
+        String contentType = connection.getHeaderField("Content-Type");
+        addHeader(evidence, "server", connection.getHeaderField("Server"), maxRead);
+        addHeader(evidence, "location", connection.getHeaderField("Location"), maxRead);
+        addHeader(evidence, "contentType", contentType, maxRead);
+        String title = extractTitle(decodeHttpBody(bytes, contentType));
+        if (title.length() > 0) evidence.put("title", title);
+        return evidence;
+    }
+
+    private Map httpResponse(HttpURLConnection connection, byte[] bytes, String charset, int maxRead)
+            throws Exception {
+        HashMap evidence = new HashMap();
+        evidence.put("body", sanitize(new String(bytes, charset)));
+        evidence.put("truncated", Boolean.valueOf(bytes.length >= maxRead));
+        Map responseHeaders = new HashMap();
+        StringBuilder headerText = new StringBuilder();
+        Map fields = connection.getHeaderFields();
+        if (fields != null) {
+            Iterator iterator = fields.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry entry = (Map.Entry) iterator.next();
+                String name = stringValue(entry.getKey());
+                Object value = entry.getValue();
+                if (name.length() == 0 || value == null) continue;
+                String safe = sanitize(String.valueOf(value));
+                responseHeaders.put(name, safe);
+                if (headerText.length() > 0) headerText.append("\\n");
+                headerText.append(name).append(": ").append(safe);
+            }
+        }
+        evidence.put("headers", headerText.toString());
+        evidence.put("responseHeaders", responseHeaders);
+        return evidence;
     }
 
     private static String decodeHttpBody(byte[] bytes, String contentType) {
@@ -489,84 +523,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 .replaceAll("\\s+", " ").trim();
         title = sanitize(title);
         return title.length() > MAX_TITLE_CHARS ? title.substring(0, MAX_TITLE_CHARS) : title;
-    }
-
-    private Map probeHttpRequest(Map target, int timeout, int maxRead) {
-        long started = System.currentTimeMillis();
-        HttpURLConnection connection = null;
-        InputStream input = null;
-        OutputStream output = null;
-        try {
-            Map request = asMap(target.get("httpRequest"));
-            if (request == null) throw new IllegalArgumentException("httpRequest is required");
-            String baseUrl = stringValue(target.get("baseUrl"));
-            if (baseUrl.length() == 0) {
-                baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
-                        + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
-            }
-            String path = stringValue(request.get("path"));
-            String url = buildProbeUrl(baseUrl, path);
-            connection = openHttpConnection(url, timeout);
-            String method = stringValue(request.get("method"));
-            if (method.length() == 0) method = "GET";
-            connection.setRequestMethod(method);
-            connection.setRequestProperty("User-Agent", "LeoAi-NetworkProbe/1.0");
-            Map headers = asMap(request.get("headers"));
-            if (headers != null) {
-                Iterator iterator = headers.keySet().iterator();
-                while (iterator.hasNext()) {
-                    Object key = iterator.next();
-                    Object value = headers.get(key);
-                    if (key != null && value != null) connection.setRequestProperty(String.valueOf(key), String.valueOf(value));
-                }
-            }
-            String body = rawString(request.get("body"));
-            if (body.length() > 0 && ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method))) {
-                connection.setDoOutput(true);
-                String charset = stringValue(request.get("charset"));
-                if (charset.length() == 0) charset = "UTF-8";
-                byte[] bytes = body.getBytes(charset);
-                connection.setFixedLengthStreamingMode(bytes.length);
-                output = connection.getOutputStream();
-                output.write(bytes);
-                output.flush();
-            }
-            int status = connection.getResponseCode();
-            input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            byte[] bytes = input == null ? new byte[0] : readBytes(input, maxRead, false);
-            String charset = stringValue(request.get("charset"));
-            if (charset.length() == 0) charset = "UTF-8";
-            HashMap evidence = new HashMap();
-            evidence.put("statusCode", Integer.valueOf(status));
-            evidence.put("body", sanitize(new String(bytes, charset)));
-            evidence.put("bodyLength", Integer.valueOf(bytes.length));
-            evidence.put("truncated", Boolean.valueOf(bytes.length >= maxRead));
-            Map responseHeaders = new HashMap();
-            StringBuilder headerText = new StringBuilder();
-            Map fields = connection.getHeaderFields();
-            if (fields != null) {
-                Iterator iterator = fields.entrySet().iterator();
-                while (iterator.hasNext()) {
-                    Map.Entry entry = (Map.Entry) iterator.next();
-                    String name = stringValue(entry.getKey());
-                    Object value = entry.getValue();
-                    if (name.length() == 0 || value == null) continue;
-                    String safe = sanitize(String.valueOf(value));
-                    responseHeaders.put(name, safe);
-                    if (headerText.length() > 0) headerText.append("\\n");
-                    headerText.append(name).append(": ").append(safe);
-                }
-            }
-            evidence.put("headers", headerText.toString());
-            evidence.put("responseHeaders", responseHeaders);
-            return baseObservation(target, "http-request", "open", started, null, null, evidence);
-        } catch (Throwable error) {
-            return baseObservation(target, "http-request", "error", started, errorCode(error), messageOf(error), null);
-        } finally {
-            closeQuietly(output);
-            closeQuietly(input);
-            if (connection != null) connection.disconnect();
-        }
     }
 
     private HttpURLConnection openHttpConnection(String url, int timeout) throws Exception {

@@ -2,6 +2,10 @@ package org.leo.web.service;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import java.util.stream.Stream;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
@@ -114,7 +118,7 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
-    void quickDepthSkipsServiceIdentification() throws Exception {
+    void legacyServiceFlagSelectsOnlyReachabilityAndPortStages() throws Exception {
         WorkflowNode node = new WorkflowNode();
         String taskId = String.valueOf(service.start("session-1", node, Map.of(
                 "hosts", List.of("host-a"),
@@ -127,7 +131,48 @@ class NetworkProbeWorkflowServiceTest {
 
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
         assertEquals(List.of("REACHABILITY", "PORT_SCAN"), node.startedStages);
-        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(2)).get("status"));
+        assertEquals(2, stages.size());
+        assertEquals(2, snapshot.get("stageCount"));
+    }
+
+    static Stream<List<String>> selectedStages() {
+        return Stream.of(List.of("REACHABILITY"), List.of("PORT_SCAN"),
+                List.of("REACHABILITY", "PORT_SCAN"), List.of("PORT_SCAN", "SERVICE_PROBE"),
+                List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("selectedStages")
+    void executesOnlySelectedStagesAndReportsConfirmedHosts(List<String> selected) throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        node.reachable = selected.contains("REACHABILITY"); // discovery would fail when bypassed
+        Map<String, Object> request = new HashMap<>(Map.of("hosts", List.of("host-a"), "stages", selected));
+        if (selected.contains("PORT_SCAN")) request.put("ports", List.of(80));
+        String taskId = String.valueOf(service.start("session-1", node, request).get("taskId"));
+        Map<String, Object> snapshot = awaitTerminal(taskId);
+
+        assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
+        assertEquals(selected, node.startedStages.stream().distinct().toList());
+        assertEquals(selected.size(), snapshot.get("stageCount"));
+        assertEquals(selected.size(), snapshot.get("completedStageCount"));
+        assertEquals(100, snapshot.get("progress"));
+        assertEquals(List.of("host-a"), snapshot.get("reachableHostList"));
+        assertEquals(selected.contains("PORT_SCAN") ? 1 : 0, ((List<?>) snapshot.get("openPortResults")).size());
+        assertEquals(selected.contains("SERVICE_PROBE") ? 1 : 0, ((List<?>) snapshot.get("serviceResults")).size());
+    }
+
+    @Test
+    void bypassedDiscoveryDoesNotMarkClosedHostsAsAlive() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        node.openPorts = Set.of();
+        String taskId = String.valueOf(service.start("session-1", node, Map.of(
+                "hosts", List.of("host-a"), "ports", List.of(80),
+                "stages", List.of("PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
+        Map<String, Object> snapshot = awaitTerminal(taskId);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertEquals(List.of(), snapshot.get("reachableHostList"));
+        assertEquals(List.of("PORT_SCAN"), node.startedStages);
+        assertEquals("NO_OPEN_PORTS", ((Map<?, ?>) ((List<?>) snapshot.get("stages")).get(1)).get("reason"));
     }
 
     @Test
@@ -185,14 +230,16 @@ class NetworkProbeWorkflowServiceTest {
         assertEquals(List.of("REACHABILITY"), node.startedStages);
     }
 
-    @Test
-    void controlsTheActiveStageAndChildTask() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void controlsTheActiveStageAndChildTask(boolean skipReachability) throws Exception {
         ControlledWorkflowNode node = new ControlledWorkflowNode();
         String taskId = String.valueOf(service.start("session-1", node, Map.of(
                 "hosts", List.of("host-a"),
                 "ports", List.of(80),
                 "probeServices", true,
-                "ruleSelector", Map.of())).get("taskId"));
+                "stages", skipReachability ? List.of("PORT_SCAN", "SERVICE_PROBE")
+                        : List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
 
         assertTrue(node.started.await(1L, TimeUnit.SECONDS));
         assertEquals("PAUSED", service.pause("session-1", taskId).get("status"));

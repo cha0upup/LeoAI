@@ -23,6 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NetworkProbeComponentTest {
@@ -89,28 +90,58 @@ class NetworkProbeComponentTest {
     }
 
     @Test
-    void extractsTitleFromHttpServiceProbe() throws Exception {
+    void keepsHttpSummaryAndRuleRequestEvidenceDistinct() throws Exception {
+        Map<String, Map<String, String>> received = new java.util.concurrent.ConcurrentHashMap<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
-            byte[] body = "<html><head><title> 资产管理平台 </title></head><body>ok</body></html>"
-                    .getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-            exchange.sendResponseHeaders(200, body.length);
+            String path = exchange.getRequestURI().toString();
+            received.put(path, Map.of("method", exchange.getRequestMethod(),
+                    "header", String.valueOf(exchange.getRequestHeaders().getFirst("X-Test")),
+                    "body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1)));
+            boolean rule = path.equals("/rules/check");
+            byte[] body = rule ? "réponse".getBytes(StandardCharsets.ISO_8859_1)
+                    : "<html><head><title> 资产管理平台 </title></head><body>ok</body></html>".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", rule ? "text/plain; charset=ISO-8859-1" : "text/html; charset=UTF-8");
+            exchange.getResponseHeaders().set("Server", "probe-fixture");
+            exchange.getResponseHeaders().set("Location", "/redirect");
+            exchange.sendResponseHeaders(rule ? 404 : 302, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });
         server.start();
         try {
+            int port = server.getAddress().getPort();
+            Map<String, Object> summaryTarget = target(port, "http");
+            summaryTarget.put("baseUrl", "http://127.0.0.1:" + port + "/landing?scope=one");
+            summaryTarget.put("headers", Map.of("X-Test", "summary"));
+            Map<String, Object> ruleTarget = target(port, "http");
+            ruleTarget.put("stage", "http-request");
+            ruleTarget.put("baseUrl", "http://127.0.0.1:" + port + "/rules");
+            ruleTarget.put("headers", Map.of("X-Test", "unused"));
+            ruleTarget.put("httpRequest", Map.of("method", "post", "path", "check",
+                    "headers", Map.of("X-Test", "rule"), "charset", "ISO-8859-1", "body", " café\r\n "));
             Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
-                    "methodName", "startTask", "plan", plan(
-                            Collections.singletonList(target(server.getAddress().getPort(), "http")),
-                            Collections.singletonList("http-head"))));
+                    "methodName", "startTask", "plan", plan(List.of(summaryTarget, ruleTarget), List.of("http-head"))));
             Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
-            Map<?, ?> observation = ((List<?>) snapshot.get("observations")).stream()
-                    .map(value -> (Map<?, ?>) value)
-                    .filter(value -> "http-head".equals(value.get("stage")))
-                    .findFirst().orElseThrow();
-            assertEquals("资产管理平台", ((Map<?, ?>) observation.get("evidence")).get("title"));
+            assertEquals(List.of(), snapshot.get("errors"));
+            List<?> observations = (List<?>) snapshot.get("observations");
+            assertEquals(2, observations.size());
+            Map<?, ?> summary = (Map<?, ?>) ((Map<?, ?>) observations.get(0)).get("evidence");
+            Map<?, ?> rule = (Map<?, ?>) ((Map<?, ?>) observations.get(1)).get("evidence");
+            assertEquals("资产管理平台", summary.get("title"));
+            assertEquals(302, summary.get("statusCode"));
+            assertEquals("probe-fixture", summary.get("server"));
+            assertEquals("/redirect", summary.get("location"));
+            assertFalse(summary.containsKey("body"));
+            assertFalse(summary.containsKey("responseHeaders"));
+            assertEquals(404, rule.get("statusCode"));
+            assertEquals("réponse", rule.get("body"));
+            assertTrue(((Map<?, ?>) rule.get("responseHeaders")).entrySet().stream()
+                    .anyMatch(entry -> "server".equalsIgnoreCase(String.valueOf(entry.getKey()))
+                            && "[probe-fixture]".equals(entry.getValue())));
+            assertEquals(Map.of(
+                    "/landing?scope=one", Map.of("method", "GET", "header", "summary", "body", ""),
+                    "/rules/check", Map.of("method", "POST", "header", "rule", "body", " café\r\n ")), received);
         } finally {
             server.stop(0);
         }

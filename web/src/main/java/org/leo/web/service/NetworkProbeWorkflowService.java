@@ -3,13 +3,13 @@ package org.leo.web.service;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.discovery.NetworkProbeLimits;
+import org.leo.web.service.discovery.ScanStage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,8 +43,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private static final int SERVICE_BANNER_TIMEOUT_MS = 300;
     /** HTTP identification only needs the response headers. */
     private static final int HTTP_IDENTIFICATION_TIMEOUT_MS = 700;
-    private static final List<String> STAGE_NAMES = Collections.unmodifiableList(Arrays.asList(
-            "REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"));
     private final NetworkProbeAnalysisService analysisService;
     private final NetworkProbeOrchestrationService orchestrationService;
     private volatile NetworkProbeResultStore resultStore;
@@ -99,6 +97,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             tasks.remove(taskId);
             throw new IllegalStateException("扫描结果存储不可用");
         }
+        persistTaskState(task);
         try {
             task.future = executor.submit(() -> run(task));
         } catch (RuntimeException error) {
@@ -244,16 +243,19 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
 
     private void run(WorkflowTask task) {
         try {
+            LinkedHashSet<String> portHosts = new LinkedHashSet<>(task.spec.hosts());
             StageState reachability = task.stages.get("REACHABILITY");
-            Map<String, Object> reachabilityScan = reachabilityScan(task.spec);
-            NetworkProbeAnalysisService.PreparedScan reachabilityPrepared = analysisService.prepare(reachabilityScan);
-            Map<String, Object> reachabilityResult = executeStage(task, reachability,
-                    reachabilityPrepared.plan(), reachabilityPrepared, null);
-            if (task.cancelRequested || task.terminal()) return;
-
-            Map<String, Object> reachabilityAnalysis = map(reachabilityResult.get("analysis"));
-            List<String> reachableHosts = stringList(reachabilityAnalysis.get("reachableHostList"));
-            LinkedHashSet<String> portHosts = new LinkedHashSet<>(reachableHosts);
+            if (reachability != null) {
+                Map<String, Object> reachabilityScan = reachabilityScan(task.spec);
+                NetworkProbeAnalysisService.PreparedScan prepared = analysisService.prepare(reachabilityScan);
+                Map<String, Object> result = executeStage(task, reachability, prepared.plan(), prepared, null);
+                if (task.cancelRequested || task.terminal()) return;
+                portHosts.retainAll(stringList(map(result.get("analysis")).get("reachableHostList")));
+            }
+            if (!task.spec.stages().contains(ScanStage.PORT_SCAN)) {
+                complete(task);
+                return;
+            }
             if (portHosts.isEmpty()) {
                 skip(task, task.stages.get("PORT_SCAN"), "NO_REACHABLE_HOSTS");
                 skip(task, task.stages.get("SERVICE_PROBE"), "NO_REACHABLE_HOSTS");
@@ -274,9 +276,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 complete(task);
                 return;
             }
-            if (!task.spec.probeServices()) {
-                skip(task, serviceProbe, "DISABLED");
-            } else {
+            if (serviceProbe != null) {
                 Map<String, Object> tcpServiceResult = executeStage(task, serviceProbe,
                         servicePlan(task.spec, openEndpoints), null, openEndpoints);
                 if (task.cancelRequested || task.terminal()) return;
@@ -485,6 +485,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     }
 
     private void skip(WorkflowTask task, StageState stage, String reason) {
+        if (stage == null) return;
         synchronized (task.monitor) {
             if (stage.terminal()) return;
             stage.status = "SKIPPED";
@@ -609,7 +610,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         config.put("ports", spec.ports());
         config.put("timeout", Integer.valueOf(spec.timeout()));
         config.put("threads", Integer.valueOf(spec.threads()));
-        config.put("probeServices", Boolean.valueOf(spec.probeServices()));
+        config.put("stages", spec.stages().stream().map(Enum::name).toList());
         return config;
     }
 
@@ -618,7 +619,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             int completed = 0;
             for (StageState stage : task.stages.values()) if (stage.terminal()) completed++;
             return "COMPLETED".equals(task.outcome) ? 100
-                    : Math.min(99, (completed * 100 + currentStageProgress(task)) / STAGE_NAMES.size());
+                    : Math.min(99, (completed * 100 + currentStageProgress(task)) / task.stages.size());
         }
     }
 
@@ -655,10 +656,10 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             result.put("status", task.status);
             result.put("outcome", task.outcome);
             result.put("currentStage", task.currentStage);
-            result.put("stageCount", Integer.valueOf(STAGE_NAMES.size()));
+            result.put("stageCount", Integer.valueOf(task.stages.size()));
             result.put("completedStageCount", Integer.valueOf(completedStages));
             result.put("progress", Integer.valueOf("COMPLETED".equals(task.outcome) ? 100
-                    : Math.min(99, (completedStages * 100 + currentStageProgress(task)) / STAGE_NAMES.size())));
+                    : Math.min(99, (completedStages * 100 + currentStageProgress(task)) / task.stages.size())));
             result.put("stages", stageSnapshots);
             result.put("hosts", task.spec.hosts());
             result.put("ports", task.spec.ports());
@@ -704,18 +705,24 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private int currentStageProgress(WorkflowTask task) {
         if (task.currentStage == null) return 0;
         StageState stage = task.stages.get(task.currentStage);
-        return stage == null ? 0 : stage.progress;
+        return stage == null || stage.terminal() ? 0 : stage.progress;
     }
 
     private List<String> reachableHosts(WorkflowTask task) {
         StageState stage = task.stages.get("REACHABILITY");
-        Map<String, Object> analysis = map(stage.result.get("analysis"));
-        return stringList(analysis.get("reachableHostList"));
+        if (stage != null) {
+            Map<String, Object> analysis = map(stage.result.get("analysis"));
+            return stringList(analysis.get("reachableHostList"));
+        }
+        // Skipping discovery does not assert that every input host is alive.
+        return openPortResults(task).stream().map(endpoint -> text(endpoint.get("host")))
+                .filter(host -> !host.isEmpty()).distinct().toList();
     }
 
     private List<Map<String, Object>> openPortResults(WorkflowTask task) {
         for (String name : List.of("SERVICE_PROBE", "PORT_SCAN")) {
             StageState stage = task.stages.get(name);
+            if (stage == null) continue;
             Object value = stage.result.get("openPortResults");
             if (value instanceof List<?> list) return mapList(list);
         }
@@ -753,24 +760,29 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             throw new IllegalArgumentException("workflow.hosts不能超过"
                     + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
         }
-        List<Integer> ports = uniquePorts(request.get("ports"));
-        if (ports.isEmpty()) throw new IllegalArgumentException("workflow.ports不能为空");
-        if (request.get("targets") == null
+        Object requestedStages = request.get("stages");
+        if (requestedStages == null && Boolean.FALSE.equals(request.get("probeServices"))) {
+            requestedStages = List.of("REACHABILITY", "PORT_SCAN");
+        }
+        List<ScanStage> stages = ScanStage.resolve(requestedStages);
+        boolean scanPorts = stages.contains(ScanStage.PORT_SCAN);
+        List<Integer> ports = scanPorts ? uniquePorts(request.get("ports")) : List.of();
+        if (scanPorts && ports.isEmpty()) throw new IllegalArgumentException("workflow.ports不能为空");
+        if (scanPorts && request.get("targets") == null
                 && (long) hosts.size() * (long) ports.size() > NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS) {
             throw new IllegalArgumentException("workflow目标组合数不能超过"
                     + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
         }
-        List<Map<String, Object>> targets = workflowTargets(request.get("targets"), hosts, ports);
+        List<Map<String, Object>> targets = scanPorts ? workflowTargets(request.get("targets"), hosts, ports) : List.of();
         int timeout = boundedInt(request.get("timeout"), NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS,
                 NetworkProbeLimits.NODE_MIN_TIMEOUT_MS, NetworkProbeLimits.NODE_MAX_TIMEOUT_MS);
         int threads = boundedInt(request.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
                 1, NetworkProbeLimits.NODE_MAX_THREADS);
-        boolean probeServices = !Boolean.FALSE.equals(request.get("probeServices"));
         String name = text(request.get("name"));
-        List<Map<String, Object>> reachabilityTargets = request.get("reachabilityTargets") == null
-                ? new ArrayList<>() : exactReachabilityTargets(request.get("reachabilityTargets"), hosts);
-        return new WorkflowSpec(hosts, ports, targets, timeout, threads, probeServices, name,
-                reachabilityTargets);
+        List<Map<String, Object>> reachabilityTargets = !stages.contains(ScanStage.REACHABILITY)
+                || request.get("reachabilityTargets") == null
+                ? List.of() : exactReachabilityTargets(request.get("reachabilityTargets"), hosts);
+        return new WorkflowSpec(hosts, ports, targets, timeout, threads, stages, name, reachabilityTargets);
     }
 
     private Map<String, Object> reachabilityScan(WorkflowSpec spec) {
@@ -1268,7 +1280,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
 
     private record WorkflowSpec(List<String> hosts, List<Integer> ports,
                                 List<Map<String, Object>> targets, int timeout, int threads,
-                                boolean probeServices, String name,
+                                List<ScanStage> stages, String name,
                                 List<Map<String, Object>> reachabilityTargets) { }
 
     private static final class WorkflowTask {
@@ -1282,7 +1294,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         private final Map<String, StageState> stages = new LinkedHashMap<>();
         private volatile String status = "RUNNING";
         private volatile String outcome = "RUNNING";
-        private volatile String currentStage = "REACHABILITY";
+        private volatile String currentStage;
         private volatile String childTaskId;
         private volatile boolean cancelRequested;
         private volatile String error;
@@ -1299,7 +1311,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             this.sessionId = sessionId;
             this.node = node;
             this.spec = spec;
-            for (String name : STAGE_NAMES) stages.put(name, new StageState(name));
+            for (ScanStage stage : spec.stages()) stages.put(stage.name(), new StageState(stage.name()));
+            this.currentStage = spec.stages().get(0).name();
         }
 
         private boolean terminal() {

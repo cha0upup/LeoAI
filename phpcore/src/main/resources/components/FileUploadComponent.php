@@ -6,15 +6,30 @@ return [
     'id' => 'FileUploadComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use ($get) {
         $path = (string)$get($params, 'path', '');
-        $offset = max(0, (int)$get($params, 'offset', 0));
+        $rawOffset = $get($params, 'offset', 0);
+        $offset = filter_var($rawOffset, FILTER_VALIDATE_INT);
         $data = $get($params, 'data', '');
-        if (!is_string($data)) throw new InvalidArgumentException('data must be binary');
-        $handle = fopen($path, 'c+b'); if ($handle === false) throw new RuntimeException('file cannot be opened');
+        if ($path === '') return ['code' => 400, 'msg' => 'path is required'];
+        if ($offset === false || $offset < 0) return ['code' => 400, 'msg' => 'offset must be a non-negative integer'];
+        if (!is_string($data)) return ['code' => 400, 'msg' => 'data must be binary'];
+        $length = strlen($data);
+        if ($length > 1048576) return ['code' => 413, 'msg' => 'chunk exceeds 1MB'];
+        if ($offset > PHP_INT_MAX - $length) return ['code' => 400, 'msg' => 'offset overflow'];
+        $handle = fopen($path, 'c+b');
+        if ($handle === false) throw new RuntimeException('file cannot be opened');
         try {
+            if (!flock($handle, LOCK_EX)) throw new RuntimeException('file cannot be locked');
             if (fseek($handle, $offset) !== 0) throw new RuntimeException('invalid offset');
-            $written = fwrite($handle, $data); if ($written === false) throw new RuntimeException('file write failed');
-            return ['code' => 200, 'success' => true, 'written' => $written,
-                'offset' => $offset, 'nextOffset' => $offset + $written];
+            $written = 0;
+            while ($written < $length) {
+                $count = fwrite($handle, substr($data, $written));
+                if ($count === false || $count === 0) throw new RuntimeException('incomplete chunk write');
+                $written += $count;
+            }
+            if (!fflush($handle)) throw new RuntimeException('file flush failed');
+            $stat = fstat($handle);
+            return ['code' => 200, 'success' => true, 'written' => $written, 'bytesWritten' => $written,
+                'offset' => $offset, 'nextOffset' => $offset + $written, 'fileLength' => $stat['size']];
         } finally { fclose($handle); }
     }
 ];

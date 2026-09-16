@@ -39,7 +39,8 @@ public class ScanPreviewService {
             long combinationCount = plan.targets().size();
             long reachabilityProbeCount = plan.reachabilityTargets().size();
 
-            int serviceProbeCount = estimateServiceProbeCount(combinationCount);
+            int serviceProbeCount = plan.stages().contains(ScanStage.SERVICE_PROBE)
+                    ? estimateServiceProbeCount(combinationCount) : 0;
 
             // 警告
             if (combinationCount > WARN_COMBINATIONS) {
@@ -53,7 +54,8 @@ public class ScanPreviewService {
                 warnings.add("探活请求数较大，扫描可能需要较长时间: " + reachabilityProbeCount);
             }
 
-            String estimatedSize = estimateResultSize(combinationCount);
+            String estimatedSize = plan.stages().contains(ScanStage.PORT_SCAN)
+                    ? estimateResultSize(combinationCount) : formatBytes((long) hostCount * 100);
 
             TargetPreview preview = new TargetPreview(
                     originalCount,
@@ -63,7 +65,8 @@ public class ScanPreviewService {
                     (int) reachabilityProbeCount,
                     serviceProbeCount,
                     estimatedSize,
-                    warnings
+                    warnings,
+                    plan.stages().stream().map(Enum::name).toList()
             );
 
             return new PreviewResponse(preview, errors);
@@ -92,6 +95,10 @@ public class ScanPreviewService {
         double openRate = 0.10;
         long estimatedBytes = (long) (combinationCount * openRate * avgBytesPerResult);
 
+        return formatBytes(estimatedBytes);
+    }
+
+    private String formatBytes(long estimatedBytes) {
         if (estimatedBytes < 1024) {
             return estimatedBytes + " B";
         } else if (estimatedBytes < 1024 * 1024) {

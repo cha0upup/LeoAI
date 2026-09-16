@@ -542,7 +542,10 @@ public final class NetworkProbeResultStore {
         result.put("errorCount", row.getInt("error_count"));
         result.put("error", row.getString("error_message"));
         Object stages = parseJson(row.getString("stage_json"));
-        if (stages instanceof List<?> list && !list.isEmpty()) result.put("stages", list);
+        if (stages instanceof List<?> list && !list.isEmpty()) {
+            result.put("stages", list);
+            result.put("stageCount", list.size());
+        }
         result.put("createdAt", row.getString("created_at"));
         result.put("updatedAt", row.getString("updated_at"));
         result.put("finishedAt", row.getString("finished_at"));
@@ -582,15 +585,12 @@ public final class NetworkProbeResultStore {
     }
 
     private Map<String, Object> reachableHostSummary(Connection connection, String taskId) throws SQLException {
-        // workflowStage is stored in the observation JSON; the escaped quote
-        // form would search for literal backslashes and never match SQLite JSON.
-        String marker = "%\"workflowStage\":\"REACHABILITY\"%";
+        // Any successful probe proves reachability, including port scans with discovery disabled.
         int count = 0;
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT COUNT(DISTINCT host) FROM scan_observations "
-                        + "WHERE task_id=? AND state='open' AND observation_json LIKE ?")) {
+                        + "WHERE task_id=? AND state='open' AND host IS NOT NULL AND host<>''")) {
             statement.setString(1, taskId);
-            statement.setString(2, marker);
             try (ResultSet result = statement.executeQuery()) {
                 if (result.next()) count = result.getInt(1);
             }
@@ -598,11 +598,10 @@ public final class NetworkProbeResultStore {
         List<String> hosts = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT host FROM scan_observations "
-                        + "WHERE task_id=? AND state='open' AND observation_json LIKE ? "
+                        + "WHERE task_id=? AND state='open' AND host IS NOT NULL AND host<>'' "
                         + "GROUP BY host ORDER BY MIN(observation_id) LIMIT ?")) {
             statement.setString(1, taskId);
-            statement.setString(2, marker);
-            statement.setInt(3, MAX_SUMMARY_HOSTS);
+            statement.setInt(2, MAX_SUMMARY_HOSTS);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     String host = result.getString(1);

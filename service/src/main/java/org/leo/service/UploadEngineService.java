@@ -11,6 +11,7 @@ import org.leo.service.transfer.TransferTaskState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.DigestUtils;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -21,6 +22,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -255,7 +257,13 @@ public class UploadEngineService {
 
     @PreDestroy
     public void close() {
-        for (UploadTask task : tasksById.values()) task.cancel();
+        for (UploadTask task : tasksById.values()) {
+            synchronized (task) {
+                // 提交中的远端重命名无法撤回，保留结果，继续关闭其他任务。
+                if (task.isCommitting()) continue;
+                task.cancel();
+            }
+        }
         tasksById.clear();
     }
 
@@ -351,16 +359,7 @@ public class UploadEngineService {
             updateDigest(md, String.valueOf(localFile.length()));
             updateDigest(md, String.valueOf(localFile.lastModified()));
             updateDigest(md, UUID.randomUUID().toString());
-            byte[] digest = md.digest();
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                String hex = Integer.toHexString(b & 0xff);
-                if (hex.length() == 1) {
-                    sb.append('0');
-                }
-                sb.append(hex);
-            }
-            return sb.toString();
+            return HexFormat.of().formatHex(md.digest());
         } catch (Exception e) {
             return UUID.randomUUID().toString().replace("-", "");
         }
@@ -427,7 +426,7 @@ public class UploadEngineService {
 
         private void runUpload(FileCapable fileNode) {
             synchronized (this) {
-                if (!state.canStart()) {
+                if (state != TransferTaskState.NEW) {
                     return;
                 }
                 state = TransferTaskState.RUNNING;
@@ -461,14 +460,7 @@ public class UploadEngineService {
                 touch();
                 int read;
                 while ((read = inputStream.read(buffer)) >= 0) {
-                    if (cancelRequested) {
-                        finishCancelled();
-                        return;
-                    }
-                    if (pauseRequested) {
-                        finishPaused();
-                        return;
-                    }
+                    if (finishIfRequested()) return;
                     if (read == 0) {
                         continue;
                     }
@@ -483,14 +475,7 @@ public class UploadEngineService {
                     uploadedBytes.set(offset);
                     touch();
                 }
-                if (cancelRequested) {
-                    finishCancelled();
-                    return;
-                }
-                if (pauseRequested) {
-                    finishPaused();
-                    return;
-                }
+                if (finishIfRequested()) return;
                 currentStage = TransferStage.VERIFYING_LOCAL;
                 touch();
                 String localMd5 = calculateMd5(localFile);
@@ -510,8 +495,7 @@ public class UploadEngineService {
                     throw new IllegalStateException(
                             "上传完整性校验失败: local=" + localMd5 + ", remote=" + remoteMd5);
                 }
-                currentStage = TransferStage.COMMITTING;
-                touch();
+                if (!beginCommit()) return;
                 ensureSuccess(fileNode.moveFile(tempPath, filePath, "overwrite"));
                 committed = true;
                 tempInitialized = false;
@@ -520,11 +504,7 @@ public class UploadEngineService {
                 endAt = System.currentTimeMillis();
                 touch();
             } catch (Exception e) {
-                if (pauseRequested) {
-                    finishPaused();
-                } else if (cancelRequested) {
-                    finishCancelled();
-                } else {
+                if (!finishIfRequested()) {
                     errorStage = currentStage;
                     errorMessage = e.getMessage();
                     state = TransferTaskState.FAILED;
@@ -538,18 +518,38 @@ public class UploadEngineService {
                     } catch (Exception ignored) {
                     }
                 }
-                if (!committed && state != TransferTaskState.PAUSED) {
-                    tryDeleteRemoteFile(fileNode, tempPath);
-                    tempInitialized = false;
+                synchronized (this) {
+                    if (!committed && state != TransferTaskState.PAUSED) {
+                        tryDeleteRemoteFile(fileNode, tempPath);
+                        tempInitialized = false;
+                    }
+                    cleanupComplete = true;
                 }
-                cleanupComplete = true;
             }
+        }
+
+        private synchronized boolean beginCommit() {
+            if (finishIfRequested()) return false;
+            currentStage = TransferStage.COMMITTING;
+            touch();
+            return true;
+        }
+
+        private void requireCancellable() {
+            if (isCommitting()) {
+                throw new IllegalStateException("文件正在提交，请等待提交结果");
+            }
+        }
+
+        private boolean isCommitting() {
+            return state == TransferTaskState.RUNNING && currentStage == TransferStage.COMMITTING;
         }
 
         private synchronized void pause() {
             if (state != TransferTaskState.RUNNING && state != TransferTaskState.NEW) {
                 return;
             }
+            requireCancellable();
             pauseRequested = true;
             state = TransferTaskState.PAUSED;
             touch();
@@ -561,7 +561,8 @@ public class UploadEngineService {
             if (state.isTerminal()) {
                 return;
             }
-            boolean cleanImmediately = state == TransferTaskState.PAUSED && tempInitialized;
+            requireCancellable();
+            boolean cleanImmediately = state == TransferTaskState.PAUSED && tempInitialized && cleanupComplete;
             cancelRequested = true;
             pauseRequested = false;
             state = TransferTaskState.CANCELLED;
@@ -612,6 +613,7 @@ public class UploadEngineService {
             if (state != TransferTaskState.PAUSED) {
                 return;
             }
+            if (!cleanupComplete) throw new IllegalStateException("上传任务正在暂停，请稍后恢复");
             state = TransferTaskState.NEW;
             pauseRequested = false;
             cancelRequested = false;
@@ -746,29 +748,9 @@ public class UploadEngineService {
         }
 
         private String calculateMd5(File file) throws Exception {
-            MessageDigest digest = MessageDigest.getInstance("MD5");
-            InputStream input = new FileInputStream(file);
-            try {
-                byte[] buffer = new byte[64 * 1024];
-                int read;
-                while ((read = input.read(buffer)) >= 0) {
-                    if (read > 0) {
-                        digest.update(buffer, 0, read);
-                    }
-                }
-            } finally {
-                input.close();
+            try (InputStream input = new FileInputStream(file)) {
+                return DigestUtils.md5DigestAsHex(input);
             }
-            byte[] bytes = digest.digest();
-            StringBuilder hex = new StringBuilder(bytes.length * 2);
-            for (byte value : bytes) {
-                String part = Integer.toHexString(value & 0xff);
-                if (part.length() == 1) {
-                    hex.append('0');
-                }
-                hex.append(part);
-            }
-            return hex.toString();
         }
     }
 

@@ -98,6 +98,33 @@ class NetworkProbeResultStoreTest {
         assertEquals(1, store.list("session-b").size());
     }
 
+    @Test
+    void restoresSelectedStagesAndHostsDiscoveredWithoutReachabilityStage() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("selected-stages.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        NetworkProbeResultStore store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+        List<Map<String, Object>> stages = List.of(Map.of("name", "PORT_SCAN", "status", "COMPLETED", "progress", 100));
+        assertTrue(store.createTask("ports-only", "session-a", "ports", Map.of("targetCount", 2, "stages", List.of("PORT_SCAN"))));
+        assertTrue(store.append("ports-only", List.of(
+                Map.of("workflowStage", "PORT_SCAN", "stage", "tcp-connect", "host", "10.0.0.1", "port", 80, "state", "open"),
+                Map.of("workflowStage", "PORT_SCAN", "stage", "tcp-connect", "host", "10.0.0.2", "port", 80, "state", "closed")), List.of()));
+        store.updateTask("ports-only", "STOPPED", "COMPLETED", null, 100, 2, null, stages);
+        Map<String, Object> summary = store.list("session-a").get(0);
+        assertEquals(stages, summary.get("stages"));
+        assertEquals(1, summary.get("stageCount"));
+        assertEquals(1, summary.get("reachableHostCount"));
+        assertEquals(List.of("10.0.0.1"), summary.get("reachableHostList"));
+
+        assertTrue(store.createTask("alive-only", "session-a", "alive", Map.of("targetCount", 1)));
+        assertTrue(store.append("alive-only", List.of(Map.of("workflowStage", "REACHABILITY", "stage", "tcp-connect",
+                "host", "10.0.0.3", "port", 80, "state", "open")), List.of()));
+        assertEquals(1, store.summary("session-a", "alive-only").get("reachableHostCount"));
+        assertEquals(0L, store.queryResults("session-a", "alive-only", Map.of()).get("total"));
+    }
+
     private int scalar(Statement statement, String sql) throws Exception {
         try (ResultSet rows = statement.executeQuery(sql)) {
             assertTrue(rows.next());
