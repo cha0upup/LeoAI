@@ -4,7 +4,7 @@ import java.io.File;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryUsage;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Method;
@@ -36,12 +36,6 @@ public class BasicInfoComponent implements Runnable {
 
     private static final long MIDDLEWARE_CACHE_TTL_MS = 10 * 60 * 1000;
 
-    private static volatile Object osBean;
-    private static volatile boolean sunOsBeanResolved;
-    private static volatile Class<?> sunOsBeanClass;
-    private static volatile RuntimeMXBean runtimeBean;
-    private static volatile MemoryMXBean memoryBean;
-    private static volatile ThreadMXBean threadBean;
     private static volatile String hostName;
     private static volatile Map<String, Object> middlewareInfo;
     private static volatile long middlewareCacheTime;
@@ -100,7 +94,7 @@ public class BasicInfoComponent implements Runnable {
             return;
         }
         if ("disks".equals(action)) {
-            List<Map<String, Object>> disks = getFileStoreInfo();
+            List<Map<String, Object>> disks = getFileSystemInfo();
             results.put("disks", disks);
             results.put("total", Integer.valueOf(disks.size()));
             results.put("source", "java-file-store");
@@ -164,12 +158,11 @@ public class BasicInfoComponent implements Runnable {
             info.put("SystemLoadAverage", formatLoadAverage(stdOs.getSystemLoadAverage()));
 
             // 尝试 com.sun.management 扩展方法（反射）
-            Object sunOs = getSunOsBean();
-            if (sunOs != null) {
-                Class<?> sunOsClass = getSunOsBeanClass(); // 用接口 Class 查方法，而非实现类
+            try {
+                Class<?> sunOsClass = Class.forName("com.sun.management.OperatingSystemMXBean");
 
-                long totalPhysical = invokeLongMethod(sunOs, sunOsClass, "getTotalPhysicalMemorySize", -1L);
-                long freePhysical = invokeLongMethod(sunOs, sunOsClass, "getFreePhysicalMemorySize", -1L);
+                long totalPhysical = invokeLongMethod(stdOs, sunOsClass, "getTotalPhysicalMemorySize", -1L);
+                long freePhysical = invokeLongMethod(stdOs, sunOsClass, "getFreePhysicalMemorySize", -1L);
 
                 if (totalPhysical > 0 && freePhysical >= 0) {
                     long usedPhysical = totalPhysical - freePhysical;
@@ -179,8 +172,8 @@ public class BasicInfoComponent implements Runnable {
                     info.put("PhysicalMemoryUsagePercent", Double.valueOf(calculateUsagePercent(usedPhysical, totalPhysical)));
                 }
 
-                long totalSwap = invokeLongMethod(sunOs, sunOsClass, "getTotalSwapSpaceSize", -1L);
-                long freeSwap = invokeLongMethod(sunOs, sunOsClass, "getFreeSwapSpaceSize", -1L);
+                long totalSwap = invokeLongMethod(stdOs, sunOsClass, "getTotalSwapSpaceSize", -1L);
+                long freeSwap = invokeLongMethod(stdOs, sunOsClass, "getFreeSwapSpaceSize", -1L);
 
                 if (totalSwap > 0 && freeSwap >= 0) {
                     long usedSwap = totalSwap - freeSwap;
@@ -189,7 +182,7 @@ public class BasicInfoComponent implements Runnable {
                     info.put("UsedSwapSpaceMB", Long.valueOf(bytesToMB(usedSwap)));
                     info.put("SwapUsagePercent", Double.valueOf(calculateUsagePercent(usedSwap, totalSwap)));
                 }
-            } else {
+            } catch (ClassNotFoundException ignored) {
                 info.put("note", "com.sun.management not available, physical memory info unavailable");
             }
 
@@ -206,14 +199,15 @@ public class BasicInfoComponent implements Runnable {
         Map<String, Object> info = new HashMap<String, Object>();
         try {
             java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
+            RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
             String host = getHostNameSafe();
 
             info.put("OSName", stdOs.getName());
             info.put("OSVersion", stdOs.getVersion());
             info.put("OSArch", stdOs.getArch());
             info.put("HostName", host);
-            info.put("SystemUptime", formatUptime(getRuntimeBean().getUptime()));
-            info.put("StartTime", Long.valueOf(getRuntimeBean().getStartTime()));
+            info.put("SystemUptime", formatUptime(runtime.getUptime()));
+            info.put("StartTime", Long.valueOf(runtime.getStartTime()));
 
         } catch (Exception e) {
             info.put("error", "failed to get OS info: " + e.getMessage());
@@ -296,8 +290,7 @@ public class BasicInfoComponent implements Runnable {
     public Map<String, Object> getJavaRuntimeInfo() {
         Map<String, Object> javaInfo = new HashMap<String, Object>();
         try {
-            RuntimeMXBean runtime = getRuntimeBean();
-            MemoryMXBean memory = getMemoryBean();
+            RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
             Runtime runtimeInstance = Runtime.getRuntime();
 
             // JVM 基本信息
@@ -330,14 +323,15 @@ public class BasicInfoComponent implements Runnable {
             javaInfo.put("MemoryUsagePercent", Double.valueOf(calculateUsagePercent(usedMemory, totalMemory)));
 
             // 堆内存信息
-            long heapUsed = memory.getHeapMemoryUsage().getUsed();
-            long heapMax = memory.getHeapMemoryUsage().getMax();
+            MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+            long heapUsed = heap.getUsed();
+            long heapMax = heap.getMax();
             javaInfo.put("HeapUsedMB", Long.valueOf(bytesToMB(heapUsed)));
             javaInfo.put("HeapMaxMB", Long.valueOf(bytesToMB(heapMax)));
             javaInfo.put("HeapUsagePercent", Double.valueOf(calculateUsagePercent(heapUsed, heapMax)));
 
             // 线程信息
-            ThreadMXBean thread = getThreadBean();
+            ThreadMXBean thread = ManagementFactory.getThreadMXBean();
             javaInfo.put("ThreadCount", Integer.valueOf(thread.getThreadCount()));
             javaInfo.put("PeakThreadCount", Integer.valueOf(thread.getPeakThreadCount()));
             javaInfo.put("TotalStartedThreadCount", Long.valueOf(thread.getTotalStartedThreadCount()));
@@ -366,15 +360,8 @@ public class BasicInfoComponent implements Runnable {
         return userInfo;
     }
 
-    /**
-     * 获取文件系统信息
-     */
-    public List<Map<String, Object>> getFileSystemInfo() {
-        return getFileStoreInfo();
-    }
-
     /** Java 7+ FileStore 反射路径，Java 6 自动回退 File.listRoots。 */
-    private List<Map<String, Object>> getFileStoreInfo() {
+    public List<Map<String, Object>> getFileSystemInfo() {
         List<Map<String, Object>> stores = new ArrayList<Map<String, Object>>();
         try {
             Class<?> fileSystemsClass = Class.forName("java.nio.file.FileSystems");
@@ -412,8 +399,8 @@ public class BasicInfoComponent implements Runnable {
             info.put("mount", root.getPath());
             info.put("name", root.getPath());
             info.put("fsType", "File System");
-            long total = invokeFileSpaceMethod(root, "getTotalSpace");
-            long free = invokeFileSpaceMethod(root, "getUsableSpace");
+            long total = invokeLongMethod(root, File.class, "getTotalSpace", -1L);
+            long free = invokeLongMethod(root, File.class, "getUsableSpace", -1L);
             addSpaceInfo(info, total, free);
             stores.add(info);
         }
@@ -481,7 +468,7 @@ public class BasicInfoComponent implements Runnable {
     private Map<String, Object> getProcessInfo() {
         Map<String, Object> processInfo = new HashMap<String, Object>();
         try {
-            RuntimeMXBean runtime = getRuntimeBean();
+            RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
             processInfo.put("ProcessId", getProcessId());
             processInfo.put("ProcessName", System.getProperty("sun.java.command"));
             processInfo.put("StartTime", Long.valueOf(runtime.getStartTime()));
@@ -714,32 +701,6 @@ public class BasicInfoComponent implements Runnable {
     // ==================== 反射辅助方法 ====================
 
     /**
-     * 通过反射获取 com.sun.management.OperatingSystemMXBean。
-     */
-    private static Object getSunOsBean() {
-        if (sunOsBeanResolved) return osBean;
-        synchronized (BasicInfoComponent.class) {
-            if (sunOsBeanResolved) return osBean;
-            try {
-                java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
-                sunOsBeanClass = Class.forName("com.sun.management.OperatingSystemMXBean");
-                osBean = stdOs;
-            } catch (ClassNotFoundException e) {
-                osBean = null;
-            }
-            sunOsBeanResolved = true;
-        }
-        return osBean;
-    }
-
-    /**
-     * 获取缓存的 com.sun.management.OperatingSystemMXBean 接口 Class
-     */
-    private static Class<?> getSunOsBeanClass() {
-        return sunOsBeanClass;
-    }
-
-    /**
      * 反射调用返回 long 的无参方法
      */
     private static long invokeLongMethod(Object obj, Class<?> clazz, String methodName, long defaultValue) {
@@ -752,57 +713,6 @@ public class BasicInfoComponent implements Runnable {
         } catch (Exception ignored) {
         }
         return defaultValue;
-    }
-
-    /**
-     * 反射调用 File.getTotalSpace/getUsableSpace（Java 1.6+）
-     * 返回 -1 表示方法不存在（Java 1.5）
-     */
-    private static long invokeFileSpaceMethod(File file, String methodName) {
-        try {
-            Method m = File.class.getMethod(methodName);
-            Object result = m.invoke(file);
-            if (result instanceof Number) {
-                return ((Number) result).longValue();
-            }
-        } catch (Exception ignored) {
-        }
-        return -1L;
-    }
-
-    // ==================== MXBean 单例 ====================
-
-    private static RuntimeMXBean getRuntimeBean() {
-        if (runtimeBean == null) {
-            synchronized (BasicInfoComponent.class) {
-                if (runtimeBean == null) {
-                    runtimeBean = ManagementFactory.getRuntimeMXBean();
-                }
-            }
-        }
-        return runtimeBean;
-    }
-
-    private static MemoryMXBean getMemoryBean() {
-        if (memoryBean == null) {
-            synchronized (BasicInfoComponent.class) {
-                if (memoryBean == null) {
-                    memoryBean = ManagementFactory.getMemoryMXBean();
-                }
-            }
-        }
-        return memoryBean;
-    }
-
-    private static ThreadMXBean getThreadBean() {
-        if (threadBean == null) {
-            synchronized (BasicInfoComponent.class) {
-                if (threadBean == null) {
-                    threadBean = ManagementFactory.getThreadMXBean();
-                }
-            }
-        }
-        return threadBean;
     }
 
     // ==================== 辅助方法 ====================
@@ -905,7 +815,7 @@ public class BasicInfoComponent implements Runnable {
 
     private String getProcessId() {
         try {
-            return getRuntimeBean().getName().split("@")[0];
+            return ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
         } catch (Exception e) {
             return "unknown";
         }

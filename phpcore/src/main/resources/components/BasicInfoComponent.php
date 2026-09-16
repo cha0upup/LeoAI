@@ -2,9 +2,9 @@
 $get = static function ($value, $key, $default = null) {
     return is_array($value) && array_key_exists($key, $value) ? $value[$key] : $default;
 };
-$available = static function ($name) {
-    return function_exists($name) && !in_array($name,
-        array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
+$disabledFunctions = array_values(array_filter(array_map('trim', explode(',', (string)ini_get('disable_functions')))));
+$available = static function ($name) use ($disabledFunctions) {
+    return function_exists($name) && !in_array($name, $disabledFunctions, true);
 };
 $run = static function ($command) use ($available) {
     if ($available('shell_exec')) {
@@ -33,9 +33,9 @@ $sizeToBytes = static function ($value) {
     $powers = ['' => 0, 'K' => 1, 'M' => 2, 'G' => 3, 'T' => 4];
     return (float)$matches[1] * pow(1024, $powers[strtoupper($matches[2])]);
 };
-$collectHardware = static function ($family) use ($run, $toMb, $percent, $sizeToBytes) {
+$collectHardware = static function ($family) use ($available, $run, $toMb, $percent, $sizeToBytes) {
     $info = [];
-    $processors = (int)getenv('NUMBER_OF_PROCESSORS');
+    $processors = $available('getenv') ? (int)getenv('NUMBER_OF_PROCESSORS') : 0;
     if ($processors < 1 && is_readable('/proc/cpuinfo')) {
         $cpu = @file_get_contents('/proc/cpuinfo');
         if (is_string($cpu)) $processors = preg_match_all('/^processor\s*:/m', $cpu, $unused);
@@ -45,7 +45,7 @@ $collectHardware = static function ($family) use ($run, $toMb, $percent, $sizeTo
         if (is_numeric($value)) $processors = (int)$value;
     }
     if ($processors > 0) $info['AvailableProcessors'] = $processors;
-    if (function_exists('sys_getloadavg')) {
+    if ($available('sys_getloadavg')) {
         $load = @sys_getloadavg();
         if (is_array($load)) $info['SystemLoadAverage'] = round((float)$load[0], 2);
     }
@@ -174,7 +174,7 @@ $collectNetwork = static function ($family) use ($available, $run, $networkEntry
         }
     }
     if (!$result) {
-        $host = function_exists('gethostname') ? @gethostname() : php_uname('n');
+        $host = $available('gethostname') ? @gethostname() : php_uname('n');
         $item = $networkEntry($host ? $host : 'host'); $item['IsUp'] = true;
         $addresses = $host ? @gethostbynamel($host) : false; $item['IPAddresses'] = is_array($addresses) ? $addresses : [];
         $result[$item['Name']] = $item;
@@ -207,7 +207,7 @@ $collectEnvironment = static function ($family) use ($available, $run) {
 };
 return [
     'id' => 'BasicInfoComponent', 'version' => '1.1.0',
-    'handle' => static function ($action, $params) use ($get, $available, $osFamily, $collectHardware, $collectFileSystems, $collectNetwork, $collectEnvironment) {
+    'handle' => static function ($action, $params) use ($get, $available, $disabledFunctions, $osFamily, $collectHardware, $collectFileSystems, $collectNetwork, $collectEnvironment) {
         $family = $osFamily(); $documentRoot = (string)$get($_SERVER, 'DOCUMENT_ROOT', '');
         $serverSoftware = (string)$get($_SERVER, 'SERVER_SOFTWARE', '');
         $extensions = array_values(get_loaded_extensions()); sort($extensions);
@@ -223,7 +223,7 @@ return [
             'PhpRuntimeInfo' => ['PHPVersion' => PHP_VERSION, 'SAPI' => PHP_SAPI, 'Extensions' => $extensions,
                 'MemoryLimit' => (string)ini_get('memory_limit'), 'MaxExecutionTime' => (string)ini_get('max_execution_time'),
                 'OpenBasedir' => (string)ini_get('open_basedir'),
-                'DisabledFunctions' => array_values(array_filter(array_map('trim', explode(',', (string)ini_get('disable_functions')))))],
+                'DisabledFunctions' => $disabledFunctions],
             'ProcessInfo' => ['ProcessName' => PHP_SAPI, 'ProcessId' => getmypid(), 'CurrentPath' => getcwd()],
             'EnvironmentInfo' => $collectEnvironment($family), 'HardwareInfo' => $collectHardware($family),
             'NetworkInfo' => $collectNetwork($family), 'FileSystemInfo' => $collectFileSystems($family)
