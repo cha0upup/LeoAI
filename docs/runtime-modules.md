@@ -87,7 +87,9 @@ HTTP Fuzzer 使用 `HttpSenderEngine` 级共享执行域，默认 50 个 daemon 
 - 通过 `/platform/shell-generator/generate/runtime` 生成 PHP 5.6+ 单文件 HTTP 启动器；外层只负责伪装编解码，内层使用与 Java Core 对齐的运行时中立操作协议完成测试、转发、加载和调用。组件按 digest 懒加载到目标临时目录，业务和运行环境检测逻辑均由组件承载。
 - 平台脚本生成器、伪装管理、插件管理/调用、节点信息页和 AI 插件工具均按 runtime 识别 PHP。
 
-PHP endpoint 虽然采用请求式 HTTP 传输，但虚拟终端通过会话 ID 在目标临时目录维护进程与输出状态：Unix 优先使用 Python PTY，缺少 Python 时使用无额外依赖的命令后端；Windows 使用命令后端。只有真实 PTY 支持终端尺寸调整，命令后端仍保留工作目录、输入缓冲、清屏、中断和输出游标等稳定交互行为。网络代理组件同样使用目标临时目录中的队列和独立 PHP worker 保持跨请求 socket 状态，启动 worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。压缩/解压依赖目标环境的 `ZipArchive`。数据库管理层使用与运行时无关的连接描述，Java 适配器生成 JDBC 参数，PHP 适配器独立生成 PDO DSN；PHP 组件不解析或接收 JDBC URL。目标 PHP 需安装对应的 `pdo_mysql`、`pdo_pgsql`、`pdo_sqlsrv`/`pdo_dblib`、`pdo_oci` 或 `pdo_sqlite` driver。
+PHP endpoint 虽然采用请求式 HTTP 传输，但虚拟终端通过会话 ID 在目标临时目录维护进程与输出状态：Unix 优先使用 Python PTY，缺少 Python 时使用无额外依赖的命令后端；Windows 使用命令后端。只有真实 PTY 支持终端尺寸调整，命令后端仍保留工作目录、输入缓冲、清屏、中断和输出缓冲等稳定交互行为。网络代理组件同样使用目标临时目录中的队列和独立 PHP worker 保持跨请求 socket 状态，启动 worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。压缩/解压依赖目标环境的 `ZipArchive`。数据库管理层使用与运行时无关的连接描述，Java 适配器生成 JDBC 参数，PHP 适配器独立生成 PDO DSN；PHP 组件不解析或接收 JDBC URL。目标 PHP 需安装对应的 `pdo_mysql`、`pdo_pgsql`、`pdo_sqlsrv`/`pdo_dblib`、`pdo_oci` 或 `pdo_sqlite` driver。
+
+虚拟终端使用 `alive` 与 `eof` 分别表达进程存活和输出读完，前端按会话流式解码 UTF-8。初始化和写入可在同一次请求中附带最多 64 KiB 当前输出；写响应、单次读取和批量读取共用 `outputSequence`，前端按序解码并处理 EOF，输出读取失败不会使成功的输入被重发。Java 前台采用最多等待 10 秒的长轮询，有输出立即返回；普通前台轮询在连续空读后按 3、5、10、20 秒降频，后台间隔至少 5 秒并逐步增至 20 秒，输入或激活时恢复读取。PHP 命令后端在执行期间释放会话锁，通过独立控制文件接收中断和关闭；同一次提交中的命令共享 20 秒执行预算，前端写请求采用 45 秒超时、长轮询请求采用 30 秒超时。Java 使用 daemon 清理线程回收 30 分钟无访问的进程，PHP PTY 桥接进程自行检查会话访问时间。前端关闭会话后，仅对尚在初始化的请求补做清理，并对失败的停止请求进行有限重试；普通写入不会创建进程。
 
 PHP 启动器的组件缓存目录、文件名、扩展名和原子写入前缀均由生成 seed 派生；有状态 component 的状态目录与 worker token 则由部署路径派生。目标临时目录和后台进程参数不携带固定产品名，且同一 endpoint 内保持稳定，避免影响缓存命中与任务恢复。
 
@@ -191,9 +193,9 @@ Web Runtime 返回稳定的 `runtimeId/contextId/componentId`，并把
 
 | 能力 | Java | PHP |
 | --- | --- | --- |
-| Unix 虚拟终端 | Python PTY；直接 shell pipe 降级 | Python PTY；命令后端降级 |
+| Unix 虚拟终端 | 默认原生管道；可显式新建 Python PTY | Python PTY；命令后端降级 |
 | Windows 虚拟终端 | `cmd.exe` pipe | 命令后端 |
-| 终端 resize | 仅 Python PTY | 仅 Python PTY |
+| 终端 resize | 不支持，PTY 使用 shell 默认尺寸 | 仅 Python PTY |
 | 一次性命令 | `ProcessBuilder` | `proc_open`；`exec` 降级 |
 | HTTP 发包 | `HttpURLConnection` | cURL；PHP stream 降级 |
 | 数据库管理 | 统一连接描述 → Java 适配器 → JDBC | 统一连接描述 → PHP 适配器 → PDO |
@@ -201,4 +203,4 @@ Web Runtime 返回稳定的 `runtimeId/contextId/componentId`，并把
 | 反向隧道 | 共享平台隧道引擎 + Java listener component | 共享平台隧道引擎 + PHP 后台 listener worker |
 | 基础信息 | JVM/系统接口与必要的 OS 分支 | `/proc`、`sysctl`、Windows 系统命令与 PHP 原生接口 |
 
-虚拟终端只保留一个完整 PTY 路径和一个可预测的基础路径，不探测 `socat` 或多种 `script` 方言，避免目标环境因外部程序版本差异进入难以验证的分支。
+虚拟终端只保留一个完整 PTY 路径和一个可预测的基础路径，不探测 `socat` 或多种 `script` 方言，避免目标环境因外部程序版本差异进入难以验证的分支。前后端职责、会话生命周期和维护入口见 [虚拟终端架构与维护](virtual-terminal.md)。

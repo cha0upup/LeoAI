@@ -41,7 +41,7 @@ class PhpComponentArtifactRegistryTest {
         assertThrows(IllegalArgumentException.class, () -> registry.getRequired("MissingComponent"));
 
         assertEquals("2.2.0", registry.getRequired("DatabaseComponent").getVersion());
-        assertEquals("2.3.0", registry.getRequired("ExecCommandComponent").getVersion());
+        assertEquals("3.0.0", registry.getRequired("ExecCommandComponent").getVersion());
         assertEquals("1.1.0", registry.getRequired("BasicInfoComponent").getVersion());
     }
 

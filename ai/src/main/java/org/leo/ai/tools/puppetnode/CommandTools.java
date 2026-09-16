@@ -449,7 +449,7 @@ public class CommandTools {
         String processId = UUID.randomUUID().toString();
         try {
             // Java 与 PHP 的 init 响应都在输入通道可用后返回，无需额外消费一次终端输出。
-            Map<String, Object> initialized = commandNode.execCommand("write", "init", processId);
+            Map<String, Object> initialized = commandNode.execCommand("init", "", processId);
             if (initialized == null) {
                 throw new IllegalStateException("terminal initialization returned no state");
             }

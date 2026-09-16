@@ -5,6 +5,7 @@ import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.command.CommandExecRequest;
+import org.leo.web.dto.puppetnode.command.TerminalBatchReadRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
@@ -13,7 +14,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -21,20 +21,37 @@ import java.util.Map;
 @RequestMapping("/puppet-node/command")
 public class CommandController {
 
+    @PostMapping("/read-batch")
+    public Map<String, Object> readBatch(@RequestBody TerminalBatchReadRequest request) {
+        request = TerminalBatchReadRequest.normalize(request);
+        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(request.sessionId());
+        TerminalCapable node = ControllerUtil.requireCapability(session, TerminalCapable.class);
+        session.touchLastActiveTime();
+        try {
+            Map<String, Object> result = requireSuccessfulResult(node.readTerminals(request.processIds()));
+            if (!(result.get("terminals") instanceof Map<?, ?>)) {
+                throw ApiException.serverError("批量终端读取返回了无效结果");
+            }
+            return ApiResponse.success(result);
+        } catch (ApiException error) {
+            throw error;
+        } catch (Exception error) {
+            throw ApiException.serverError("读取终端失败: " + error.getMessage());
+        }
+    }
+
     @PostMapping("/exec-command")
     public Map<String, Object> execCommand(@RequestBody CommandExecRequest request) {
         AbstractPuppetNode auditNode = null;
         String cmd = request == null ? null : request.cmd();
         Map<String, Object> auditParams = auditParams(request);
         try {
-            if (request == null) {
-                throw ApiException.badRequest("请求体不能为空");
-            }
-            String sessionId = requireText(request.sessionId(), "sessionId");
-            String type = requireCommandType(request.type());
-            String processId = requireText(request.processId(), "processId");
-            cmd = "write".equals(type) || "resize".equals(type)
-                    ? requireCommandPayload(request.cmd()) : normalizeCommand(request.cmd());
+            request = CommandExecRequest.normalize(request);
+            auditParams = auditParams(request);
+            String sessionId = request.sessionId();
+            String type = request.type();
+            String processId = request.processId();
+            cmd = request.cmd();
 
             PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
             TerminalCapable commandNode = ControllerUtil.requireCapability(session, TerminalCapable.class);
@@ -42,45 +59,30 @@ public class CommandController {
             if (commandNode instanceof AbstractPuppetNode node) {
                 auditNode = node;
             }
-            Map<String, Object> results = commandNode.execCommand(type, cmd, processId);
-            logCommandAuditSuccess(auditNode, type, cmd, processId, auditParams);
-            return ApiResponse.success(results != null ? results : Collections.emptyMap());
+            Map<String, Object> results = commandNode.execTerminal(
+                    type, cmd, processId, request.terminalMode(), request.includeOutput());
+            requireSuccessfulResult(results);
+            logCommandAudit(auditNode, type, cmd, processId, auditParams, null);
+            return ApiResponse.success(results);
         } catch (ApiException e) {
-            logCommandAuditFailure(auditNode, request == null ? null : request.type(), cmd,
+            logCommandAudit(auditNode, request == null ? null : request.type(), cmd,
                     request == null ? null : request.processId(), auditParams, e.getMessage());
             throw e;
         } catch (Exception e) {
-            logCommandAuditFailure(auditNode, request == null ? null : request.type(), cmd,
+            logCommandAudit(auditNode, request == null ? null : request.type(), cmd,
                     request == null ? null : request.processId(), auditParams, e.getMessage());
             throw ApiException.serverError("执行命令失败: " + e.getMessage());
         }
     }
 
-    private String requireText(String value, String name) {
-        if (value == null || value.isBlank()) {
-            throw ApiException.badRequest(name + "不能为空");
+    private Map<String, Object> requireSuccessfulResult(Map<String, Object> result) {
+        if (result == null || !(result.get("code") instanceof Number code)
+                || code.intValue() != ApiResponse.CODE_SUCCESS) {
+            Object message = result == null ? null : result.get("msg");
+            throw ApiException.serverError(message == null
+                    ? "终端操作失败：目标返回了无效结果" : String.valueOf(message));
         }
-        return value.trim();
-    }
-
-    private String requireCommandType(String value) {
-        String type = requireText(value, "type");
-        if (!"write".equals(type) && !"read".equals(type)
-                && !"resize".equals(type) && !"stop".equals(type)) {
-            throw ApiException.badRequest("type不支持");
-        }
-        return type;
-    }
-
-    private String requireCommandPayload(String value) {
-        if (value == null || value.isEmpty()) {
-            throw ApiException.badRequest("cmd不能为空");
-        }
-        return value;
-    }
-
-    private String normalizeCommand(String value) {
-        return value == null ? "" : value;
+        return result;
     }
 
     private Map<String, Object> auditParams(CommandExecRequest request) {
@@ -92,47 +94,28 @@ public class CommandController {
         params.put("cmd", request.cmd());
         params.put("type", request.type());
         params.put("processId", request.processId());
+        if (request.terminalMode() != null) params.put("terminalMode", request.terminalMode());
         return params;
     }
 
-    private void logCommandAuditSuccess(AbstractPuppetNode node,
-                                        String type,
-                                        String cmd,
-                                        String processId,
-                                        Map<String, Object> auditParams) {
-        if (node == null) {
-            return;
-        }
-        if ("read".equals(type) || "resize".equals(type)) {
-            return;
-        }
-        if ("stop".equals(type)) {
-            AuditLogUtil.logSuccess(node, "COMMAND_STOP", "停止命令进程", processId, auditParams,
-                    ApiResponse.CODE_SUCCESS, "停止命令进程成功", AuditLogUtil.getClientIp());
-            return;
-        }
-        AuditLogUtil.logSuccess(node, "COMMAND_EXEC", "执行命令", cmd, auditParams,
-                ApiResponse.CODE_SUCCESS, "执行命令成功", AuditLogUtil.getClientIp());
-    }
-
-    private void logCommandAuditFailure(AbstractPuppetNode node,
-                                        String type,
-                                        String cmd,
-                                        String processId,
-                                        Map<String, Object> auditParams,
-                                        String errorMessage) {
-        if (node == null) {
-            return;
-        }
-        if ("read".equals(type) || "resize".equals(type)) {
-            return;
-        }
-        if ("stop".equals(type)) {
-            AuditLogUtil.logFailure(node, "COMMAND_STOP", "停止命令进程", processId, auditParams,
+    private void logCommandAudit(AbstractPuppetNode node,
+                                 String type,
+                                 String cmd,
+                                 String processId,
+                                 Map<String, Object> auditParams,
+                                 String errorMessage) {
+        if (node == null || "read".equals(type) || "resize".equals(type)) return;
+        boolean stop = "stop".equals(type);
+        boolean init = "init".equals(type);
+        String operation = stop ? "COMMAND_STOP" : init ? "COMMAND_INIT" : "COMMAND_EXEC";
+        String description = stop ? "停止命令进程" : init ? "初始化终端" : "执行命令";
+        String target = stop || init ? processId : cmd;
+        if (errorMessage == null) {
+            AuditLogUtil.logSuccess(node, operation, description, target, auditParams,
+                    ApiResponse.CODE_SUCCESS, description + "成功", AuditLogUtil.getClientIp());
+        } else {
+            AuditLogUtil.logFailure(node, operation, description, target, auditParams,
                     errorMessage, AuditLogUtil.getClientIp());
-            return;
         }
-        AuditLogUtil.logFailure(node, "COMMAND_EXEC", "执行命令", cmd, auditParams,
-                errorMessage, AuditLogUtil.getClientIp());
     }
 }

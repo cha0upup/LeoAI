@@ -553,21 +553,14 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> execCommand(String type, String cmd, String processId) throws Exception {
-        if ("write".equals(type)) return commandService.write(cmd, processId);
-        if ("read".equals(type))  return commandService.read(processId, parseTerminalReadWait(cmd));
-        if ("resize".equals(type)) return commandService.resize(cmd, processId);
-        if ("stop".equals(type))  return commandService.stop(processId);
-        return new HashMap<String, Object>();
+    public Map<String, Object> execTerminal(String type, String cmd, String processId,
+                                           String terminalMode, boolean includeOutput) throws Exception {
+        return commandService.execTerminal(type, cmd, processId, terminalMode, includeOutput);
     }
 
-    private int parseTerminalReadWait(String value) {
-        if (value == null || value.trim().isEmpty()) return 0;
-        try {
-            return Math.max(0, Math.min(2000, Integer.parseInt(value.trim())));
-        } catch (NumberFormatException ignored) {
-            return 0;
-        }
+    @Override
+    public Map<String, Object> readTerminals(List<String> processIds) throws Exception {
+        return commandService.readTerminals(processIds);
     }
 
     @Override

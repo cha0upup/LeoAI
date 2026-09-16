@@ -4,6 +4,7 @@ import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,35 +15,14 @@ public class CommandService extends ComponentService {
         super(communication, requestLayers, responseLayers);
     }
 
-    public Map<String, Object> write(String cmd, String processId) throws Exception {
-        HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("processId", processId.getBytes("UTF-8"));
-        params.put("op", 0);
-        params.put("cmd", cmd.getBytes("UTF-8"));
-        return invokeComponent("ExecCommandComponent", params);
+    public Map<String, Object> readTerminals(List<String> processIds) throws Exception {
+        return invokeComponent(TerminalRequests.COMPONENT, TerminalRequests.batchRead(processIds));
     }
 
-    public Map<String, Object> read(String processId, int waitMillis) throws Exception {
-        HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("processId", processId.getBytes("UTF-8"));
-        params.put("op", 1);
-        params.put("waitMs", Integer.valueOf(Math.max(0, Math.min(2000, waitMillis))));
-        return invokeComponent("ExecCommandComponent", params);
-    }
-
-    public Map<String, Object> stop(String processId) throws Exception {
-        HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("processId", processId.getBytes("UTF-8"));
-        params.put("op", 2);
-        return invokeComponent("ExecCommandComponent", params);
-    }
-
-    public Map<String, Object> resize(String size, String processId) throws Exception {
-        HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("processId", processId.getBytes("UTF-8"));
-        params.put("op", 3);
-        params.put("cmd", size.getBytes("UTF-8"));
-        return invokeComponent("ExecCommandComponent", params);
+    public Map<String, Object> execTerminal(String type, String command, String processId,
+                                           String terminalMode, boolean includeOutput) throws Exception {
+        return invokeComponent(TerminalRequests.COMPONENT,
+                TerminalRequests.create(type, command, processId, terminalMode, includeOutput));
     }
 
     public Map<String, Object> execSimpleCommand(String cmd) throws Exception {
@@ -56,8 +36,8 @@ public class CommandService extends ComponentService {
      * @param timeoutSeconds 超时秒数；&lt;=0 时使用组件默认（30s）
      */
     public Map<String, Object> execSimpleCommand(String cmd, int timeoutSeconds) throws Exception {
-        HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("cmd", cmd.getBytes("UTF-8"));
+        Map<String, Object> params = new HashMap<>();
+        params.put("cmd", cmd.getBytes(StandardCharsets.UTF_8));
         if (timeoutSeconds > 0) {
             params.put("timeout", Integer.valueOf(timeoutSeconds));
         }

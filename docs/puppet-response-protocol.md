@@ -138,17 +138,21 @@ Java `ComponentService` 使用内部字段 `reqStatus/reqMsg` 表示编解码与
 
 ### 5.2 ExecCommandComponent
 
-公共参数：`processId, cmd?`。
+公共参数：`processId, cmd?, includeOutput?`。`cmd` 仅用于 `write/resize`，`includeOutput` 仅用于 `init/write`。
 
 | action | 返回字段 |
 |---|---|
-| `write` + `cmd=init` | `code, initialized, alive, pty, resizable, backend, instanceId, backendFailures` |
+| `init`（无 cmd） | `code, initialized, alive, pty, resizable, backend, instanceId, backendFailures` |
 | `write` | `code, written, alive, pty, resizable, backend, instanceId, backendFailures` |
-| `read` | `code, data:binary, alive, pty?, resizable?, backend?, exitCode?, instanceId, backendFailures?` |
+| `read` | `code, data:binary, alive, eof, hasMore?, busy?, pty?, resizable?, backend?, exitCode?, instanceId, backendFailures?` |
 | `resize` | `code, cols, rows, pty, resizable, resized, instanceId` |
 | `stop` | `code, stopped, alive, instanceId` |
 
-不存在的 read 会返回 `code:200, data:empty, alive:false, missing:true`。
+不存在的 read 会返回 `code:200, data:empty, alive:false, missing:true, eof:true`。
+
+`alive:false` 只表示进程结束，客户端仍须读取到 `eof:true` 才能停止读取并刷新 UTF-8 解码器。`hasMore` 表示当前尚有缓冲输出；Java 输出采集线程尚未读完时允许 `alive:false, hasMore:false, eof:false`。当前终端协议要求明确返回 `eof`，不以空数据代替 EOF。
+
+PHP 命令模式在命令执行时返回 `busy:true`。写入请求释放会话锁，允许独立请求读取输出；单独写入 `\x03` 请求中断，`stop` 请求结束会话。正在执行时拒绝其他写入（组件码 409）。单次提交共享 20 秒执行预算，每条命令输出上限为 1MiB，客户端写入请求超时为 45 秒；该模式不保留跨命令环境变量，也不支持交互式标准输入。组件的非 200 返回在 HTTP 控制器中作为失败处理，并记录失败审计。
 
 ### 5.3 ExecCommandSimpleComponent
 
@@ -285,13 +289,34 @@ servletApiVersion, namespace, features, capabilities, contexts[], frameworks[]`�
 
 | Component | 操作选择 | 返回字段 |
 |---|---|---|
-| ExecCommandComponent | op 0 write | `code, initialized/starting?, alive, rows?, cols?, msg?` |
+| ExecCommandComponent | op 0 write | `code, written, alive, terminalMode, terminalModes, pty, lineInput` |
 | ExecCommandComponent | op 1 read | `code, data:byte[], alive, exitCode?, error?, missing?` |
 | ExecCommandComponent | op 2 stop | `code, stopped, alive` |
 | ExecCommandComponent | op 3 resize | `code, resized, cols, rows` |
+| ExecCommandComponent | op 4 write-line | `code, written, alive, lineInput, pty, terminalMode` |
+| ExecCommandComponent | op 5 read-batch | `code, instanceId, terminals:Map<processId, readResult>` |
+| ExecCommandComponent | op 6 init | `code, initialized, alive, terminalMode, terminalModes, pty, lineInput` |
 | ExecCommandSimpleComponent | 无 | `code, data:byte[], exitCode, timedOut, msg?` |
 | ExecScriptComponent | 无 | `code, result?, msg?` |
 | PluginComponent | 无 | `code, result?, msg?` |
+
+Java 终端默认 `pipe`。初始化 `type=init` 可额外指定 `terminalMode=pipe|python-pty`，会话建立后模式不可更改。Java Python PTY 仅支持 Unix，依赖 Python 标准库 `pty`；启动失败不自动降级。平台仅在 PTY 初始化时发送三行 `ptyBridge` 源码，由标准库 `pty.spawn` 启动交互 shell，输入输出均直接传递原始字节，无启动握手。Java 的 PTY `exitCode` 表示桥接进程退出码，正常结束通常为 0，不再转发子 shell 的退出码。Java 两种模式均返回 `resizable=false`，resize 请求返回 `resized=false`，不向进程发送尺寸控制。返回的 `terminalModes` 表示该操作系统支持选择的模式，不保证节点已安装兼容的 Python。管道与 Python PTY 均不创建 Java 终端辅助文件。
+
+Java PIPE 响应报告 `lineInput=true`，允许前端本地编辑、回显后通过 HTTP `type=write-line`（组件 `op=4`）提交完整行。整个输入必须以 LF 结束且不超过 1 MiB；节点不回显、不解释编辑按键，Windows 转为节点字符集和 CRLF。PTY 不接受此操作。会话不存在时写入报错，不隐式创建；读取仍返回 `missing=true, eof=true`。PHP 命令终端及 PTY 使用 `write` 流式输入。前端流式输入采用 100ms 合并窗口，控制输入及时发送。
+
+HTTP `read.cmd` 为空时不等待；非空时必须为 32 位非负整数，非法值返回 400，超出 10000ms 则限制到 10000ms。Java 适配器对内部调用执行相同校验，再发送整数 `waitMs`。Java 节点的 `op/waitMs` 仅接受整数、`includeOutput` 仅接受布尔值、`terminalMode` 仅接受字符串，`cmd/processId/processIds/ptyBridge` 仅接受 UTF-8 字节数组。PHP `cmd` 仅接受字符串，不支持长轮询。
+
+`init` 是唯一可创建会话的操作；`write` 中的 `init` 是普通文本，客户端不再拆帧。重复初始化运行中的会话不会清空输入、重启进程或重置输出序号；`terminalMode` 仅允许在初始化时指定，已有会话不能改变模式。HTTP `init/stop` 不接受命令，初始化审计为 `COMMAND_INIT`，审计目标为进程 ID。
+
+Java 前台读取请求 `waitMs=10000`，服务适配器与节点组件均将等待限制在 0–10000ms；有输出、进程退出或停止时提前返回。浏览器长轮询请求超时为 30 秒，响应后在下一个调度周期续接，不叠加空闲延迟。不支持长轮询的前台终端连续空读后按 3、5、10、20 秒降频，后台使用非阻塞读取且间隔至少 5 秒，连续空读后为 5、5、10、20 秒。输入、激活或输出重置空闲计数；`hasMore` 和退出后的排空跳过空闲间隔。
+
+终端初始化和写入可携带 `includeOutput=true`，Java/PHP 适配器将该标志传入同一次组件调用。写入成功后非阻塞地消费最多 64 KiB 当前输出，嵌套在写响应的 `output` 字段中；该字段使用读取响应结构（`code, instanceId, outputSequence, data, alive, eof, hasMore` 等）。附带输出失败返回 `output.code=500, output.msg`，外层保持写入成功，客户端不可因此重发输入。该标志仅用于初始化与写操作；内部命令执行器或等待早先输出响应的前端可不携带它，将输出留给读取请求。
+
+写响应内的输出、单次读取及批量读取共用每进程从 1 递增的 `outputSequence`，空读也分配序号；缺失进程无序号，返回 `missing=true`。序号和字节消费在同一临界区完成。前端按序解码并处理 EOF；缺口存在时暂停新增输出消费，所有在途请求结束后仍缺失的序号会触发丢失提示，再继续显示后续输出。当前客户端要求新序号协议，服务器和节点组件需同步更新，既有终端需重新创建。
+
+Java/PHP 组件报告 `batchRead=true`。HTTP `POST /puppet-node/command/read-batch` 接收 `{sessionId, processIds:[...]}`，每批限制为同一节点的 1–16 个不同进程。HTTP 层先校验完整列表，再复用会话权限与终端能力检查。Java 适配器发送 `op=5`，`processIds` 为 LF 分隔的 UTF-8 字节；PHP 适配器发送 `action=read-batch` 和 `processIds` 数组。目标端再次校验完整列表后一次读取，每个进程最多 64 KiB，不等待新输出。
+
+批量响应的 `terminals` 按进程 ID 索引，每项保留独立 `code`、`instanceId`、`outputSequence`、`data:byte[]`、`alive`、`eof` 和 `hasMore`。缺失进程返回 `missing=true, alive=false, eof=true`；单项失败返回 `code=500, msg`，其他项继续执行。PHP 批量读取不等待被占用的状态锁或输出锁。前端只合并同一调度轮次的普通读取，前台长轮询独立发送。网络失败不会立即降级重放已消费的读取。
 
 Java插件参数为 `pluginBytecode, pluginParam`；PHP插件则使用 `source, pluginParams`，两者不是同一传输结构。
 

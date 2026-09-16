@@ -702,49 +702,32 @@ public class ComponentService {
     protected String execWithTimeout(String cmd, int timeoutSeconds) throws Exception {
         int clampedTimeout = Math.max(1, Math.min(timeoutSeconds, 120));
 
-        // ── 1. 创建 shell 会话，等待就绪 ──
         String processId = java.util.UUID.randomUUID().toString();
-        sendToTerminal("\n", processId);
-
-        long readyDeadline = System.currentTimeMillis() + 5000;
-        while (System.currentTimeMillis() < readyDeadline) {
-            Thread.sleep(300);
-            try {
-                String probe = readFromTerminal(processId);
-                if (probe != null && !probe.isEmpty()) break;
-            } catch (Exception ignored) {}
-        }
-
-        // ── 2. 写入命令 + 哨兵 ──
         String sentinel = "__DONE_" + processId.replace("-", "").substring(0, 12) + "__";
-        sendToTerminal(cmd + "\n", processId);
-        sendToTerminal("echo " + sentinel + "\n", processId);
-
-        // ── 3. 轮询直到哨兵或超时 ──
-        long deadline = System.currentTimeMillis() + (long) clampedTimeout * 1000;
         StringBuilder accumulated = new StringBuilder();
         boolean sentinelFound = false;
-        while (System.currentTimeMillis() < deadline) {
-            Thread.sleep(400);
-            String chunk = readFromTerminal(processId);
-            if (chunk != null && !chunk.isEmpty()) {
-                accumulated.append(chunk);
+        try {
+            invokeTerminal("init", "", processId);
+            invokeTerminal("read", "", processId);
+            // Complete lines must not be echoed: an echoed sentinel would end the read too early.
+            invokeTerminal("write-line", cmd + "\n", processId);
+            invokeTerminal("write-line", "echo " + sentinel + "\n", processId);
+            long deadline = System.currentTimeMillis() + (long) clampedTimeout * 1000;
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(400);
+                accumulated.append(extractString(invokeTerminal("read", "", processId)));
                 if (accumulated.indexOf(sentinel) >= 0) {
                     sentinelFound = true;
                     break;
                 }
             }
+        } finally {
+            try {
+                invokeTerminal("stop", "", processId);
+            } catch (Exception ignored) {}
         }
 
-        // ── 4. 停止会话 ──
-        try {
-            Map<String, Object> stopParams = new HashMap<>();
-            stopParams.put("processId", processId.getBytes("UTF-8"));
-            stopParams.put("op", Integer.valueOf(2));
-            invokeComponent("ExecCommandComponent", stopParams);
-        } catch (Exception ignored) {}
-
-        // ── 5. 去除哨兵行及其后内容，修剪尾部空行 ──
+        // 去除哨兵及其后内容，修剪尾部空行。
         String result = accumulated.toString();
         int idx = result.indexOf(sentinel);
         if (idx >= 0) result = result.substring(0, idx);
@@ -758,29 +741,22 @@ public class ComponentService {
         return result;
     }
 
-    private void sendToTerminal(String text, String processId) throws Exception {
-        Map<String, Object> p = new HashMap<>();
-        p.put("processId", processId.getBytes("UTF-8"));
-        p.put("op", Integer.valueOf(0));
-        p.put("cmd", text.getBytes("UTF-8"));
-        invokeComponent("ExecCommandComponent", p);
-    }
-
-    private String readFromTerminal(String processId) throws Exception {
-        Map<String, Object> p = new HashMap<>();
-        p.put("processId", processId.getBytes("UTF-8"));
-        p.put("op", Integer.valueOf(1));
-        Map<String, Object> result = invokeComponent("ExecCommandComponent", p);
-        return extractString(result);
+    private Map<String, Object> invokeTerminal(String type, String command, String processId) throws Exception {
+        Map<String, Object> result = invokeComponent(TerminalRequests.COMPONENT,
+                TerminalRequests.create(type, command, processId, null, false));
+        Object code = result == null ? null : result.get("code");
+        if (!(code instanceof Number) || ((Number) code).intValue() != 200) {
+            Object message = result == null ? "empty response" : result.get("msg");
+            throw new IllegalStateException("Terminal operation failed (code=" + code + "): " + message);
+        }
+        return result;
     }
 
     /** 从 invokeComponent 结果的 data 字段中提取字符串输出。 */
     protected String extractString(Map<String, Object> results) {
         if (results == null) return "";
         Object data = results.get("data");
-        if (data instanceof byte[]) {
-            try { return new String((byte[]) data, "UTF-8"); } catch (Exception e) { return ""; }
-        }
+        if (data instanceof byte[]) return new String((byte[]) data, StandardCharsets.UTF_8);
         if (data instanceof String) return (String) data;
         return "";
     }

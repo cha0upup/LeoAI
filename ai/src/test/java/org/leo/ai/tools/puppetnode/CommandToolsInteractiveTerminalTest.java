@@ -94,7 +94,7 @@ class CommandToolsInteractiveTerminalTest {
 
     @Test
     void initializesCrossRuntimeTerminalBeforeStartingAsyncCommand() throws Exception {
-        when(terminal.execCommand(eq("write"), eq("init"), anyString()))
+        when(terminal.execCommand(eq("init"), eq(""), anyString()))
                 .thenReturn(Map.of("alive", true));
         when(terminal.execCommand(eq("write"), eq("tail -f app.log\n"), anyString()))
                 .thenReturn(Map.of("alive", true));
@@ -102,7 +102,7 @@ class CommandToolsInteractiveTerminalTest {
         Map<String, Object> result = tools.exec("tail -f app.log", 0);
 
         String taskId = String.valueOf(result.get("taskId"));
-        verify(terminal).execCommand("write", "init", taskId);
+        verify(terminal).execCommand("init", "", taskId);
         verify(terminal).execCommand("write", "tail -f app.log\n", taskId);
         verify(terminal, never()).execCommand(eq("read"), anyString(), anyString());
         assertEquals("running", result.get("status"));
@@ -110,7 +110,7 @@ class CommandToolsInteractiveTerminalTest {
 
     @Test
     void cleansUpTerminalWhenInitialAsyncWriteFails() throws Exception {
-        when(terminal.execCommand(eq("write"), eq("init"), anyString()))
+        when(terminal.execCommand(eq("init"), eq(""), anyString()))
                 .thenReturn(Map.of("alive", true));
         doThrow(new IllegalStateException("write failed"))
                 .when(terminal).execCommand(eq("write"), eq("tail -f app.log\n"), anyString());

@@ -65,7 +65,9 @@ class ComponentBytecodeProfileTest {
         String constants = new String(payload, StandardCharsets.ISO_8859_1);
 
         assertTrue(constants.contains("longPolling"));
-        assertTrue(constants.contains("windows-winpty"));
+        assertTrue(constants.contains("python-pty"));
+        assertTrue(constants.contains("terminalModes"));
+        assertFalse(constants.contains(".leo-java-terminal"));
         assertTrue(constants.contains("java.lang.ProcessHandle"));
     }
 

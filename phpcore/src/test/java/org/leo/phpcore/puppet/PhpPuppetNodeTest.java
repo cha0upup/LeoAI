@@ -42,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhpPuppetNodeTest {
@@ -274,15 +275,31 @@ class PhpPuppetNodeTest {
         PhpPuppetNode node = node(communication, portable);
 
         assertTrue(node instanceof TerminalCapable);
-        node.execCommand("write", "init", "terminal-1");
-        node.execCommand("read", "read", "terminal-1");
+        node.execCommand("init", "", "terminal-1");
+        node.execCommand("read", "", "terminal-1");
         node.execCommand("resize", "120,40", "terminal-1");
         node.execCommand("stop", "", "terminal-1");
 
-        assertEquals(List.of("write", "read", "resize", "stop"),
+        assertEquals(List.of("init", "read", "resize", "stop"),
                 invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
         assertTrue(invokes.stream().allMatch(item -> "ExecCommandComponent".equals(item.get("componentName"))));
         assertTrue(invokes.stream().allMatch(item -> "terminal-1".equals(item.get("processId"))));
+        assertTrue(invokes.stream().noneMatch(item -> item.containsKey("includeOutput")));
+        invokes.clear();
+        node.readTerminals(List.of("terminal-1", "terminal-2"));
+        assertEquals(1, invokes.size());
+        assertEquals("read-batch", invokes.get(0).get("action"));
+        assertEquals(List.of("terminal-1", "terminal-2"), invokes.get(0).get("processIds"));
+        invokes.clear();
+        node.execTerminal("write", "pwd\n", "terminal-1", null, true);
+        assertEquals(1, invokes.size());
+        assertEquals("write", invokes.get(0).get("action"));
+        assertEquals(true, invokes.get(0).get("includeOutput"));
+        assertThrows(IllegalArgumentException.class,
+                () -> node.execTerminal("read", "", "terminal-1", null, true));
+        assertThrows(IllegalArgumentException.class,
+                () -> node.execTerminal("init", "", "terminal-1", "python-pty", true));
+        assertEquals(1, invokes.size());
     }
 
     @Test

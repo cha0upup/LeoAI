@@ -614,15 +614,28 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> execCommand(String type, String cmd, String processId) throws Exception {
-        String action = type == null ? "" : type.trim().toLowerCase();
-        if (!Set.of("write", "read", "resize", "stop").contains(action)) {
-            return error(400, "PHP 虚拟终端操作不受支持: " + action);
+    public Map<String, Object> execTerminal(String type, String cmd, String processId,
+                                           String terminalMode, boolean includeOutput) throws Exception {
+        if (type == null || !Set.of("init", "write", "read", "resize", "stop").contains(type)) {
+            return error(400, "PHP 虚拟终端操作不受支持: " + type);
+        }
+        if (terminalMode != null || (includeOutput && !"init".equals(type) && !"write".equals(type))) {
+            throw new IllegalArgumentException("PHP terminal accepts includeOutput only on init/write, without terminalMode");
+        }
+        String command = cmd == null ? "" : cmd;
+        if (Set.of("init", "read", "stop").contains(type) && !command.isEmpty()) {
+            throw new IllegalArgumentException("PHP init/read/stop do not accept cmd or long polling");
         }
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("processId", processId);
-        params.put("cmd", cmd == null ? "" : cmd);
-        return invoke("ExecCommandComponent", action, params);
+        if ("write".equals(type) || "resize".equals(type)) params.put("cmd", command);
+        if (includeOutput) params.put("includeOutput", true);
+        return invoke("ExecCommandComponent", type, params);
+    }
+
+    @Override
+    public Map<String, Object> readTerminals(List<String> processIds) throws Exception {
+        return invoke("ExecCommandComponent", "read-batch", Map.of("processIds", processIds));
     }
 
     @Override
