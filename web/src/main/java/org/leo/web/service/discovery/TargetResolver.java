@@ -65,7 +65,7 @@ public class TargetResolver {
         }
 
         List<ResolvedTarget> results = new ArrayList<>();
-        Set<String> dedup = new HashSet<>();  // 去重：ip:port:protocol
+        Set<String> dedup = new HashSet<>();  // Preserve virtual hosts and application paths; ports are deduplicated by the planner.
 
         for (String item : input.items()) {
             if (item == null) continue;
@@ -80,7 +80,8 @@ public class TargetResolver {
                     if (excludeSet.contains(target.ip())) {
                         continue;
                     }
-                    String key = target.ip() + ":" + target.port() + ":" + target.protocol();
+                    String key = target.ip() + "\u0000" + target.port() + "\u0000" + target.protocol()
+                            + "\u0000" + target.host() + "\u0000" + ("url".equals(target.source()) ? target.rawTarget() : "");
                     if (dedup.add(key)) {
                         if (results.size() >= NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
                             throw new IllegalArgumentException("目标展开后不能超过"

@@ -159,7 +159,7 @@ public class FingerprintManageService {
         return data;
     }
 
-    private void validateRule(Object ruleValue) {
+    public void validateRule(Object ruleValue) {
         if (!(ruleValue instanceof Map<?, ?> rule)) {
             throw new IllegalArgumentException("rule 必须是 JSON 对象");
         }
@@ -171,11 +171,56 @@ public class FingerprintManageService {
         if (!(rule.get("match") instanceof Map<?, ?> match)) {
             throw new IllegalArgumentException("rule.match 必须是声明式匹配对象");
         }
+        for (Object value : requests) {
+            if (!(value instanceof Map<?, ?> request)) throw new IllegalArgumentException("rule.requests 中的请求必须是对象");
+            Object pathValue = request.get("uri");
+            if (pathValue == null || String.valueOf(pathValue).isBlank()) pathValue = request.get("path");
+            String path = pathValue == null ? "/" : String.valueOf(pathValue).trim();
+            if (path.isEmpty()) path = "/";
+            try {
+                java.net.URI uri = java.net.URI.create(path);
+                if (uri.isAbsolute() || uri.getRawAuthority() != null || path.startsWith("//") || path.contains("\\"))
+                    throw new IllegalArgumentException("规则路径必须是站内相对路径");
+            } catch (IllegalArgumentException error) { throw new IllegalArgumentException("无效的规则请求路径: " + path); }
+        }
         validateMatch(match, 0);
+        validateRequestIndices(match, requests.size());
+        if (rule.containsKey("version")) validateVersion(rule.get("version"), requests.size());
+    }
+
+    private void validateVersion(Object value, int requestCount) {
+        if (!(value instanceof Map<?, ?> extractor)) throw new IllegalArgumentException("rule.version 必须是对象");
+        if (!(extractor.get("field") instanceof String field) || !List.of("body", "headers").contains(field))
+            throw new IllegalArgumentException("rule.version.field 仅支持 body、headers");
+        if (!(extractor.get("prefix") instanceof String prefix) || prefix.isEmpty() || prefix.length() > 256)
+            throw new IllegalArgumentException("rule.version.prefix 必须是 1–256 字符的文本前缀");
+        if (extractor.containsKey("suffix") && (!(extractor.get("suffix") instanceof String suffix) || suffix.length() > 256))
+            throw new IllegalArgumentException("rule.version.suffix 不能超过 256 字符");
+        if (extractor.containsKey("ignoreCase") && !(extractor.get("ignoreCase") instanceof Boolean))
+            throw new IllegalArgumentException("rule.version.ignoreCase 必须是布尔值");
+        if (extractor.keySet().stream().anyMatch(key -> !List.of("request", "field", "prefix", "suffix", "ignoreCase").contains(key)))
+            throw new IllegalArgumentException("rule.version 仅支持 request、field、prefix、suffix、ignoreCase");
+        validateRequestIndices(extractor, requestCount);
+    }
+
+    private void validateRequestIndices(Map<?, ?> match, int count) {
+        for (String key : List.of("all", "any")) {
+            if (match.get(key) instanceof List<?> children)
+                for (Object child : children) validateRequestIndices((Map<?, ?>) child, count);
+        }
+        if (match.get("not") instanceof Map<?, ?> child) validateRequestIndices(child, count);
+        if (match.containsKey("request")) {
+            Object index = match.get("request");
+            if (!(index instanceof Number number) || number.doubleValue() != number.intValue()
+                    || number.intValue() < 0 || number.intValue() >= count)
+                throw new IllegalArgumentException("rule.match.request 超出请求序号范围");
+        }
     }
 
     private void validateMatch(Map<?, ?> match, int depth) {
         if (depth > 8) throw new IllegalArgumentException("rule.match 嵌套不能超过8层");
+        long forms = List.of("all", "any", "not", "field").stream().filter(match::containsKey).count();
+        if (forms != 1) throw new IllegalArgumentException("匹配表达式必须且只能包含 all、any、not 或 field 之一");
         Object children = match.containsKey("all") ? match.get("all") : match.get("any");
         if (children != null) {
             if (!(children instanceof List<?> list) || list.isEmpty()) {
@@ -204,6 +249,13 @@ public class FingerprintManageService {
                 .contains(operator)) {
             throw new IllegalArgumentException("rule.match.operator 不支持: " + operator);
         }
+        if (!"exists".equals(operator) && (!match.containsKey("value") || match.get("value") == null))
+            throw new IllegalArgumentException("匹配条件缺少 value");
+        if (List.of("contains", "notcontains", "startswith", "endswith").contains(operator)
+                && String.valueOf(match.get("value")).isEmpty())
+            throw new IllegalArgumentException("文本匹配值不能为空");
+        if ("in".equals(operator) && (!(match.get("value") instanceof List<?> values) || values.isEmpty()))
+            throw new IllegalArgumentException("in 的 value 必须是非空数组");
     }
 
     private Map<String, Object> toFingerprintSummary(File file) {

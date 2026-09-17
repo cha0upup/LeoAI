@@ -1,6 +1,11 @@
 package org.leo.web.service;
 
 import org.leo.service.fingerprint.FingerprintManageService;
+import org.leo.core.util.json.JsonUtil;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.TreeMap;
 import org.leo.web.service.discovery.NetworkProbeLimits;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +38,38 @@ public class NetworkProbeAnalysisService {
         this.fingerprintManageService = fingerprintManageService;
     }
 
+    /** Resolve and copy the exact rules once, before the workflow is queued. */
+    public List<Map<String, Object>> snapshotRules(Object value) {
+        Map<?, ?> selector = value instanceof Map<?, ?> map ? map : Map.of();
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        Object requestedIds = selector.containsKey("ids") ? selector.get("ids") : selector.get("fingerprintIds");
+        if (requestedIds instanceof Collection<?> items) {
+            for (Object item : items) if (!text(item).isEmpty()) ids.add(text(item));
+        }
+        if (ids.isEmpty()) {
+            Set<String> tags = textSet(selector.get("tags"));
+            for (Map<String, Object> summary : fingerprintManageService.listFingerprints()) {
+                if (tags.isEmpty() || !disjoint(tags, textSet(summary.get("tags"))))
+                    ids.add(text(summary.get("fingerprintId")));
+            }
+        }
+        if (ids.isEmpty()) throw new IllegalArgumentException("没有匹配到可执行的 HTTP 指纹规则");
+        if (ids.size() > MAX_RULES) throw new IllegalArgumentException("一次最多执行" + MAX_RULES + "条指纹规则，请按标签或指定规则筛选");
+        List<Map<String, Object>> snapshots = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                Map<String, Object> snapshot = castMap(fingerprintManageService.getFingerprintById(id));
+                toRule(snapshot);
+                snapshots.add(snapshot);
+            } catch (Exception error) {
+                throw new IllegalArgumentException("指纹规则 " + id + ": " + error.getMessage(), error);
+            }
+        }
+        return List.copyOf(snapshots);
+    }
+
+    public void release(String taskId) { contexts.remove(taskId); }
+
     public PreparedScan prepare(Object value) throws Exception {
         if (!(value instanceof Map<?, ?> rawScan)) {
             throw new IllegalArgumentException("scan必须是对象");
@@ -47,7 +84,9 @@ public class NetworkProbeAnalysisService {
         List<Map<String, Object>> sourceTargets = mapList(rawScan.get("targets"), "scan.targets");
         if (sourceTargets.isEmpty()) throw new IllegalArgumentException("scan.targets不能为空");
         boolean explicitReconRules = "recon".equals(kind) && hasExplicitRuleIds(rawScan.get("ruleSelector"));
-        List<RuleDefinition> rules = "fingerprint".equals(kind)
+        List<RuleDefinition> rules = rawScan.get("rules") instanceof List<?>
+                ? mapList(rawScan.get("rules"), "rules").stream().map(this::toRule).toList()
+                : "fingerprint".equals(kind)
                 ? resolveFingerprintRules(rawScan.get("fingerprintIds"))
                 : resolveReconRules(rawScan.get("ruleSelector"));
         // The workflow's RECON stage is intentionally HTTP-only. TCP Banner
@@ -68,6 +107,9 @@ public class NetworkProbeAnalysisService {
 
         List<Map<String, Object>> probes = new ArrayList<>();
         List<WorkGroup> groups = new ArrayList<>();
+        Map<String, Map<String, Object>> sharedProbes = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> aliases = new LinkedHashMap<>();
+        int logicalRequests = 0;
         Set<String> ruleIds = new LinkedHashSet<>();
         for (Map.Entry<String, Map<String, Object>> targetEntry : targetsById.entrySet()) {
             String targetId = targetEntry.getKey();
@@ -76,14 +118,27 @@ public class NetworkProbeAnalysisService {
             for (RuleDefinition rule : rules) {
                 if (!compatibleProtocol(targetProtocol, rule.protocol())) continue;
                 if ("recon".equals(kind) && !explicitReconRules && !relevantToService(target, rule)) continue;
-                groups.add(new WorkGroup(targetId, rule.id(), rule.requests().size()));
+                groups.add(new WorkGroup(targetId, rule.id(), rule.requests().size(), Map.copyOf(target)));
                 ruleIds.add(rule.id());
                 for (int requestIndex = 0; requestIndex < rule.requests().size(); requestIndex++) {
-                    if (probes.size() >= NetworkProbeLimits.MAX_FINGERPRINT_PROBES) {
+                    if (logicalRequests++ >= NetworkProbeLimits.MAX_FINGERPRINT_PROBES) {
                         throw new IllegalArgumentException("指纹探测请求数不能超过"
                                 + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + "个");
                     }
-                    probes.add(buildProbe(target, targetId, rule, requestIndex));
+                    Map<String, Object> probe = buildProbe(target, targetId, rule, requestIndex);
+                    Map<String, Object> identity = new LinkedHashMap<>(probe);
+                    identity.keySet().removeAll(List.of("probeId", "ruleId", "requestIndex"));
+                    // Only read requests can share a response. Preserve writes as distinct operations.
+                    String method = text(((Map<?, ?>) probe.get("httpRequest")).get("method"));
+                    String key = List.of("GET", "HEAD").contains(method) ? ruleHash(identity) : text(probe.get("probeId"));
+                    Map<String, Object> physical = sharedProbes.get(key);
+                    if (physical == null) {
+                        physical = probe;
+                        sharedProbes.put(key, physical);
+                        probes.add(physical);
+                    }
+                    aliases.computeIfAbsent(text(physical.get("probeId")), ignored -> new ArrayList<>())
+                            .add(Map.of("ruleId", rule.id(), "requestIndex", requestIndex));
                 }
             }
         }
@@ -107,6 +162,10 @@ public class NetworkProbeAnalysisService {
         for (RuleDefinition rule : rules) rulesById.put(rule.id(), rule);
         ScanContext context = new ScanContext(kind, rulesById, groups,
                 targetsById.keySet(), ruleIds, Collections.emptyMap(), System.currentTimeMillis());
+        context.aliases.putAll(aliases);
+        for (Map<String, Object> probe : probes) context.requests.put(text(probe.get("probeId")), probe);
+        context.debug = Boolean.TRUE.equals(rawScan.get("debug"));
+        context.logicalRequests = logicalRequests;
         return new PreparedScan(plan, context);
     }
 
@@ -230,7 +289,17 @@ public class NetworkProbeAnalysisService {
         Object snapshotValue = componentResult.get("result");
         if (!(snapshotValue instanceof Map<?, ?> rawSnapshot)) return;
         Map<String, Object> snapshot = castMap(rawSnapshot);
-        List<Map<String, Object>> observations = context.remember(mapListOrEmpty(snapshot.get("observations")));
+        List<Map<String, Object>> page = mapListOrEmpty(snapshot.get("observations"));
+        for (Map<String, Object> observation : page) {
+            Map<String, Object> request = context.requests.get(text(observation.get("probeId")));
+            if (request != null) {
+                Map<String, Object> requestDetails = new LinkedHashMap<>(request);
+                requestDetails.keySet().removeAll(List.of("probeId", "targetId", "ruleId", "requestIndex"));
+                observation.put("request", requestDetails);
+            }
+        }
+        snapshot.put("observations", page);
+        List<Map<String, Object>> observations = context.remember(page);
         if ("reachability".equals(context.kind())) {
             enrichReachability(context, snapshot, observations);
             componentResult.put("result", snapshot);
@@ -240,7 +309,15 @@ public class NetworkProbeAnalysisService {
             cleanup();
             return;
         }
-        context.rememberGrouped(observations);
+        List<Map<String, Object>> logical = new ArrayList<>();
+        for (Map<String, Object> observation : observations) {
+            for (Map<String, Object> alias : context.aliases.getOrDefault(text(observation.get("probeId")), List.of(Map.of()))) {
+                Map<String, Object> copy = new LinkedHashMap<>(observation);
+                copy.putAll(alias);
+                logical.add(copy);
+            }
+        }
+        context.rememberGrouped(logical);
         Map<String, Map<Integer, Map<String, Object>>> grouped = context.groupedObservations();
 
         List<Map<String, Object>> matches = new ArrayList<>();
@@ -248,17 +325,39 @@ public class NetworkProbeAnalysisService {
         int hitCount = 0;
         for (WorkGroup group : context.groups()) {
             String key = groupKey(group.targetId(), group.ruleId());
+            Map<String, Object> evaluated = context.completedMatches.get(key);
+            if (evaluated != null) {
+                matches.add(evaluated);
+                completed++;
+                if (Boolean.TRUE.equals(evaluated.get("matched"))) hitCount++;
+                continue;
+            }
             Map<Integer, Map<String, Object>> groupObservations = grouped.getOrDefault(key, Collections.emptyMap());
             boolean complete = groupObservations.size() >= group.requestCount();
             boolean matched = false;
             String matchError = null;
+            String status = "PENDING";
+            if (!complete && "STOPPED".equals(text(snapshot.get("status"))) && !Boolean.TRUE.equals(snapshot.get("hasMore"))) {
+                status = "CANCELLED".equals(text(snapshot.get("outcome"))) ? "CANCELLED" : "INCONCLUSIVE";
+                matchError = "规则所需响应尚未全部采集";
+            }
             if (complete) {
                 completed++;
                 try {
                     List<Map<String, Object>> responses = responses(groupObservations, group.requestCount());
-                    matched = evaluate(context.rulesById().get(group.ruleId()).match(), responses);
-                    if (matched) hitCount++;
+                    if (responses.stream().anyMatch(response -> response.containsKey("error") || !(response.get("status") instanceof Number statusCode) || statusCode.intValue() < 100)) {
+                        status = "ERROR";
+                        matchError = "请求失败或未收到 HTTP 响应";
+                    } else {
+                        matched = evaluate(context.rulesById().get(group.ruleId()).match(), responses);
+                        status = matched ? "MATCHED" : "NOT_MATCHED";
+                        if (matched) hitCount++;
+                    }
+                } catch (IncompleteEvidence error) {
+                    status = "INCONCLUSIVE";
+                    matchError = error.getMessage();
                 } catch (RuntimeException error) {
+                    status = "ERROR";
                     matchError = error.getMessage();
                 }
             }
@@ -268,11 +367,30 @@ public class NetworkProbeAnalysisService {
             RuleDefinition rule = context.rulesById().get(group.ruleId());
             match.put("ruleName", rule == null ? "" : rule.name());
             match.put("protocol", rule == null ? "" : rule.protocol());
+            match.put("ruleHash", rule == null ? "" : rule.hash());
+            match.put("host", group.target().get("host"));
+            match.put("port", group.target().get("port"));
+            match.put("url", group.target().get("baseUrl"));
+            match.put("status", status);
+            match.put("probeIds", new TreeMap<>(groupObservations).values().stream()
+                    .map(observation -> text(observation.get("probeId"))).filter(id -> !id.isEmpty()).toList());
+            match.put("requestIndices", new ArrayList<>(new TreeMap<>(groupObservations).keySet()));
             match.put("complete", Boolean.valueOf(complete));
             match.put("matched", Boolean.valueOf(matched));
             match.put("evidenceCount", Integer.valueOf(groupObservations.size()));
             if (matchError != null && !matchError.isBlank()) match.put("error", matchError);
+            if (complete && rule != null) {
+                List<Map<String, Object>> responseList = responses(groupObservations, group.requestCount());
+                if (matched && !rule.version().isEmpty()) extractVersion(match, rule.version(), responseList, groupObservations);
+                if (context.debug) match.put("conditions", conditionTrace(rule.match(), responseList, "match"));
+            }
             matches.add(match);
+            if (complete) {
+                // Retain only the decision after a rule is evaluated. Raw evidence
+                // is held by the current result page until its database commit.
+                context.completedMatches.put(key, match);
+                context.discardGroup(key);
+            }
         }
 
         Map<String, Object> analysis = new LinkedHashMap<>();
@@ -282,6 +400,9 @@ public class NetworkProbeAnalysisService {
         analysis.put("targetCount", Integer.valueOf(context.targetIds().size()));
         analysis.put("ruleCount", Integer.valueOf(context.ruleIds().size()));
         analysis.put("hitCount", Integer.valueOf(hitCount));
+        analysis.put("logicalRequestCount", context.logicalRequests);
+        analysis.put("networkRequestCount", context.requests.size());
+        analysis.put("savedRequestCount", context.logicalRequests - context.requests.size());
         analysis.put("matches", matches);
         snapshot.put("analysis", analysis);
         componentResult.put("result", snapshot);
@@ -377,8 +498,10 @@ public class NetworkProbeAnalysisService {
         if (!(rawRule.get("match") instanceof Map<?, ?> rawMatch)) {
             throw new IllegalArgumentException("指纹缺少声明式match: " + id);
         }
+        fingerprintManageService.validateRule(rawRule);
+        if (!"http".equals(protocol)) throw new IllegalArgumentException("仅支持 HTTP 指纹: " + id);
         return new RuleDefinition(id, text(fingerprint.get("name")), protocol,
-                textSet(fingerprint.get("tags")), requests, castMap(rawMatch));
+                textSet(fingerprint.get("tags")), requests, castMap(rawMatch), rawRule.get("version") instanceof Map<?, ?> version ? castMap(version) : Map.of(), ruleHash(fingerprint));
     }
 
     private Map<String, Object> buildProbe(Map<String, Object> source, String targetId,
@@ -399,13 +522,22 @@ public class NetworkProbeAnalysisService {
                 MAX_READ_BYTES, 256, MAX_READ_BYTES)));
         probe.put("stage", "http-request");
         Map<String, Object> httpRequest = new LinkedHashMap<>();
-        httpRequest.put("method", defaultText(request.get("method"), "GET"));
+        httpRequest.put("method", defaultText(request.get("method"), "GET").toUpperCase(Locale.ROOT));
         String path = text(request.get("uri"));
         if (path.isEmpty()) path = defaultText(request.get("path"), "/");
+        // Both runtimes receive an origin URL plus the fully joined application path.
+        // PHP sends path verbatim, while Java joins it to baseUrl.
+        if (!text(source.get("baseUrl")).isEmpty()) {
+            java.net.URI base = java.net.URI.create(text(source.get("baseUrl")));
+            String prefix = base.getRawPath() == null ? "/" : base.getRawPath();
+            if (!prefix.endsWith("/")) prefix += "/";
+            path = prefix + (path.startsWith("/") ? path.substring(1) : path);
+            probe.put("baseUrl", base.getScheme() + "://" + base.getRawAuthority() + "/");
+        }
         httpRequest.put("path", path);
         httpRequest.put("charset", defaultText(request.get("charset"), "UTF-8"));
-        copyIfPresent(request, httpRequest, "headers");
-        copyIfPresent(request, httpRequest, "body");
+        httpRequest.put("headers", request.get("headers") == null ? Map.of() : wireValue(request.get("headers")));
+        httpRequest.put("body", request.get("body") == null ? "" : String.valueOf(request.get("body")));
         probe.put("httpRequest", httpRequest);
         return probe;
     }
@@ -423,10 +555,13 @@ public class NetworkProbeAnalysisService {
             Map<String, Object> evidence = observation.get("evidence") instanceof Map<?, ?> map
                     ? castMap(map) : Collections.emptyMap();
             response.put("status", evidence.get("statusCode"));
-            response.put("body", defaultText(evidence.get("body"), ""));
+            response.put("body", evidence.get("body") == null ? "" : String.valueOf(evidence.get("body")));
             response.put("bodyLength", evidence.getOrDefault("bodyLength", Integer.valueOf(0)));
             response.put("truncated", evidence.getOrDefault("truncated", Boolean.FALSE));
-            response.put("headers", defaultText(evidence.get("headers"), ""));
+            response.put("headersTruncated", evidence.getOrDefault("headersTruncated", Boolean.FALSE));
+            response.put("headers", evidence.get("headers") == null ? "" : String.valueOf(evidence.get("headers")));
+            response.put("raw", String.valueOf(evidence.getOrDefault("statusCode", "")) + "\r\n"
+                    + response.get("headers") + "\r\n\r\n" + response.get("body"));
             responses.add(response);
         }
         return responses;
@@ -434,15 +569,21 @@ public class NetworkProbeAnalysisService {
 
     private boolean evaluate(Map<String, Object> expression, List<Map<String, Object>> responses) {
         if (expression.containsKey("all")) {
+            IncompleteEvidence incomplete = null;
             for (Map<String, Object> child : expressionList(expression.get("all"))) {
-                if (!evaluate(child, responses)) return false;
+                try { if (!evaluate(child, responses)) return false; }
+                catch (IncompleteEvidence error) { incomplete = error; }
             }
+            if (incomplete != null) throw incomplete;
             return true;
         }
         if (expression.containsKey("any")) {
+            IncompleteEvidence incomplete = null;
             for (Map<String, Object> child : expressionList(expression.get("any"))) {
-                if (evaluate(child, responses)) return true;
+                try { if (evaluate(child, responses)) return true; }
+                catch (IncompleteEvidence error) { incomplete = error; }
             }
+            if (incomplete != null) throw incomplete;
             return false;
         }
         if (expression.get("not") instanceof Map<?, ?> child) return !evaluate(castMap(child), responses);
@@ -452,8 +593,22 @@ public class NetworkProbeAnalysisService {
         String field = text(expression.get("field"));
         Object actualValue = response.get(field);
         String operator = defaultText(expression.get("operator"), "contains").toLowerCase(Locale.ROOT);
+        boolean incomplete = (Boolean.TRUE.equals(response.get("headersTruncated")) && List.of("headers", "raw").contains(field))
+                || (Boolean.TRUE.equals(response.get("truncated")) && List.of("body", "raw", "bodyLength").contains(field));
         boolean ignoreCase = !Boolean.FALSE.equals(expression.get("ignoreCase"));
         Object expectedValue = expression.get("value");
+        if (incomplete) {
+            String prefix = actualValue == null ? "" : String.valueOf(actualValue);
+            String needle = expectedValue == null ? "" : String.valueOf(expectedValue);
+            if (ignoreCase) { prefix = prefix.toLowerCase(Locale.ROOT); needle = needle.toLowerCase(Locale.ROOT); }
+            // A positive substring is conclusive even in a prefix. Its absence is unknown,
+            // and must remain unknown through any enclosing NOT expression.
+            if ("contains".equals(operator) && prefix.contains(needle)) return true;
+            if ("notcontains".equals(operator) && prefix.contains(needle)) return false;
+            if ("startswith".equals(operator) && prefix.startsWith(needle)) return true;
+            if ("exists".equals(operator) && !prefix.isEmpty()) return true;
+            throw new IncompleteEvidence("响应已截断，无法完整判断该条件");
+        }
         if ("in".equals(operator)) {
             if (!(expectedValue instanceof Collection<?> values)) return false;
             for (Object expected : values) if (equalsValue(actualValue, expected, ignoreCase)) return true;
@@ -472,6 +627,72 @@ public class NetworkProbeAnalysisService {
         if ("notcontains".equals(operator)) return !actual.contains(expected);
         if (!"contains".equals(operator)) throw new IllegalArgumentException("不支持的匹配操作: " + operator);
         return actual.contains(expected);
+    }
+
+    /** Literal boundaries and a bounded version token avoid running user-supplied regex. */
+    private void extractVersion(Map<String, Object> match, Map<String, Object> extractor,
+                                List<Map<String, Object>> responses, Map<Integer, Map<String, Object>> observations) {
+        int index = ((Number) extractor.getOrDefault("request", 0)).intValue();
+        Map<String, Object> response = responses.get(index);
+        String field = text(extractor.get("field"));
+        String source = String.valueOf(response.getOrDefault(field, ""));
+        String prefix = String.valueOf(extractor.get("prefix"));
+        boolean ignoreCase = !Boolean.FALSE.equals(extractor.get("ignoreCase"));
+        boolean truncated = Boolean.TRUE.equals(response.get("headers".equals(field) ? "headersTruncated" : "truncated"));
+        String suffix = String.valueOf(extractor.getOrDefault("suffix", ""));
+        int offset = 0;
+        while ((offset = literalIndexOf(source, prefix, offset, ignoreCase)) >= 0) {
+            int start = offset + prefix.length();
+            java.util.regex.Matcher token = java.util.regex.Pattern.compile("[0-9][0-9A-Za-z._+\\-]{0,63}").matcher(source);
+            token.region(start, source.length());
+            if (token.lookingAt()) {
+                int end = token.end();
+                boolean boundary = end == source.length() || !String.valueOf(source.charAt(end)).matches("[0-9A-Za-z._+\\-]");
+                boolean suffixMatches = suffix.isEmpty() || source.regionMatches(ignoreCase, end, suffix, 0, suffix.length());
+                if (boundary && suffixMatches && !(truncated && end == source.length())) {
+                    match.put("detectedVersion", token.group());
+                    match.put("versionStatus", "EXTRACTED");
+                    match.put("versionEvidence", Map.of("request", index, "field", field,
+                            "probeId", text(observations.get(index).get("probeId")), "offset", start));
+                    return;
+                }
+            }
+            offset = start;
+        }
+        match.put("versionStatus", truncated ? "INCONCLUSIVE" : "NOT_FOUND");
+    }
+
+    private int literalIndexOf(String source, String prefix, int offset, boolean ignoreCase) {
+        for (int i = offset; i <= source.length() - prefix.length(); i++)
+            if (source.regionMatches(ignoreCase, i, prefix, 0, prefix.length())) return i;
+        return -1;
+    }
+
+    private List<Map<String, Object>> conditionTrace(Map<String, Object> expression,
+                                                     List<Map<String, Object>> responses, String path) {
+        List<Map<String, Object>> trace = new ArrayList<>();
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("path", path);
+        item.put("expression", expression);
+        try {
+            int index = boundedInt(expression.get("request"), 0, 0, responses.size() - 1);
+            List<Map<String, Object>> relevant = expression.containsKey("field") ? List.of(responses.get(index)) : responses;
+            if (relevant.stream().anyMatch(response -> response.containsKey("error")
+                    || !(response.get("status") instanceof Number code) || code.intValue() < 100)) {
+                item.put("status", "ERROR");
+            } else item.put("status", evaluate(expression, responses) ? "MATCHED" : "NOT_MATCHED");
+        } catch (IncompleteEvidence error) { item.put("status", "INCONCLUSIVE"); }
+        catch (RuntimeException error) { item.put("status", "ERROR"); }
+        trace.add(item);
+        for (String key : List.of("all", "any")) {
+            if (expression.get(key) instanceof List<?> children) {
+                for (int i = 0; i < children.size(); i++)
+                    trace.addAll(conditionTrace(castMap((Map<?, ?>) children.get(i)), responses, path + "." + key + "[" + i + "]"));
+            }
+        }
+        if (expression.get("not") instanceof Map<?, ?> child)
+            trace.addAll(conditionTrace(castMap(child), responses, path + ".not"));
+        return trace;
     }
 
     private List<Map<String, Object>> expressionList(Object value) {
@@ -632,14 +853,39 @@ public class NetworkProbeAnalysisService {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
+    private static final class IncompleteEvidence extends RuntimeException {
+        private IncompleteEvidence(String message) { super(message); }
+    }
+
+    private static Object canonical(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> result = new TreeMap<>();
+            map.forEach((key, item) -> result.put(String.valueOf(key), canonical(item)));
+            return result;
+        }
+        if (value instanceof Collection<?> list) return list.stream().map(NetworkProbeAnalysisService::canonical).toList();
+        return value;
+    }
+
+    private static String ruleHash(Map<String, Object> rule) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(JsonUtil.toJsonString(canonical(rule)).getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception error) { throw new IllegalStateException("无法计算规则摘要", error); }
+    }
+
     public record PreparedScan(Map<String, Object> plan, ScanContext context) { }
 
     public record RuleDefinition(String id, String name, String protocol, Set<String> tags,
-                                 List<Map<String, Object>> requests, Map<String, Object> match) { }
+                                 List<Map<String, Object>> requests, Map<String, Object> match, Map<String, Object> version, String hash) { }
 
-    public record WorkGroup(String targetId, String ruleId, int requestCount) { }
+    public record WorkGroup(String targetId, String ruleId, int requestCount, Map<String, Object> target) { }
 
     public static final class ScanContext {
+        private final Map<String, List<Map<String, Object>>> aliases = new LinkedHashMap<>();
+        private final Map<String, Map<String, Object>> requests = new LinkedHashMap<>();
+        private boolean debug;
+        private int logicalRequests;
         private final String kind;
         private final Map<String, RuleDefinition> rulesById;
         private final List<WorkGroup> groups;
@@ -650,6 +896,7 @@ public class NetworkProbeAnalysisService {
         private final Set<String> reachableHosts = new LinkedHashSet<>();
         private final Set<String> seenObservationKeys = new LinkedHashSet<>();
         private final Map<String, Map<Integer, Map<String, Object>>> groupedObservations = new LinkedHashMap<>();
+        private final Map<String, Map<String, Object>> completedMatches = new ConcurrentHashMap<>();
         private final long createdAt;
         private volatile long finishedAt;
 
@@ -686,6 +933,8 @@ public class NetworkProbeAnalysisService {
                         .put(requestIndex, new LinkedHashMap<>(observation));
             }
         }
+
+        private synchronized void discardGroup(String key) { groupedObservations.remove(key); }
 
         private synchronized Map<String, Map<Integer, Map<String, Object>>> groupedObservations() {
             Map<String, Map<Integer, Map<String, Object>>> copy = new LinkedHashMap<>();

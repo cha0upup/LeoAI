@@ -8,10 +8,10 @@ import java.util.Locale;
 
 /** User-selectable stages, always executed in dependency order. */
 public enum ScanStage {
-    REACHABILITY, PORT_SCAN, SERVICE_PROBE;
+    REACHABILITY, PORT_SCAN, SERVICE_PROBE, FINGERPRINT;
 
     public static List<ScanStage> resolve(Object value) {
-        if (value == null) return List.of(values());
+        if (value == null) return List.of(REACHABILITY, PORT_SCAN, SERVICE_PROBE);
         if (!(value instanceof Collection<?> stages) || stages.isEmpty()) {
             throw new IllegalArgumentException("请至少选择一个扫描阶段");
         }
@@ -25,6 +25,9 @@ public enum ScanStage {
         }
         if (selected.contains(SERVICE_PROBE) && !selected.contains(PORT_SCAN)) {
             throw new IllegalArgumentException("服务识别需要同时启用端口扫描");
+        }
+        if (selected.contains(FINGERPRINT) && !selected.contains(SERVICE_PROBE)) {
+            throw new IllegalArgumentException("组件识别需要同时启用服务识别和端口扫描");
         }
         return Arrays.stream(values()).filter(selected::contains).toList();
     }

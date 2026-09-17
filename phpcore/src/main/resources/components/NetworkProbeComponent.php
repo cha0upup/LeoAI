@@ -148,7 +148,10 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
     $address = $scheme . '://' . $hostForUrl($host) . ':' . $port;
     $stream = null;
     try {
-        $context = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);
+        $url = parse_url((string)($target['baseUrl'] ?? '')) ?: [];
+        $httpHost = (string)($url['host'] ?? $host);
+        $context = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false,
+            'peer_name' => trim($httpHost, '[]'), 'SNI_enabled' => true]]);
         $errno = 0; $error = '';
         $stream = @stream_socket_client($address, $errno, $error, $timeout / 1000.0, STREAM_CLIENT_CONNECT, $context);
         if (!is_resource($stream)) return $observation($target, $stage, 'closed', $started, $error ?: 'connection failed');
@@ -175,7 +178,7 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
         $pathValue = (string)($request['path'] ?? $defaultPath); if ($pathValue === '') $pathValue = '/';
         $headerSource = $stage === 'http-request' ? $request : $target;
         $headers = is_array($headerSource['headers'] ?? null) ? $headerSource['headers'] : [];
-        $headers['Host'] = $headers['Host'] ?? ($hostForUrl($host) . ':' . $port);
+        $headers['Host'] = $headers['Host'] ?? ($hostForUrl($httpHost) . ':' . $port);
         $headers['User-Agent'] = $headers['User-Agent'] ?? '';
         $headers['Connection'] = $headers['Connection'] ?? 'close';
         $raw = $method . ' ' . $pathValue . " HTTP/1.1\r\n";
@@ -203,8 +206,10 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
             'truncated' => strlen($response) >= $maxRead
         ];
         if ($stage === 'http-request') {
-            $evidence['headers'] = $sanitize($headerBlock);
-            $evidence['body'] = $sanitize($bodyBlock);
+            $evidence['headers'] = $sanitize($headerBlock, $maxRead);
+            $evidence['headersTruncated'] = $separator === false || strlen($headerBlock) >= $maxRead;
+            $evidence['body'] = $sanitize($bodyBlock, $maxRead);
+            if (strlen($bodyBlock) >= $maxRead) $evidence['truncated'] = true;
         }
         if (preg_match('/(?:^|\r?\n)Content-Length:\s*(\d+)/i', $headerBlock, $match)) {
             $evidence['responseSize'] = (int)$match[1];

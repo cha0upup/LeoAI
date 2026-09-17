@@ -3,6 +3,7 @@ package org.leo.web.service.discovery;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ResolvedTarget;
 import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ScanConfig;
 import org.springframework.stereotype.Service;
+import org.leo.web.service.NetworkProbeAnalysisService;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -17,10 +18,13 @@ public class ScanPlanService {
 
     private final TargetResolver targetResolver;
     private final PortPolicyResolver portPolicyResolver;
+    private final NetworkProbeAnalysisService analysisService;
 
-    public ScanPlanService(TargetResolver targetResolver, PortPolicyResolver portPolicyResolver) {
+    public ScanPlanService(TargetResolver targetResolver, PortPolicyResolver portPolicyResolver,
+                           NetworkProbeAnalysisService analysisService) {
         this.targetResolver = targetResolver;
         this.portPolicyResolver = portPolicyResolver;
+        this.analysisService = analysisService;
     }
 
     public ScanPlan plan(ScanConfig scan) {
@@ -28,6 +32,10 @@ public class ScanPlanService {
             throw new IllegalArgumentException("scan.targets不能为空");
         }
         List<ScanStage> stages = ScanStage.resolve(scan.stages());
+        List<Map<String, Object>> fingerprintRules = stages.contains(ScanStage.FINGERPRINT)
+                ? analysisService.snapshotRules(scan.fingerprint() == null ? Map.of() : Map.of(
+                    "ids", scan.fingerprint().ids() == null ? List.of() : scan.fingerprint().ids(),
+                    "tags", scan.fingerprint().tags() == null ? List.of() : scan.fingerprint().tags())) : List.of();
         boolean scanPorts = stages.contains(ScanStage.PORT_SCAN);
         boolean discoverHosts = stages.contains(ScanStage.REACHABILITY);
         var execution = scan.execution();
@@ -90,6 +98,13 @@ public class ScanPlanService {
                     return value;
                 });
                 if ("url".equalsIgnoreCase(target.source())) endpoint.putIfAbsent("baseUrl", target.rawTarget());
+                // Retain applications for future supplemental scans even without fingerprinting.
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> applications = (List<Map<String, Object>>) endpoint.computeIfAbsent(
+                        "applications", ignored -> new ArrayList<>());
+                Map<String, Object> application = "url".equalsIgnoreCase(target.source())
+                        ? Map.of("baseUrl", target.rawTarget()) : Map.of("hostname", target.host());
+                if (!applications.contains(application)) applications.add(application);
                 ports.add(port);
             }
         }
@@ -98,7 +113,7 @@ public class ScanPlanService {
         }
         return new ScanPlan(scan.name() == null ? "" : scan.name().trim(), scan.targets().items().size(),
                 List.copyOf(explicitByHost.keySet()), List.copyOf(ports),
-                endpoints.values().stream().map(Map::copyOf).toList(), List.copyOf(reachability), workers, timeout, stages);
+                endpoints.values().stream().map(Map::copyOf).toList(), List.copyOf(reachability), workers, timeout, stages, fingerprintRules);
     }
 
     private static void addSample(Set<Integer> probes, List<Integer> candidates) {
@@ -122,7 +137,7 @@ public class ScanPlanService {
 
     public record ScanPlan(String name, int originalCount, List<String> hosts, List<Integer> ports,
                            List<Map<String, Object>> targets, List<Map<String, Object>> reachabilityTargets,
-                           int workers, int timeoutMs, List<ScanStage> stages) {
+                           int workers, int timeoutMs, List<ScanStage> stages, List<Map<String, Object>> fingerprintRules) {
         public Map<String, Object> workflowRequest() {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("name", name);
@@ -133,6 +148,7 @@ public class ScanPlanService {
             request.put("threads", workers);
             request.put("timeout", timeoutMs);
             request.put("stages", stages.stream().map(Enum::name).toList());
+            request.put("fingerprintRules", fingerprintRules);
             return request;
         }
     }

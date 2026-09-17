@@ -71,6 +71,27 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
+    void runsFingerprintStageAndSkipsItWhenThereAreNoHttpApplications() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        var request = new HashMap<String, Object>(Map.of("hosts", List.of("host-a"), "ports", List.of(80),
+                "stages", List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"),
+                "fingerprintRules", analysis.snapshotRules(Map.of())));
+        String id = String.valueOf(service.start("session-1", node, request).get("taskId"));
+        var snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
+        assertEquals(1, service.querySummaryIfPresent("session-1", id).get("fingerprintCount"));
+        assertTrue(node.startedStages.contains("RECON"));
+        WorkflowNode tcpOnly = new WorkflowNode();
+        tcpOnly.openPorts = Set.of(5432);
+        request.put("ports", List.of(5432));
+        id = String.valueOf(service.start("session-1", tcpOnly, request).get("taskId"));
+        snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertEquals("NO_HTTP_APPLICATIONS", ((Map<?, ?>) ((List<?>) snapshot.get("stages")).get(2)).get("reason"));
+        assertTrue(!tcpOnly.startedStages.contains("RECON"));
+    }
+
+    @Test
     void probesUnknownNonStandardPortsForHttpAndSkipsKnownTcpServices() throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.openPorts = Set.of(80, 18080, 5432);
@@ -254,6 +275,42 @@ class NetworkProbeWorkflowServiceTest {
         Map<String, Object> snapshot = awaitTerminal(taskId);
         assertEquals("CANCELLED", snapshot.get("outcome"));
         awaitCount(node.stopCalls);
+    }
+
+    @Test
+    void controlsFingerprintChildAfterServiceIdentificationHasFinished() throws Exception {
+        var node = new FingerprintControlledNode();
+        String id = String.valueOf(service.start("session-1", node, Map.of(
+                "hosts", List.of("host-a"), "ports", List.of(80),
+                "stages", List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"),
+                "fingerprintRules", analysis.snapshotRules(Map.of()))).get("taskId"));
+        assertTrue(node.control.started.await(2, TimeUnit.SECONDS));
+        service.pause("session-1", id);
+        awaitCount(node.control.pauseCalls);
+        assertEquals("PAUSED", service.querySummaryIfPresent("session-1", id).get("status"));
+        assertEquals("FINGERPRINT", service.querySummaryIfPresent("session-1", id).get("currentStage"));
+        service.resume("session-1", id);
+        awaitCount(node.control.resumeCalls);
+        service.stop("session-1", id);
+        assertEquals("CANCELLED", awaitTerminal(id).get("outcome"));
+        awaitCount(node.control.stopCalls);
+    }
+
+    private static final class FingerprintControlledNode implements NetworkProbeCapable {
+        private final WorkflowNode discovery = new WorkflowNode();
+        private final ControlledWorkflowNode control = new ControlledWorkflowNode();
+        private NetworkProbeCapable node(String id) { return "controlled-child".equals(id) ? control : discovery; }
+        public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
+            return ((List<?>) plan.get("stages")).contains("http-request")
+                    ? control.startNetworkProbe(plan) : discovery.startNetworkProbe(plan);
+        }
+        public Map<String, Object> queryNetworkProbe(String id, long cursor, int items, int bytes, boolean evidence) throws Exception {
+            return node(id).queryNetworkProbe(id, cursor, items, bytes, evidence);
+        }
+        public Map<String, Object> pauseNetworkProbe(String id) throws Exception { return node(id).pauseNetworkProbe(id); }
+        public Map<String, Object> resumeNetworkProbe(String id) throws Exception { return node(id).resumeNetworkProbe(id); }
+        public Map<String, Object> stopNetworkProbe(String id) throws Exception { return node(id).stopNetworkProbe(id); }
+        public Map<String, Object> releaseNetworkProbe(String id) throws Exception { return node(id).releaseNetworkProbe(id); }
     }
 
     @SuppressWarnings("unchecked")

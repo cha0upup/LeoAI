@@ -158,6 +158,48 @@ class PhpOperationsCapabilityComponentTest {
     }
 
     @Test
+    void preservesVirtualHostAndRuleBodiesBeyondBannerLimit() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<String> request = new CompletableFuture<>();
+            String body = "x".repeat(5000) + "component-marker";
+            Thread responder = new Thread(() -> {
+                try (Socket socket = server.accept()) {
+                    socket.setSoTimeout(2000);
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                    StringBuilder headers = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null && !line.isEmpty()) headers.append(line).append("\n");
+                    request.complete(headers.toString());
+                    socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Length: " + body.length()
+                            + "\r\nConnection: close\r\n\r\n" + body).getBytes(StandardCharsets.US_ASCII));
+                    socket.getOutputStream().flush();
+                } catch (IOException error) { request.completeExceptionally(error); }
+            });
+            responder.start();
+            String taskId = "";
+            try {
+                var started = invoke("NetworkProbeComponent.php", "startTask",
+                        "array('plan'=>array('targets'=>array(array('host'=>'127.0.0.1','port'=>" + server.getLocalPort()
+                        + ",'protocol'=>'http','baseUrl'=>'http://virtual.example.invalid:" + server.getLocalPort()
+                        + "/','httpRequest'=>array('method'=>'GET','path'=>'/app/probe'))),'stages'=>array('http-request'),"
+                        + "'limits'=>array('maxReadBytes'=>8192)))");
+                assertEquals(200, code(started));
+                taskId = String.valueOf(started.get("taskId"));
+                Map<?, ?> info = awaitNetworkProbeTask(taskId);
+                Map<?, ?> observation = (Map<?, ?>) ((List<?>) info.get("observations")).get(0);
+                Map<?, ?> evidence = (Map<?, ?>) observation.get("evidence");
+                assertEquals(body, evidence.get("body"));
+                assertEquals(false, evidence.get("truncated"));
+                assertTrue(request.get(2, TimeUnit.SECONDS).contains("Host: virtual.example.invalid:" + server.getLocalPort()));
+                assertTrue(request.get().startsWith("GET /app/probe HTTP/1.1"));
+            } finally {
+                if (!taskId.isEmpty()) invoke("NetworkProbeComponent.php", "releaseTask", "array('taskId'=>'" + taskId + "')");
+                responder.join(3000);
+            }
+        }
+    }
+
+    @Test
     void persistsBinaryBannerAndKeepsAcknowledgementMonotonic() throws Exception {
         ExecutorService responder = Executors.newSingleThreadExecutor();
         try (ServerSocket server = new ServerSocket(0)) {

@@ -57,6 +57,18 @@ public class ScanPreviewService {
             String estimatedSize = plan.stages().contains(ScanStage.PORT_SCAN)
                     ? estimateResultSize(combinationCount) : formatBytes((long) hostCount * 100);
 
+            int ruleRequests = plan.fingerprintRules().stream().mapToInt(rule ->
+                    ((List<?>) ((java.util.Map<?, ?>) rule.get("rule")).get("requests")).size()).sum();
+            long applicationCount = plan.targets().stream().mapToLong(target ->
+                    target.get("applications") instanceof List<?> list ? list.size() : 1).sum();
+            long fingerprintUpperBound = applicationCount * ruleRequests;
+            if (ruleRequests > 0) {
+                warnings.add("组件识别仅扫描 HTTP/HTTPS 应用；实际请求数以发现结果为准，单次最多 "
+                        + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + " 个请求，响应正文最多读取 "
+                        + NetworkProbeLimits.NODE_MAX_READ_BYTES + " 字节");
+                if (fingerprintUpperBound > NetworkProbeLimits.MAX_FINGERPRINT_PROBES)
+                    warnings.add("组件请求上界超过单次限制，实际应用数过多时组件阶段将失败，请缩小范围或减少规则");
+            }
             TargetPreview preview = new TargetPreview(
                     originalCount,
                     hostCount,
@@ -64,6 +76,8 @@ public class ScanPreviewService {
                     (int) Math.min(combinationCount, Integer.MAX_VALUE),
                     (int) reachabilityProbeCount,
                     serviceProbeCount,
+                    plan.fingerprintRules().size(), ruleRequests, fingerprintUpperBound,
+                    NetworkProbeLimits.NODE_MAX_READ_BYTES,
                     estimatedSize,
                     warnings,
                     plan.stages().stream().map(Enum::name).toList()

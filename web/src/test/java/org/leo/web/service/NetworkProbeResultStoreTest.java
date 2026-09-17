@@ -125,6 +125,70 @@ class NetworkProbeResultStoreTest {
         assertEquals(0L, store.queryResults("session-a", "alive-only", Map.of()).get("total"));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void atomicallyStoresFingerprintEvidenceAndDeduplicatesReplayedMatches() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("fingerprints.db"));
+        dataSource.setEnforceForeignKeys(true);
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+        assertTrue(store.createTask("task", "session", "test", Map.of()));
+        Map<String, Object> endpoint = Map.of("host", "127.0.0.1", "port", 80, "stage", "http-head", "state", "open",
+                "workflowStage", "SERVICE_PROBE", "evidence", Map.of("statusCode", 200, "title", "Home"));
+        assertTrue(store.append("task", List.of(endpoint), List.of()));
+        Map<String, Object> observation = Map.of("host", "127.0.0.1", "port", 80, "stage", "http-request", "state", "open",
+                "workflowStage", "FINGERPRINT", "targetId", "app", "ruleId", "demo", "probeId", "probe", "requestIndex", 0,
+                "evidence", Map.of("statusCode", 404, "body", "marker"));
+        Map<String, Object> match = Map.of("host", "127.0.0.1", "port", 80, "targetId", "app", "ruleId", "demo",
+                "ruleHash", "hash", "ruleName", "Demo", "status", "MATCHED");
+        Map<String, Object> summary = Map.of("host", "127.0.0.1", "port", 80,
+                "fingerprint", Map.of("status", "COMPLETED", "components", List.of(match)));
+        assertTrue(store.append("task", List.of(observation), List.of(), List.of(match), List.of(summary)));
+        assertTrue(store.append("task", List.of(observation), List.of(), List.of(match), List.of(summary)));
+        var rows = (List<Map<String, Object>>) store.queryResults("session", "task", Map.of()).get("endpoints");
+        assertEquals(200, ((Number) rows.get(0).get("statusCode")).intValue());
+        assertEquals("Home", rows.get(0).get("title"));
+        assertEquals(1, store.summary("session", "task").get("fingerprintCount"));
+        assertEquals(1L, store.queryFingerprintMatches("session", "task", Map.of("endpointId", "tcp|127.0.0.1|80")).get("total"));
+        assertTrue(store.queryFingerprintMatches("another-session", "task", Map.of()).isEmpty());
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM scan_observations"));
+            statement.executeUpdate("DROP TABLE scan_fingerprint_results");
+        }
+        var changed = new LinkedHashMap<>(observation);
+        changed.put("probeId", "uncommitted");
+        assertFalse(store.append("task", List.of(changed), List.of(), List.of(match), List.of(summary)));
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM scan_observations"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void restartMarksPendingFingerprintEvidenceAsIncomplete() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("interrupted.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+        assertTrue(store.createTask("task", "session", "test", Map.of()));
+        Map<String, Object> endpoint = Map.of("host", "127.0.0.1", "port", 80, "stage", "tcp-connect", "state", "open");
+        Map<String, Object> match = Map.of("host", "127.0.0.1", "port", 80, "targetId", "app", "ruleId", "demo",
+                "ruleHash", "hash", "ruleName", "Demo", "status", "PENDING");
+        Map<String, Object> summary = Map.of("host", "127.0.0.1", "port", 80, "fingerprint", Map.of("status", "RUNNING"));
+        assertTrue(store.append("task", List.of(endpoint), List.of(), List.of(match), List.of(summary)));
+        store.markInterruptedTasks();
+        assertEquals("FAILED", store.summary("session", "task").get("outcome"));
+        var matches = (List<Map<String, Object>>) store.queryFingerprintMatches("session", "task", Map.of("endpointId", "tcp|127.0.0.1|80")).get("matches");
+        assertEquals("INCONCLUSIVE", matches.get(0).get("status"));
+        var rows = (List<Map<String, Object>>) store.queryResults("session", "task", Map.of()).get("endpoints");
+        assertEquals("INTERRUPTED", ((Map<?, ?>) rows.get(0).get("fingerprint")).get("status"));
+    }
+
     private int scalar(Statement statement, String sql) throws Exception {
         try (ResultSet rows = statement.executeQuery(sql)) {
             assertTrue(rows.next());

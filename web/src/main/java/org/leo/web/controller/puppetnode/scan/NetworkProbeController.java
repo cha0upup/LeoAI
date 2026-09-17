@@ -94,7 +94,7 @@ public class NetworkProbeController {
             if (!live.isEmpty()) {
                 Map<String, Object> persisted = resultStore.summaryCounts(sessionId, taskId);
                 if (!persisted.isEmpty()) {
-                    for (String key : List.of("openCount", "serviceCount", "errorCount")) {
+                    for (String key : List.of("openCount", "serviceCount", "errorCount", "fingerprintCount", "identifiedApplicationCount")) {
                         if (persisted.get(key) != null) live.put(key, persisted.get(key));
                     }
                 }
@@ -106,6 +106,25 @@ public class NetworkProbeController {
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
         }
+    }
+
+    @RequestMapping(value = "/workflow/fingerprints/query", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> queryFingerprints(@RequestBody java.util.HashMap<String, Object> params) {
+        String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+        String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
+        ControllerUtil.getPuppetNodeSession(sessionId);
+        Map<String, Object> result = resultStore.queryFingerprintMatches(sessionId, taskId, params);
+        return result.isEmpty() ? ApiResponse.notFound("扫描任务不存在或不属于当前会话") : ApiResponse.success(result);
+    }
+
+    @RequestMapping(value = "/workflow/fingerprints/evidence", method = RequestMethod.POST)
+    public java.util.HashMap<String, Object> fingerprintEvidence(@RequestBody java.util.HashMap<String, Object> params) {
+        String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
+        String taskId = ControllerUtil.getRequiredStringParam(params, "taskId").trim();
+        String matchKey = ControllerUtil.getRequiredStringParam(params, "matchKey").trim();
+        ControllerUtil.getPuppetNodeSession(sessionId);
+        Map<String, Object> result = resultStore.fingerprintEvidence(sessionId, taskId, matchKey);
+        return result.isEmpty() ? ApiResponse.notFound("识别证据不存在或不属于当前会话") : ApiResponse.success(result);
     }
 
     @RequestMapping(value = "/workflow/tasks", method = RequestMethod.POST)

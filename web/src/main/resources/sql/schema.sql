@@ -667,3 +667,19 @@ CREATE TABLE IF NOT EXISTS ai_operation_assessments (
 
 CREATE INDEX IF NOT EXISTS idx_ai_operation_assessment_lookup
     ON ai_operation_assessments(user_id, thread_id, tool_name, arguments_hash, status);
+
+-- Component identification evaluations; task deletion also removes the evidence history.
+CREATE TABLE IF NOT EXISTS scan_fingerprint_results (
+    task_id TEXT NOT NULL REFERENCES scan_tasks(task_id) ON DELETE CASCADE,
+    match_key TEXT NOT NULL,
+    endpoint_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    rule_id TEXT NOT NULL,
+    rule_hash TEXT NOT NULL,
+    rule_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, match_key)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_fingerprint_endpoint ON scan_fingerprint_results(task_id, endpoint_id, status);

@@ -462,9 +462,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private Map httpResponse(HttpURLConnection connection, byte[] bytes, String charset, int maxRead)
             throws Exception {
         HashMap evidence = new HashMap();
-        evidence.put("body", sanitize(new String(bytes, charset)));
+        // The read byte limit already bounds this text. Do not silently cut it
+        // to the shorter banner limit: rule matching needs the complete prefix.
+        evidence.put("body", new String(bytes, charset));
         evidence.put("truncated", Boolean.valueOf(bytes.length >= maxRead));
         Map responseHeaders = new HashMap();
+        boolean headersTruncated = false;
         StringBuilder headerText = new StringBuilder();
         Map fields = connection.getHeaderFields();
         if (fields != null) {
@@ -474,13 +477,20 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 String name = stringValue(entry.getKey());
                 Object value = entry.getValue();
                 if (name.length() == 0 || value == null) continue;
-                String safe = sanitize(String.valueOf(value));
+                String original = String.valueOf(value);
+                String safe = sanitize(original);
+                if (original.length() > MAX_EVIDENCE_CHARS) headersTruncated = true;
+                if (headerText.length() + name.length() + safe.length() + 4 > maxRead) {
+                    headersTruncated = true;
+                    break;
+                }
                 responseHeaders.put(name, safe);
                 if (headerText.length() > 0) headerText.append("\\n");
                 headerText.append(name).append(": ").append(safe);
             }
         }
         evidence.put("headers", headerText.toString());
+        evidence.put("headersTruncated", Boolean.valueOf(headersTruncated));
         evidence.put("responseHeaders", responseHeaders);
         return evidence;
     }

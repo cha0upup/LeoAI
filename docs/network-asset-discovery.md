@@ -1,6 +1,6 @@
 # 网络资产发现
 
-工作流按配置依次执行主机探活、端口扫描、服务识别。节点负责执行探测，服务端负责计划与阶段编排，前端负责展示和操作。
+工作流按配置依次执行主机探活、端口扫描、服务识别，以及显式启用的组件识别。节点负责执行探测，服务端负责计划与阶段编排，前端负责展示和操作。
 
 ## 扫描阶段配置
 
@@ -29,6 +29,94 @@
 探活使用 TCP 连接，不使用 ICMP。仅探活时，裸主机使用 80、443、22、8080、8443；显式 `host:port` 或 URL 使用对应端口，端口扫描策略不参与。未连接成功表示未确认存活，不能据此断定主机离线。跳过探活时，只将实际发现开放端口的主机计为存活。
 
 任务快照、持久化记录及进度只包含启用的阶段。因没有存活主机或开放端口而无法执行的后续阶段标记为跳过；暂停、继续、停止始终作用于当前实际执行的阶段。仅探活任务展示主机结果，不显示端口结果表。
+
+## 组件识别
+
+`FINGERPRINT` 是可选的第四阶段，依赖 `PORT_SCAN` 和 `SERVICE_PROBE`。未传 `stages` 时仍只执行原来的三个阶段。前端在“新建扫描”中勾选组件识别后，可以选择全部 HTTP 指纹、按任一标签筛选，或指定规则；规则来源为平台指纹管理。
+
+```json
+{
+  "sessionId": "当前会话ID",
+  "scan": {
+    "targets": { "items": ["https://example.internal:8443/app/"] },
+    "stages": ["PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"],
+    "fingerprint": { "ids": ["spring-boot-actuator_any"], "tags": [] }
+  }
+}
+```
+
+`fingerprint.ids` 非空时优先使用指定规则，否则按 `tags` 筛选，两者为空时使用全部 HTTP 规则。预览与启动共用规则校验，未知规则、空集合、无效匹配表达式会被拒绝。启动时复制完整规则到任务配置，之后的文件修改或删除不影响该任务；每项识别结果记录规则内容的 SHA-256。
+
+预览返回 `fingerprintRuleCount`、`fingerprintRequestsPerApplication`、`fingerprintProbeUpperBound`、`fingerprintMaxReadBytes`。请求上界按候选应用计算，不代表实际请求数。当前最多 64 条规则、每规则 16 个请求、组件阶段最多 50,000 个逻辑请求，并发最多 32；超过逻辑请求上限时该阶段失败，已发现的端口结果继续保留。规则声明的正文上限受节点 8192 字节读取限制约束，PHP 此限制包含 HTTP 头部。
+
+端口探测仍按 IP/端口去重，组件识别保留同一端点下的不同域名及应用路径。显式 HTTP/HTTPS URL 可直接作为开放端口上的应用候选；普通主机输入使用服务识别确认的 HTTP/HTTPS 协议。URL 的路径被视为应用基路径，查询串和片段不参与基路径：`https://host/app/` 配合规则 `/actuator` 请求 `/app/actuator`。旧规则 `uri` 与编辑器的 `path` 均受支持，`uri` 非空时优先。Java 用域名 URL 发起 HTTP/TLS 请求；PHP 连接已解析地址并保留域名 Host/SNI。Java 请求期间仍可能重新进行 DNS 解析，不保证绑定到预览时的地址。
+
+规则请求通过现有编排层分批下发，响应按应用、规则、请求序号聚合，在服务端执行 `all/any/not` 及叶子条件。超时或无有效 HTTP 状态码记为 `ERROR`，不能通过否定条件成为命中；截断响应中找到正向子串可以命中，无法判断的条件记为 `INCONCLUSIVE`，经 `not` 也不会变成命中。无 HTTP 应用时跳过该阶段。暂停、继续和停止作用于当前子任务。
+
+结果分为 `MATCHED`、`NOT_MATCHED`、`ERROR`、`INCONCLUSIVE`、`PENDING`、`CANCELLED`。`scan_fingerprint_results` 保存每个应用规则的执行明细，`scan_endpoint_results.fingerprint_json` 保存多个组件及统计摘要，原始响应保存到现有 observations/evidence 表。三者在同一事务中提交后才确认结果游标，重复接收幂等；规则请求不覆盖端点的首页标题、状态码及服务摘要。服务端重启把未完成的证据标记为不足，历史任务仍可查看已完成识别。删除任务或销毁会话会级联清理识别明细。
+
+新增的会话隔离查询接口：
+
+- `POST /puppet-node/network-probe/workflow/fingerprints/query`：`sessionId/taskId/endpointId/page/pageSize`，返回规则执行明细，命中项优先。
+- `POST /puppet-node/network-probe/workflow/fingerprints/evidence`：`sessionId/taskId/matchKey`，返回本次规则快照及已采集响应。
+- 原结果查询的 `filter.hasFingerprint` 和 `filter.component` 支持组件筛选；任务摘要增加 `fingerprintCount`（应用规则命中数）和 `identifiedApplicationCount`（命中应用数）。
+
+资产表展示组件标签，详情展示所有规则状态及请求响应证据，并可下载 JSON。历史任务未执行组件识别时显示“—”。规则中的 `info.version` 保持元数据含义，不作为实测组件版本；漏洞关联信息也不自动转为漏洞确认。
+
+## 第二期：补扫、请求合并、版本与规则调试
+
+资产表勾选已确认的 HTTP/HTTPS 开放资产后，点击“补扫组件”并选择规则。服务端从来源任务读取所选端点及原始应用地址，直接执行 `FINGERPRINT`，不重复探活、端口扫描或服务识别。结果写入独立任务，保留来源任务编号及原有首页摘要，来源结果不被改写。一次可选 1–256 个端点，仍受 64 条规则及 50,000 个逻辑请求限制。
+
+补扫入口为 `POST /puppet-node/network-probe/workflow/fingerprints/start`：
+
+```json
+{
+  "sessionId": "执行会话ID",
+  "sourceTaskId": "来源扫描任务ID",
+  "endpointIds": ["tcp|192.168.1.10|8080"],
+  "fingerprint": { "ids": ["spring-boot-actuator_any"], "tags": [] }
+}
+```
+
+端点来自数据库，不能通过此接口任意替换主机或端口；来源任务必须属于执行会话。普通新建扫描的阶段依赖保持不变。新任务均保留原始域名和应用路径，供后续补扫使用；老历史记录缺少这些信息时只能使用已保存端点的协议与地址。
+
+同一任务、同一应用内，目标地址、方法、路径、请求头、正文、字符集、超时及响应读取上限一致的 GET/HEAD 请求会合并。POST 等其他方法保持独立执行。不同域名、应用路径或请求配置不会合并。规则分别判断，共享响应只保存一次，各规则通过请求编号引用该证据；不同任务之间不共用响应缓存。阶段进度按合并后的节点请求计数，阶段摘要另含 `logicalRequestCount`、`networkRequestCount`（合并后的计划请求数）和 `savedRequestCount`，预览仍为合并前的上限。
+
+在规则编辑器“版本提取”中填写可选 JSON，对应 `rule.version`：
+
+```json
+{
+  "requests": [{ "method": "GET", "path": "/", "timeout": 3000 }],
+  "match": { "field": "headers", "operator": "contains", "value": "nginx/" },
+  "version": { "request": 0, "field": "headers", "prefix": "nginx/" }
+}
+```
+
+`request` 为从 0 开始的请求序号，默认 0；`field` 仅支持 `body`、`headers`。`prefix` 是必填的字面文本，可加 `suffix` 校验紧随版本的字面后缀；两者最多 256 字符，`ignoreCase` 默认 true。提取以数字开头、最长 64 字符的版本标记，后续允许数字、字母、点、下划线、加号和连字符，不执行自定义正则或脚本。例如响应 `Server: nginx/1.26.2` 可提取 `1.26.2`。
+
+只有组件命中后才提取版本。结果包含 `detectedVersion`、`versionStatus` 和 `versionEvidence`（请求编号、响应字段、物理 probeId、字符偏移）。未找到版本记为 `NOT_FOUND`，响应截断导致无法确定版本边界则记为 `INCONCLUSIVE`；版本未知不会撤销已经成立的组件命中。`info.version` 继续用于规则命名和适用范围，不作为实际组件版本。资产标签、明细和导出均展示提取到的版本。
+
+指纹管理详情的“调试”执行当前已保存规则；新增/编辑窗口的“调试当前草稿”执行打开调试面板时的草稿，不要求先保存。选择执行会话、输入单个 HTTP/HTTPS 应用根地址后启动独立任务，可停止并查看命中状态、各条件判断、实际请求参数和响应证据。关闭面板后任务继续，结果仍可在对应会话的网络资产发现历史中查询。
+
+调试入口为 `POST /puppet-node/network-probe/workflow/fingerprints/debug`：
+
+```json
+{
+  "sessionId": "执行会话ID",
+  "target": "http://192.168.1.10:8080/app/",
+  "fingerprint": {
+    "name": "草稿示例",
+    "rule": {
+      "requests": [{ "path": "/info" }],
+      "match": { "field": "body", "value": "component-marker" }
+    }
+  }
+}
+```
+
+调试 URL 不接受认证信息、查询串或片段。规则校验和请求合并与正式扫描共用，条件轨迹仅在调试任务中保存。调试不修改指纹库；权限检查先于 DNS 解析和节点调用。通用任务查询、停止、历史及删除接口均可操作此任务；指纹明细查询省略 `endpointId` 可查看任务全部应用。
+
+回归测试覆盖本机 HTTP 服务器与真实 Java 探测组件、补扫无端口探测、跨规则合并与证据重载、版本截断边界、来源会话隔离和未保存草稿。前端测试覆盖调试轮询、销毁后迟到响应、停止失败与重试、版本配置读写。本期不变更节点协议或 payload。
 
 ## 服务端职责
 

@@ -26,6 +26,22 @@ import java.util.Map;
 @Service
 public final class NetworkProbeResultStore {
 
+    private static final String FINGERPRINT_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS scan_fingerprint_results (
+                task_id TEXT NOT NULL REFERENCES scan_tasks(task_id) ON DELETE CASCADE,
+                match_key TEXT NOT NULL,
+                endpoint_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                rule_hash TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, match_key)
+            )
+            """;
+    private static final String FINGERPRINT_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_scan_fingerprint_endpoint ON scan_fingerprint_results(task_id, endpoint_id, status)";
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_FILTER_VALUES = 256;
     private static final int MAX_SUMMARY_HOSTS = 160;
@@ -45,16 +61,31 @@ public final class NetworkProbeResultStore {
         ensureFingerprintColumn();
         ensureResponseSizeColumn();
         ensureStageColumn();
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate(FINGERPRINT_TABLE_SQL);
+            statement.executeUpdate(FINGERPRINT_INDEX_SQL);
+        } catch (SQLException error) { throw new IllegalStateException("无法初始化组件识别结果存储", error); }
         String now = Instant.now().toString();
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
                      "UPDATE scan_tasks SET status='FAILED', outcome='FAILED', "
                              + "current_stage=NULL, progress=0, error_message=?, updated_at=?, finished_at=? "
                              + "WHERE status IN ('RUNNING', 'PAUSED')")) {
+            connection.setAutoCommit(false);
+            try (Statement interrupted = connection.createStatement()) {
+                interrupted.executeUpdate("UPDATE scan_fingerprint_results SET status='INCONCLUSIVE', "
+                        + "result_json=json_set(result_json, '$.status', 'INCONCLUSIVE', '$.error', '服务端重启，证据采集中断') "
+                        + "WHERE status='PENDING' AND task_id IN (SELECT task_id FROM scan_tasks WHERE status IN ('RUNNING','PAUSED'))");
+                interrupted.executeUpdate("UPDATE scan_endpoint_results SET "
+                        + "fingerprint_json=json_set(fingerprint_json, '$.status', 'INTERRUPTED') "
+                        + "WHERE json_extract(fingerprint_json, '$.status')='RUNNING' "
+                        + "AND task_id IN (SELECT task_id FROM scan_tasks WHERE status IN ('RUNNING','PAUSED'))");
+            }
             statement.setString(1, "服务端重启时任务被中断");
             statement.setString(2, now);
             statement.setString(3, now);
             int count = statement.executeUpdate();
+            connection.commit();
             if (count > 0) logger.warn("Marked {} interrupted network scan tasks as FAILED", count);
         } catch (SQLException error) {
             logger.warn("Unable to reconcile interrupted network scan tasks", error);
@@ -87,6 +118,13 @@ public final class NetworkProbeResultStore {
 
     public boolean append(String taskId, List<Map<String, Object>> observations,
                           List<Map<String, Object>> errors) {
+        return append(taskId, observations, errors, List.of(), List.of());
+    }
+
+    /** Evidence, rule evaluations and summaries are committed together before acknowledging the node. */
+    public boolean append(String taskId, List<Map<String, Object>> observations,
+                          List<Map<String, Object>> errors, List<Map<String, Object>> matches,
+                          List<Map<String, Object>> endpoints) {
         if (taskId == null || taskId.isBlank()) return false;
         List<Map<String, Object>> safeObservations = observations == null ? List.of() : observations;
         List<Map<String, Object>> safeErrors = errors == null ? List.of() : errors;
@@ -124,6 +162,7 @@ public final class NetworkProbeResultStore {
                 observationStatement.executeBatch();
                 endpointStatement.executeBatch();
                 evidenceStatement.executeBatch();
+                persistFingerprints(connection, taskId, matches, endpoints);
                 connection.commit();
                 return true;
             } catch (Exception error) {
@@ -139,37 +178,175 @@ public final class NetworkProbeResultStore {
         return false;
     }
 
-    public boolean updateFingerprints(String taskId, List<Map<String, Object>> endpoints) {
-        if (taskId == null || taskId.isBlank()) return false;
-        List<Map<String, Object>> safeEndpoints = endpoints == null ? List.of() : endpoints;
-        try (Connection connection = dataSource.getConnection()) {
-            connection.setAutoCommit(false);
+    private void persistFingerprints(Connection connection, String taskId,
+                                     List<Map<String, Object>> matches,
+                                     List<Map<String, Object>> endpoints) throws SQLException {
+        String now = Instant.now().toString();
+        if (matches != null && !matches.isEmpty()) {
             try (PreparedStatement statement = connection.prepareStatement(
-                    "UPDATE scan_endpoint_results SET fingerprint_json=?, updated_at=? "
-                            + "WHERE task_id=? AND endpoint_id=?")) {
-                String now = Instant.now().toString();
-                for (Map<String, Object> endpoint : safeEndpoints) {
-                    Map<String, Object> fingerprint = map(endpoint.get("fingerprint"));
-                    if (fingerprint.isEmpty()) continue;
-                    statement.setString(1, json(fingerprint));
-                    statement.setString(2, now);
-                    statement.setString(3, taskId);
-                    statement.setString(4, endpointId(endpoint));
+                    "INSERT INTO scan_fingerprint_results (task_id, match_key, endpoint_id, target_id, rule_id, rule_hash, rule_name, status, result_json, updated_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id, match_key) DO UPDATE SET "
+                    + "status=excluded.status, result_json=excluded.result_json, updated_at=excluded.updated_at "
+                    + "WHERE scan_fingerprint_results.result_json <> excluded.result_json")) {
+                for (Map<String, Object> match : matches) {
+                    Map<String, Object> result = new LinkedHashMap<>(match);
+                    String key = digest(text(match.get("targetId")) + "|" + text(match.get("ruleId")) + "|" + text(match.get("ruleHash")));
+                    result.put("matchKey", key);
+                    statement.setString(1, taskId);
+                    statement.setString(2, key);
+                    statement.setString(3, endpointId(match));
+                    statement.setString(4, text(match.get("targetId")));
+                    statement.setString(5, text(match.get("ruleId")));
+                    statement.setString(6, text(match.get("ruleHash")));
+                    statement.setString(7, text(match.get("ruleName")));
+                    statement.setString(8, text(match.get("status")));
+                    statement.setString(9, json(result));
+                    statement.setString(10, now);
                     statement.addBatch();
                 }
                 statement.executeBatch();
-                connection.commit();
-                return true;
-            } catch (Exception error) {
-                connection.rollback();
-                logger.warn("Unable to persist network scan fingerprints for task {}", taskId, error);
-            } finally {
-                connection.setAutoCommit(true);
             }
-        } catch (Exception error) {
-            logger.warn("Unable to persist network scan fingerprints for task {}", taskId, error);
         }
-        return false;
+        if (endpoints == null || endpoints.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement(
+                "UPDATE scan_endpoint_results SET fingerprint_json=?, updated_at=? WHERE task_id=? AND endpoint_id=?")) {
+            for (Map<String, Object> endpoint : endpoints) {
+                Map<String, Object> fingerprint = map(endpoint.get("fingerprint"));
+                if (fingerprint.isEmpty()) continue;
+                statement.setString(1, json(fingerprint));
+                statement.setString(2, now);
+                statement.setString(3, taskId);
+                statement.setString(4, endpointId(endpoint));
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    /** Load selections only from a task owned by the requested session. */
+    public FingerprintSource fingerprintSource(String sessionId, String taskId, List<String> endpointIds) {
+        if (!ownsTask(sessionId, taskId)) throw new IllegalArgumentException("来源扫描任务不存在或不属于当前会话");
+        if (endpointIds == null || endpointIds.isEmpty() || endpointIds.size() > 256)
+            throw new IllegalArgumentException("请选择 1–256 个 HTTP/HTTPS 资产");
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>(endpointIds);
+        List<Map<String, Object>> endpoints = new ArrayList<>();
+        List<Map<String, Object>> targets = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT * FROM scan_endpoint_results WHERE task_id=? AND endpoint_id IN (SELECT value FROM json_each(?))")) {
+                statement.setString(1, taskId); statement.setString(2, json(ids));
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        Map<String, Object> endpoint = endpointMap(rows);
+                        if (!"open".equals(endpoint.get("state")) || !List.of("http", "https").contains(text(endpoint.get("service"))))
+                            throw new IllegalArgumentException("仅支持对已识别的 HTTP/HTTPS 开放资产补扫组件");
+                        endpoint.remove("fingerprint");
+                        endpoints.add(endpoint);
+                    }
+                }
+            }
+            if (endpoints.size() != ids.size()) throw new IllegalArgumentException("选择中包含不存在的资产，请刷新后重试");
+            try (PreparedStatement statement = connection.prepareStatement("SELECT config_json FROM scan_tasks WHERE task_id=?")) {
+                statement.setString(1, taskId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (rows.next() && map(parseJson(rows.getString(1))).get("targets") instanceof List<?> values) {
+                        for (Object value : values) {
+                            Map<String, Object> target = map(value);
+                            if (ids.contains(endpointId(target))) targets.add(target);
+                        }
+                    }
+                }
+            }
+            return new FingerprintSource(endpoints, targets);
+        } catch (SQLException error) { throw new IllegalStateException("读取补扫资产失败", error); }
+    }
+
+    public record FingerprintSource(List<Map<String, Object>> endpoints, List<Map<String, Object>> targets) { }
+
+    public Map<String, Object> queryFingerprintMatches(String sessionId, String taskId, Map<String, Object> request) {
+        if (!ownsTask(sessionId, taskId)) return Map.of();
+        String endpoint = text(request.get("endpointId"));
+        int page = boundedInt(request.get("page"), 1, 1, Integer.MAX_VALUE);
+        int pageSize = boundedInt(request.get("pageSize"), 50, 1, MAX_PAGE_SIZE);
+        try (Connection connection = dataSource.getConnection()) {
+            long total;
+            try (PreparedStatement count = connection.prepareStatement(
+                    "SELECT COUNT(*) FROM scan_fingerprint_results WHERE task_id=? AND (?='' OR endpoint_id=?)")) {
+                count.setString(1, taskId); count.setString(2, endpoint); count.setString(3, endpoint);
+                try (ResultSet rows = count.executeQuery()) { total = rows.next() ? rows.getLong(1) : 0; }
+            }
+            List<Object> matches = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT result_json FROM scan_fingerprint_results WHERE task_id=? AND (?='' OR endpoint_id=?) "
+                    + "ORDER BY CASE WHEN status='MATCHED' THEN 0 ELSE 1 END, target_id, rule_id LIMIT ? OFFSET ?")) {
+                statement.setString(1, taskId); statement.setString(2, endpoint);
+                statement.setString(3, endpoint);
+                statement.setInt(4, pageSize); statement.setLong(5, (long) (page - 1) * pageSize);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) matches.add(parseJson(rows.getString(1)));
+                }
+            }
+            return Map.of("matches", matches, "total", total, "page", page, "pageSize", pageSize);
+        } catch (SQLException error) { throw new IllegalStateException("读取组件识别明细失败", error); }
+    }
+
+    public Map<String, Object> fingerprintEvidence(String sessionId, String taskId, String matchKey) {
+        if (!ownsTask(sessionId, taskId)) return Map.of();
+        try (Connection connection = dataSource.getConnection()) {
+            Map<String, Object> match;
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT result_json FROM scan_fingerprint_results WHERE task_id=? AND match_key=?")) {
+                statement.setString(1, taskId); statement.setString(2, matchKey);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) return Map.of();
+                    match = map(parseJson(rows.getString(1)));
+                }
+            }
+            List<Object> observations = new ArrayList<>();
+            List<?> probeIds = match.get("probeIds") instanceof List<?> ids ? ids : List.of();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT observation_json FROM scan_observations WHERE task_id=? AND stage='http-request' "
+                    + "AND json_extract(observation_json, '$.probeId') IN (SELECT value FROM json_each(?))")) {
+                statement.setString(1, taskId); statement.setString(2, json(probeIds));
+                Map<String, Map<String, Object>> byProbe = new LinkedHashMap<>();
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        Map<String, Object> observation = map(parseJson(rows.getString(1)));
+                        byProbe.put(text(observation.get("probeId")), observation);
+                    }
+                }
+                // A physical response may provide evidence for several rules/request indices.
+                List<?> indices = match.get("requestIndices") instanceof List<?> values ? values : List.of();
+                for (int index = 0; index < probeIds.size(); index++) {
+                    Map<String, Object> found = byProbe.get(text(probeIds.get(index)));
+                    if (found == null) continue;
+                    Map<String, Object> observation = new LinkedHashMap<>(found);
+                    observation.put("ruleId", match.get("ruleId"));
+                    observation.put("requestIndex", indices.size() == probeIds.size() ? indices.get(index) : index);
+                    observations.add(observation);
+                }
+            }
+            Object rule = Map.of();
+            try (PreparedStatement statement = connection.prepareStatement("SELECT config_json FROM scan_tasks WHERE task_id=?")) {
+                statement.setString(1, taskId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (rows.next() && map(parseJson(rows.getString(1))).get("fingerprintRules") instanceof List<?> rules)
+                        for (Object value : rules)
+                            if (text(map(value).get("fingerprintId")).equals(text(match.get("ruleId")))) rule = value;
+                }
+            }
+            return Map.of("match", match, "rule", rule, "observations", observations);
+        } catch (SQLException error) { throw new IllegalStateException("读取组件识别证据失败", error); }
+    }
+
+    private Map<String, Object> fingerprintCounts(Connection connection, String taskId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT COUNT(*), COUNT(DISTINCT target_id) FROM scan_fingerprint_results WHERE task_id=? AND status='MATCHED'")) {
+            statement.setString(1, taskId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Map.of("fingerprintCount", rows.getInt(1), "identifiedApplicationCount", rows.getInt(2)) : Map.of();
+            }
+        }
     }
 
     public void updateTask(String taskId, String status, String outcome, String currentStage,
@@ -233,6 +410,7 @@ public final class NetworkProbeResultStore {
                 if (!result.next()) return Map.of();
                 Map<String, Object> task = taskMap(result);
                 task.putAll(reachableHostSummary(connection, taskId));
+                task.putAll(fingerprintCounts(connection, taskId));
                 return task;
             }
         } catch (SQLException error) {
@@ -254,6 +432,7 @@ public final class NetworkProbeResultStore {
                 while (rows.next()) {
                     Map<String, Object> task = taskMap(rows);
                     task.putAll(reachableHostSummary(connection, text(task.get("taskId"))));
+                    task.putAll(fingerprintCounts(connection, text(task.get("taskId"))));
                     result.add(task);
                 }
             }
@@ -324,8 +503,11 @@ public final class NetworkProbeResultStore {
             statement.setString(2, sessionId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return Map.of();
-                return Map.of("openCount", result.getInt(1),
-                        "serviceCount", result.getInt(2), "errorCount", result.getInt(3));
+                Map<String, Object> counts = new LinkedHashMap<>(fingerprintCounts(connection, taskId));
+                counts.put("openCount", result.getInt(1));
+                counts.put("serviceCount", result.getInt(2));
+                counts.put("errorCount", result.getInt(3));
+                return counts;
             }
         } catch (SQLException error) {
             logger.warn("Unable to read network scan task counts {}", taskId, error);
@@ -403,6 +585,8 @@ public final class NetworkProbeResultStore {
         }
 
         String workflowStage = text(observation.get("workflowStage"));
+        // Rule requests describe a particular path, not the endpoint's service summary.
+        if ("FINGERPRINT".equals(workflowStage)) return;
         String service = "SERVICE_PROBE".equalsIgnoreCase(workflowStage)
                 ? service(observation, evidence) : null;
         endpointStatement.setString(1, taskId);
@@ -499,6 +683,13 @@ public final class NetworkProbeResultStore {
         }
         if (filter.get("responseTimeMax") != null) {
             where.append(" AND COALESCE(response_time, 0) <= ?"); parameters.add(filter.get("responseTimeMax"));
+        }
+        String component = text(filter.get("component"));
+        if (Boolean.TRUE.equals(filter.get("hasFingerprint")) || !component.isEmpty()) {
+            where.append(" AND EXISTS (SELECT 1 FROM scan_fingerprint_results f WHERE f.task_id=scan_endpoint_results.task_id "
+                    + "AND f.endpoint_id=scan_endpoint_results.endpoint_id AND f.status='MATCHED'");
+            if (!component.isEmpty()) { where.append(" AND LOWER(f.rule_name) LIKE LOWER(?)"); parameters.add("%" + component + "%"); }
+            where.append(")");
         }
         String search = text(filter.get("searchText"));
         if (!search.isEmpty()) {

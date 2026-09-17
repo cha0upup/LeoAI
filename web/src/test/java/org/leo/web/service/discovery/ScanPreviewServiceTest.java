@@ -18,7 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScanPreviewServiceTest {
 
-    private final ScanPlanService planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver());
+    private final ScanPlanService planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(),
+            new org.leo.web.service.NetworkProbeAnalysisService(new org.leo.service.fingerprint.FingerprintManageService()));
     private final ScanPreviewService service = new ScanPreviewService(planner);
 
     @Test
@@ -127,7 +128,7 @@ class ScanPreviewServiceTest {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         ScanConfig legacy = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
         assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).workflowRequest().get("stages"));
-        for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("UNKNOWN"))) {
+        for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("PORT_SCAN", "FINGERPRINT"), List.of("UNKNOWN"))) {
             ScanConfig invalid = new ScanConfig("invalid", legacy.targets(), null, null, null, stages);
             var failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
             assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
