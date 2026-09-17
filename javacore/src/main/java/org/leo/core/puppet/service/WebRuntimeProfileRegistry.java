@@ -190,14 +190,15 @@ final class WebRuntimeProfileRegistry {
             return "controller".equals(type) || "interceptor".equals(type);
         }
 
-        Map<String, Object> capabilities(boolean controllerManageable, boolean interceptorManageable) {
+        Map<String, Object> capabilities(boolean frameworkInspectable, boolean controllerManageable,
+                                         boolean interceptorManageable) {
             LinkedHashMap<String, Object> answer = new LinkedHashMap<>();
             answer.put("servlet", capability(true, servletMutation));
             answer.put("filter", capability(true, filterMutation));
             answer.put("listener", capability(true, listenerMutation));
             answer.put("valve", capability("TOMCAT".equals(family) || "TOMEE".equals(family), valveMutation));
-            answer.put("controller", capability(controllerManageable, controllerManageable));
-            answer.put("interceptor", capability(interceptorManageable, interceptorManageable));
+            answer.put("controller", capability(frameworkInspectable, controllerManageable));
+            answer.put("interceptor", capability(frameworkInspectable, interceptorManageable));
             return answer;
         }
 

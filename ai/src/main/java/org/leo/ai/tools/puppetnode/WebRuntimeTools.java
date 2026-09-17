@@ -38,16 +38,15 @@ public class WebRuntimeTools {
     @Tool("移除 Web Runtime 中的一个运行期组件。⚠️ 不可逆。\n"
             + "componentType: filter | servlet | valve | listener | controller | interceptor\n"
             + "详细信息从 inspectWebRuntime 返回结果中获取：\n"
-            + "• filter → 传 contextName（来自 name 字段）+ identifier = filterName\n"
-            + "• servlet → 传 contextName（来自 name 字段）+ identifier = url（servletPattern）\n"
+            + "• filter → 传 contextId（来自 contextId 字段）+ identifier = filterName\n"
+            + "• servlet → 传 contextId（来自 contextId 字段）+ identifier = url（servletPattern）\n"
             + "• valve → 传 identifier = valveId（Tomcat）\n"
             + "• listener → 传 identifier = listenerId\n"
             + "• controller → 传 identifier = mappingInfo（Spring/Struts2）\n"
             + "• interceptor → 传 identifier = interceptorId（Spring/Struts2/JSF）")
     public Map<String, Object> removeWebRuntimeComponent(
             @P("组件类型: filter/servlet/valve/listener/controller/interceptor") String componentType,
-            @P(value = "容器上下文名称；filter/servlet 必填，其余组件类型可省略",
-                    required = false) String contextName,
+            @P("inspectWebRuntime 返回的 contextId，所有移除操作必填") String contextId,
             @P("组件标识，含义因类型而异（见工具描述）") String identifier) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         WebRuntimeManageCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, WebRuntimeManageCapable.class);
@@ -56,10 +55,8 @@ public class WebRuntimeTools {
         String runtimeVersion = String.valueOf(runtime.get("version"));
         String webFramework = getWebFrameworkName(sessionId);
 
-        String requiredContext = ("filter".equals(componentType) || "servlet".equals(componentType))
-                ? requireNonEmpty(contextName, "contextName") : contextName;
         return node.removeWebRuntimeComponent(runtimeFamily, runtimeVersion, webFramework,
-                componentType, requiredContext, requireNonEmpty(identifier, "identifier"));
+                componentType, requireNonEmpty(contextId, "contextId"), requireNonEmpty(identifier, "identifier"));
     }
 
     private Map<String, Object> getRuntimeInfo(String sessionId) {

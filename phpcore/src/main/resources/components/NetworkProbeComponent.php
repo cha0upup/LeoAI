@@ -176,7 +176,7 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
         $headerSource = $stage === 'http-request' ? $request : $target;
         $headers = is_array($headerSource['headers'] ?? null) ? $headerSource['headers'] : [];
         $headers['Host'] = $headers['Host'] ?? ($hostForUrl($host) . ':' . $port);
-        $headers['User-Agent'] = $headers['User-Agent'] ?? 'LeoAi-NetworkProbe/1.0';
+        $headers['User-Agent'] = $headers['User-Agent'] ?? '';
         $headers['Connection'] = $headers['Connection'] ?? 'close';
         $raw = $method . ' ' . $pathValue . " HTTP/1.1\r\n";
         foreach ($headers as $name => $value) {

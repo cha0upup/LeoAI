@@ -228,24 +228,25 @@ public class TomcatContainerManageComponent implements Runnable {
             results.put("features", inspectRuntimeFeatures());
             results.put("code", Integer.valueOf(200));
             return;
-        } else if ("removeFilter".equals(methodName)) {
-            String contextName = (String) params.get("contextName");
-            String filterName = (String) params.get("filterName");
-            putOperationResult(removeFilter(contextName, filterName));
-        } else if ("removeServlet".equals(methodName)) {
-            String contextName = (String) params.get("contextName");
-            String servletPattern = (String) params.get("servletPattern");
-            putOperationResult(removeServlet(contextName, servletPattern));
-        } else if ("removeValve".equals(methodName)) {
-            String valveId = (String) params.get("valveId");
-            putOperationResult(removeValve(valveId));
-        } else if ("removeListener".equals(methodName)) {
-            String listenerId = (String) params.get("listenerId");
-            putOperationResult(removeListener(listenerId));
-        } else {
+        }
+        if (!"removeFilter".equals(methodName) && !"removeServlet".equals(methodName) && !"removeListener".equals(methodName) && !"removeValve".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
             return;
+        }
+        Object context = findContext(getContexts(), (String) params.get("contextId"));
+        if (context == null) {
+            putOperationResult(Boolean.FALSE);
+            return;
+        }
+        if ("removeFilter".equals(methodName)) {
+            putOperationResult(removeFilter(context, (String) params.get("filterName")));
+        } else if ("removeServlet".equals(methodName)) {
+            putOperationResult(removeServlet(context, (String) params.get("servletPattern")));
+        } else if ("removeListener".equals(methodName)) {
+            putOperationResult(removeListener(context, (String) params.get("listenerId")));
+        } else if ("removeValve".equals(methodName)) {
+            putOperationResult(removeValve(context, (String) params.get("valveId")));
         }
     }
 
@@ -261,11 +262,40 @@ public class TomcatContainerManageComponent implements Runnable {
         }
     }
 
+    // Context IDs identify a live deployment; a reload requires a fresh inspection.
+    private static String contextId(Object context) {
+        return "tomcat:" + Integer.toHexString(System.identityHashCode(context));
+    }
+
+    private static Object findContext(Collection contexts, String id) {
+        if (id == null || id.length() == 0) throw new IllegalArgumentException("contextId required");
+        Object match = null;
+        Iterator iterator = contexts.iterator();
+        while (iterator.hasNext()) {
+            Object context = iterator.next();
+            if (!id.equals(contextId(context))) continue;
+            if (match != null && match != context) throw new IllegalArgumentException("Ambiguous contextId");
+            match = context;
+        }
+        return match;
+    }
+
+    private String contextHost(Object context) {
+        try {
+            Object host = invokeMethod(context, "getParent");
+            return String.valueOf(invokeMethod(host, "getName"));
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
     public ArrayList inspectRuntime() {
         ArrayList runtimeContexts = new ArrayList();
         for (Object context : getContexts()) {
             try {
                 HashMap contextInfo = new HashMap();
+                contextInfo.put("contextId", contextId(context));
+                contextInfo.put("host", contextHost(context));
                 contextInfo.put("name", String.valueOf(getFV(context, "name")));
                 contextInfo.put("basePath", String.valueOf(getFV(context, "path")));
 
@@ -491,114 +521,104 @@ public class TomcatContainerManageComponent implements Runnable {
         }
     }
 
-    public Boolean removeServlet(String contextName, String servletPattern) throws Exception {
-        for (Object standardContext : getContexts()) {
-            if (getFV(standardContext, "name").equals(contextName)) {
-                String wrapperName;
-                try {
-                    wrapperName = (String) invokeMethod(standardContext, "findServletMapping",
-                            new Class[]{String.class}, new Object[]{servletPattern});
-                } catch (Exception ignored) {
-                    Map servletMappings = (Map) getFV(standardContext, "servletMappings");
-                    wrapperName = (String) servletMappings.get(servletPattern);
-                }
-                if (wrapperName == null) continue;
-
-                Object wrapper = this.invokeMethod(standardContext, "findChild", new Class[]{String.class}, new Object[]{wrapperName});
-                Class containerClass = Class.forName("org.apache.catalina.Container", false, standardContext.getClass().getClassLoader());
-                if (wrapper != null) {
-                    standardContext.getClass().getDeclaredMethod("removeChild", containerClass).invoke(standardContext, wrapper);
-                }
-                this.invokeMethod(standardContext, "removeServletMapping", new Class[]{String.class}, new Object[]{servletPattern});
-                return Boolean.valueOf(!hasServletMapping(standardContext, servletPattern));
-            }
+    private Boolean removeServlet(Object standardContext, String servletPattern) throws Exception {
+        String wrapperName;
+        try {
+            wrapperName = (String) invokeMethod(standardContext, "findServletMapping",
+                    new Class[]{String.class}, new Object[]{servletPattern});
+        } catch (Exception ignored) {
+            Map servletMappings = (Map) getFV(standardContext, "servletMappings");
+            wrapperName = (String) servletMappings.get(servletPattern);
         }
-        return Boolean.FALSE;
+        if (wrapperName == null) return Boolean.FALSE;
+
+        Object wrapper = this.invokeMethod(standardContext, "findChild", new Class[]{String.class}, new Object[]{wrapperName});
+        Class containerClass = Class.forName("org.apache.catalina.Container", false, standardContext.getClass().getClassLoader());
+        if (wrapper != null) {
+            standardContext.getClass().getDeclaredMethod("removeChild", containerClass).invoke(standardContext, wrapper);
+        }
+        this.invokeMethod(standardContext, "removeServletMapping", new Class[]{String.class}, new Object[]{servletPattern});
+        return Boolean.valueOf(!hasServletMapping(standardContext, servletPattern));
     }
 
-    public Boolean removeFilter(String contextName, String filterName) throws Exception {
-        for (Object standardContext : getContexts()) {
-            if (!getFV(standardContext, "name").equals(contextName)) continue;
-
-            // 收集同名 Filter 的全部映射。
-            Object[] filterMaps = (Object[]) this.invokeMethod(standardContext, "findFilterMaps");
-            ArrayList toRemove = new ArrayList();
-            ArrayList kept = new ArrayList();
-            for (int i = 0; i < filterMaps.length; i++) {
-                Object fm = filterMaps[i];
-                if (filterName.equals(getFV(fm, "filterName"))) {
-                    toRemove.add(fm);
-                } else {
-                    kept.add(fm);
-                }
+    private Boolean removeFilter(Object standardContext, String filterName) throws Exception {
+        // 收集同名 Filter 的全部映射。
+        Object[] filterMaps = (Object[]) this.invokeMethod(standardContext, "findFilterMaps");
+        ArrayList toRemove = new ArrayList();
+        ArrayList kept = new ArrayList();
+        for (int i = 0; i < filterMaps.length; i++) {
+            Object fm = filterMaps[i];
+            if (filterName.equals(getFV(fm, "filterName"))) {
+                toRemove.add(fm);
+            } else {
+                kept.add(fm);
             }
-            if (toRemove.isEmpty()) continue;
+        }
+        if (toRemove.isEmpty()) return Boolean.FALSE;
 
-            // FilterMap 在 Tomcat 8.5 前后位于不同包。
-            boolean publicApiUsed = false;
+        // FilterMap 在 Tomcat 8.5 前后位于不同包。
+        boolean publicApiUsed = false;
+        try {
+            Class fmClass = Class.forName("org.apache.tomcat.util.descriptor.web.FilterMap",
+                    false, standardContext.getClass().getClassLoader());
+            Method removeFilterMap = standardContext.getClass().getMethod("removeFilterMap", fmClass);
+            for (int i = 0; i < toRemove.size(); i++) {
+                removeFilterMap.invoke(standardContext, toRemove.get(i));
+            }
+            publicApiUsed = true;
+        } catch (Throwable t1) {
             try {
-                Class fmClass = Class.forName("org.apache.tomcat.util.descriptor.web.FilterMap",
+                Class fmClass = Class.forName("org.apache.catalina.deploy.FilterMap",
                         false, standardContext.getClass().getClassLoader());
                 Method removeFilterMap = standardContext.getClass().getMethod("removeFilterMap", fmClass);
                 for (int i = 0; i < toRemove.size(); i++) {
                     removeFilterMap.invoke(standardContext, toRemove.get(i));
                 }
                 publicApiUsed = true;
-            } catch (Throwable t1) {
-                try {
-                    Class fmClass = Class.forName("org.apache.catalina.deploy.FilterMap",
-                            false, standardContext.getClass().getClassLoader());
-                    Method removeFilterMap = standardContext.getClass().getMethod("removeFilterMap", fmClass);
-                    for (int i = 0; i < toRemove.size(); i++) {
-                        removeFilterMap.invoke(standardContext, toRemove.get(i));
-                    }
-                    publicApiUsed = true;
-                } catch (Throwable t2) {
-                    // 该画像通过字段结构管理 FilterMap。
-                }
+            } catch (Throwable t2) {
+                // 该画像通过字段结构管理 FilterMap。
             }
-
-            // Tomcat 6/7 与部分 8.x 通过字段保存映射。
-            if (!publicApiUsed) {
-                Object[] newArr = (Object[]) Array.newInstance(filterMaps.getClass().getComponentType(), 0);
-                try {
-                    setFieldValue(standardContext, "filterMaps", kept.toArray(newArr));
-                } catch (Exception ignored) {
-                    setFieldValue(getFV(standardContext, "filterMaps"), "array", kept.toArray(newArr));
-                }
-            }
-
-            // 删除 FilterDef，保持后续 filterStart 结果一致。
-            try {
-                Object filterDef = invokeMethod(standardContext, "findFilterDef",
-                        new Class[]{String.class}, new Object[]{filterName});
-                if (filterDef != null) {
-                    Class fdClass = filterDef.getClass();
-                    Method removeFilterDef = standardContext.getClass().getMethod("removeFilterDef", fdClass);
-                    removeFilterDef.invoke(standardContext, filterDef);
-                }
-            } catch (Throwable ignored) {
-                try {
-                    HashMap filterDefs = (HashMap) getFV(standardContext, "filterDefs");
-                    if (filterDefs != null) filterDefs.remove(filterName);
-                } catch (Throwable ignored2) {
-                }
-            }
-
-            // 清理 FilterConfig，使请求链按当前注册表重建。
-            try {
-                HashMap filterConfigs = (HashMap) getFV(standardContext, "filterConfigs");
-                if (filterConfigs != null) {
-                    Object cfg = filterConfigs.remove(filterName);
-                    if (cfg != null) {
-                        try { invokeMethod(cfg, "release"); } catch (Throwable ignored) {}
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-            return Boolean.valueOf(!hasFilter(standardContext, filterName));
         }
-        return Boolean.FALSE;
+
+        // Tomcat 6/7 与部分 8.x 通过字段保存映射。
+        if (!publicApiUsed) {
+            Object[] newArr = (Object[]) Array.newInstance(filterMaps.getClass().getComponentType(), 0);
+            try {
+                setFieldValue(standardContext, "filterMaps", kept.toArray(newArr));
+            } catch (Exception ignored) {
+                setFieldValue(getFV(standardContext, "filterMaps"), "array", kept.toArray(newArr));
+            }
+        }
+
+        // 删除 FilterDef，保持后续 filterStart 结果一致。
+        try {
+            Object filterDef = invokeMethod(standardContext, "findFilterDef",
+                    new Class[]{String.class}, new Object[]{filterName});
+            if (filterDef != null) {
+                Class fdClass = filterDef.getClass();
+                Method removeFilterDef = standardContext.getClass().getMethod("removeFilterDef", fdClass);
+                removeFilterDef.invoke(standardContext, filterDef);
+            }
+        } catch (Throwable ignored) {
+            try {
+                HashMap filterDefs = (HashMap) getFV(standardContext, "filterDefs");
+                if (filterDefs != null) filterDefs.remove(filterName);
+            } catch (Throwable ignored2) {
+            }
+        }
+
+        // 清理 FilterConfig，使请求链按当前注册表重建。
+        try {
+            HashMap filterConfigs = (HashMap) getFV(standardContext, "filterConfigs");
+            if (filterConfigs != null) {
+                Object cfg = filterConfigs.remove(filterName);
+                if (cfg != null) {
+                    try { invokeMethod(cfg, "release"); } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return Boolean.valueOf(!hasFilter(standardContext, filterName));
     }
 
     private boolean hasServletMapping(Object standardContext, String pattern) {
@@ -630,44 +650,40 @@ public class TomcatContainerManageComponent implements Runnable {
         }
     }
 
-    public Boolean removeValve(String valveId) throws Exception {
-        Iterator contexts = getContexts().iterator();
-        while (contexts.hasNext()) {
-            Object container = contexts.next();
-            while (container != null) {
-                Object pipeline;
-                try {
-                    pipeline = invokeMethod(container, "getPipeline");
-                } catch (Throwable ignored) {
-                    pipeline = null;
-                }
-                if (pipeline != null) {
-                    Object[] valves = (Object[]) invokeMethod(pipeline, "getValves");
-                    for (int i = 0; i < valves.length; i++) {
-                        Object valve = valves[i];
-                        if (!valveId.equals(Integer.toHexString(System.identityHashCode(valve)))) continue;
-                        ClassLoader loader = pipeline.getClass().getClassLoader();
-                        Class valveClass = Class.forName("org.apache.catalina.Valve", false, loader);
-                        Method removeMethod = pipeline.getClass().getMethod("removeValve", valveClass);
-                        removeMethod.setAccessible(true);
-                        removeMethod.invoke(pipeline, valve);
-                        Object[] remaining = (Object[]) invokeMethod(pipeline, "getValves");
-                        for (int j = 0; j < remaining.length; j++) {
-                            if (remaining[j] == valve) return Boolean.FALSE;
-                        }
-                        return Boolean.TRUE;
+    private Boolean removeValve(Object container, String valveId) throws Exception {
+        while (container != null) {
+            Object pipeline;
+            try {
+                pipeline = invokeMethod(container, "getPipeline");
+            } catch (Throwable ignored) {
+                pipeline = null;
+            }
+            if (pipeline != null) {
+                Object[] valves = (Object[]) invokeMethod(pipeline, "getValves");
+                for (int i = 0; i < valves.length; i++) {
+                    Object valve = valves[i];
+                    if (!valveId.equals(Integer.toHexString(System.identityHashCode(valve)))) continue;
+                    ClassLoader loader = pipeline.getClass().getClassLoader();
+                    Class valveClass = Class.forName("org.apache.catalina.Valve", false, loader);
+                    Method removeMethod = pipeline.getClass().getMethod("removeValve", valveClass);
+                    removeMethod.setAccessible(true);
+                    removeMethod.invoke(pipeline, valve);
+                    Object[] remaining = (Object[]) invokeMethod(pipeline, "getValves");
+                    for (int j = 0; j < remaining.length; j++) {
+                        if (remaining[j] == valve) return Boolean.FALSE;
                     }
+                    return Boolean.TRUE;
                 }
-                try {
-                    container = invokeMethod(container, "getParent");
-                } catch (Throwable ignored) {
-                    container = null;
-                }
+            }
+            try {
+                container = invokeMethod(container, "getParent");
+            } catch (Throwable ignored) {
+                container = null;
             }
         }
         return Boolean.FALSE;
     }
-    public Boolean removeListener(String listenerId) throws Exception {
+    private Boolean removeListener(Object standardContext, String listenerId) throws Exception {
         // Tomcat 在不同版本里运行时 listener 列表字段名不一致，且 event / lifecycle 是两套字段：
         //   event listeners
         //     - Tomcat 8.5/9/10/11：applicationEventListenersList（CopyOnWriteArrayList）
@@ -687,85 +703,81 @@ public class TomcatContainerManageComponent implements Runnable {
                 "applicationLifecycleListeners"
         };
 
-        Iterator contextIt = getContexts().iterator();
-        while (contextIt.hasNext()) {
-            Object standardContext = contextIt.next();
-            Object targetListener = null;
-            String className = null;
-            for (int fi = 0; fi < candidateFields.length && targetListener == null; fi++) {
-                Object source;
-                try {
-                    source = getFV(standardContext, candidateFields[fi]);
-                } catch (Throwable ignored) {
-                    continue;
+        Object targetListener = null;
+        String className = null;
+        for (int fi = 0; fi < candidateFields.length && targetListener == null; fi++) {
+            Object source;
+            try {
+                source = getFV(standardContext, candidateFields[fi]);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            if (source == null) continue;
+            int length = source instanceof List ? ((List) source).size()
+                    : source.getClass().isArray() ? Array.getLength(source) : 0;
+            for (int i = 0; i < length; i++) {
+                Object value = source instanceof List ? ((List) source).get(i) : Array.get(source, i);
+                if (value != null && listenerId.equals(
+                        Integer.toHexString(System.identityHashCode(value)))) {
+                    targetListener = value;
+                    className = value.getClass().getName();
+                    break;
                 }
-                if (source == null) continue;
-                int length = source instanceof List ? ((List) source).size()
-                        : source.getClass().isArray() ? Array.getLength(source) : 0;
+            }
+        }
+        if (targetListener == null) return Boolean.FALSE;
+
+        boolean anyHit = false;
+        for (int fi = 0; fi < candidateFields.length; fi++) {
+            String fieldName = candidateFields[fi];
+            Object listObj;
+            try {
+                listObj = getFV(standardContext, fieldName);
+            } catch (NoSuchFieldException nf) {
+                continue;  // 这个 Tomcat 版本没有这个字段
+            }
+            if (listObj == null) continue;
+
+            if (listObj instanceof List) {
+                List list = (List) listObj;
+                // CopyOnWriteArrayList 不允许 iterator.remove()，用 list.remove(Object) 才安全
+                if (list.remove(targetListener)) {
+                    anyHit = true;
+                }
+            } else if (listObj.getClass().isArray()) {
+                int length = Array.getLength(listObj);
+                ArrayList newList = new ArrayList();
+                boolean found = false;
                 for (int i = 0; i < length; i++) {
-                    Object value = source instanceof List ? ((List) source).get(i) : Array.get(source, i);
-                    if (value != null && listenerId.equals(
-                            Integer.toHexString(System.identityHashCode(value)))) {
-                        targetListener = value;
-                        className = value.getClass().getName();
-                        break;
+                    Object l = Array.get(listObj, i);
+                    if (l == targetListener) {
+                        found = true;
+                        continue;
                     }
+                    newList.add(l);
+                }
+                if (found) {
+                    Object replacement = Array.newInstance(
+                            listObj.getClass().getComponentType(), newList.size());
+                    for (int i = 0; i < newList.size(); i++) {
+                        Array.set(replacement, i, newList.get(i));
+                    }
+                    setFieldValue(standardContext, fieldName, replacement);
+                    anyHit = true;
                 }
             }
-            if (targetListener == null) continue;
+        }
 
-            boolean anyHit = false;
-            for (int fi = 0; fi < candidateFields.length; fi++) {
-                String fieldName = candidateFields[fi];
-                Object listObj;
-                try {
-                    listObj = getFV(standardContext, fieldName);
-                } catch (NoSuchFieldException nf) {
-                    continue;  // 这个 Tomcat 版本没有这个字段
-                }
-                if (listObj == null) continue;
-
-                if (listObj instanceof List) {
-                    List list = (List) listObj;
-                    // CopyOnWriteArrayList 不允许 iterator.remove()，用 list.remove(Object) 才安全
-                    if (list.remove(targetListener)) {
-                        anyHit = true;
-                    }
-                } else if (listObj.getClass().isArray()) {
-                    int length = Array.getLength(listObj);
-                    ArrayList newList = new ArrayList();
-                    boolean found = false;
-                    for (int i = 0; i < length; i++) {
-                        Object l = Array.get(listObj, i);
-                        if (l == targetListener) {
-                            found = true;
-                            continue;
-                        }
-                        newList.add(l);
-                    }
-                    if (found) {
-                        Object replacement = Array.newInstance(
-                                listObj.getClass().getComponentType(), newList.size());
-                        for (int i = 0; i < newList.size(); i++) {
-                            Array.set(replacement, i, newList.get(i));
-                        }
-                        setFieldValue(standardContext, fieldName, replacement);
-                        anyHit = true;
-                    }
-                }
+        if (anyHit) {
+            // 同时尝试从配置定义中移除该类名（防止重启复活）
+            try {
+                invokeMethod(standardContext, "removeApplicationListener",
+                        new Class[]{String.class}, new Object[]{className});
+            } catch (Exception e) {
+                // 该字段画像不提供对应的公开移除方法。
             }
 
-            if (anyHit) {
-                // 同时尝试从配置定义中移除该类名（防止重启复活）
-                try {
-                    invokeMethod(standardContext, "removeApplicationListener",
-                            new Class[]{String.class}, new Object[]{className});
-                } catch (Exception e) {
-                    // 该字段画像不提供对应的公开移除方法。
-                }
-
-                return Boolean.TRUE;
-            }
+            return Boolean.TRUE;
         }
         return Boolean.FALSE;
     }

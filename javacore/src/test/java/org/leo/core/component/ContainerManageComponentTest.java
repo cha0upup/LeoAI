@@ -12,13 +12,31 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ContainerManageComponentTest {
+
+    @Test
+    void contextSelectionSeparatesSameNamedDeploymentsAndRejectsStaleIds() throws Exception {
+        Object first = new HashMap<>(Map.of("name", "/app", "host", "first"));
+        Object second = new HashMap<>(Map.of("name", "/app", "host", "second"));
+        for (Class<?> type : List.of(TomcatContainerManageComponent.class, WeblogicContainerManageComponent.class)) {
+            Method id = type.getDeclaredMethod("contextId", Object.class);
+            Method select = type.getDeclaredMethod("findContext", java.util.Collection.class, String.class);
+            id.setAccessible(true);
+            select.setAccessible(true);
+            String secondId = (String) id.invoke(null, second);
+            assertSame(second, select.invoke(null, List.of(first, second), secondId));
+            assertNull(select.invoke(null, List.of(first), secondId));
+        }
+    }
 
     @Test
     void transformedContainerPayloadsInitializeAfterMethodRandomization() throws Exception {

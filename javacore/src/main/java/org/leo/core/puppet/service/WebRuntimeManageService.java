@@ -28,17 +28,26 @@ public class WebRuntimeManageService extends ComponentService {
                                        String webFramework) throws Exception {
         WebRuntimeProfileRegistry.RuntimeProfile profile =
                 WebRuntimeProfileRegistry.resolve(runtimeFamily, runtimeVersion);
-        Map<String, Object> raw = invokeComponent(profile.componentId, params("inspectRuntime"));
-        List<Map<String, Object>> contexts = normalizeContexts(raw == null ? null : raw.get("contexts"), profile);
-        Map<String, Object> framework = inspectFramework(webFramework);
-        boolean controllerManageable = framework != null
+        Map<String, Object> raw = inspectContainer(profile);
+        List<Map<String, Object>> contexts = normalizeContexts(raw.get("contexts"), profile);
+        ArrayList<String> diagnostics = new ArrayList<>();
+        Map<String, Object> framework = null;
+        try {
+            framework = inspectFramework(webFramework);
+        } catch (Exception e) {
+            diagnostics.add("框架信息获取失败：" + e.getMessage());
+        }
+        boolean controllerManageable = framework != null && contexts.size() == 1
                 && frameworkSupportsMutation(webFramework, "controller");
-        boolean interceptorManageable = framework != null
+        boolean interceptorManageable = framework != null && contexts.size() == 1
                 && frameworkSupportsMutation(webFramework, "interceptor");
+        Map<String, Object> capabilities = profile.capabilities(framework != null,
+                controllerManageable, interceptorManageable);
 
         List<Map<String, Object>> runtimeFrameworks = new ArrayList<>();
         if (framework != null) {
             Map<String, Object> normalizedFramework = normalizeFramework(framework, webFramework, contexts);
+            normalizedFramework.put("capabilities", capabilities);
             runtimeFrameworks.add(normalizedFramework);
             if (contexts.size() == 1) {
                 contexts.get(0).put("frameworks", Collections.singletonList(normalizedFramework));
@@ -58,13 +67,12 @@ public class WebRuntimeManageService extends ComponentService {
                 ? (Map<?, ?>) raw.get("features") : Collections.emptyMap();
         runtime.put("features", features);
         runtime.put("strategyId", WebRuntimeProfileRegistry.strategyId(profile, features));
-        runtime.put("capabilities", profile.capabilities(controllerManageable, interceptorManageable));
+        runtime.put("capabilities", capabilities);
         runtime.put("contexts", contexts);
         runtime.put("frameworks", runtimeFrameworks);
 
-        ArrayList<String> diagnostics = new ArrayList<>();
         if ("unknown".equalsIgnoreCase(profile.version)) diagnostics.add("RUNTIME_VERSION_UNKNOWN");
-        if (contexts.size() > 1 && framework != null) diagnostics.add("FRAMEWORK_CONTEXT_UNRESOLVED");
+        if (contexts.size() != 1 && framework != null) diagnostics.add("FRAMEWORK_CONTEXT_UNRESOLVED");
         if (raw != null && raw.get("msg") != null) diagnostics.add(String.valueOf(raw.get("msg")));
 
         LinkedHashMap<String, Object> snapshot = new LinkedHashMap<>();
@@ -76,8 +84,10 @@ public class WebRuntimeManageService extends ComponentService {
     }
 
     public Map<String, Object> remove(String runtimeFamily, String runtimeVersion, String webFramework,
-                                      String componentType, String contextName, String identifier) throws Exception {
+                                      String componentType, String contextId, String identifier) throws Exception {
         String type = normalizeComponentType(componentType);
+        if (contextId == null || contextId.isBlank()) throw new IllegalArgumentException("contextId 不能为空，请刷新容器信息");
+        if (identifier == null || identifier.isBlank()) throw new IllegalArgumentException("identifier 不能为空");
         WebRuntimeProfileRegistry.RuntimeProfile profile =
                 WebRuntimeProfileRegistry.resolve(runtimeFamily, runtimeVersion);
         if (!profile.supportsMutation(type)) {
@@ -91,6 +101,10 @@ public class WebRuntimeManageService extends ComponentService {
             }
             String component = resolveFrameworkComponentName(webFramework);
             if (component == null) return operation("UNSUPPORTED", 0, 0, false, "FRAMEWORK_READ_ONLY");
+            List<Map<String, Object>> contexts = normalizeContexts(inspectContainer(profile).get("contexts"), profile);
+            if (contexts.size() != 1 || !contextId.equals(contexts.get(0).get("contextId"))) {
+                return operation("UNSUPPORTED", 0, 0, false, "FRAMEWORK_CONTEXT_UNRESOLVED");
+            }
             HashMap<String, Object> request = params("controller".equals(type)
                     ? "removeController" : "removeInterceptor");
             request.put("frameworkName", webFramework);
@@ -98,7 +112,7 @@ public class WebRuntimeManageService extends ComponentService {
             raw = invokeComponent(component, request);
         } else {
             HashMap<String, Object> request = params(methodFor(type));
-            if (contextName != null) request.put("contextName", contextName);
+            request.put("contextId", contextId);
             request.put(identifierField(type), identifier);
             raw = invokeComponent(profile.componentId, request);
         }
@@ -143,8 +157,24 @@ public class WebRuntimeManageService extends ComponentService {
         HashMap<String, Object> request = params("getFrameworkInfo");
         request.put("frameworkName", webFramework);
         Map<String, Object> response = invokeComponent(component, request);
-        Object info = response == null ? null : response.get("frameworkInfo");
-        return info instanceof Map ? (Map<String, Object>) info : null;
+        requireSuccessfulInspection(response);
+        Object info = response.get("frameworkInfo");
+        if (!(info instanceof Map)) throw new IllegalStateException("节点未返回框架信息");
+        return (Map<String, Object>) info;
+    }
+
+    private Map<String, Object> inspectContainer(WebRuntimeProfileRegistry.RuntimeProfile profile) throws Exception {
+        Map<String, Object> response = invokeComponent(profile.componentId, params("inspectRuntime"));
+        requireSuccessfulInspection(response);
+        if (!(response.get("contexts") instanceof List)) throw new IllegalStateException("节点未返回 Context 列表");
+        return response;
+    }
+
+    private static void requireSuccessfulInspection(Map<String, Object> response) {
+        if (response == null || number(response.get("code"), 0) != 200) {
+            throw new IllegalStateException(response == null ? "节点返回为空"
+                    : text(response.get("msg"), "节点检查失败"));
+        }
     }
 
     private List<Map<String, Object>> normalizeContexts(Object rawContexts,
@@ -157,7 +187,7 @@ public class WebRuntimeManageService extends ComponentService {
             String name = text(raw.get("name"), "ROOT");
             String path = text(raw.get("basePath"), "/");
             String host = text(raw.get("host"), "default");
-            String contextId = stableId("context", profile.profileId, host, path, name);
+            String contextId = text(raw.get("contextId"), stableId("context", profile.profileId, host, path, name));
             LinkedHashMap<String, Object> context = new LinkedHashMap<>();
             context.put("contextId", contextId);
             context.put("name", name);
@@ -226,7 +256,7 @@ public class WebRuntimeManageService extends ComponentService {
         if (raw == null) return operation("FAILED", 0, 0, false, "EMPTY_COMPONENT_RESPONSE");
         Object status = raw.get("status");
         if (status == null) {
-            return operation("FAILED", 0, 0, false, "INVALID_COMPONENT_RESPONSE");
+            return operation("FAILED", 0, 0, false, text(raw.get("msg"), "INVALID_COMPONENT_RESPONSE"));
         }
         String operationStatus = String.valueOf(status);
         boolean changed = "CHANGED".equals(operationStatus);

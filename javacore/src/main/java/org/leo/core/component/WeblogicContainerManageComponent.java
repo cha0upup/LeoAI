@@ -37,23 +37,26 @@ public class WeblogicContainerManageComponent implements Runnable {
         }
         String methodName = (String) methodObj;
         if ("inspectRuntime".equals(methodName)) {
-            results.put("contexts",inspectRuntime());
+            results.put("contexts", inspectRuntime());
             results.put("code", Integer.valueOf(200));
             return;
-        } else if ("removeFilter".equals(methodName)) {
-            String contextName= (String) params.get("contextName");
-            String filterName= (String) params.get("filterName");
-            putOperationResult(removeFilter(contextName,filterName));
-        } else if ("removeServlet".equals(methodName)) {
-            String contextName= (String) params.get("contextName");
-            String filterName= (String) params.get("servletPattern");
-            putOperationResult(removeServlet(contextName,filterName));
-        } else if ("removeListener".equals(methodName)) {
-            putOperationResult(removeListener((String) params.get("listenerId")));
-        } else {
+        }
+        if (!"removeFilter".equals(methodName) && !"removeServlet".equals(methodName) && !"removeListener".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
             return;
+        }
+        Object context = findContext(getContext(), (String) params.get("contextId"));
+        if (context == null) {
+            putOperationResult(Boolean.FALSE);
+            return;
+        }
+        if ("removeFilter".equals(methodName)) {
+            putOperationResult(Boolean.valueOf(removeFilter(invokeMethod(context, "getFilterManager"), (String) params.get("filterName"))));
+        } else if ("removeServlet".equals(methodName)) {
+            putOperationResult(removeServlet(context, (String) params.get("servletPattern")));
+        } else if ("removeListener".equals(methodName)) {
+            putOperationResult(removeListener(context, (String) params.get("listenerId")));
         }
     }
 
@@ -66,12 +69,41 @@ public class WeblogicContainerManageComponent implements Runnable {
         results.put("code", Integer.valueOf(changedValue ? 200 : 404));
     }
 
+    // Context IDs identify a live deployment; a reload requires a fresh inspection.
+    private static String contextId(Object context) {
+        return "weblogic:" + Integer.toHexString(System.identityHashCode(context));
+    }
+
+    private static Object findContext(Collection contexts, String id) {
+        if (id == null || id.length() == 0) throw new IllegalArgumentException("contextId required");
+        Object match = null;
+        Iterator iterator = contexts.iterator();
+        while (iterator.hasNext()) {
+            Object context = iterator.next();
+            if (!id.equals(contextId(context))) continue;
+            if (match != null && match != context) throw new IllegalArgumentException("Ambiguous contextId");
+            match = context;
+        }
+        return match;
+    }
+
+    private String contextHost(Object context) {
+        try {
+            Object host = invokeMethod(context, "getHttpServer");
+            return String.valueOf(invokeMethod(host, "getName"));
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
     public ArrayList inspectRuntime() {
         HashSet contexts = getContext();
         ArrayList runtimeContexts=new ArrayList();
         for (Object context:contexts) {
             try {
                 HashMap contextInfo=new HashMap();
+                contextInfo.put("contextId", contextId(context));
+                contextInfo.put("host", contextHost(context));
                 contextInfo.put("name",String.valueOf(getFV(context,"contextName")));
                 contextInfo.put("basePath",String.valueOf(getFV(context,"contextPath")));
                 contextInfo.put("workDir",String.valueOf(getFV(context,"docroot")));
@@ -231,7 +263,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         }
     }
 
-    public Boolean removeListener(String listenerId) throws Exception {
+    private Boolean removeListener(Object context, String listenerId) throws Exception {
         String[] fieldNames = new String[]{
                 "_servletContextListeners", "servletContextListeners",
                 "_servletContextAttListeners", "servletContextAttListeners",
@@ -242,18 +274,14 @@ public class WeblogicContainerManageComponent implements Runnable {
                 "_requestAttListeners", "requestAttListeners",
                 "_asyncListeners", "asyncListeners"
         };
-        Iterator contexts = getContext().iterator();
-        while (contexts.hasNext()) {
-            Object context = contexts.next();
-            Object[] holders = new Object[]{context, tryGetField(context, "eventsManager"),
-                    tryGetField(context, "_eventsManager")};
-            for (int hi = 0; hi < holders.length; hi++) {
-                Object holder = holders[hi];
-                if (holder == null) continue;
-                for (int fi = 0; fi < fieldNames.length; fi++) {
-                    if (removeListenerById(holder, fieldNames[fi], listenerId)) {
-                        return Boolean.TRUE;
-                    }
+        Object[] holders = new Object[]{context, tryGetField(context, "eventsManager"),
+                tryGetField(context, "_eventsManager")};
+        for (int hi = 0; hi < holders.length; hi++) {
+            Object holder = holders[hi];
+            if (holder == null) continue;
+            for (int fi = 0; fi < fieldNames.length; fi++) {
+                if (removeListenerById(holder, fieldNames[fi], listenerId)) {
+                    return Boolean.TRUE;
                 }
             }
         }
@@ -293,15 +321,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         return true;
     }
 
-    public Boolean removeFilter(String contextName,String filterName) throws Exception {
-        for (Object standardContext:getContext()){
-            if (contextName.equals(getFV(standardContext,"contextName"))){
-                Object filterManager = invokeMethod(standardContext, "getFilterManager");
-                return Boolean.valueOf(removeFilter(filterManager, filterName));
-            }
-        }
-        return Boolean.FALSE;
-    }
+
 
     private boolean removeFilter(Object filterManager, String filterName) throws Exception {
         HashMap filters = (HashMap) getFV(filterManager,"filters");
@@ -318,23 +338,18 @@ public class WeblogicContainerManageComponent implements Runnable {
         return removed && !filters.containsKey(filterName);
     }
 
-    public Boolean removeServlet(String contextName,String servletPattern) throws Exception {
-        for (Object standardContext:getContext()){
-            if (contextName.equals(getFV(standardContext,"contextName"))){
-                Object servletMapping=getFV(standardContext,"servletMapping");
-                Map matchMap = (Map)getFV(servletMapping, "matchMap");
-                Object fullMatchNode=matchMap.get(servletPattern);
-                if (fullMatchNode == null) continue;
-                Object exactValue=getFV(fullMatchNode,"exactValue");
-                if (exactValue == null) exactValue = getFV(fullMatchNode, "patternValue");
-                if (exactValue == null) continue;
-                Object servletStub=invokeMethod(exactValue,"getServletStub");
-                invokeMethod(standardContext,"removeServletStub",new Class[]{servletStub.getClass(),boolean.class},new Object[]{servletStub,false});
-                invokeMethod(servletMapping,"removePattern",new Class[]{String.class},new Object[]{servletPattern});
-                return Boolean.valueOf(!matchMap.containsKey(servletPattern));
-            }
-        }
-        return Boolean.FALSE;
+    private Boolean removeServlet(Object standardContext, String servletPattern) throws Exception {
+        Object servletMapping=getFV(standardContext,"servletMapping");
+        Map matchMap = (Map)getFV(servletMapping, "matchMap");
+        Object fullMatchNode=matchMap.get(servletPattern);
+        if (fullMatchNode == null) return Boolean.FALSE;
+        Object exactValue=getFV(fullMatchNode,"exactValue");
+        if (exactValue == null) exactValue = getFV(fullMatchNode, "patternValue");
+        if (exactValue == null) return Boolean.FALSE;
+        Object servletStub=invokeMethod(exactValue,"getServletStub");
+        invokeMethod(standardContext,"removeServletStub",new Class[]{servletStub.getClass(),boolean.class},new Object[]{servletStub,false});
+        invokeMethod(servletMapping,"removePattern",new Class[]{String.class},new Object[]{servletPattern});
+        return Boolean.valueOf(!matchMap.containsKey(servletPattern));
     }
 
 

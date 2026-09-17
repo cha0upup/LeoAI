@@ -409,7 +409,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             String method = request == null ? "GET" : stringValue(request.get("method"));
             if (method.length() == 0) method = "GET";
             connection.setRequestMethod(method);
-            connection.setRequestProperty("User-Agent", "LeoAi-NetworkProbe/1.0");
             Map headers = asMap((request == null ? target : request).get("headers"));
             if (headers != null) {
                 Iterator iterator = headers.keySet().iterator();

@@ -613,9 +613,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public Map<String, Object> removeWebRuntimeComponent(String runtimeFamily, String runtimeVersion,
                                                           String webFramework, String componentType,
-                                                          String contextName, String identifier) throws Exception {
+                                                          String contextId, String identifier) throws Exception {
         return webRuntimeManageService.remove(runtimeFamily, runtimeVersion, webFramework,
-                componentType, contextName, identifier);
+                componentType, contextId, identifier);
     }
 
     @Override

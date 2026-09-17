@@ -61,7 +61,7 @@ public class WebRuntimeManageController {
                     string(middleware.get("Version")),
                     string(basicInfo.get("WebFramework")),
                     ControllerUtil.getRequiredStringParam(params, "componentType"),
-                    string(params.get("contextName")),
+                    ControllerUtil.getRequiredStringParam(params, "contextId"),
                     ControllerUtil.getRequiredStringParam(params, "identifier"));
             return ApiResponse.success(result);
         } catch (IllegalArgumentException e) {

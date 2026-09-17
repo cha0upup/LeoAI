@@ -15,6 +15,6 @@ public interface WebRuntimeManageCapable {
                                                    String runtimeVersion,
                                                    String webFramework,
                                                    String componentType,
-                                                   String contextName,
+                                                   String contextId,
                                                    String identifier) throws Exception;
 }

@@ -167,9 +167,16 @@ Spring MVC 与 Struts2 开放控制器/拦截器验证式移除，JSF/Faces 仅�
 PhaseListener 移除；WebFlux 与其余框架保留检测或只读运行时视图。
 
 Web Runtime 返回稳定的 `runtimeId/contextId/componentId`，并把
-`capabilities.detect/inspect/remove` 随 runtime 下发。前端只根据 capability 渲染
+`capabilities.detect/inspect/remove` 随 runtime 下发。框架的检查能力与修改能力分别下发；归属未确定的框架保留 runtime 级只读视图及诊断。前端只根据 capability 渲染
 操作入口，并且仅把 `status=CHANGED && verified=true` 视为修改成功。未知版本默认
 停留在只读画像，避免把相邻大版本的私有结构当作兼容合同。
+
+所有组件移除请求必须携带检查结果中的 `contextId`，不接受 Context 名称定位。
+Tomcat/WebLogic adapter 的 Context ID 标识当前部署实例，在该实例存活期间稳定；
+重新部署后需刷新检查结果。节点每次移除先重新扫描并唯一匹配 Context，目标失效或
+匹配歧义时不执行操作。Host 用于展示同名应用的归属；Listener/Valve 同样限定到选定
+Context（Valve 可属于其父级容器）。框架归属只有在当前检查唯一确定 Context 时才开放修改。
+节点检查失败会返回错误；仅框架检查失败时保留容器数据并附带诊断。
 
 完整制品分组如下：
 
