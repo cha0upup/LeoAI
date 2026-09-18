@@ -208,11 +208,7 @@ public class ExecCommandSimpleComponent implements Runnable {
         }
 
         if (timedOut) {
-            results.put("code",     Integer.valueOf(200));
-            results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
-            results.put("exitCode", Integer.valueOf(-1));
-            results.put("timedOut", Boolean.TRUE);
-            results.put("truncated", Boolean.valueOf(workerTruncated));
+            putExecutionResult(-1, true);
             results.put("msg",      "command timed out after " + (timeoutMs / 1000L) + "s");
             return;
         }
@@ -223,10 +219,14 @@ public class ExecCommandSimpleComponent implements Runnable {
             return;
         }
 
+        putExecutionResult(workerExitCode, false);
+    }
+
+    private void putExecutionResult(int exitCode, boolean timedOut) {
         results.put("code",     Integer.valueOf(200));
         results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
-        results.put("exitCode", Integer.valueOf(workerExitCode));
-        results.put("timedOut", Boolean.FALSE);
+        results.put("exitCode", Integer.valueOf(exitCode));
+        results.put("timedOut", Boolean.valueOf(timedOut));
         results.put("truncated", Boolean.valueOf(workerTruncated));
     }
 
@@ -242,16 +242,14 @@ public class ExecCommandSimpleComponent implements Runnable {
             seconds = ((Number) raw).longValue();
         } else {
             try {
-                seconds = Long.parseLong(raw.toString().trim());
+                seconds = Long.parseLong(getStringParam("timeout").trim());
             } catch (NumberFormatException e) {
                 return DEFAULT_TIMEOUT_MS;
             }
         }
         if (seconds <= 0) return DEFAULT_TIMEOUT_MS;
         if (seconds > MAX_TIMEOUT_MS / 1000L) return MAX_TIMEOUT_MS;
-        long ms = seconds * 1000L;
-        if (ms > MAX_TIMEOUT_MS) return MAX_TIMEOUT_MS;
-        return ms;
+        return seconds * 1000L;
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────

@@ -4,10 +4,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Field;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,6 +20,30 @@ class FileDownloadComponentTest {
 
     @TempDir
     Path tempDir;
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void boundsLongRangesBeforeConvertingToInt(boolean payload) throws Exception {
+        Path file = tempDir.resolve("large.bin");
+        try (RandomAccessFile sparse = new RandomAccessFile(file.toFile(), "rw")) {
+            sparse.setLength(4294967296L);
+        }
+        Object component;
+        if (payload) {
+            try (var input = getClass().getResourceAsStream("/component/FileDownloadComponent.payload")) {
+                component = new BytecodeLoader().load(input.readAllBytes()).getDeclaredConstructor().newInstance();
+            }
+        } else {
+            component = new FileDownloadComponent();
+        }
+        for (long size : new long[]{2147483648L, 4294967296L, Long.MAX_VALUE}) {
+            HashMap result = invoke(component, file, 0L, size);
+            assertEquals(100, result.get("code"));
+            assertEquals(1048576, result.get("bytesRead"));
+            assertEquals(1048576L, result.get("nextOffset"));
+            assertEquals(1048576, ((byte[]) result.get("data")).length);
+        }
+    }
 
     @Test
     void readsBoundedChunksWithoutChangingTheWireContract() throws Exception {
@@ -69,7 +96,10 @@ class FileDownloadComponentTest {
     }
 
     private HashMap invoke(Path file, Object offset, Object size) throws Exception {
-        FileDownloadComponent component = new FileDownloadComponent();
+        return invoke(new FileDownloadComponent(), file, offset, size);
+    }
+
+    private HashMap invoke(Object component, Path file, Object offset, Object size) throws Exception {
         HashMap params = new HashMap();
         params.put("path", file.toString().getBytes(StandardCharsets.UTF_8));
         params.put("offset", offset);
@@ -77,7 +107,7 @@ class FileDownloadComponentTest {
         HashMap results = new HashMap();
         setField(component, "params", params);
         setField(component, "results", results);
-        component.invoke();
+        component.getClass().getMethod("invoke").invoke(component);
         return results;
     }
 
@@ -85,5 +115,9 @@ class FileDownloadComponentTest {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    private static class BytecodeLoader extends ClassLoader {
+        Class<?> load(byte[] bytes) { return defineClass(null, bytes, 0, bytes.length); }
     }
 }

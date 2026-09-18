@@ -48,6 +48,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
     private static final int MAX_TASKS = 32;
     private static final int MAX_THREADS = 256;
+    private static final int MAX_TARGETS = 4096;
+    private static final int MAX_STAGES = 8;
+    private static final long MAX_PLAN_CHARS = 2L * 1024L * 1024L;
+    private static final int MAX_PENDING_OBSERVATIONS = 4096;
+    private static final int MAX_ERRORS = 128;
+    private static final long MAX_RESULT_CHARS = 4L * 1024L * 1024L;
     private static final int WORK_QUEUE_CAPACITY = MAX_TASKS * MAX_THREADS;
     private static final int MAX_READ_BYTES = 8192;
     private static final int MAX_EVIDENCE_CHARS = 4096;
@@ -134,6 +140,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (sourcePlan == null) sourcePlan = input;
         List rawTargets = asList(sourcePlan.get("targets"));
         if (rawTargets == null) throw new IllegalArgumentException("targets must be a list");
+        if (rawTargets.size() > MAX_TARGETS) {
+            throw new IllegalArgumentException("too many targets, max=" + MAX_TARGETS);
+        }
+        if (estimateChars(sourcePlan, 0) > MAX_PLAN_CHARS) {
+            throw new IllegalArgumentException("network probe plan exceeds retention limit");
+        }
 
         Map limits = asMap(sourcePlan.get("limits"));
         int timeout = boundedInt(limits == null ? null : limits.get("timeout"), 3000, 100, 300000);
@@ -164,6 +176,8 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         task.put("plan", normalizedPlan);
         task.put("observations", new ArrayList());
         task.put("errors", new ArrayList());
+        task.put("retainedChars", Long.valueOf(0L));
+        task.put("errorCount", Integer.valueOf(0));
         task.put("observationOffset", Integer.valueOf(0));
         task.put("createdAt", Long.valueOf(System.currentTimeMillis()));
         task.put("nextIndex", Integer.valueOf(0));
@@ -292,6 +306,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         ArrayList stages = new ArrayList();
         List raw = asList(value);
         if (raw == null) return stages;
+        if (raw.size() > MAX_STAGES) throw new IllegalArgumentException("too many stages, max=" + MAX_STAGES);
         for (int i = 0; i < raw.size(); i++) {
             String stage = stringValue(raw.get(i)).toLowerCase(Locale.ENGLISH);
             stages.add(stage);
@@ -589,7 +604,16 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private void addObservation(Map task, Map observation) {
         synchronized (task) {
             if ("STOPPED".equals(task.get("status"))) return;
-            ((List) task.get("observations")).add(observation);
+            List observations = (List) task.get("observations");
+            long retained = longValue(task.get("retainedChars"), 0L) + estimateChars(observation, 0);
+            if (observations.size() >= MAX_PENDING_OBSERVATIONS || retained > MAX_RESULT_CHARS) {
+                task.put("truncated", Boolean.TRUE);
+                task.put("truncateReason", "pending results exceed retention limit");
+                finishTask(task, true);
+                return;
+            }
+            observations.add(observation);
+            task.put("retainedChars", Long.valueOf(retained));
             if ("error".equals(observation.get("state"))) {
                 addError(task, stringValue(observation.get("target")),
                         stringValue(observation.get("stage")), stringValue(observation.get("errorCode")),
@@ -606,7 +630,15 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             error.put("stage", stage);
             error.put("errorCode", code);
             error.put("error", sanitize(message));
-            ((List) task.get("errors")).add(error);
+            task.put("errorCount", Integer.valueOf(intValue(task.get("errorCount"), 0) + 1));
+            List errors = (List) task.get("errors");
+            long retained = longValue(task.get("retainedChars"), 0L) + estimateChars(error, 0);
+            if (errors.size() >= MAX_ERRORS || retained > MAX_RESULT_CHARS) {
+                task.put("errorsTruncated", Boolean.TRUE);
+                return;
+            }
+            errors.add(error);
+            task.put("retainedChars", Long.valueOf(retained));
         }
     }
 
@@ -647,7 +679,19 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             snapshot.put("nextCursor", Long.valueOf((long) base + index));
             snapshot.put("hasMore", Boolean.valueOf(index < observations.size()));
             snapshot.put("observations", page);
-            snapshot.put("errors", copyListLimited(task.get("errors"), maxItems));
+            List errors;
+            if (Boolean.TRUE.equals(task.get("truncated"))) {
+                errors = copyListLimited(task.get("errors"), maxItems - 1);
+                HashMap limitError = new HashMap();
+                limitError.put("target", "");
+                limitError.put("stage", "RESULTS");
+                limitError.put("errorCode", "RESULT_LIMIT");
+                limitError.put("error", task.get("truncateReason"));
+                errors.add(0, limitError);
+            } else {
+                errors = copyListLimited(task.get("errors"), maxItems);
+            }
+            snapshot.put("errors", errors);
         }
         snapshot.put("incremental", Boolean.TRUE);
         results.put("code", Integer.valueOf(200));
@@ -667,6 +711,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         snapshot.put("progress", Integer.valueOf(total == 0 ? 0 : (int) Math.min(100L, (long) count * 100L / total)));
         snapshot.put("createdAt", task.get("createdAt"));
         snapshot.put("finishedAt", task.get("finishedAt"));
+        snapshot.put("errorCount", Integer.valueOf(intValue(task.get("errorCount"), 0)));
+        snapshot.put("errorsTruncated", Boolean.valueOf(Boolean.TRUE.equals(task.get("errorsTruncated"))));
+        if (Boolean.TRUE.equals(task.get("truncated"))) {
+            snapshot.put("truncated", Boolean.TRUE);
+            snapshot.put("truncateReason", task.get("truncateReason"));
+        }
         return snapshot;
     }
 
@@ -679,6 +729,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             long bounded = Math.max((long) base, Math.min(cursor, (long) base + observations.size()));
             int remove = (int) (bounded - base);
             if (remove > 0) {
+                long retained = longValue(task.get("retainedChars"), 0L);
+                for (int i = 0; i < remove; i++) retained -= estimateChars(observations.get(i), 0);
+                task.put("retainedChars", Long.valueOf(Math.max(0L, retained)));
                 observations.subList(0, remove).clear();
                 task.put("observationOffset", Integer.valueOf((int) bounded));
             }
@@ -740,6 +793,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             task.put("status", "STOPPED");
             task.put("outcome", cancelled ? "CANCELLED" : "COMPLETED");
             task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            // 正在退出的 worker 保留自己的局部引用；不清空它们正在读取的列表。
+            task.remove("targets");
+            task.remove("plan");
             task.notifyAll();
         }
     }
@@ -758,6 +814,32 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             }
         }
         return removed;
+    }
+
+    // 限制保留文本与容器开销的估算值；同时限制条目数，避免大量小对象绕过预算。
+    private static long estimateChars(Object value, int depth) {
+        if (value == null) return 4L;
+        if (depth > 8) return MAX_RESULT_CHARS + 1L;
+        if (value instanceof String) return 16L + ((String) value).length();
+        if (value instanceof byte[]) return 16L + ((byte[]) value).length;
+        long size = 32L;
+        if (value instanceof Map) {
+            Iterator entries = ((Map) value).entrySet().iterator();
+            while (entries.hasNext()) {
+                Map.Entry entry = (Map.Entry) entries.next();
+                size += 32L + estimateChars(entry.getKey(), depth + 1) + estimateChars(entry.getValue(), depth + 1);
+                if (size > MAX_RESULT_CHARS) break;
+            }
+        } else if (value instanceof List) {
+            List values = (List) value;
+            for (int i = 0; i < values.size(); i++) {
+                size += 8L + estimateChars(values.get(i), depth + 1);
+                if (size > MAX_RESULT_CHARS) break;
+            }
+        } else {
+            size += String.valueOf(value).length();
+        }
+        return size;
     }
 
     private static void addHeader(Map evidence, String key, String value, int maxRead) {

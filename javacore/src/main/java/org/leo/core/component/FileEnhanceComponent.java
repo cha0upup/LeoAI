@@ -10,11 +10,13 @@ import java.util.zip.GZIPOutputStream;
 /**
  * 文件操作增强组件
  *
- * <p>提供三项增强能力：
+ * <p>提供五项增强能力：
  * <ul>
  *   <li>ACTION_GREP (1)  — 递归关键词搜索文件内容</li>
  *   <li>ACTION_TOUCH (2) — 修改文件/目录时间戳</li>
  *   <li>ACTION_PACK (3)  — 将目录打包为 tar.gz 并保存到目标机器临时路径</li>
+ *   <li>ACTION_RENAME (4) — 重命名文件或目录</li>
+ *   <li>ACTION_CHMOD (5) — 修改文件或目录权限</li>
  * </ul>
  *
  * <p>尽量使用低版本 JDK 语法和 API，避免生成匿名内部类。
@@ -53,7 +55,7 @@ public class FileEnhanceComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        int action = toInt(params.get("action"), -1);
+        int action = getInt("action", -1);
         switch (action) {
             case ACTION_GREP:   doGrep();   break;
             case ACTION_TOUCH:  doTouch();  break;
@@ -73,8 +75,8 @@ public class FileEnhanceComponent implements Runnable {
         String keyword   = getString("keyword");
         boolean regex    = Boolean.TRUE.equals(params.get("regex"));
         boolean ignoreCase = !Boolean.FALSE.equals(params.get("ignoreCase")); // 默认忽略大小写
-        int maxResults   = toInt(params.get("maxResults"), 200);
-        int maxLineLen   = toInt(params.get("maxLineLen"), 300);
+        int maxResults   = getInt("maxResults", 200);
+        int maxLineLen   = getInt("maxLineLen", 300);
         String include   = getString("include"); // 文件名 glob，如 "*.java"
 
         if (rootPath == null || rootPath.isEmpty()) {
@@ -634,9 +636,12 @@ public class FileEnhanceComponent implements Runnable {
         return String.valueOf(v);
     }
 
-    private int toInt(Object v, int def) {
+    private int getInt(String key, int def) {
+        Object v = params.get(key);
         if (v == null) return def;
-        try { return Integer.parseInt(v.toString()); } catch (Exception e) { return def; }
+        if (v instanceof Number) return ((Number) v).intValue();
+        try { return Integer.parseInt(getString(key).trim()); }
+        catch (NumberFormatException e) { return def; }
     }
 
     private void closeQuietly(Closeable closeable) {

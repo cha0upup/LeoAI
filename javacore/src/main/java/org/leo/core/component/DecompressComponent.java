@@ -9,8 +9,8 @@ import java.util.zip.ZipInputStream;
 
 /**
  * 文件解压组件
- * 提供跨平台的ZIP和GZIP文件解压功能
- * 设计为在被控主机上稳定执行，兼容Java 1.5+
+ * 提供跨平台的 ZIP、GZIP、TAR 和 TAR.GZ 文件解压功能
+ * 设计为在被控主机上稳定执行，兼容Java 6+
  * 
  * @author LeoSpring
  * @version 2.2
@@ -54,26 +54,9 @@ public class DecompressComponent implements Runnable {
     public void decompress(String zipFile, String outputFolder) throws IOException {
         File zipFileObj = new File(zipFile);
         
-        // 验证ZIP文件是否存在
-        if (!zipFileObj.exists()) {
-            throw new IOException("ZIP文件不存在: " + zipFile);
-        }
-        
-        if (!zipFileObj.isFile()) {
-            throw new IOException("指定路径不是文件: " + zipFile);
-        }
-        
-        // 创建输出目录
-        File outDir = new File(outputFolder);
-        if (!outDir.exists()) {
-            if (!outDir.mkdirs()) {
-                throw new IOException("无法创建输出目录: " + outputFolder);
-            }
-        }
-        if (!outDir.isDirectory()) {
-            throw new IOException("输出路径不是目录: " + outputFolder);
-        }
-        
+        validateReadableFile(zipFileObj, "ZIP文件不存在: ", zipFile);
+        File outDir = prepareOutputDirectory(outputFolder);
+
         int fileCount = 0;
         int entryCount = 0;
         long totalSize = 0;
@@ -138,14 +121,8 @@ public class DecompressComponent implements Runnable {
         File gzipFileObj = new File(gzipFile);
         
         // 验证GZIP文件是否存在
-        if (!gzipFileObj.exists()) {
-            throw new IOException("GZIP文件不存在: " + gzipFile);
-        }
-        
-        if (!gzipFileObj.isFile()) {
-            throw new IOException("指定路径不是文件: " + gzipFile);
-        }
-        
+        validateReadableFile(gzipFileObj, "GZIP文件不存在: ", gzipFile);
+
         // 创建输出目录
         File outputFileObj = new File(outputFile);
         if (gzipFileObj.getCanonicalPath().equals(outputFileObj.getCanonicalPath())) {
@@ -159,13 +136,15 @@ public class DecompressComponent implements Runnable {
         }
         
         GZIPInputStream gzis = null;
+        FileInputStream fis = null;
         File tempFile = createSiblingTemp(outputFileObj);
         FileOutputStream fos = null;
         long totalSize = 0;
         
         boolean completed = false;
         try {
-            gzis = new GZIPInputStream(new FileInputStream(gzipFile));
+            fis = new FileInputStream(gzipFileObj);
+            gzis = new GZIPInputStream(fis);
             fos = new FileOutputStream(tempFile);
             
             byte[] buffer = new byte[BUFFER_SIZE];
@@ -175,12 +154,13 @@ public class DecompressComponent implements Runnable {
                 totalSize += length;
                 ensureExtractionLimit(totalSize, totalSize, outputFileObj.getName());
             }
-            closeStream(fos);
+            fos.close();
             fos = null;
             replaceFile(tempFile, outputFileObj);
             completed = true;
         } finally {
             closeStream(gzis);
+            closeStream(fis);
             closeStream(fos);
             if (!completed && tempFile.exists()) tempFile.delete();
         }
@@ -209,14 +189,7 @@ public class DecompressComponent implements Runnable {
             gzis = new GZIPInputStream(fis);
             long[] stats = extractTarStream(gzis, outDir);
 
-            results.put("code", 200);
-            results.put("msg", "TAR.GZ解压完成: " + archiveFile + " -> " + outputFolder);
-            results.put("archiveFile", archiveFile);
-            results.put("outputFolder", outputFolder);
-            results.put("fileCount", Long.valueOf(stats[0]));
-            results.put("dirCount", Long.valueOf(stats[1]));
-            results.put("totalSize", Long.valueOf(stats[2]));
-            results.put("format", "tar.gz");
+            putTarResult(archiveFile, outputFolder, stats, "tar.gz");
         } finally {
             closeStream(gzis);
             closeStream(fis);
@@ -237,17 +210,21 @@ public class DecompressComponent implements Runnable {
             fis = new FileInputStream(archiveFileObj);
             long[] stats = extractTarStream(fis, outDir);
 
-            results.put("code", 200);
-            results.put("msg", "TAR解压完成: " + archiveFile + " -> " + outputFolder);
-            results.put("archiveFile", archiveFile);
-            results.put("outputFolder", outputFolder);
-            results.put("fileCount", Long.valueOf(stats[0]));
-            results.put("dirCount", Long.valueOf(stats[1]));
-            results.put("totalSize", Long.valueOf(stats[2]));
-            results.put("format", "tar");
+            putTarResult(archiveFile, outputFolder, stats, "tar");
         } finally {
             closeStream(fis);
         }
+    }
+
+    private void putTarResult(String archiveFile, String outputFolder, long[] stats, String format) {
+        results.put("code", 200);
+        results.put("msg", format.toUpperCase(Locale.ENGLISH) + "解压完成: " + archiveFile + " -> " + outputFolder);
+        results.put("archiveFile", archiveFile);
+        results.put("outputFolder", outputFolder);
+        results.put("fileCount", Long.valueOf(stats[0]));
+        results.put("dirCount", Long.valueOf(stats[1]));
+        results.put("totalSize", Long.valueOf(stats[2]));
+        results.put("format", format);
     }
 
     /**
@@ -267,7 +244,7 @@ public class DecompressComponent implements Runnable {
                 fileSize += length;
                 ensureExtractionLimit(fileSize, currentTotal + fileSize, newFile.getName());
             }
-            closeStream(fos);
+            fos.close();
             fos = null;
             replaceFile(tempFile, newFile);
             completed = true;
@@ -374,7 +351,7 @@ public class DecompressComponent implements Runnable {
                 try {
                     fos = new FileOutputStream(tempFile);
                     long written = copyExact(in, fos, size);
-                    closeStream(fos);
+                    fos.close();
                     fos = null;
                     replaceFile(tempFile, target);
                     totalSize += written;

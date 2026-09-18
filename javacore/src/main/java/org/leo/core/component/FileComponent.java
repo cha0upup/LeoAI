@@ -3,6 +3,7 @@ package org.leo.core.component;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,7 +23,6 @@ public class FileComponent implements Runnable {
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
-    
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
@@ -31,8 +31,7 @@ public class FileComponent implements Runnable {
             invoke();
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            setResult(500, t.getMessage());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -41,16 +40,9 @@ public class FileComponent implements Runnable {
 
 
     /**
-     * 主要执行方法
-     */
-    public void invoke() throws Exception {
-        handleFile();
-    }
-
-    /**
      * 文件操作处理
      */
-    private void handleFile() throws Exception {
+    public void invoke() throws Exception {
         String action = getStringParam("action");
         if ("profile".equals(action)) getFileSystemProfile();
         else if ("list".equals(action)) getFileList();
@@ -103,18 +95,16 @@ public class FileComponent implements Runnable {
      * 获取文件列表
      */
     private void getFileList() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
 
         File directory = new File(path);
         if (!directory.exists()) {
-            results.put("code", 500);
-            results.put("msg", "directory not found: " + path);
+            setResult(500, "directory not found: " + path);
             return;
         }
 
         if (!directory.isDirectory()) {
-            results.put("code", 500);
-            results.put("msg", "not a directory: " + path);
+            setResult(500, "not a directory: " + path);
             return;
         }
 
@@ -138,12 +128,11 @@ public class FileComponent implements Runnable {
      * 删除文件
      */
     private void deleteFile() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
 
         File file = new File(path);
         if (!file.exists()) {
-            results.put("code", 500);
-            results.put("msg", "file not found: " + path);
+            setResult(500, "file not found: " + path);
             return;
         }
 
@@ -151,8 +140,7 @@ public class FileComponent implements Runnable {
             // 符号链接仅删除链接本身，不递归进入链接目标。
             if (isSymbolicLink(file)) {
                 boolean success = file.delete();
-                results.put("code", success ? 200 : 500);
-                results.put("msg", success ? "symlink deleted: " + file.getName()
+                setResult(success ? 200 : 500, success ? "symlink deleted: " + file.getName()
                         : "failed to delete symlink: " + file.getName());
                 return;
             }
@@ -161,11 +149,9 @@ public class FileComponent implements Runnable {
             boolean success = deleteDirectory(file, 0, failedFiles);
 
             if (success && failedFiles.isEmpty()) {
-                results.put("code", 200);
-                results.put("msg", "directory deleted: " + file.getName());
+                setResult(200, "directory deleted: " + file.getName());
             } else {
-                results.put("code", 500);
-                results.put("msg", "delete partially failed: " + file.getName());
+                setResult(500, "delete partially failed: " + file.getName());
                 if (!failedFiles.isEmpty()) {
                     results.put("failedFiles", failedFiles);
                     results.put("failedCount", Integer.valueOf(failedFiles.size()));
@@ -173,8 +159,7 @@ public class FileComponent implements Runnable {
             }
         } else {
             boolean success = file.delete();
-            results.put("code", success ? 200 : 500);
-            results.put("msg", success ? "deleted: " + file.getName()
+            setResult(success ? 200 : 500, success ? "deleted: " + file.getName()
                     : "failed to delete: " + file.getName());
         }
     }
@@ -183,22 +168,19 @@ public class FileComponent implements Runnable {
      * 创建目录
      */
     private void createDirectory() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
 
         File directory = new File(path);
         if (directory.exists()) {
-            results.put("code", 500);
-            results.put("msg", "directory already exists: " + path);
+            setResult(500, "directory already exists: " + path);
             return;
         }
 
         if (directory.mkdirs()) {
-            results.put("code", 200);
-            results.put("msg", "directory created: " + path);
+            setResult(200, "directory created: " + path);
             results.put("absolutePath", directory.getAbsolutePath());
         } else {
-            results.put("code", 500);
-            results.put("msg", "failed to create directory: " + path);
+            setResult(500, "failed to create directory: " + path);
         }
     }
 
@@ -207,51 +189,29 @@ public class FileComponent implements Runnable {
      * 支持可选 content 参数。
      */
     private void createNewFile() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
         byte[] content = (byte[]) params.get("content");
-        if (content != null && content.length > MAX_WRITE_BYTES) {
-            results.put("code", 500);
-            results.put("msg", "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
-            return;
-        }
+        if (!validateContentSize(content)) return;
 
         File file = new File(path);
         if (file.exists()) {
-            results.put("code", 500);
-            results.put("msg", "file already exists: " + path);
+            setResult(500, "file already exists: " + path);
             return;
         }
 
-        // 确保父目录存在
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists()) {
-            if (!parent.mkdirs()) {
-                results.put("code", 500);
-                results.put("msg", "cannot create parent directory: " + parent.getAbsolutePath());
-                return;
-            }
-        }
+        if (!ensureParentDirectory(file, "parent")) return;
 
         if (!file.createNewFile()) {
-            results.put("code", 500);
-            results.put("msg", "failed to create file: " + path);
+            setResult(500, "failed to create file: " + path);
             return;
         }
 
         // 如果 params 包含 content，写入初始内容
         if (content != null && content.length > 0) {
-            FileOutputStream fos = null;
-            try {
-                fos = new FileOutputStream(file);
-                fos.write(content);
-                fos.flush();
-            } finally {
-                closeResource(fos);
-            }
+            writeFileContent(file, content);
         }
 
-        results.put("code", 200);
-        results.put("msg", "file created: " + path);
+        setResult(200, "file created: " + path);
         results.put("absolutePath", file.getAbsolutePath());
         if (content != null) {
             results.put("size", Integer.valueOf(content.length));
@@ -260,7 +220,7 @@ public class FileComponent implements Runnable {
 
     /** 移动文件，overwrite 时以同目录备份保证失败可回滚。 */
     private void moveFile() throws Exception {
-        String sourcePath = getPathFromParams();
+        String sourcePath = getStringParam("path");
         String newPath = getStringParam("newPath");
         String strategy = getStringParam("conflictStrategy");
         validateConflictStrategy(strategy);
@@ -269,60 +229,31 @@ public class FileComponent implements Runnable {
         File destFile = new File(newPath);
 
         if (!sourceFile.exists()) {
-            results.put("code", 500);
-            results.put("msg", "source not found: " + sourcePath);
+            setResult(500, "source not found: " + sourcePath);
             return;
         }
 
-        // 冲突解析
-        File resolved = resolveConflict(destFile, strategy);
-        if (resolved == null) {
-            // skip
-            results.put("code", 200);
-            results.put("msg", "skipped: target exists: " + destFile.getAbsolutePath());
-            results.put("skipped", Boolean.TRUE);
-            results.put("newPath", destFile.getAbsolutePath());
+        destFile = prepareDestination(destFile, strategy);
+        if (destFile == null) return;
+
+        File backupFile;
+        try {
+            backupFile = prepareOverwriteBackup(destFile, strategy);
+        } catch (IOException error) {
+            setResult(500, error.getMessage());
             return;
-        }
-        destFile = resolved;
-
-        // 确保目标目录存在
-        File destParent = destFile.getParentFile();
-        if (destParent != null && !destParent.exists()) {
-            if (!destParent.mkdirs()) {
-                results.put("code", 500);
-                results.put("msg", "cannot create target directory: " + destParent.getAbsolutePath());
-                return;
-            }
-        }
-
-        File backupFile = null;
-        if ("overwrite".equals(strategy) && destFile.exists()) {
-            if (destFile.isDirectory()) {
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", "cannot overwrite directory: " + destFile.getAbsolutePath());
-                return;
-            }
-            backupFile = createBackupFile(destFile);
-            if (!destFile.renameTo(backupFile)) {
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", "cannot prepare target backup: " + destFile.getAbsolutePath());
-                return;
-            }
         }
 
         if (sourceFile.renameTo(destFile)) {
             deleteBackup(backupFile);
-            results.put("code", 200);
-            results.put("msg", "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            setResult(200, "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             return;
         }
 
         if (!sourceFile.isFile()) {
             restoreBackup(destFile, backupFile);
-            results.put("code", 500);
-            results.put("msg", "move failed (cross-filesystem directory move not supported): "
+            setResult(500, "move failed (cross-filesystem directory move not supported): "
                     + sourcePath + " -> " + destFile.getAbsolutePath());
             return;
         }
@@ -332,19 +263,30 @@ public class FileComponent implements Runnable {
             destFile.setLastModified(sourceFile.lastModified());
             if (!sourceFile.delete()) {
                 restoreBackup(destFile, backupFile);
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", "move rollback: source delete failed: " + sourcePath);
+                setResult(500, "move rollback: source delete failed: " + sourcePath);
                 return;
             }
             deleteBackup(backupFile);
-            results.put("code", 200);
-            results.put("msg", "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            setResult(200, "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             results.put("size", Long.valueOf(totalBytes));
         } catch (Exception error) {
             restoreBackup(destFile, backupFile);
             throw error;
         }
+    }
+
+    /** 返回 null 表示无需备份；失败时目标文件保持不变。 */
+    private File prepareOverwriteBackup(File target, String strategy) throws IOException {
+        if (!"overwrite".equals(strategy) || !target.exists()) return null;
+        if (target.isDirectory()) {
+            throw new IOException("cannot overwrite directory: " + target.getAbsolutePath());
+        }
+        File backup = createBackupFile(target);
+        if (!target.renameTo(backup)) {
+            throw new IOException("cannot prepare target backup: " + target.getAbsolutePath());
+        }
+        return backup;
     }
 
     private File createBackupFile(File target) {
@@ -383,47 +325,23 @@ public class FileComponent implements Runnable {
 
     /**
      * 编辑文件
-     * 编辑文件。
      */
     private void editFile() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
 
         byte[] content = (byte[]) params.get("content");
         if (content == null) {
-            results.put("code", 500);
-            results.put("msg", "content is null");
+            setResult(500, "content is null");
             return;
         }
 
-        if (content.length > MAX_WRITE_BYTES) {
-            results.put("code", 500);
-            results.put("msg", "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
-            return;
-        }
+        if (!validateContentSize(content)) return;
 
         File file = new File(path);
+        if (!ensureParentDirectory(file, "parent")) return;
+        writeFileContent(file, content);
 
-        // 确保父目录存在
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists()) {
-            if (!parent.mkdirs()) {
-                results.put("code", 500);
-                results.put("msg", "cannot create parent directory: " + parent.getAbsolutePath());
-                return;
-            }
-        }
-
-        FileOutputStream fos = null;
-        try {
-            fos = new FileOutputStream(file);
-            fos.write(content);
-            fos.flush();
-        } finally {
-            closeResource(fos);
-        }
-
-        results.put("code", 200);
-        results.put("msg", "file edited: " + path);
+        setResult(200, "file edited: " + path);
         results.put("size", Integer.valueOf(content.length));
         results.put("absolutePath", file.getAbsolutePath());
     }
@@ -432,18 +350,16 @@ public class FileComponent implements Runnable {
      * 获取文件MD5值
      */
     private void getFileMD5() throws Exception {
-        String path = getPathFromParams();
+        String path = getStringParam("path");
 
         File file = new File(path);
         if (!file.exists()) {
-            results.put("code", 500);
-            results.put("msg", "file not found: " + path);
+            setResult(500, "file not found: " + path);
             return;
         }
 
         if (!file.isFile()) {
-            results.put("code", 500);
-            results.put("msg", "not a file: " + path);
+            setResult(500, "not a file: " + path);
             return;
         }
 
@@ -455,12 +371,11 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 复制文件
      * 复制文件并保留最后修改时间。
      * 支持 conflictStrategy: overwrite / autorename / skip。
      */
     private void copyFile() throws Exception {
-        String sourcePath = getPathFromParams();
+        String sourcePath = getStringParam("path");
         String destPath = getStringParam("destPath");
         String strategy = getStringParam("conflictStrategy");
         validateConflictStrategy(strategy);
@@ -469,60 +384,31 @@ public class FileComponent implements Runnable {
         File destFile = new File(destPath);
 
         if (!sourceFile.exists()) {
-            results.put("code", 500);
-            results.put("msg", "source not found: " + sourcePath);
+            setResult(500, "source not found: " + sourcePath);
             return;
         }
 
         if (!sourceFile.isFile()) {
-            results.put("code", 500);
-            results.put("msg", "source is not a file: " + sourcePath);
+            setResult(500, "source is not a file: " + sourcePath);
             return;
         }
 
-        // 冲突解析
-        File resolved = resolveConflict(destFile, strategy);
-        if (resolved == null) {
-            // skip
-            results.put("code", 200);
-            results.put("msg", "skipped: target exists: " + destFile.getAbsolutePath());
-            results.put("skipped", Boolean.TRUE);
-            results.put("newPath", destFile.getAbsolutePath());
+        destFile = prepareDestination(destFile, strategy);
+        if (destFile == null) return;
+
+        File backupFile;
+        try {
+            backupFile = prepareOverwriteBackup(destFile, strategy);
+        } catch (IOException error) {
+            setResult(500, error.getMessage());
             return;
-        }
-        destFile = resolved;
-
-        // 确保目标目录存在
-        File destParent = destFile.getParentFile();
-        if (destParent != null && !destParent.exists()) {
-            if (!destParent.mkdirs()) {
-                results.put("code", 500);
-                results.put("msg", "cannot create target directory: " + destParent.getAbsolutePath());
-                return;
-            }
-        }
-
-        File backupFile = null;
-        if ("overwrite".equals(strategy) && destFile.exists()) {
-            if (destFile.isDirectory()) {
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", "cannot overwrite directory: " + destFile.getAbsolutePath());
-                return;
-            }
-            backupFile = createBackupFile(destFile);
-            if (!destFile.renameTo(backupFile)) {
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", "cannot prepare target backup: " + destFile.getAbsolutePath());
-                return;
-            }
         }
 
         try {
             long totalBytes = copyFileContent(sourceFile, destFile);
             destFile.setLastModified(sourceFile.lastModified());
             deleteBackup(backupFile);
-            results.put("code", 200);
-            results.put("msg", "copied: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            setResult(200, "copied: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             results.put("size", Long.valueOf(totalBytes));
         } catch (Exception error) {
@@ -531,11 +417,23 @@ public class FileComponent implements Runnable {
         }
     }
 
+    /** 返回 null 表示已写入跳过或失败响应，调用方应结束操作。 */
+    private File prepareDestination(File dest, String strategy) {
+        File resolved = resolveConflict(dest, strategy);
+        if (resolved == null) {
+            setResult(200, "skipped: target exists: " + dest.getAbsolutePath());
+            results.put("skipped", Boolean.TRUE);
+            results.put("newPath", dest.getAbsolutePath());
+            return null;
+        }
+        return ensureParentDirectory(resolved, "target") ? resolved : null;
+    }
+
     /**
      * 解析目标路径上的同名冲突。
      *
      * @param dest     原始目标
-     * @param strategy overwrite / autorename / skip / null
+     * @param strategy overwrite / autorename / skip
      * @return 实际应使用的目标 File；返回 null 表示 skip
      */
     private File resolveConflict(File dest, String strategy) {
@@ -591,11 +489,37 @@ public class FileComponent implements Runnable {
 
     // ==================== 辅助方法 ====================
 
-    /**
-     * 从参数中获取路径
-     */
-    private String getPathFromParams() throws Exception {
-        return getStringParam("path");
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
+    private boolean validateContentSize(byte[] content) {
+        if (content != null && content.length > MAX_WRITE_BYTES) {
+            setResult(500, "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean ensureParentDirectory(File file, String description) {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            setResult(500, "cannot create " + description + " directory: " + parent.getAbsolutePath());
+            return false;
+        }
+        return true;
+    }
+
+    private void writeFileContent(File file, byte[] content) throws IOException {
+        FileOutputStream output = null;
+        try {
+            output = new FileOutputStream(file);
+            output.write(content);
+            output.flush();
+        } finally {
+            closeResource(output);
+        }
     }
 
     /**
@@ -664,16 +588,11 @@ public class FileComponent implements Runnable {
 
     /**
      * 检查文件是否可执行
-     * 读取可执行权限。
      */
     private boolean canExecute(File file) {
         try {
-            java.lang.reflect.Method method = File.class.getMethod("canExecute");
-            Object result = method.invoke(file);
-            return ((Boolean) result).booleanValue();
-        } catch (NoSuchMethodException e) {
-            return false;
-        } catch (Exception e) {
+            return file.canExecute();
+        } catch (SecurityException ignored) {
             return false;
         }
     }

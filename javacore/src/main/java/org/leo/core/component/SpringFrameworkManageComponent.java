@@ -80,7 +80,7 @@ public class SpringFrameworkManageComponent implements Runnable {
         return frameworkInfo;
     }
     public ArrayList getAllController() throws Exception {
-        Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
+        Object abstractHandlerMapping = getHandlerMapping();
         Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
         Map registry = getRegistrations(mappingRegistry);
         ArrayList allController=new ArrayList();
@@ -109,7 +109,7 @@ public class SpringFrameworkManageComponent implements Runnable {
 
     public Boolean removeController(String mappingInfo) throws Exception {
         if (context == null) return Boolean.FALSE;
-        Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
+        Object abstractHandlerMapping = getHandlerMapping();
 
         Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
         Map registry = getRegistrations(mappingRegistry);
@@ -149,39 +149,42 @@ public class SpringFrameworkManageComponent implements Runnable {
 
 
 
+    private Object getHandlerMapping() throws Exception {
+        return invokeMethod(context, "getBean", new Class[]{String.class},
+                new Object[]{"requestMappingHandlerMapping"});
+    }
+
     public ArrayList getAllMappedInterceptor() throws Exception {
-        Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
-        Object[] adaptedInterceptors= (Object[]) invokeMethod(abstractHandlerMapping,"getAdaptedInterceptors");
-        ArrayList AllMappedInterceptor=new ArrayList();
-        for (Object adaptedInterceptor: adaptedInterceptors) {
-            HashMap interceptorInfo=new HashMap();
-            if (adaptedInterceptor.getClass().getName().equals("org.springframework.web.servlet.handler.MappedInterceptor")){
-                Object pathPatterns=invokeMethod(adaptedInterceptor,"getPathPatterns");
-                Object interceptor=invokeMethod(adaptedInterceptor,"getInterceptor");
-                String interceptorId= Integer.toHexString(System.identityHashCode(adaptedInterceptor));
-                Object[] excludePatterns= (Object[]) getFV(adaptedInterceptor,"excludePatterns");
-                ArrayList excludePatternList=new ArrayList();
-                if (excludePatterns!=null){
-                    for (Object excludePattern:excludePatterns) {
-                        excludePatternList.add(invokeMethod(excludePattern,"getPatternString"));
-                    }
-                }
-                interceptorInfo.put("pathPatterns",patternStrings(pathPatterns));
-                interceptorInfo.put("interceptorName",interceptor.getClass().getName());
-                interceptorInfo.put("excludePatterns",excludePatternList);
-                interceptorInfo.put("interceptorId",interceptorId);
-                AllMappedInterceptor.add(interceptorInfo);
-            }else {
-                String interceptorId= Integer.toHexString(System.identityHashCode(adaptedInterceptor));
-                interceptorInfo.put("pathPatterns",java.util.Collections.singletonList("/*"));
-                interceptorInfo.put("interceptorName",adaptedInterceptor.getClass().getName());
-                interceptorInfo.put("excludePatterns",null);
-                interceptorInfo.put("interceptorId",interceptorId);
-                AllMappedInterceptor.add(interceptorInfo);
+        Object[] interceptors = (Object[]) invokeMethod(getHandlerMapping(), "getAdaptedInterceptors");
+        ArrayList answer = new ArrayList();
+        if (interceptors == null) return answer;
+        for (Object interceptor : interceptors) {
+            if (interceptor == null) continue;
+            try {
+                answer.add(interceptorInfo(interceptor));
+            } catch (Exception ignored) {
+                // 单项读取失败不丢弃其他拦截器。
             }
         }
-        return AllMappedInterceptor;
+        return answer;
     }
+
+    private HashMap interceptorInfo(Object adaptedInterceptor) throws Exception {
+        HashMap info = new HashMap();
+        info.put("interceptorId", Integer.toHexString(System.identityHashCode(adaptedInterceptor)));
+        if (adaptedInterceptor.getClass().getName().equals("org.springframework.web.servlet.handler.MappedInterceptor")) {
+            Object interceptor = invokeMethod(adaptedInterceptor, "getInterceptor");
+            info.put("interceptorName", interceptor.getClass().getName());
+            info.put("pathPatterns", patternStrings(invokeMethod(adaptedInterceptor, "getPathPatterns")));
+            info.put("excludePatterns", patternStrings(getFV(adaptedInterceptor, "excludePatterns")));
+        } else {
+            info.put("interceptorName", adaptedInterceptor.getClass().getName());
+            info.put("pathPatterns", java.util.Collections.singletonList("/*"));
+            info.put("excludePatterns", null);
+        }
+        return info;
+    }
+
     public Boolean removeInterceptor(String interceptorId) throws Exception {
         if (context == null) return Boolean.FALSE;
         boolean removed = false;

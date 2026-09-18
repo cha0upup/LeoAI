@@ -11,7 +11,7 @@ import java.util.zip.ZipOutputStream;
 /**
  * 文件压缩组件
  * 提供跨平台的ZIP文件压缩功能，支持正则表达式排除文件
- * 设计为在被控主机上稳定执行，兼容Java 1.5+
+ * 设计为在被控主机上稳定执行，兼容Java 6+
  * 
  * @author LeoSpring
  * @version 2.3
@@ -28,7 +28,6 @@ public class CompressComponent implements Runnable {
     
     // 排除模式（正则表达式）
     private Pattern excludePattern;
-    private File sourceRoot;
     private String sourceRootCanonical;
     private String destinationCanonical;
     private String temporaryCanonical;
@@ -85,7 +84,7 @@ public class CompressComponent implements Runnable {
         
         // 初始化排除模式
         initializeExcludePattern(excludePattern);
-        sourceRoot = sourceFile.isDirectory() ? sourceFile : sourceFile.getParentFile();
+        File sourceRoot = sourceFile.isDirectory() ? sourceFile : sourceFile.getParentFile();
         sourceRootCanonical = sourceRoot == null ? null : sourceRoot.getCanonicalPath();
         visitedDirectories = new HashSet();
         
@@ -174,6 +173,8 @@ public class CompressComponent implements Runnable {
             return;
         }
         visitedDirectories.add(canonical);
+        zos.putNextEntry(new ZipEntry(parentFolder + "/"));
+        zos.closeEntry();
         File[] files = folder.listFiles();
         if (files != null) {
             for (File file : files) {
@@ -239,13 +240,13 @@ public class CompressComponent implements Runnable {
         // 获取相对于源根目录的路径
         String relativePath = normalizedPath;
         try {
-            if (sourceRoot != null) {
+            if (sourceRootCanonical != null) {
                 String filePath = file.getCanonicalPath();
                 if (filePath.equals(destinationCanonical) || filePath.equals(temporaryCanonical)) {
                     return true;
                 }
                 String rootPath = sourceRootCanonical;
-                if (rootPath != null && !filePath.equals(rootPath)
+                if (!filePath.equals(rootPath)
                         && !filePath.startsWith(rootPath + File.separator)) {
                     return true;
                 }

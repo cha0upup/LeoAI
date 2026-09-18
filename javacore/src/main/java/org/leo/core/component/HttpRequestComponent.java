@@ -33,7 +33,7 @@ import javax.net.ssl.X509TrustManager;
  * HTTPS 固定跳过证书与主机名校验，以兼容内网自签名证书。
  * 未指定请求头时会补充常见浏览器请求头，调用方传入的同名请求头优先。
  * <p>
- * 兼容 Java 1.5+，仅使用 JDK 内置类。
+ * 兼容 Java 6+，仅使用 JDK 内置类。
  *
  * @author LeoSpring
  * @version 1.1
@@ -112,13 +112,6 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             return;
         }
 
-        int connectTimeout = getIntParam("connectTimeout", DEFAULT_CONNECT_TIMEOUT);
-        int readTimeout = getIntParam("readTimeout", DEFAULT_READ_TIMEOUT);
-        if (connectTimeout <= 0) connectTimeout = DEFAULT_CONNECT_TIMEOUT;
-        if (readTimeout <= 0) readTimeout = DEFAULT_READ_TIMEOUT;
-        if (connectTimeout > MAX_TIMEOUT) connectTimeout = MAX_TIMEOUT;
-        if (readTimeout > MAX_TIMEOUT) readTimeout = MAX_TIMEOUT;
-        boolean followRedirects = getBooleanParam("followRedirects", true);
         Object requestHeadersObj = params.get("headers");
         if (requestHeadersObj != null && !(requestHeadersObj instanceof Map)) {
             results.put("code", Integer.valueOf(400));
@@ -138,120 +131,141 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         try {
             conn = (HttpURLConnection) targetUrl.openConnection();
 
-            // HTTPS 固定信任所有证书与主机名，兼容内网自签名证书。
-            if (conn instanceof HttpsURLConnection) {
-                HttpsURLConnection httpsConn = (HttpsURLConnection) conn;
-                httpsConn.setSSLSocketFactory(getTrustAllSslSocketFactory());
-                ClassLoader cl2 = Thread.currentThread().getContextClassLoader();
-                HostnameVerifier hnv = (HostnameVerifier) Proxy.newProxyInstance(cl2, new Class[]{HostnameVerifier.class}, this);
-                httpsConn.setHostnameVerifier(hnv);
-            }
-
-            conn.setRequestMethod(method);
-            conn.setConnectTimeout(connectTimeout);
-            conn.setReadTimeout(readTimeout);
-            conn.setInstanceFollowRedirects(followRedirects);
-
-            // 设置请求头
-            if (requestHeaders != null) {
-                for (Object entry : requestHeaders.entrySet()) {
-                    Map.Entry e = (Map.Entry) entry;
-                    String key = String.valueOf(e.getKey());
-                    String value = String.valueOf(e.getValue());
-                    conn.setRequestProperty(key, value);
-                }
-            }
-            applyBrowserRequestHeaders(conn, requestHeaders);
-
-            // 写入请求体
-            if (bodyBytes != null && bodyBytes.length > 0
-                    && allowsRequestBody(method)) {
-                conn.setDoOutput(true);
-                if (conn.getRequestProperty("Content-Type") == null) {
-                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-                }
-                OutputStream os = null;
-                try {
-                    os = conn.getOutputStream();
-                    os.write(bodyBytes);
-                    os.flush();
-                } finally {
-                    if (os != null) {
-                        try { os.close(); } catch (Exception ignored) {}
-                    }
-                }
-            }
-
-            // 读取响应
+            configureConnection(conn, method, requestHeaders);
+            writeRequestBody(conn, method, bodyBytes);
             int statusCode = conn.getResponseCode();
             String statusMessage = conn.getResponseMessage();
+            HashMap responseHeaders = collectResponseHeaders(conn);
+            byte[] responseBody = readResponseBody(conn, method, statusCode);
 
-            // 收集响应头
-            HashMap responseHeaders = new HashMap();
-            Map headerFields = conn.getHeaderFields();
-            if (headerFields != null) {
-                for (Object entry : headerFields.entrySet()) {
-                    Map.Entry e = (Map.Entry) entry;
-                    Object key = e.getKey();
-                    if (key != null) {
-                        List values = (List) e.getValue();
-                        if (values != null && values.size() == 1) {
-                            responseHeaders.put(String.valueOf(key), String.valueOf(values.get(0)));
-                        } else if (values != null) {
-                            responseHeaders.put(String.valueOf(key), values);
-                        }
-                    }
-                }
-            }
-
-            // 读取响应体
-            byte[] responseBody = null;
-            if (!"HEAD".equals(method)) {
-                InputStream is = null;
-                try {
-                    is = (statusCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
-                } catch (Exception ignored) {
-                    // 某些情况下 getInputStream 会抛异常
-                    is = conn.getErrorStream();
-                }
-
-                if (is != null) {
-                    try {
-                        responseBody = readStream(is);
-                    } finally {
-                        try { is.close(); } catch (Exception ignored) {}
-                    }
-                }
-            }
-
-            // 构建结果
             results.put("code", 200);
             results.put("statusCode", statusCode);
             results.put("statusMessage", statusMessage);
             results.put("responseHeaders", responseHeaders);
-
-            if (responseBody != null) {
-                // 尝试判断是否为文本内容
-                String contentType = conn.getContentType();
-                if (isTextContent(contentType)) {
-                    String charset = parseCharset(contentType);
-                    try {
-                        results.put("body", new String(responseBody, charset));
-                    } catch (Exception unsupportedCharset) {
-                        results.put("body", new String(responseBody, DEFAULT_CHARSET));
-                        results.put("charsetFallback", DEFAULT_CHARSET);
-                    }
-                    results.put("bodyType", "text");
-                } else {
-                    results.put("body", responseBody);
-                    results.put("bodyType", "binary");
-                    results.put("bodySize", responseBody.length);
-                }
-            }
+            putResponseBody(responseBody, conn.getContentType());
 
         } finally {
             if (conn != null) {
                 conn.disconnect();
+            }
+        }
+    }
+
+    private void configureConnection(HttpURLConnection conn, String method, Map requestHeaders) throws Exception {
+        int connectTimeout = getIntParam("connectTimeout", DEFAULT_CONNECT_TIMEOUT);
+        int readTimeout = getIntParam("readTimeout", DEFAULT_READ_TIMEOUT);
+        if (connectTimeout <= 0) connectTimeout = DEFAULT_CONNECT_TIMEOUT;
+        if (readTimeout <= 0) readTimeout = DEFAULT_READ_TIMEOUT;
+        if (connectTimeout > MAX_TIMEOUT) connectTimeout = MAX_TIMEOUT;
+        if (readTimeout > MAX_TIMEOUT) readTimeout = MAX_TIMEOUT;
+        boolean followRedirects = getBooleanParam("followRedirects", true);
+        // HTTPS 固定信任所有证书与主机名，兼容内网自签名证书。
+        if (conn instanceof HttpsURLConnection) {
+            HttpsURLConnection httpsConn = (HttpsURLConnection) conn;
+            httpsConn.setSSLSocketFactory(getTrustAllSslSocketFactory());
+            ClassLoader cl2 = Thread.currentThread().getContextClassLoader();
+            HostnameVerifier hnv = (HostnameVerifier) Proxy.newProxyInstance(cl2, new Class[]{HostnameVerifier.class}, this);
+            httpsConn.setHostnameVerifier(hnv);
+        }
+
+        conn.setRequestMethod(method);
+        conn.setConnectTimeout(connectTimeout);
+        conn.setReadTimeout(readTimeout);
+        conn.setInstanceFollowRedirects(followRedirects);
+
+        // 设置请求头
+        if (requestHeaders != null) {
+            for (Object entry : requestHeaders.entrySet()) {
+                Map.Entry e = (Map.Entry) entry;
+                String key = String.valueOf(e.getKey());
+                String value = String.valueOf(e.getValue());
+                conn.setRequestProperty(key, value);
+            }
+        }
+        applyBrowserRequestHeaders(conn, requestHeaders);
+    }
+
+    private void writeRequestBody(HttpURLConnection conn, String method, byte[] bodyBytes) throws Exception {
+        // 写入请求体
+        if (bodyBytes != null && bodyBytes.length > 0
+                && allowsRequestBody(method)) {
+            conn.setDoOutput(true);
+            if (conn.getRequestProperty("Content-Type") == null) {
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            }
+            OutputStream os = null;
+            try {
+                os = conn.getOutputStream();
+                os.write(bodyBytes);
+                os.flush();
+            } finally {
+                if (os != null) {
+                    try { os.close(); } catch (Exception ignored) {}
+                }
+            }
+        }
+    }
+
+    private HashMap collectResponseHeaders(HttpURLConnection conn) {
+        // 收集响应头
+        HashMap responseHeaders = new HashMap();
+        Map headerFields = conn.getHeaderFields();
+        if (headerFields != null) {
+            for (Object entry : headerFields.entrySet()) {
+                Map.Entry e = (Map.Entry) entry;
+                Object key = e.getKey();
+                if (key != null) {
+                    List values = (List) e.getValue();
+                    if (values != null && values.size() == 1) {
+                        responseHeaders.put(String.valueOf(key), String.valueOf(values.get(0)));
+                    } else if (values != null) {
+                        responseHeaders.put(String.valueOf(key), values);
+                    }
+                }
+            }
+        }
+        return responseHeaders;
+    }
+
+    private byte[] readResponseBody(HttpURLConnection conn, String method, int statusCode) throws Exception {
+        // 读取响应体
+        byte[] responseBody = null;
+        if (!"HEAD".equals(method)) {
+            InputStream is = null;
+            try {
+                is = (statusCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
+            } catch (Exception ignored) {
+                // 某些情况下 getInputStream 会抛异常
+                is = conn.getErrorStream();
+            }
+
+            if (is != null) {
+                try {
+                    responseBody = readStream(is);
+                } finally {
+                    try { is.close(); } catch (Exception ignored) {}
+                }
+            }
+        }
+        return responseBody;
+    }
+
+    private void putResponseBody(byte[] responseBody, String contentType) throws Exception {
+        if (responseBody != null) {
+            // 尝试判断是否为文本内容
+            if (isTextContent(contentType)) {
+                String charset = parseCharset(contentType);
+                try {
+                    results.put("body", new String(responseBody, charset));
+                } catch (Exception unsupportedCharset) {
+                    results.put("body", new String(responseBody, DEFAULT_CHARSET));
+                    results.put("charsetFallback", DEFAULT_CHARSET);
+                }
+                results.put("bodyType", "text");
+            } else {
+                results.put("body", responseBody);
+                results.put("bodyType", "binary");
+                results.put("bodySize", responseBody.length);
             }
         }
     }
@@ -420,7 +434,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             return ((Number) value).intValue();
         }
         try {
-            return Integer.parseInt(String.valueOf(value));
+            return Integer.parseInt(getStringParam(key).trim());
         } catch (NumberFormatException e) {
             return defaultValue;
         }
@@ -437,6 +451,6 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (value instanceof Number) {
             return ((Number) value).intValue() != 0;
         }
-        return Boolean.parseBoolean(String.valueOf(value));
+        return Boolean.parseBoolean(getStringParam(key).trim());
     }
 }

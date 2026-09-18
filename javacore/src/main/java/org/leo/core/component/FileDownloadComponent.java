@@ -6,7 +6,7 @@ import java.util.HashMap;
 
 /**
  * 文件下载组件
- * 提供高性能文件分块下载功能，兼容Java 1.5+
+ * 提供高性能文件分块下载功能，兼容Java 6+
  * 
  * @author LeoSpring
  * @version 2.2
@@ -41,21 +41,11 @@ public class FileDownloadComponent implements Runnable {
      * 主要执行方法
      */
     public void invoke() throws Exception {
-        fileDownload();
-    }
-
-    /**
-     * 高性能文件下载
-     */
-    private void fileDownload() throws Exception {
         String path = getStringParam("path");
         long size = getLongParam("size", 0L);
         long offset = getLongParam("offset", 0L);
 
-        if (path == null) {
-            throw new IllegalArgumentException("path 不能为空");
-        }
-        if (path.length() == 0) {
+        if (path == null || path.length() == 0) {
             throw new IllegalArgumentException("path 不能为空");
         }
         if (size <= 0L) {
@@ -89,13 +79,7 @@ public class FileDownloadComponent implements Runnable {
 
             long fileLength = inputFile.length();
             if (fileLength == 0 && offset == 0) {
-                results.put("code", 200);
-                results.put("length", Long.valueOf(0L));
-                results.put("data", new byte[0]);
-                results.put("bytesRead", Integer.valueOf(0));
-                results.put("offset", Long.valueOf(0L));
-                results.put("nextOffset", Long.valueOf(0L));
-                results.put("isComplete", Boolean.TRUE);
+                putChunkResult(new byte[0], fileLength, offset);
                 return;
             }
 
@@ -108,8 +92,7 @@ public class FileDownloadComponent implements Runnable {
                 return;
             }
             
-            int readSize = (int) Math.min(size, availableSize);
-            readSize = Math.min(readSize, MAX_CHUNK_SIZE); // 限制最大块大小
+            int readSize = (int) Math.min(Math.min(size, availableSize), (long) MAX_CHUNK_SIZE);
             
             byte[] buffer = new byte[readSize];
             int totalRead = readChunk(inputFile, buffer);
@@ -121,19 +104,23 @@ public class FileDownloadComponent implements Runnable {
                 buffer = actualData;
             }
             
-            // 设置响应状态
-            boolean isComplete = (offset + totalRead) >= fileLength;
-            results.put("code", isComplete ? 200 : 100);
-            results.put("length", fileLength);
-            results.put("data", buffer);
-            results.put("bytesRead", totalRead);
-            results.put("offset", offset);
-            results.put("nextOffset", offset + totalRead);
-            results.put("isComplete", isComplete);
+            putChunkResult(buffer, fileLength, offset);
         } finally {
             // 优化：确保资源正确关闭
             closeQuietly(inputFile);
         }
+    }
+
+    private void putChunkResult(byte[] data, long fileLength, long offset) {
+        long nextOffset = offset + data.length;
+        boolean complete = nextOffset >= fileLength;
+        results.put("code", complete ? 200 : 100);
+        results.put("length", fileLength);
+        results.put("data", data);
+        results.put("bytesRead", data.length);
+        results.put("offset", offset);
+        results.put("nextOffset", nextOffset);
+        results.put("isComplete", complete);
     }
     
     private int readChunk(RandomAccessFile file, byte[] buffer) throws Exception {

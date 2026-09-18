@@ -79,9 +79,38 @@ class FileSafetyTest {
         assertEquals(200, result.get("code"));
         if (posix) assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(destination)));
         try (ZipFile archive = new ZipFile(destination.toFile())) {
-            assertEquals(1, archive.size());
+            assertEquals(2, archive.size());
+            assertTrue(archive.getEntry("source/").isDirectory());
             assertNotNull(archive.getEntry("source/a.txt"));
         }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void compressionPreservesEmptyDirectoriesAndHonorsExclusions(boolean payload) throws Exception {
+        Path source = Files.createDirectory(directory.resolve("source"));
+        Path archivePath = directory.resolve("empty.zip");
+        assertEquals(200, invoke(component("CompressComponent", payload), Map.of(
+                "src", utf8(source), "des", utf8(archivePath))).get("code"));
+        try (ZipFile archive = new ZipFile(archivePath.toFile())) {
+            assertEquals(1, archive.size());
+            assertTrue(archive.getEntry("source/").isDirectory());
+        }
+        Files.createDirectories(source.resolve("nested/empty"));
+        Files.createDirectory(source.resolve("excluded"));
+        Files.writeString(source.resolve("one.txt"), "one");
+        assertEquals(200, invoke(component("CompressComponent", payload), Map.of(
+                "src", utf8(source), "des", utf8(archivePath), "exclude", "excluded")).get("code"));
+        try (ZipFile archive = new ZipFile(archivePath.toFile())) {
+            assertEquals(4, archive.size());
+            assertTrue(archive.getEntry("source/nested/empty/").isDirectory());
+            assertNull(archive.getEntry("source/excluded/"));
+            assertNotNull(archive.getEntry("source/one.txt"));
+        }
+        Path output = directory.resolve("unpacked");
+        assertEquals(200, invoke(component("DecompressComponent", payload), Map.of(
+                "src", archivePath.toString(), "des", output.toString(), "format", "zip")).get("code"));
+        assertTrue(Files.isDirectory(output.resolve("source/nested/empty")));
+        assertEquals("one", Files.readString(output.resolve("source/one.txt")));
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})

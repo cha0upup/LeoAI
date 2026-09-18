@@ -71,66 +71,84 @@ public class BasicInfoComponent implements Runnable {
      */
     public void invoke() {
         currentThreadClassLoader = Thread.currentThread().getContextClassLoader();
-        String action = params != null && params.get("action") != null
-                ? String.valueOf(params.get("action")) : "basic";
-        if ("processes".equals(action)) {
-            List<Map<String, Object>> processes = getProcessesInfo();
-            results.put("processes", processes);
-            results.put("total", Integer.valueOf(processes.size()));
-            results.put("source", processCollectionSource());
-            results.put("os", System.getProperty("os.name", ""));
-            results.put("code", Integer.valueOf(200));
-            return;
+        String action = stringParam("action", "basic");
+        if ("basic".equals(action)) {
+            collectBasicInfo();
+        } else if ("processes".equals(action)) {
+            collectProcesses();
+        } else if ("disks".equals(action)) {
+            putSystemList("disks", getFileSystemInfo(), "java-file-store");
+        } else if ("network".equals(action)) {
+            collectNetwork();
+        } else if ("resolveDns".equals(action)) {
+            resolveDns();
+        } else if ("killProcess".equals(action)) {
+            killProcess();
+        } else {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 action: " + action);
         }
-        if ("killProcess".equals(action)) {
-            int pid = params.get("pid") instanceof Number
-                    ? ((Number) params.get("pid")).intValue() : -1;
-            boolean force = Boolean.TRUE.equals(params.get("force"));
-            Boolean terminated = terminateWithProcessHandle(pid, force);
-            results.put("handled", Boolean.valueOf(terminated != null));
-            results.put("terminated", Boolean.valueOf(Boolean.TRUE.equals(terminated)));
-            results.put("pid", Integer.valueOf(pid));
-            results.put("code", Integer.valueOf(terminated == null ? 501 : 200));
-            return;
+    }
+
+    private String stringParam(String name, String fallback) {
+        Object value = params == null ? null : params.get(name);
+        if (value == null) return fallback;
+        if (value instanceof byte[]) {
+            try { return new String((byte[]) value, "UTF-8"); }
+            catch (java.io.UnsupportedEncodingException impossible) { return fallback; }
         }
-        if ("disks".equals(action)) {
-            List<Map<String, Object>> disks = getFileSystemInfo();
-            results.put("disks", disks);
-            results.put("total", Integer.valueOf(disks.size()));
-            results.put("source", "java-file-store");
-            results.put("os", System.getProperty("os.name", ""));
-            results.put("code", Integer.valueOf(200));
-            return;
-        }
-        if ("network".equals(action)) {
-            results.put("interfaces", getNetworkInfo());
-            results.put("os", System.getProperty("os.name", ""));
-            putFileIfPresent(results, "procArp", "/proc/net/arp", 64 * 1024);
-            putFileIfPresent(results, "procRoute", "/proc/net/route", 64 * 1024);
-            putFileIfPresent(results, "resolvConf", "/etc/resolv.conf", 64 * 1024);
-            putFileIfPresent(results, "hosts", isWindows()
-                    ? System.getenv("SystemRoot") + "\\System32\\drivers\\etc\\hosts"
-                    : "/etc/hosts", 128 * 1024);
-            results.put("code", Integer.valueOf(200));
-            return;
-        }
-        if ("resolveDns".equals(action)) {
-            String hostname = params.get("hostname") == null ? "" : String.valueOf(params.get("hostname"));
-            List<String> addresses = new ArrayList<String>();
-            if (hostname.length() > 0) {
-                try {
-                    InetAddress[] resolved = InetAddress.getAllByName(hostname);
-                    for (int i = 0; i < resolved.length; i++) addresses.add(resolved[i].getHostAddress());
-                } catch (Exception error) {
-                    results.put("msg", error.getMessage());
-                }
+        return String.valueOf(value);
+    }
+
+    private void putSystemList(String name, List<Map<String, Object>> values, String source) {
+        results.put(name, values);
+        results.put("total", Integer.valueOf(values.size()));
+        results.put("source", source);
+        results.put("os", System.getProperty("os.name", ""));
+        results.put("code", Integer.valueOf(200));
+    }
+
+    private void killProcess() {
+        int pid = params.get("pid") instanceof Number
+                ? ((Number) params.get("pid")).intValue() : -1;
+        boolean force = Boolean.TRUE.equals(params.get("force"));
+        Boolean terminated = terminateWithProcessHandle(pid, force);
+        results.put("handled", Boolean.valueOf(terminated != null));
+        results.put("terminated", Boolean.valueOf(Boolean.TRUE.equals(terminated)));
+        results.put("pid", Integer.valueOf(pid));
+        results.put("code", Integer.valueOf(terminated == null ? 501 : 200));
+    }
+
+    private void collectNetwork() {
+        results.put("interfaces", getNetworkInfo());
+        results.put("os", System.getProperty("os.name", ""));
+        putFileIfPresent(results, "procArp", "/proc/net/arp", 64 * 1024);
+        putFileIfPresent(results, "procRoute", "/proc/net/route", 64 * 1024);
+        putFileIfPresent(results, "resolvConf", "/etc/resolv.conf", 64 * 1024);
+        putFileIfPresent(results, "hosts", isWindows()
+                ? System.getenv("SystemRoot") + "\\System32\\drivers\\etc\\hosts"
+                : "/etc/hosts", 128 * 1024);
+        results.put("code", Integer.valueOf(200));
+    }
+
+    private void resolveDns() {
+        String hostname = stringParam("hostname", "");
+        List<String> addresses = new ArrayList<String>();
+        if (hostname.length() > 0) {
+            try {
+                InetAddress[] resolved = InetAddress.getAllByName(hostname);
+                for (int i = 0; i < resolved.length; i++) addresses.add(resolved[i].getHostAddress());
+            } catch (Exception error) {
+                results.put("msg", error.getMessage());
             }
-            results.put("hostname", hostname);
-            results.put("addresses", addresses);
-            results.put("code", Integer.valueOf(hostname.length() == 0 ? 400
-                    : addresses.isEmpty() ? 404 : 200));
-            return;
         }
+        results.put("hostname", hostname);
+        results.put("addresses", addresses);
+        results.put("code", Integer.valueOf(hostname.length() == 0 ? 400
+                : addresses.isEmpty() ? 404 : 200));
+    }
+
+    private void collectBasicInfo() {
         Map<String, Object> basicInfo = new HashMap<String, Object>();
         basicInfo.put("collectTime", Long.valueOf(System.currentTimeMillis()));
         basicInfo.put("HardwareInfo", getHardwareInfo());
@@ -479,23 +497,19 @@ public class BasicInfoComponent implements Runnable {
         return processInfo;
     }
 
-    /** ProcessHandle → JNA → /proc，依次选择当前运行时可用路径。 */
-    private List<Map<String, Object>> getProcessesInfo() {
+    /** ProcessHandle → JNA → /proc，响应来源与实际使用的结果保持一致。 */
+    private void collectProcesses() {
+        String source = "ProcessHandle";
         List<Map<String, Object>> processes = getProcessHandleProcesses();
-        if (!processes.isEmpty()) return processes;
-        processes = getJnaProcesses();
-        if (!processes.isEmpty()) return processes;
-        return getProcProcesses();
-    }
-
-    private String processCollectionSource() {
-        try {
-            Class.forName("java.lang.ProcessHandle");
-            return "ProcessHandle";
-        } catch (Throwable ignored) {
-            if (isWindows()) return "JNA";
-            return "/proc";
+        if (processes.isEmpty()) {
+            source = "JNA";
+            processes = getJnaProcesses();
         }
+        if (processes.isEmpty()) {
+            source = "/proc";
+            processes = getProcProcesses();
+        }
+        putSystemList("processes", processes, source);
     }
 
     private List<Map<String, Object>> getProcessHandleProcesses() {
