@@ -170,6 +170,20 @@ class NetworkProbeAnalysisServiceTest {
     }
 
     @Test
+    void nacosFingerprintDoesNotTreatErrorPageEchoAsAHit() throws Exception {
+        Map<String, Object> nacosMatch = Map.of("all", List.of(
+                Map.of("field", "status", "operator", "equals", "value", 200),
+                Map.of("field", "body", "operator", "contains", "value", "nacos")));
+
+        assertEquals("NOT_MATCHED", evaluateFingerprint(nacosMatch,
+                Map.of("evidence", Map.of("statusCode", 404,
+                        "body", "请求的资源[/nacos/]不可用"))).get("status"));
+        assertEquals("MATCHED", evaluateFingerprint(nacosMatch,
+                Map.of("evidence", Map.of("statusCode", 200,
+                        "body", "<title>Nacos</title>"))).get("status"));
+    }
+
+    @Test
     void validatesRequestsBeforeCreatingAnyProbes() {
         FingerprintManageService library = new FingerprintManageService();
         assertThrows(IllegalArgumentException.class, () -> library.validateRule(Map.of(

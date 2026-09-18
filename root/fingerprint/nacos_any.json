@@ -1,0 +1,35 @@
+{
+  "fingerprintId": "nacos_any",
+  "name": "nacos",
+  "protocol": "http",
+  "tags": ["middleware", "java", "alibaba", "microservice"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 /nacos/ 路径特征识别阿里巴巴 Nacos 服务发现与配置管理平台。"
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/nacos/",
+        "timeout": 4000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 65536
+      }
+    ],
+    "match": {
+      "any": [
+        {"all": [
+          {"field": "status", "operator": "equals", "value": 200},
+          {"field": "body", "operator": "contains", "value": "nacos"}
+        ]},
+        {"all": [
+          {"field": "status", "operator": "equals", "value": 200},
+          {"field": "body", "operator": "contains", "value": "console"},
+          {"field": "body", "operator": "contains", "value": "alibaba"}
+        ]}
+      ]
+    }
+  }
+}
