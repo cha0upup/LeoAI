@@ -30,13 +30,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import static org.leo.core.component.ComponentTestSupport.code;
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
+import static org.leo.core.component.ComponentTestSupport.params;
+
 class NetworkProbeComponentTest {
 
     @AfterEach
     void clearStaticState() throws Exception {
         Map<Object, Object> tasks = state("TASKS");
         for (Object id : tasks.keySet()) {
-            invoke(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", id));
+            invokeComponent(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", id));
         }
         tasks.clear();
     }
@@ -55,7 +59,7 @@ class NetworkProbeComponentTest {
                 return null;
             });
             Map<String, Object> target = target(server.getLocalPort(), "tcp");
-            Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+            Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "startTask", "plan", plan(Collections.singletonList(target),
                             List.of("tcp-connect", "tcp-exchange"))));
             assertEquals(200, code(started));
@@ -69,21 +73,21 @@ class NetworkProbeComponentTest {
                     .filter(value -> "tcp-exchange".equals(value.get("stage"))).findFirst().orElseThrow();
             assertEquals("SSH-2.0-Leo", ((Map<?, ?>) exchange.get("evidence")).get("banner"));
             String taskId = String.valueOf(started.get("taskId"));
-            invoke(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", taskId));
+            invokeComponent(new NetworkProbeComponent(), params("methodName", "stopTask", "taskId", taskId));
             Map<?, ?> stopped = awaitTask(taskId, 1000L);
             assertEquals("COMPLETED", stopped.get("outcome"));
             assertEquals(snapshot.get("finishedAt"), stopped.get("finishedAt"));
-            invoke(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", 1L));
+            invokeComponent(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", 1L));
             Map<?, ?> remaining = awaitTask(taskId, 1000L); // cursor zero may lag the acknowledged offset
             assertEquals(1, ((List<?>) remaining.get("observations")).size());
             assertEquals(2L, remaining.get("nextCursor"));
-            invoke(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", Long.MAX_VALUE));
+            invokeComponent(new NetworkProbeComponent(), params("methodName", "ackTask", "taskId", taskId, "cursor", Long.MAX_VALUE));
             Map<?, ?> drained = awaitTask(taskId, 1000L);
             assertTrue(((List<?>) drained.get("observations")).isEmpty());
             assertEquals(2L, drained.get("nextCursor"));
-            assertEquals(200, code(invoke(new NetworkProbeComponent(), params(
+            assertEquals(200, code(invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "releaseTask", "taskId", taskId))));
-            assertEquals(404, code(invoke(new NetworkProbeComponent(), params(
+            assertEquals(404, code(invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "queryTask", "taskId", taskId,
                     "cursor", 0L, "maxItems", 128, "maxBytes", 524288,
                     "includeEvidence", true))));
@@ -124,7 +128,7 @@ class NetworkProbeComponentTest {
             ruleTarget.put("headers", Map.of("X-Test", "unused"));
             ruleTarget.put("httpRequest", Map.of("method", "post", "path", "check",
                     "headers", Map.of("X-Test", "rule"), "charset", "ISO-8859-1", "body", " café\r\n "));
-            Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+            Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "startTask", "plan", plan(List.of(summaryTarget, ruleTarget), List.of("http-head"))));
             Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
             assertEquals(List.of(), snapshot.get("errors"));
@@ -170,7 +174,7 @@ class NetworkProbeComponentTest {
                 public void connectFailed(URI uri, SocketAddress address, IOException failure) {}
             });
 
-            Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+            Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "startTask", "plan", plan(
                             Collections.singletonList(target(target.getLocalPort(), "tcp")),
                             Collections.singletonList("tcp-connect"))));
@@ -188,7 +192,7 @@ class NetworkProbeComponentTest {
 
     @Test
     void keepsProbeErrorsAsPartialResults() throws Exception {
-        Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+        Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                 "methodName", "startTask", "plan", plan(
                         Collections.singletonList(target(80, "tcp")),
                         Collections.singletonList("http-request"))));
@@ -213,7 +217,7 @@ class NetworkProbeComponentTest {
             });
             Map<String, Object> target = target(server.getLocalPort(), "tcp");
             target.put("request", "PING\r\n");
-            Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+            Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "startTask", "plan", plan(List.of(target), List.of("tcp-exchange"))));
             Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 5000L);
             assertEquals("PING\r\n", received.get(2, TimeUnit.SECONDS));
@@ -226,7 +230,7 @@ class NetworkProbeComponentTest {
 
     @Test
     void emptyPlanCompletesWithoutSchedulingWorkers() throws Exception {
-        Map<String, Object> started = invoke(new NetworkProbeComponent(), params(
+        Map<String, Object> started = invokeComponent(new NetworkProbeComponent(), params(
                 "methodName", "startTask", "plan", plan(List.of(), List.of("tcp-connect"))));
         Map<?, ?> snapshot = awaitTask(String.valueOf(started.get("taskId")), 1000L);
         assertEquals("COMPLETED", snapshot.get("outcome"));
@@ -242,19 +246,6 @@ class NetworkProbeComponentTest {
         assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
     }
 
-    private Map<String, Object> invoke(NetworkProbeComponent component, HashMap<String, Object> params) throws Exception {
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "params", params); setField(component, "results", results);
-        component.getClass().getDeclaredMethod("invoke").invoke(component);
-        return results;
-    }
-
-    private HashMap<String, Object> params(Object... values) {
-        HashMap<String, Object> result = new HashMap<>();
-        for (int i = 0; i < values.length; i += 2) result.put((String) values[i], values[i + 1]);
-        return result;
-    }
-
     private Map<String, Object> plan(List<Map<String, Object>> targets, List<String> stages) {
         return new HashMap<>(Map.of("targets", targets, "stages", stages,
                 "limits", new HashMap<>(Map.of("threads", 1, "timeout", 1000, "maxReadBytes", 1024))));
@@ -264,13 +255,11 @@ class NetworkProbeComponentTest {
         return new HashMap<>(Map.of("host", "127.0.0.1", "port", port, "protocol", protocol));
     }
 
-    private int code(Map<String, Object> response) { return ((Number) response.get("code")).intValue(); }
-
     private Map<?, ?> awaitTask(String taskId, long timeoutMillis) throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         Map<?, ?> snapshot = Collections.emptyMap();
         while (System.currentTimeMillis() < deadline) {
-            Map<String, Object> response = invoke(new NetworkProbeComponent(), params(
+            Map<String, Object> response = invokeComponent(new NetworkProbeComponent(), params(
                     "methodName", "queryTask", "taskId", taskId,
                     "cursor", 0L, "maxItems", 128, "maxBytes", 524288,
                     "includeEvidence", true));
@@ -285,10 +274,6 @@ class NetworkProbeComponentTest {
     private Map<Object, Object> state(String name) throws Exception {
         Field field = NetworkProbeComponent.class.getDeclaredField(name); field.setAccessible(true);
         return (Map<Object, Object>) field.get(null);
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name); field.setAccessible(true); field.set(target, value);
     }
 
     private static final class BytecodeLoader extends ClassLoader {

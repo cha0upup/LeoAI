@@ -20,11 +20,12 @@ import static org.mockito.Mockito.when;
 
 class PuppetDatabaseConnectionServiceTest {
 
+    private final PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+    private final DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
+    private final PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
+
     @Test
     void encryptsPasswordAtMapperBoundaryAndKeepsCallerValuePlaintext() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection("plain-secret");
         doAnswer(invocation -> {
             PuppetDatabaseConnection persisted = invocation.getArgument(0);
@@ -39,9 +40,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void doesNotEncryptAnExistingCiphertextAgainAtMapperBoundary() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         String encrypted = crypto.encrypt("plain-secret");
         PuppetDatabaseConnection connection = connection(encrypted);
         connection.setConnectionId("connection-1");
@@ -58,13 +56,10 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void keepsStoredPasswordEncryptedUntilRuntimeSpecResolution() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
         PuppetDatabaseConnection stored = connection(crypto.encrypt("plain-secret"));
         stored.setConnectionId("connection-1");
         when(mapper.selectById("connection-1")).thenReturn(stored);
 
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection result = service.findById("connection-1");
 
         assertTrue(crypto.isEncrypted(result.getPassword()));
@@ -74,9 +69,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void persistsAndRestoresRuntimeNeutralConnectionSpec() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection("plain-secret");
         DatabaseConnectionSpec spec = DatabaseConnectionSpec.fromMap(Map.of(
                 "dialect", "mysql", "connectionMode", "custom", "variant", "default",
@@ -103,9 +95,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void preservesStoredPasswordWhenAnUpdateOmitsTheSecret() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         String encrypted = crypto.encrypt("existing-secret");
         PuppetDatabaseConnection connection = connection(encrypted);
         connection.setConnectionId("connection-1");
@@ -123,9 +112,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void removesNestedAndInlineSecretsFromConnectionViews() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection(crypto.encrypt("plain-secret"));
         connection.setConnectionSpec(new String(org.leo.core.util.json.PortableJsonCodec.encode(Map.of(
                 "dialect", "mysql", "connectionMode", "custom", "variant", "default",
@@ -146,9 +132,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void restoresMaskedAndOmittedSecretsWhenEditingAProfile() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection(crypto.encrypt("plain-secret"));
         connection.setConnectionSpec(new String(org.leo.core.util.json.PortableJsonCodec.encode(Map.of(
                 "dialect", "generic", "connectionMode", "custom",
@@ -174,9 +157,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void recordsConnectionTestResultWithBoundedMessage() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         when(mapper.updateTestStatus(any(), any(), any())).thenReturn(1);
 
         String message = "x".repeat(1200);
@@ -187,9 +167,6 @@ class PuppetDatabaseConnectionServiceTest {
 
     @Test
     void updatesEnabledStateAndRejectsInactiveProfilesAtExecutionBoundary() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
-        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         when(mapper.updateStatusByPuppet("connection-1", "puppet-1", 0)).thenReturn(1);
         PuppetDatabaseConnection connection = connection("plain-secret");
         connection.setConnectionId("connection-1");

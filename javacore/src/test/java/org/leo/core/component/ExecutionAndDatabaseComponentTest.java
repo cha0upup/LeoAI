@@ -3,10 +3,8 @@ package org.leo.core.component;
 import javassist.ClassPool;
 import javassist.CtClass;
 import org.junit.jupiter.api.Test;
-import org.leo.core.util.javassist.CloneWithJavassist;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,6 +16,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
+import static org.leo.core.component.ComponentTestSupport.code;
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
+import static org.leo.core.component.ComponentTestSupport.params;
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class ExecutionAndDatabaseComponentTest {
 
@@ -31,7 +35,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseRequiresDriverAndKeepsStableErrorShape() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "jdbcUrl", "jdbc:sqlite::memory:", "sql", "SELECT 1"));
 
         assertEquals(400, code(response));
@@ -44,7 +48,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseAcceptsUtf8ByteParameters() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "driverClass", utf8("org.sqlite.JDBC"),
                 "jdbcUrl", utf8("jdbc:sqlite::memory:"),
                 "sql", utf8("SELECT 1 AS value")));
@@ -57,7 +61,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseBindsParametersWithoutConcatenatingSql() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "driverClass", "org.sqlite.JDBC",
                 "jdbcUrl", "jdbc:sqlite::memory:",
                 "sql", "SELECT ? AS value",
@@ -70,7 +74,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseLimitsRowsAndKeepsDuplicateColumnsAddressable() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "driverClass", "org.sqlite.JDBC",
                 "jdbcUrl", "jdbc:sqlite::memory:",
                 "sql", "WITH RECURSIVE numbers(value) AS (SELECT 1 UNION ALL "
@@ -92,7 +96,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseCapsOversizedCellsAndReportsTheBoundary() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "driverClass", "org.sqlite.JDBC",
                 "jdbcUrl", "jdbc:sqlite::memory:",
                 "sql", "SELECT printf('%0300d', 0) AS payload",
@@ -107,7 +111,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseReturnsStructuredDriverErrorsWithoutThrowing() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "driverClass", "missing.jdbc.Driver",
                 "jdbcUrl", "jdbc:missing:value",
                 "sql", "SELECT 1"));
@@ -120,7 +124,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void databaseReportsAvailableRuntimeDriversBeforeConnecting() throws Exception {
-        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+        Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
                 "operation", "capabilities",
                 "requestedDriver", "org.sqlite.JDBC"));
 
@@ -135,7 +139,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void simpleCommandAcceptsByteCommandAndReturnsLifecycleFlags() throws Exception {
-        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+        Map<String, Object> response = invokeComponent(new ExecCommandSimpleComponent(), params(
                 "cmd", utf8("echo simple-ok"), "timeout", "2"));
 
         assertEquals(200, code(response));
@@ -149,7 +153,7 @@ class ExecutionAndDatabaseComponentTest {
     void simpleCommandTimeoutTerminatesPromptly() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
         long startedAt = System.nanoTime();
-        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+        Map<String, Object> response = invokeComponent(new ExecCommandSimpleComponent(), params(
                 "cmd", "sleep 3", "timeout", 1));
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
 
@@ -162,7 +166,7 @@ class ExecutionAndDatabaseComponentTest {
     @Test
     void simpleCommandReportsOutputTruncation() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
-        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+        Map<String, Object> response = invokeComponent(new ExecCommandSimpleComponent(), params(
                 "cmd", "head -c 4198400 /dev/zero", "timeout", 5));
 
         assertEquals(200, code(response));
@@ -173,7 +177,7 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void scriptAcceptsByteParametersBeforeEngineLookup() throws Exception {
-        Map<String, Object> response = invoke(new ExecScriptComponent(), params(
+        Map<String, Object> response = invokeComponent(new ExecScriptComponent(), params(
                 "language", utf8("missing-engine-for-test"), "script", utf8("1 + 1")));
 
         assertEquals(500, code(response));
@@ -182,11 +186,11 @@ class ExecutionAndDatabaseComponentTest {
 
     @Test
     void pluginRejectsInvalidParameterTypesWithClientError() throws Exception {
-        Map<String, Object> invalidBytecode = invoke(new PluginComponent(), params(
+        Map<String, Object> invalidBytecode = invokeComponent(new PluginComponent(), params(
                 "pluginBytecode", "not-bytes"));
         assertEquals(400, code(invalidBytecode));
 
-        Map<String, Object> invalidParams = invoke(new PluginComponent(), params(
+        Map<String, Object> invalidParams = invokeComponent(new PluginComponent(), params(
                 "pluginBytecode", new byte[]{1}, "pluginParam", "not-a-map"));
         assertEquals(400, code(invalidParams));
     }
@@ -204,27 +208,6 @@ class ExecutionAndDatabaseComponentTest {
 
         assertThrows(UnsupportedClassVersionError.class, component::invoke);
         assertEquals(before, pluginTempDirectories());
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> invoke(Object component, HashMap<String, Object> params) throws Exception {
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "params", params);
-        setField(component, "results", results);
-        component.getClass().getDeclaredMethod("invoke").invoke(component);
-        return results;
-    }
-
-    private HashMap<String, Object> params(Object... values) {
-        HashMap<String, Object> params = new HashMap<>();
-        for (int index = 0; index < values.length; index += 2) {
-            params.put((String) values[index], values[index + 1]);
-        }
-        return params;
-    }
-
-    private int code(Map<String, Object> response) {
-        return ((Number) response.get("code")).intValue();
     }
 
     private byte[] utf8(String value) {
@@ -254,25 +237,5 @@ class ExecutionAndDatabaseComponentTest {
             }
         }
         return paths;
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    private void assertTransformedRunnable(String componentId) throws Exception {
-        String className = "org.leo.generated." + componentId + System.nanoTime();
-        byte[] bytecode = CloneWithJavassist.cloneClass(componentId, className);
-        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
-        assertTrue(Runnable.class.isAssignableFrom(transformed));
-        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
-    }
-
-    private static final class BytecodeLoader extends ClassLoader {
-        private Class<?> define(String name, byte[] bytecode) {
-            return defineClass(name, bytecode, 0, bytecode.length);
-        }
     }
 }

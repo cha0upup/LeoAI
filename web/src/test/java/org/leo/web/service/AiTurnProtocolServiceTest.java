@@ -17,13 +17,14 @@ import static org.mockito.Mockito.when;
 
 class AiTurnProtocolServiceTest {
 
+    private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiTurnProtocolService service = new AiTurnProtocolService(store);
+
     @Test
     void reusesIdempotencyKeyOnlyForTheSameCommand() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
         AiTurnRecord existing = existingTurn();
         when(store.findProtocolTurnByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
-        AiTurnProtocolService service = new AiTurnProtocolService(store);
 
         AiTurnProtocolService.Reservation reservation = service.begin(
                 "thread-1", "client-1", "platform",
@@ -34,11 +35,9 @@ class AiTurnProtocolServiceTest {
 
     @Test
     void rejectsIdempotencyKeyReusedForDifferentCommand() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
         AiTurnRecord existing = existingTurn();
         when(store.findProtocolTurnByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
-        AiTurnProtocolService service = new AiTurnProtocolService(store);
 
         assertThrows(IllegalStateException.class, () -> service.begin(
                 "thread-1", "client-1", "platform",
@@ -48,8 +47,6 @@ class AiTurnProtocolServiceTest {
 
     @Test
     void resolvesTheAuthoritativeActiveTurnWhenClientHasNoTurnId() {
-        AiConversationStoreService store =
-                mock(AiConversationStoreService.class);
         AiTurnRecord active = existingTurn();
         active.setDispatchStatus("running");
         when(store.listInProgressProtocolTurns("thread-1"))
@@ -60,8 +57,6 @@ class AiTurnProtocolServiceTest {
         when(store.findProtocolTurn("turn-1")).thenReturn(active);
         when(store.requestProtocolTurnInterrupt("thread-1", "turn-1"))
                 .thenReturn(cancelling);
-        AiTurnProtocolService service =
-                new AiTurnProtocolService(store);
 
         AiTurnProtocolService.TurnSnapshot result =
                 service.requestInterrupt("thread-1", null);

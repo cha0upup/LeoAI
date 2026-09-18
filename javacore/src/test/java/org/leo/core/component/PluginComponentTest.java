@@ -6,10 +6,11 @@ import javassist.CtField;
 import javassist.CtNewMethod;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class PluginComponentTest {
 
@@ -49,11 +50,5 @@ class PluginComponentTest {
 
         assertEquals(200, results.get("code"));
         assertEquals("jdk17-ok", results.get("result"));
-    }
-
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
     }
 }

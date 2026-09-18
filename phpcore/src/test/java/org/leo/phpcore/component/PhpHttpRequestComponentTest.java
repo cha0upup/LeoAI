@@ -20,12 +20,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.phpcore.PhpTestSupport.phpAvailable;
+import static org.leo.phpcore.PhpTestSupport.runJson;
 
 class PhpHttpRequestComponentTest {
 
@@ -165,22 +167,6 @@ class PhpHttpRequestComponentTest {
                 + "$component=require $argv[1];"
                 + "$params=json_decode(base64_decode($argv[2]),true);"
                 + "echo json_encode(call_user_func($component['handle'],'send',$params));";
-        Process process = new ProcessBuilder("php", "-r", script, component.toString(), encoded)
-                .redirectErrorStream(true)
-                .start();
-        assertTrue(process.waitFor(15, TimeUnit.SECONDS), "PHP HTTP request timed out");
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertEquals(0, process.exitValue(), output);
-        return PortableJsonCodec.decode(output.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private boolean phpAvailable() {
-        try {
-            Process process = new ProcessBuilder("php", "-v").redirectErrorStream(true).start();
-            return process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            return false;
-        }
+        return runJson(15, "php", "-r", script, component.toString(), encoded);
     }
 }

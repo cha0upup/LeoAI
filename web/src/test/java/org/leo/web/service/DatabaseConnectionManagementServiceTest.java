@@ -26,13 +26,13 @@ import static org.mockito.Mockito.when;
 
 class DatabaseConnectionManagementServiceTest {
 
+    private final PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+    private final DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
+    private final PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
+    private final DatabaseConnectionManagementService management = management(persistence);
+
     @Test
     void savesPuppetOwnedProfilesWithoutVisibilityScope() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-        PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
-        DatabaseConnectionManagementService management =
-                management(persistence);
         doAnswer(invocation -> {
             PuppetDatabaseConnection saved = invocation.getArgument(0);
             assertEquals("puppet-1", saved.getPuppetId());
@@ -53,11 +53,6 @@ class DatabaseConnectionManagementServiceTest {
 
     @Test
     void anyUserConnectedToTheSamePuppetCanUpdateAndReuseStoredPassword() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-        PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
-        DatabaseConnectionManagementService management =
-                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
         when(mapper.update(any(PuppetDatabaseConnection.class))).thenReturn(1);
@@ -71,11 +66,6 @@ class DatabaseConnectionManagementServiceTest {
 
     @Test
     void managementOperationsRejectConnectionsOwnedByAnotherPuppet() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-        PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
-        DatabaseConnectionManagementService management =
-                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
 
@@ -90,11 +80,6 @@ class DatabaseConnectionManagementServiceTest {
 
     @Test
     void mutationsRemainScopedToTheResolvedPuppetAtTheMapperBoundary() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
-        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-        PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
-        DatabaseConnectionManagementService management =
-                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
         when(mapper.updateStatusByPuppet("connection-1", "puppet-1", 0)).thenReturn(1);

@@ -3,7 +3,6 @@ package org.leo.core.component;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.lang.reflect.Field;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +14,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class FileDownloadComponentTest {
 
@@ -109,12 +110,6 @@ class FileDownloadComponentTest {
         setField(component, "results", results);
         component.getClass().getMethod("invoke").invoke(component);
         return results;
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
     }
 
     private static class BytecodeLoader extends ClassLoader {

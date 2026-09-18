@@ -8,9 +8,7 @@ import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.phpcore.database.PhpDatabaseConnectionAdapter;
 
-import java.io.IOException;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,12 +17,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.phpcore.PhpTestSupport.code;
+import static org.leo.phpcore.PhpTestSupport.commandSucceeds;
+import static org.leo.phpcore.PhpTestSupport.phpAvailable;
+import static org.leo.phpcore.PhpTestSupport.runJson;
 
 class PhpDatabaseComponentTest {
 
@@ -173,12 +175,7 @@ class PhpDatabaseComponentTest {
                 + "$component=require $argv[1];"
                 + "$params=json_decode(base64_decode($argv[2]),true);"
                 + "echo json_encode(call_user_func($component['handle'],$argv[3],$params));";
-        Process process = new ProcessBuilder("php", "-r", script,
-                component.toString(), encoded, action).redirectErrorStream(true).start();
-        assertTrue(process.waitFor(15, TimeUnit.SECONDS), "PHP database operation timed out");
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertEquals(0, process.exitValue(), output);
-        return PortableJsonCodec.decode(output.getBytes(StandardCharsets.UTF_8));
+        return runJson(15, "php", "-r", script, component.toString(), encoded, action);
     }
 
     private void assertSuccess(Map<String, Object> response) {
@@ -190,25 +187,7 @@ class PhpDatabaseComponentTest {
         assertEquals("pdo", ((Map<?, ?>) response.get("runtimeMetadata")).get("provider"));
     }
 
-    private int code(Map<String, Object> response) {
-        return ((Number) response.get("code")).intValue();
-    }
-
-    private boolean phpAvailable() {
-        return commandSucceeds("php", "-v");
-    }
-
     private boolean pdoSqliteAvailable() {
         return commandSucceeds("php", "-r", "exit(in_array('sqlite',PDO::getAvailableDrivers(),true)?0:1);");
-    }
-
-    private boolean commandSucceeds(String... command) {
-        try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            return process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0;
-        } catch (IOException | InterruptedException error) {
-            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
-            return false;
-        }
     }
 }

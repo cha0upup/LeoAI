@@ -28,6 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import static org.leo.phpcore.PhpTestSupport.phpAvailable;
+
 class PhpScriptGeneratorProviderTest {
     private static final String PAYLOAD_KEY = "php-generator-test-key";
 
@@ -344,14 +346,6 @@ class PhpScriptGeneratorProviderTest {
         disguise.setPhpTrafficEncodeBody("return base64_encode($payload);");
         disguise.setPhpTrafficDecodeBody("$decoded = base64_decode($body, true); if ($decoded === false) throw new InvalidArgumentException('bad traffic'); return $decoded;");
         return disguise;
-    }
-
-    private boolean phpAvailable() {
-        try {
-            return new ProcessBuilder("php", "-v").redirectErrorStream(true).start().waitFor() == 0;
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 
     private String unpack(String wrapper) throws Exception {

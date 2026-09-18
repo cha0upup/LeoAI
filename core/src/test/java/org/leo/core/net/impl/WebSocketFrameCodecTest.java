@@ -5,12 +5,12 @@ import org.leo.core.net.TransportException;
 import org.leo.core.net.TransportLimits;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class WebSocketFrameCodecTest {
 
@@ -37,7 +37,7 @@ class WebSocketFrameCodecTest {
                 assertNull(completed);
             }
         }
-        assertTrue(Arrays.equals(message, completed));
+        assertArrayEquals(message, completed);
     }
 
     @Test
@@ -59,12 +59,9 @@ class WebSocketFrameCodecTest {
         invalid.putInt(TransportLimits.MAX_MESSAGE_BYTES + 1);
         invalid.flip();
 
-        try {
-            WebSocketFrameCodec.decode(invalid);
-            fail("oversized frame should fail");
-        } catch (TransportException expected) {
-            assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, expected.getReason());
-        }
+        TransportException error = assertThrows(TransportException.class,
+                () -> WebSocketFrameCodec.decode(invalid));
+        assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, error.getReason());
     }
 
     @Test
@@ -72,11 +69,8 @@ class WebSocketFrameCodecTest {
         byte[] message = new byte[TransportLimits.MAX_FRAGMENT_PAYLOAD_BYTES + 1];
         WebSocketFrameCodec.Frame second = WebSocketFrameCodec.decode(
                 WebSocketFrameCodec.encode(9L, message, 1));
-        try {
-            new WebSocketFrameCodec.Accumulator(second);
-            fail("message must start at fragment zero");
-        } catch (TransportException expected) {
-            assertEquals(TransportException.Reason.FRAME_INVALID, expected.getReason());
-        }
+        TransportException error = assertThrows(TransportException.class,
+                () -> new WebSocketFrameCodec.Accumulator(second));
+        assertEquals(TransportException.Reason.FRAME_INVALID, error.getReason());
     }
 }

@@ -7,7 +7,6 @@ import jakarta.servlet.Filter;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.entity.Disguise;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.jmg.core.LeoCore;
 import org.leo.jmg.generation.GenerationRequest;
@@ -20,6 +19,9 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class GeneratedBytecodeCompatibilityTest {
 
@@ -228,17 +230,7 @@ class GeneratedBytecodeCompatibilityTest {
 
     private static ShellGeneratorConfig createConfig(ServletNamespace servletNamespace,
                                                      String serverType) {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}"
-        );
-
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}"
-        );
-
-        return ShellGeneratorConfig.builder(request, response)
+        return ShellGeneratorConfig.builder(requestDisguise(), responseDisguise())
                 .payloadKey("compatibility-test-key")
                 .coreClassName("org.example.Java6Core")
                 .shellClassName("org.example.Java6Filter")

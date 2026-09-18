@@ -1,9 +1,7 @@
 package org.leo.core.component;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.util.javassist.CloneWithJavassist;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,6 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+
+import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
+import static org.leo.core.component.ComponentTestSupport.code;
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
+import static org.leo.core.component.ComponentTestSupport.params;
 
 class ContainerManageComponentTest {
 
@@ -49,11 +52,11 @@ class ContainerManageComponentTest {
 
     @Test
     void unknownOperationsReturnBadRequest() throws Exception {
-        assertEquals(400, code(invoke(new SpringFrameworkManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new TomcatContainerManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new WeblogicContainerManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new GenericServletContainerManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new JavaWebFrameworkManageComponent(), "unknown")));
+        assertEquals(400, code(invokeComponent(new SpringFrameworkManageComponent(), params("methodName", "unknown"))));
+        assertEquals(400, code(invokeComponent(new TomcatContainerManageComponent(), params("methodName", "unknown"))));
+        assertEquals(400, code(invokeComponent(new WeblogicContainerManageComponent(), params("methodName", "unknown"))));
+        assertEquals(400, code(invokeComponent(new GenericServletContainerManageComponent(), params("methodName", "unknown"))));
+        assertEquals(400, code(invokeComponent(new JavaWebFrameworkManageComponent(), params("methodName", "unknown"))));
     }
 
     @Test
@@ -98,7 +101,7 @@ class ContainerManageComponentTest {
 
     @Test
     void genericServletAdapterOnlyExposesInspection() throws Exception {
-        Map<String, Object> response = invoke(new GenericServletContainerManageComponent(), "removeFilter");
+        Map<String, Object> response = invokeComponent(new GenericServletContainerManageComponent(), params("methodName", "removeFilter"));
         assertEquals(400, code(response));
     }
 
@@ -146,40 +149,12 @@ class ContainerManageComponentTest {
 
     @Test
     void frameworkMutationUsesV2OperationShape() throws Exception {
-        Map<String, Object> response = invoke(new JavaWebFrameworkManageComponent(), "removeController");
+        Map<String, Object> response = invokeComponent(new JavaWebFrameworkManageComponent(), params("methodName", "removeController"));
         assertEquals("NOT_FOUND", response.get("status"));
         assertEquals(0, response.get("matched"));
         assertEquals(0, response.get("changed"));
         assertEquals(Boolean.TRUE, response.get("verified"));
         assertEquals(Set.of("status", "matched", "changed", "verified", "code"), response.keySet());
-    }
-
-    private Map<String, Object> invoke(Object component, Object methodName) throws Exception {
-        HashMap<String, Object> params = new HashMap<>();
-        params.put("methodName", methodName);
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "params", params);
-        setField(component, "results", results);
-        component.getClass().getDeclaredMethod("invoke").invoke(component);
-        return results;
-    }
-
-    private int code(Map<String, Object> response) {
-        return ((Number) response.get("code")).intValue();
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    private void assertTransformedRunnable(String componentId) throws Exception {
-        String className = "org.leo.generated." + componentId + System.nanoTime();
-        byte[] bytecode = CloneWithJavassist.cloneClass(componentId, className);
-        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
-        assertTrue(Runnable.class.isAssignableFrom(transformed));
-        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
     }
 
     private static class ParentHolder {
@@ -303,12 +278,6 @@ class ContainerManageComponentTest {
 
         public Collection<String> getMappings() {
             return mappings;
-        }
-    }
-
-    private static final class BytecodeLoader extends ClassLoader {
-        private Class<?> define(String name, byte[] bytecode) {
-            return defineClass(name, bytecode, 0, bytecode.length);
         }
     }
 }

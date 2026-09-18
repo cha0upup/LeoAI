@@ -6,7 +6,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.component.runtime.ComponentArtifact;
 import org.leo.core.util.json.PortableJsonCodec;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.phpcore.PhpTestSupport.phpAvailable;
 
 class PhpComponentVariantBuilderTest {
 
@@ -116,15 +117,5 @@ class PhpComponentVariantBuilderTest {
         assertEquals(0, process.exitValue(), new String(output, StandardCharsets.UTF_8));
         Map<String, Object> response = PortableJsonCodec.decode(output);
         assertEquals("unsupported process action", response.get("msg"));
-    }
-
-    private static boolean phpAvailable() {
-        try {
-            Process process = new ProcessBuilder("php", "-v").redirectErrorStream(true).start();
-            return process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            return false;
-        }
     }
 }

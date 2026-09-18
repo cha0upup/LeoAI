@@ -1,17 +1,17 @@
 package org.leo.jmg;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Disguise;
 import org.leo.jmg.catalog.GeneratorCatalog;
 import org.leo.jmg.generation.GenerationPlan;
 import org.leo.jmg.generation.GenerationRequest;
-
-import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class ShellGeneratorConfigTest {
 
@@ -166,11 +166,7 @@ class ShellGeneratorConfigTest {
     }
 
     private ShellGeneratorConfig.Builder builder() {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
-        return ShellGeneratorConfig.builder(request, response).payloadKey("config-test-key");
+        return ShellGeneratorConfig.builder(requestDisguise(), responseDisguise()).payloadKey("config-test-key");
     }
 
     private ShellGeneratorConfig.Builder injectorBuilder() {

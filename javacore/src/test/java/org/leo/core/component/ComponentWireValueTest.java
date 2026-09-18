@@ -2,7 +2,6 @@ package org.leo.core.component;
 
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -11,19 +10,22 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
+import static org.leo.core.component.ComponentTestSupport.params;
+
 /** Verifies the response contract without adding runtime conversion code. */
 class ComponentWireValueTest {
 
     @Test
     void componentResponsesUseWireTypes() throws Exception {
-        assertDoesNotThrow(() -> assertWireValue(invoke(new BasicInfoComponent(), "disks")));
-        assertDoesNotThrow(() -> assertWireValue(invoke(new FileComponent(), "profile")));
+        assertDoesNotThrow(() -> assertWireValue(invokeComponent(new BasicInfoComponent(), params("action", "disks"))));
+        assertDoesNotThrow(() -> assertWireValue(invokeComponent(new FileComponent(), params("action", "profile"))));
 
         HashMap<String, Object> database = new HashMap<>();
         database.put("driverClass", "missing.Driver");
         database.put("jdbcUrl", "jdbc:missing:test");
         database.put("sql", "SELECT 1");
-        assertDoesNotThrow(() -> assertWireValue(invoke(new DatabaseComponent(), database)));
+        assertDoesNotThrow(() -> assertWireValue(invokeComponent(new DatabaseComponent(), database)));
     }
 
     @Test
@@ -35,20 +37,6 @@ class ComponentWireValueTest {
         response.clear();
         response.put("array", new String[]{"/"});
         assertThrows(AssertionError.class, () -> assertWireValue(response));
-    }
-
-    private Map<String, Object> invoke(Object component, String action) throws Exception {
-        HashMap<String, Object> params = new HashMap<>();
-        params.put("action", action);
-        return invoke(component, params);
-    }
-
-    private Map<String, Object> invoke(Object component, HashMap<String, Object> params) throws Exception {
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "params", params);
-        setField(component, "results", results);
-        component.getClass().getDeclaredMethod("invoke").invoke(component);
-        return results;
     }
 
     private void assertWireValue(Object value) {
@@ -72,11 +60,5 @@ class ComponentWireValueTest {
             return;
         }
         throw new AssertionError("unsupported wire value: " + value.getClass().getName());
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
     }
 }

@@ -30,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 确保能力目录中的每个公开组合都能走完整 Core → Shell → Injector 管线。 */
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
+
 class GeneratorCatalogGenerationTest {
 
     @TestFactory
@@ -156,12 +159,8 @@ class GeneratorCatalogGenerationTest {
     @Test
     void tomcatUpgradeExecutesHeaderGateAndKeepsConfiguredResponseCode()
             throws Exception {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
+        Disguise request = requestDisguise();
+        Disguise response = responseDisguise();
         ShellGeneratorConfig config = ShellGeneratorConfig.builder(request, response)
                 .payloadKey("catalog-test-key")
                 .serverType("Tomcat")
@@ -305,12 +304,8 @@ class GeneratorCatalogGenerationTest {
                                              long seed,
                                              ServletNamespace namespace,
                                              String serverVersion) throws Exception {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
+        Disguise request = requestDisguise();
+        Disguise response = responseDisguise();
 
         ShellGeneratorConfig.Builder builder = ShellGeneratorConfig.builder(request, response)
                 .payloadKey("catalog-test-key")

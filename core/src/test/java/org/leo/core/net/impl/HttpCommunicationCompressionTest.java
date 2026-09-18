@@ -16,7 +16,7 @@ import java.util.zip.DeflaterOutputStream;
 import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class HttpCommunicationCompressionTest {
 
@@ -46,12 +46,9 @@ class HttpCommunicationCompressionTest {
     void rejectsOversizedRequestBeforeOpeningConnection() throws Exception {
         HttpCommunication communication = new HttpCommunication(
                 "http://127.0.0.1:1/unreachable", "POST", null, Proxy.NO_PROXY);
-        try {
-            communication.sendRequest(new byte[TransportLimits.MAX_MESSAGE_BYTES + 1]);
-            fail("oversized request should fail");
-        } catch (TransportException expected) {
-            assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, expected.getReason());
-        }
+        TransportException error = assertThrows(TransportException.class,
+                () -> communication.sendRequest(new byte[TransportLimits.MAX_MESSAGE_BYTES + 1]));
+        assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, error.getReason());
     }
 
     @Test
@@ -69,12 +66,9 @@ class HttpCommunicationCompressionTest {
             HttpCommunication communication = new HttpCommunication(
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/large",
                     "POST", null, Proxy.NO_PROXY);
-            try {
-                communication.sendRequest(new byte[0]);
-                fail("oversized response should fail");
-            } catch (TransportException expected) {
-                assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, expected.getReason());
-            }
+            TransportException error = assertThrows(TransportException.class,
+                    () -> communication.sendRequest(new byte[0]));
+            assertEquals(TransportException.Reason.MESSAGE_TOO_LARGE, error.getReason());
         } finally {
             server.stop(0);
         }

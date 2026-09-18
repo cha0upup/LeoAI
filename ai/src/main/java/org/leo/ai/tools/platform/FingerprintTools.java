@@ -41,7 +41,7 @@ public class FingerprintTools {
             @P("创建人用户 ID") String userId,
             @P("指纹名称") String name,
             @P("匹配规则 JSON") String ruleJson,
-            @P(value = "指纹信息 JSON；可包含 version", required = false) String infoJson,
+            @P(value = "规则元信息 JSON；仅保留 version、author、description、remark", required = false) String infoJson,
             @P(value = "标签数组 JSON", required = false) String tagsJson,
             @P(value = "版本；省略时尝试从 infoJson.version 读取", required = false) String version) throws Exception {
         return fingerprintManageService.saveFingerprint(userId, name, ruleJson, infoJson, tagsJson, version);

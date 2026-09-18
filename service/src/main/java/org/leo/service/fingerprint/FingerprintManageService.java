@@ -2,6 +2,7 @@ package org.leo.service.fingerprint;
 
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
+import org.leo.core.fingerprint.FingerprintMetadata;
 import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
@@ -301,7 +302,7 @@ public class FingerprintManageService {
         if (!(parsed instanceof Map<?, ?> parsedMap)) {
             throw new IllegalArgumentException("指纹文件格式无效: " + safeFileName);
         }
-        return new HashMap<>(copyStringKeyMap(parsedMap));
+        return new HashMap<>(FingerprintMetadata.normalize(parsedMap));
     }
 
     private File resolveFingerprintDir() {
@@ -322,19 +323,7 @@ public class FingerprintManageService {
     }
 
     private HashMap<String, Object> normalizeInfo(Object infoObj) {
-        if (infoObj == null) {
-            return new HashMap<>();
-        }
-        if (!(infoObj instanceof Map<?, ?> map)) {
-            throw new IllegalArgumentException("info 必须是 JSON 对象");
-        }
-        HashMap<String, Object> result = new HashMap<>();
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (entry.getKey() != null) {
-                result.put(String.valueOf(entry.getKey()), entry.getValue());
-            }
-        }
-        return result;
+        return new HashMap<>(FingerprintMetadata.normalizeInfo(infoObj));
     }
 
     private HashMap<String, Object> parseInfo(String infoJson) {

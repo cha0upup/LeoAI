@@ -1,0 +1,1 @@
+import{nn as e}from"./vendor-element-plus-C4LuPZz4.js";var t=new Map;function n(e,n){let r=t.get(e);if(r)for(let e of r)try{e(n)}catch{}}function r(n,r){t.has(n)||t.set(n,new Set),t.get(n).add(r),e(()=>{let e=t.get(n);e&&(e.delete(r),e.size===0&&t.delete(n))})}export{r as n,n as t};

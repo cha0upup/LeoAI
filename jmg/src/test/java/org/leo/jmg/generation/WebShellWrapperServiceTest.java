@@ -2,7 +2,6 @@ package org.leo.jmg.generation;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.entity.Disguise;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -19,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class WebShellWrapperServiceTest {
 
@@ -101,20 +103,6 @@ class WebShellWrapperServiceTest {
         } finally {
             files.close();
         }
-    }
-
-    private static Disguise requestDisguise() {
-        Disguise disguise = new Disguise();
-        disguise.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        return disguise;
-    }
-
-    private static Disguise responseDisguise() {
-        Disguise disguise = new Disguise();
-        disguise.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
-        return disguise;
     }
 
     private static final class StringJavaSource extends SimpleJavaFileObject {

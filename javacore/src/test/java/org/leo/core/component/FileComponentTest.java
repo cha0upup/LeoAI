@@ -3,7 +3,6 @@ package org.leo.core.component;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -13,6 +12,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class FileComponentTest {
 
@@ -82,11 +83,5 @@ class FileComponentTest {
         setField(component, "results", results);
         component.invoke();
         return results;
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
     }
 }

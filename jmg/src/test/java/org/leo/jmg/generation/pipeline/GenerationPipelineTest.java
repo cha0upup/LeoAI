@@ -1,7 +1,6 @@
 package org.leo.jmg.generation.pipeline;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.generation.GenerationPlan;
@@ -15,6 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class GenerationPipelineTest {
 
@@ -104,13 +106,7 @@ class GenerationPipelineTest {
     }
 
     private static ShellGeneratorConfig.Builder baseBuilder() {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
-        return ShellGeneratorConfig.builder(request, response)
+        return ShellGeneratorConfig.builder(requestDisguise(), responseDisguise())
                 .payloadKey("pipeline-test-key")
                 .header("X-Test", "pipeline");
     }

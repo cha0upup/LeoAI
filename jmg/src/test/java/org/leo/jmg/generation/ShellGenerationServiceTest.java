@@ -1,7 +1,6 @@
 package org.leo.jmg.generation;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Disguise;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,6 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class ShellGenerationServiceTest {
 
@@ -197,20 +199,6 @@ class ShellGenerationServiceTest {
                 .serverType("Tomcat")
                 .injectorName("FilterInjector")
                 .packerType("DefaultBase64");
-    }
-
-    private static Disguise requestDisguise() {
-        Disguise disguise = new Disguise();
-        disguise.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        return disguise;
-    }
-
-    private static Disguise responseDisguise() {
-        Disguise disguise = new Disguise();
-        disguise.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
-        return disguise;
     }
 
     private static void assertClassArtifact(GeneratedClassArtifact artifact) {

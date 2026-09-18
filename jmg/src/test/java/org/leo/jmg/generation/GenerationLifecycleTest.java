@@ -3,7 +3,6 @@ package org.leo.jmg.generation;
 import javassist.ClassPool;
 import javassist.CtClass;
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Disguise;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.TransportProtocol;
@@ -23,6 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
 class GenerationLifecycleTest {
 
@@ -167,13 +169,7 @@ class GenerationLifecycleTest {
     }
 
     private static ShellGeneratorConfig.Builder injectorConfig() {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
-        return ShellGeneratorConfig.builder(request, response)
+        return ShellGeneratorConfig.builder(requestDisguise(), responseDisguise())
                 .payloadKey("lifecycle-test-key")
                 .protocol("httpchunk")
                 .serverType("Tomcat")

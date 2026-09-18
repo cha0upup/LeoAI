@@ -13,16 +13,15 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
+import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
+
 class EnvelopeCoreCompatibilityTest {
 
     @Test
     void generatedCoreExecutesEnvelopeRequest() throws Exception {
-        Disguise request = new Disguise();
-        request.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
-        Disguise response = new Disguise();
-        response.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
+        Disguise request = requestDisguise();
+        Disguise response = responseDisguise();
         ShellGeneratorConfig config = ShellGeneratorConfig.builder(request, response)
                 .payloadKey("envelope-test-key")
                 .coreClassName("org.example.EnvelopeCore")

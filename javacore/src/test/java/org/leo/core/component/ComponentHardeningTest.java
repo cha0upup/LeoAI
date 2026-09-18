@@ -2,13 +2,14 @@ package org.leo.core.component;
 
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class ComponentHardeningTest {
 
@@ -70,11 +71,5 @@ class ComponentHardeningTest {
         setField(component, "params", params);
         setField(component, "results", results);
         return results;
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
     }
 }

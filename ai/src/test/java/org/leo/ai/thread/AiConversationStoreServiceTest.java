@@ -18,6 +18,7 @@ import org.mockito.InOrder;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -35,10 +36,11 @@ import static org.mockito.Mockito.when;
 
 class AiConversationStoreServiceTest {
 
+    private final AiConversationMapper mapper = mock(AiConversationMapper.class);
+    private final AiConversationStoreService service = new AiConversationStoreService(mapper);
+
     @Test
     void storesAndRestoresVersionedContextCheckpointMetadata() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         AiThreadRecord thread = new AiThreadRecord();
         thread.setThreadId("thread-1");
         thread.setContextSummary("[历史摘要]\nsummary");
@@ -63,21 +65,19 @@ class AiConversationStoreServiceTest {
         verify(mapper).updateThreadContextCheckpoint(
                 eq("thread-1"), eq("[历史摘要]\nsummary"),
                 metadata.capture(), anyLong());
-        assertEquals(true, metadata.getValue().contains("\"boundarySequence\":42"));
-        assertEquals(true, metadata.getValue().contains("\"boundaryHash\":\"hash-42\""));
-        assertEquals(true, metadata.getValue().contains("\"version\":1"));
+        assertTrue(metadata.getValue().contains("\"boundarySequence\":42"));
+        assertTrue(metadata.getValue().contains("\"boundaryHash\":\"hash-42\""));
+        assertTrue(metadata.getValue().contains("\"version\":1"));
     }
 
     @Test
     void committedConversationMessagesKeepTheirStableSequence() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageSeq(7L);
         row.setRole("assistant");
         row.setContent("answer");
         when(mapper.recentMessages("thread-1", 20)).thenReturn(List.of(row));
         when(mapper.findCommittedMessageBySequence("thread-1", 7L)).thenReturn(row);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         assertEquals(7L, service.committedMessages("thread-1", 20).get(0).sequence());
         assertEquals("answer", service.committedMessage("thread-1", 7L).content());
@@ -85,7 +85,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void exposesRecoverableDiscardedMessagesAsModelContext() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiMessageRecord user = new AiMessageRecord();
         user.setMessageSeq(7L);
         user.setRole("user");
@@ -98,7 +97,6 @@ class AiConversationStoreServiceTest {
                 .thenReturn(List.of(user, recovery));
         when(mapper.findContextMessageBySequence("thread-1", 8L))
                 .thenReturn(recovery);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         List<AiConversationStoreService.ConversationMessage> context =
                 service.contextMessages("thread-1", 20);
@@ -110,10 +108,7 @@ class AiConversationStoreServiceTest {
 
     @Test
     void reservesTurnAndVisibleMessagesInOneStoreOperation() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.insertProtocolTurn(any(AiTurnRecord.class))).thenReturn(1);
-        AiConversationStoreService service =
-                new AiConversationStoreService(mapper);
         AiTurnRecord turn = new AiTurnRecord();
         turn.setTurnId("turn-queued");
         turn.setThreadId("thread-1");
@@ -123,7 +118,7 @@ class AiConversationStoreServiceTest {
         boolean reserved = service.reserveProtocolTurn(
                 turn, "visible command", Map.of("name", "a.txt"));
 
-        assertEquals(true, reserved);
+        assertTrue(reserved);
         ArgumentCaptor<AiMessageRecord> messages =
                 ArgumentCaptor.forClass(AiMessageRecord.class);
         verify(mapper).insertProtocolTurn(turn);
@@ -141,7 +136,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void bindsAReservedTurnToItsRunWithoutDuplicatingMessages() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiTurnRecord reserved = new AiTurnRecord();
         reserved.setTurnId("turn-1");
         reserved.setThreadId("thread-1");
@@ -151,8 +145,6 @@ class AiConversationStoreServiceTest {
         when(mapper.insertRun(any(AiRunRecord.class))).thenReturn(1);
         when(mapper.attachRunToTurnMessages(
                 eq("thread-1"), eq("turn-1"), anyString())).thenReturn(2);
-        AiConversationStoreService service =
-                new AiConversationStoreService(mapper);
 
         AiConversationStoreService.PersistedTurn turn = service.beginTurn(
                 "turn-1", "user-1", "assistant-1", "thread-1", 7,
@@ -170,9 +162,7 @@ class AiConversationStoreServiceTest {
 
     @Test
     void beginsTurnWithLinkedRunAndPendingUserMessage() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.insertRun(any(AiRunRecord.class))).thenReturn(1);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         AiConversationStoreService.PersistedTurn turn = service.beginTurn(
                 null, null, null, "thread-1", 7,
@@ -206,11 +196,9 @@ class AiConversationStoreServiceTest {
 
     @Test
     void rejectsTurnCreationWhenLeaseTokenIsStale() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.insertTurn(any(AiTurnRecord.class))).thenReturn(1);
         when(mapper.insertRunFenced(any(AiRunRecord.class), anyLong()))
                 .thenReturn(0);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         assertThrows(IllegalStateException.class, () -> service.beginTurn(
                 "turn-1", "user-1", "assistant-1", "thread-1", 7,
@@ -222,7 +210,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void completesTurnByCommittingBothMessagesAndFinishingRun() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.updateMessageFenced(
                 anyString(), anyString(), anyString(), anyString(),
                 anyString(), isNull(), anyString(), anyLong())).thenReturn(1);
@@ -232,7 +219,6 @@ class AiConversationStoreServiceTest {
         when(mapper.finishTurn(
                 anyString(), anyString(), anyLong(), anyString())).thenReturn(1);
         when(mapper.finishRun(any(AiRunRecord.class))).thenReturn(1);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         var turn = new AiConversationStoreService.PersistedTurn(
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "lease-1");
@@ -263,7 +249,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void discardsFailedTurnWithoutReturningItAsCommittedHistory() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.updateMessageFenced(
                 anyString(), anyString(), anyString(), isNull(),
                 isNull(), isNull(), anyString(), anyLong())).thenReturn(1);
@@ -273,7 +258,6 @@ class AiConversationStoreServiceTest {
         when(mapper.finishTurn(
                 anyString(), anyString(), anyLong(), anyString())).thenReturn(1);
         when(mapper.finishRun(any(AiRunRecord.class))).thenReturn(1);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         var turn = new AiConversationStoreService.PersistedTurn(
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "lease-1");
@@ -299,8 +283,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void exposesTurnMetadataInMessageShape() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageId("message-1");
         row.setThreadId("thread-1");
@@ -325,14 +307,12 @@ class AiConversationStoreServiceTest {
 
     @Test
     void attachesPersistentJournalAndContinuesThreadSequence() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.findLastEventSeq("thread-1")).thenReturn(41L);
         when(mapper.insertEvent(
                 anyString(), any(), eq("thread-1"), eq("turn-1"),
                 eq("item-1"), eq("subagent-1"), eq(42L),
                 anyLong(), eq("delta"), eq("{\"text\":\"hello\"}"),
                 isNull(), anyLong())).thenReturn(1);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         AiThread thread = new AiThread("thread-1", "test");
         thread.bindActiveTurnId("turn-1");
         thread.bindActiveItemId("item-1");
@@ -351,7 +331,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void restoresPersistedEventsWithRoutingMetadata() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiEventRecord row = new AiEventRecord();
         row.setEventId("event-1");
         row.setThreadId("thread-1");
@@ -366,7 +345,7 @@ class AiConversationStoreServiceTest {
         when(mapper.listEventsAfter("thread-1", 8L, 200))
                 .thenReturn(List.of(row));
 
-        AiSseEvent event = new AiConversationStoreService(mapper)
+        AiSseEvent event = service
                 .listEventsAfter("thread-1", 8L, 200).get(0);
 
         assertEquals(9L, event.seq());
@@ -380,7 +359,6 @@ class AiConversationStoreServiceTest {
 
     @Test
     void closesOrphanedRunAndAppendsAuthoritativeCompletionEvent() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiOrphanedRunRecord run = new AiOrphanedRunRecord();
         run.setThreadId("thread-1");
         run.setTurnId("turn-1");
@@ -409,7 +387,6 @@ class AiConversationStoreServiceTest {
                  "status":"completed","resultPreview":"os=linux"}
                 """);
         when(mapper.listEventsByRun("run-1")).thenReturn(List.of(delta, tool));
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         List<AiSseEvent> events =
                 service.recoverOrphanedRuns("thread-1", 1_000L);
@@ -425,10 +402,10 @@ class AiConversationStoreServiceTest {
         ArgumentCaptor<AiMessageRecord> partial =
                 ArgumentCaptor.forClass(AiMessageRecord.class);
         verify(mapper).updateMessage(partial.capture());
-        assertEquals(true, partial.getValue().getContent().startsWith("partial"));
-        assertEquals(true, partial.getValue().getContent().contains("可用于继续任务"));
-        assertEquals(true, partial.getValue().getContent().contains("getBasicInfo"));
-        assertEquals(true, partial.getValue().getContent().contains("os=linux"));
+        assertTrue(partial.getValue().getContent().startsWith("partial"));
+        assertTrue(partial.getValue().getContent().contains("可用于继续任务"));
+        assertTrue(partial.getValue().getContent().contains("getBasicInfo"));
+        assertTrue(partial.getValue().getContent().contains("os=linux"));
         verify(mapper).discardOrphanedTurn("turn-1", 1_000L);
         verify(mapper).failOrphanedThread("thread-1", 1_000L);
         verify(mapper).insertEvent(
@@ -439,11 +416,9 @@ class AiConversationStoreServiceTest {
 
     @Test
     void rejectsTerminalWriteWhenLeaseTokenIsStale() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.updateMessageFenced(
                 anyString(), anyString(), anyString(), any(), any(), any(),
                 eq("stale-token"), anyLong())).thenReturn(0);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         var turn = new AiConversationStoreService.PersistedTurn(
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "stale-token");
@@ -453,18 +428,16 @@ class AiConversationStoreServiceTest {
                 () -> service.completeTurn(
                         turn, "answer", List.of(), Map.of(), null, 0));
 
-        assertEquals(true, error.getMessage().contains("执行租约已失效"));
+        assertTrue(error.getMessage().contains("执行租约已失效"));
     }
 
     @Test
     void rejectsEventWhenRuntimeLeaseIsStale() {
-        AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.findLastEventSeq("thread-1")).thenReturn(0L);
         when(mapper.insertEvent(
                 anyString(), any(), eq("thread-1"), any(), any(), any(),
                 eq(1L), anyLong(), eq("delta"), anyString(),
                 eq("stale-token"), anyLong())).thenReturn(0);
-        AiConversationStoreService service = new AiConversationStoreService(mapper);
         AiThread thread = new AiThread("thread-1", "test");
         thread.bindActiveLeaseToken("stale-token");
         service.attachEventJournal("thread-1", thread);

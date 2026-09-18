@@ -39,6 +39,8 @@ description: 当用户希望在平台侧编写、生成、完善、检查、保�
 }
 ```
 
+指纹文件只保存名称、协议、标签、识别规则及规则元信息。`info` 仅支持 `version`、`author`、`description`、`remark`，用于描述规则适用版本、作者、识别方法和备注。漏洞情报、CVE、风险等级、利用资料等应由独立流程管理，不写入指纹文件。
+
 `rule.requests` 必须为非空数组。HTTP 请求支持 `method`、`path`/`uri`、`headers`、`body`、`timeout`、`charset`、`maxBodyBytes`。证据最多读取 8192 字节。
 
 `rule.match` 支持：

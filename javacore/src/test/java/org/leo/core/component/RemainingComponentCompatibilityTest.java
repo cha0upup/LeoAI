@@ -2,28 +2,30 @@ package org.leo.core.component;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.util.javassist.CloneWithJavassist;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.FileOutputStream;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
+import static org.leo.core.component.ComponentTestSupport.code;
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
+import static org.leo.core.component.ComponentTestSupport.params;
+import static org.leo.core.component.ComponentTestSupport.setField;
 
 class RemainingComponentCompatibilityTest {
 
@@ -46,7 +48,7 @@ class RemainingComponentCompatibilityTest {
         Files.createDirectories(output.resolve("nested"));
         Files.write(output.resolve("nested/value.txt"), utf8("old-value"));
 
-        Map<String, Object> response = invoke(new DecompressComponent(), params(
+        Map<String, Object> response = invokeComponent(new DecompressComponent(), params(
                 "src", archive.toString(), "des", utf8(output.toString()), "format", utf8("zip")));
 
         assertEquals(200, code(response));
@@ -61,7 +63,7 @@ class RemainingComponentCompatibilityTest {
         Path output = tempDir.resolve("existing.txt");
         Files.write(output, utf8("keep-me"));
 
-        Map<String, Object> response = invoke(new DecompressComponent(), params(
+        Map<String, Object> response = invokeComponent(new DecompressComponent(), params(
                 "src", archive.toString(), "des", output.toString(), "format", "gzip"));
 
         assertEquals(500, code(response));
@@ -70,7 +72,7 @@ class RemainingComponentCompatibilityTest {
 
     @Test
     void invalidArchiveFormatReturnsClientError() throws Exception {
-        Map<String, Object> response = invoke(new DecompressComponent(), params(
+        Map<String, Object> response = invokeComponent(new DecompressComponent(), params(
                 "src", "archive.bin", "des", tempDir.toString(), "format", "unknown"));
         assertEquals(400, code(response));
     }
@@ -78,9 +80,9 @@ class RemainingComponentCompatibilityTest {
     @Test
     void uploadAcceptsStringPathAndByteOffset() throws Exception {
         Path output = tempDir.resolve("upload.bin");
-        Map<String, Object> first = invoke(new FileUploadComponent(), params(
+        Map<String, Object> first = invokeComponent(new FileUploadComponent(), params(
                 "path", output.toString(), "offset", utf8("0"), "data", utf8("first")));
-        Map<String, Object> second = invoke(new FileUploadComponent(), params(
+        Map<String, Object> second = invokeComponent(new FileUploadComponent(), params(
                 "path", utf8(output.toString()), "offset", "5", "data", utf8("-second")));
 
         assertEquals(200, code(first));
@@ -92,12 +94,12 @@ class RemainingComponentCompatibilityTest {
 
     @Test
     void uploadRejectsInvalidOffsetAndOversizedChunk() throws Exception {
-        Map<String, Object> invalidOffset = invoke(new FileUploadComponent(), params(
+        Map<String, Object> invalidOffset = invokeComponent(new FileUploadComponent(), params(
                 "path", tempDir.resolve("invalid.bin").toString(),
                 "offset", "not-number", "data", new byte[0]));
         assertEquals(400, code(invalidOffset));
 
-        Map<String, Object> oversized = invoke(new FileUploadComponent(), params(
+        Map<String, Object> oversized = invokeComponent(new FileUploadComponent(), params(
                 "path", tempDir.resolve("large.bin").toString(),
                 "offset", 0, "data", new byte[1024 * 1024 + 1]));
         assertEquals(413, code(oversized));
@@ -134,7 +136,7 @@ class RemainingComponentCompatibilityTest {
     @Test
     void resourceAcceptsLeadingSlashBytesAndResetsOversizeState() throws Exception {
         ResourceComponent component = new ResourceComponent();
-        Map<String, Object> found = invoke(component, params(
+        Map<String, Object> found = invokeComponent(component, params(
                 "resourcePath", utf8("/component/ResourceComponent.payload")));
 
         assertEquals(200, code(found));
@@ -143,30 +145,9 @@ class RemainingComponentCompatibilityTest {
         assertTrue(((Number) found.get("size")).intValue() > 0);
 
         setField(component, "resourceTooLarge", true);
-        Map<String, Object> missing = invoke(component, params(
+        Map<String, Object> missing = invokeComponent(component, params(
                 "resourcePath", "component/missing-resource.bin"));
         assertEquals(404, code(missing));
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> invoke(Object component, HashMap<String, Object> params) throws Exception {
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "params", params);
-        setField(component, "results", results);
-        component.getClass().getDeclaredMethod("invoke").invoke(component);
-        return results;
-    }
-
-    private HashMap<String, Object> params(Object... values) {
-        HashMap<String, Object> params = new HashMap<>();
-        for (int index = 0; index < values.length; index += 2) {
-            params.put((String) values[index], values[index + 1]);
-        }
-        return params;
-    }
-
-    private int code(Map<String, Object> response) {
-        return ((Number) response.get("code")).intValue();
     }
 
     private byte[] utf8(String value) {
@@ -181,26 +162,6 @@ class RemainingComponentCompatibilityTest {
             output.closeEntry();
         } finally {
             output.close();
-        }
-    }
-
-    private void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    private void assertTransformedRunnable(String componentId) throws Exception {
-        String className = "org.leo.generated." + componentId + System.nanoTime();
-        byte[] bytecode = CloneWithJavassist.cloneClass(componentId, className);
-        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
-        assertTrue(Runnable.class.isAssignableFrom(transformed));
-        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
-    }
-
-    private static final class BytecodeLoader extends ClassLoader {
-        private Class<?> define(String name, byte[] bytecode) {
-            return defineClass(name, bytecode, 0, bytecode.length);
         }
     }
 }
