@@ -68,9 +68,6 @@ public class DatabaseComponent implements Runnable {
 
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
-    private boolean driverClassFound;
-    private boolean driverRejectedUrl;
-    private String driverLoadError;
     private String selectedLoader;
     private boolean cellValueTruncated;
 
@@ -93,11 +90,11 @@ public class DatabaseComponent implements Runnable {
 
     public void invoke() {
         if (results == null) results = new HashMap<String, Object>();
-        putEmptyResults();
         if ("capabilities".equalsIgnoreCase(getStringParam("operation"))) {
             inspectRuntimeCapabilities();
             return;
         }
+        putEmptyResults();
 
         String provider = getStringParam("provider");
         String url = getStringParam("jdbcUrl");
@@ -138,83 +135,14 @@ public class DatabaseComponent implements Runnable {
             }
 
             boolean hasResult = statement.execute();
-            ArrayList<HashMap<String, Object>> columns = new ArrayList<HashMap<String, Object>>();
-            ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
-            boolean truncated = false;
-            String truncationReason = null;
-            int resultBytes = 0;
-            int updateCount = 0;
-
             if (hasResult) {
                 resultSet = statement.getResultSet();
-                ResultSetMetaData metadata = resultSet.getMetaData();
-                int columnCount = metadata.getColumnCount();
-                ArrayList<String> columnKeys = new ArrayList<String>();
-                HashSet<String> usedKeys = new HashSet<String>();
-                int columnIndex;
-                for (columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
-                    String label = safeColumnLabel(metadata, columnIndex);
-                    String nativeName = safeColumnName(metadata, columnIndex);
-                    String key = uniqueColumnKey(label, nativeName, columnIndex, usedKeys);
-                    columnKeys.add(key);
-
-                    HashMap<String, Object> column = new HashMap<String, Object>();
-                    column.put("name", key);
-                    column.put("label", label);
-                    column.put("nativeName", nativeName);
-                    String nativeType = safeColumnTypeName(metadata, columnIndex);
-                    column.put("type", nativeType);
-                    column.put("nativeType", nativeType);
-                    column.put("jdbcType", safeColumnType(metadata, columnIndex));
-                    column.put("precision", safeColumnPrecision(metadata, columnIndex));
-                    column.put("scale", safeColumnScale(metadata, columnIndex));
-                    column.put("nullable", safeColumnNullable(metadata, columnIndex));
-                    columns.add(column);
-                }
-
-                while (resultSet.next()) {
-                    if (rows.size() >= maxRows) {
-                        truncated = true;
-                        truncationReason = "MAX_ROWS";
-                        break;
-                    }
-                    HashMap<String, Object> row = new HashMap<String, Object>();
-                    long rowBytes = 0L;
-                    boolean rowCellTruncated = false;
-                    for (columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
-                        cellValueTruncated = false;
-                        Object value = normalizeJdbcValue(resultSet.getObject(columnIndex), maxCellBytes);
-                        String key = columnKeys.get(columnIndex - 1);
-                        row.put(key, value);
-                        rowBytes += utf8Length(key) + estimateValueBytes(value);
-                        if (cellValueTruncated) rowCellTruncated = true;
-                    }
-                    if (((long) resultBytes) + rowBytes > maxResultBytes) {
-                        truncated = true;
-                        truncationReason = "MAX_RESULT_BYTES";
-                        break;
-                    }
-                    rows.add(row);
-                    resultBytes += rowBytes;
-                    if (rowCellTruncated && !truncated) {
-                        truncated = true;
-                        truncationReason = "MAX_CELL_BYTES";
-                    }
-                }
+                readResultSet(resultSet, maxRows, maxResultBytes, maxCellBytes);
             } else {
-                updateCount = statement.getUpdateCount();
+                results.put("affectedRows", Integer.valueOf(Math.max(0, statement.getUpdateCount())));
+                results.put("generatedKey", readGeneratedKey(statement, maxCellBytes));
             }
 
-            Object generatedKey = null;
-            if (!hasResult) generatedKey = readGeneratedKey(statement, maxCellBytes);
-            results.put("columns", columns);
-            results.put("rows", rows);
-            results.put("rowCount", Integer.valueOf(rows.size()));
-            results.put("affectedRows", Integer.valueOf(updateCount < 0 ? 0 : updateCount));
-            results.put("generatedKey", generatedKey);
-            results.put("truncated", Boolean.valueOf(truncated));
-            results.put("truncationReason", truncationReason);
-            results.put("resultBytes", Integer.valueOf(resultBytes));
             results.put("runtimeMetadata", runtimeMetadata(connection, driverClass, timeoutSeconds,
                     maxRows, maxResultBytes, maxCellBytes));
             results.put("code", Integer.valueOf(200));
@@ -234,6 +162,67 @@ public class DatabaseComponent implements Runnable {
             closeResource(statement);
             closeResource(connection);
         }
+    }
+
+    private ArrayList<HashMap<String, Object>> readColumns(ResultSetMetaData metadata) throws SQLException {
+        ArrayList<HashMap<String, Object>> columns = new ArrayList<HashMap<String, Object>>();
+        HashSet<String> usedKeys = new HashSet<String>();
+        int columnCount = metadata.getColumnCount();
+        for (int index = 1; index <= columnCount; index++) {
+            String label = safeColumnLabel(metadata, index);
+            String nativeType = safeColumnTypeName(metadata, index);
+            HashMap<String, Object> column = new HashMap<String, Object>();
+            column.put("name", uniqueColumnKey(label, usedKeys));
+            column.put("label", label);
+            column.put("nativeName", safeColumnName(metadata, index));
+            column.put("type", nativeType);
+            column.put("nativeType", nativeType);
+            column.put("jdbcType", safeColumnType(metadata, index));
+            column.put("precision", safeColumnPrecision(metadata, index));
+            column.put("scale", safeColumnScale(metadata, index));
+            column.put("nullable", safeColumnNullable(metadata, index));
+            columns.add(column);
+        }
+        return columns;
+    }
+
+    private void readResultSet(ResultSet resultSet, int maxRows, int maxResultBytes,
+                               int maxCellBytes) throws Exception {
+        ArrayList<HashMap<String, Object>> columns = readColumns(resultSet.getMetaData());
+        ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
+        String truncationReason = null;
+        int resultBytes = 0;
+        while (resultSet.next()) {
+            if (rows.size() >= maxRows) {
+                truncationReason = "MAX_ROWS";
+                break;
+            }
+            HashMap<String, Object> row = new HashMap<String, Object>();
+            long rowBytes = 0L;
+            boolean rowCellTruncated = false;
+            for (int index = 0; index < columns.size(); index++) {
+                cellValueTruncated = false;
+                Object value = normalizeJdbcValue(resultSet.getObject(index + 1), maxCellBytes);
+                String key = (String) columns.get(index).get("name");
+                row.put(key, value);
+                rowBytes += utf8Length(key) + estimateValueBytes(value);
+                if (cellValueTruncated) rowCellTruncated = true;
+            }
+            if (((long) resultBytes) + rowBytes > maxResultBytes) {
+                truncationReason = "MAX_RESULT_BYTES";
+                break;
+            }
+            rows.add(row);
+            resultBytes += rowBytes;
+            if (rowCellTruncated) truncationReason = "MAX_CELL_BYTES";
+        }
+        // Publish only a fully read result, so JDBC failures retain the empty error response.
+        results.put("columns", columns);
+        results.put("rows", rows);
+        results.put("rowCount", Integer.valueOf(rows.size()));
+        results.put("truncated", Boolean.valueOf(truncationReason != null));
+        results.put("truncationReason", truncationReason);
+        results.put("resultBytes", Integer.valueOf(resultBytes));
     }
 
     private void putEmptyResults() {
@@ -269,13 +258,17 @@ public class DatabaseComponent implements Runnable {
             candidates.add(KNOWN_DRIVER_CLASSES[index]);
         }
         String requested = getStringParam("requestedDriver");
-        if (!isBlank(requested)) candidates.add(requested.trim());
+        requested = isBlank(requested) ? "" : requested.trim();
+        if (requested.length() > 0) candidates.add(requested);
 
+        ArrayList<ClassLoader> loaders = collectCandidateClassLoaders();
+        boolean requestedAvailable = requested.length() == 0;
         ArrayList<String> candidateNames = new ArrayList<String>(candidates);
         Collections.sort(candidateNames);
         for (index = 0; index < candidateNames.size(); index++) {
             String className = candidateNames.get(index);
-            boolean available = registeredNames.contains(className) || canLoadDriverClass(className);
+            boolean available = registeredNames.contains(className) || canLoadDriverClass(className, loaders);
+            if (className.equals(requested)) requestedAvailable = available;
             if (available || className.equals(requested)) {
                 HashMap<String, Object> item = new HashMap<String, Object>();
                 item.put("id", className);
@@ -287,9 +280,7 @@ public class DatabaseComponent implements Runnable {
         }
 
         HashMap<String, Object> requestedStatus = new HashMap<String, Object>();
-        requestedStatus.put("id", isBlank(requested) ? "" : requested.trim());
-        boolean requestedAvailable = isBlank(requested)
-                || registeredNames.contains(requested.trim()) || canLoadDriverClass(requested.trim());
+        requestedStatus.put("id", requested);
         requestedStatus.put("available", Boolean.valueOf(requestedAvailable));
         requestedStatus.put("message", isBlank(requested)
                 ? "未指定 JDBC 驱动"
@@ -310,13 +301,10 @@ public class DatabaseComponent implements Runnable {
         results.put("constraints", constraints);
     }
 
-    private boolean canLoadDriverClass(String className) {
-        if (isBlank(className)) return false;
-        ArrayList<ClassLoader> loaders = collectCandidateClassLoaders();
-        int index;
-        for (index = 0; index < loaders.size(); index++) {
+    private boolean canLoadDriverClass(String className, List<ClassLoader> loaders) {
+        for (ClassLoader loader : loaders) {
             try {
-                Class candidate = Class.forName(className, false, loaders.get(index));
+                Class candidate = Class.forName(className, false, loader);
                 if (Driver.class.isAssignableFrom(candidate)) return true;
             } catch (Throwable ignored) {
             }
@@ -435,16 +423,6 @@ public class DatabaseComponent implements Runnable {
     private Connection openConnection(String driverClassName, String url, String user,
                                       String password, Properties properties) throws Exception {
         Driver driver = loadDriver(driverClassName, url);
-        if (driver == null) {
-            if (driverRejectedUrl) {
-                throw new IllegalArgumentException("JDBC URL 与驱动不匹配: " + redactUrl(url));
-            }
-            if (driverClassFound) {
-                throw new IllegalStateException("JDBC driver 初始化失败: " + driverClassName
-                        + (isBlank(driverLoadError) ? "" : " (" + driverLoadError + ")"));
-            }
-            throw new ClassNotFoundException("JDBC driver not found: " + driverClassName);
-        }
         if (!isBlank(user)) properties.setProperty("user", user);
         if (!isBlank(password) || !isBlank(user)) properties.setProperty("password", password == null ? "" : password);
         Connection connection = driver.connect(url, properties);
@@ -454,15 +432,12 @@ public class DatabaseComponent implements Runnable {
         return connection;
     }
 
-    private Driver loadDriver(String driverClassName, String url) {
-        driverClassFound = false;
-        driverRejectedUrl = false;
-        driverLoadError = null;
+    private Driver loadDriver(String driverClassName, String url) throws ClassNotFoundException {
+        boolean driverClassFound = false;
+        boolean driverRejectedUrl = false;
+        String driverLoadError = null;
         selectedLoader = null;
-        ArrayList<ClassLoader> loaders = collectCandidateClassLoaders();
-        int index;
-        for (index = 0; index < loaders.size(); index++) {
-            ClassLoader loader = loaders.get(index);
+        for (ClassLoader loader : collectCandidateClassLoaders()) {
             Class driverClass;
             try {
                 driverClass = Class.forName(driverClassName, true, loader);
@@ -487,7 +462,14 @@ public class DatabaseComponent implements Runnable {
                 driverLoadError = safeMessage(error);
             }
         }
-        return null;
+        if (driverRejectedUrl) {
+            throw new IllegalArgumentException("JDBC URL 与驱动不匹配: " + redactUrl(url));
+        }
+        if (driverClassFound) {
+            throw new IllegalStateException("JDBC driver 初始化失败: " + driverClassName
+                    + (isBlank(driverLoadError) ? "" : " (" + driverLoadError + ")"));
+        }
+        throw new ClassNotFoundException("JDBC driver not found: " + driverClassName);
     }
 
     private ArrayList<ClassLoader> collectCandidateClassLoaders() {
@@ -563,13 +545,10 @@ public class DatabaseComponent implements Runnable {
                 || value instanceof java.sql.Timestamp || value instanceof java.util.Date) {
             return String.valueOf(value);
         }
-        if (value instanceof java.sql.Array) {
-            return capString(String.valueOf(value), maxCellBytes);
-        }
-        if (value instanceof String || value instanceof Boolean || value instanceof Byte
+        if (value instanceof Boolean || value instanceof Byte
                 || value instanceof Short || value instanceof Integer || value instanceof Long
                 || value instanceof Float || value instanceof Double) {
-            return value instanceof String ? capString((String) value, maxCellBytes) : value;
+            return value;
         }
         return capString(String.valueOf(value), maxCellBytes);
     }
@@ -593,7 +572,6 @@ public class DatabaseComponent implements Runnable {
             return output.toByteArray();
         } finally {
             try { input.close(); } catch (Throwable ignored) {}
-            try { output.close(); } catch (Throwable ignored) {}
         }
     }
 
@@ -602,13 +580,12 @@ public class DatabaseComponent implements Runnable {
         StringBuilder text = new StringBuilder(Math.min(maxBytes, 8192));
         char[] buffer = new char[2048];
         try {
-            int read;
-            while ((read = reader.read(buffer)) != -1) {
+            // UTF-8 needs at least one byte per UTF-16 code unit. One extra character
+            // is enough to detect truncation without repeatedly encoding the entire prefix.
+            while (text.length() <= maxBytes) {
+                int read = reader.read(buffer, 0, Math.min(buffer.length, maxBytes + 1 - text.length()));
+                if (read == -1) break;
                 text.append(buffer, 0, read);
-                if (utf8Length(text.toString()) > maxBytes) {
-                    cellValueTruncated = true;
-                    break;
-                }
             }
             return capString(text.toString(), maxBytes);
         } finally {
@@ -633,6 +610,8 @@ public class DatabaseComponent implements Runnable {
             if (utf8Length(value.substring(0, middle)) <= maxBytes) low = middle;
             else high = middle - 1;
         }
+        if (low > 0 && Character.isHighSurrogate(value.charAt(low - 1))
+                && Character.isLowSurrogate(value.charAt(low))) low--;
         cellValueTruncated = true;
         return value.substring(0, low);
     }
@@ -640,17 +619,10 @@ public class DatabaseComponent implements Runnable {
     private long estimateValueBytes(Object value) {
         if (value == null) return 4L;
         if (value instanceof byte[]) return ((byte[]) value).length;
-        if (value instanceof List) {
-            long size = 2L;
-            Iterator iterator = ((List) value).iterator();
-            while (iterator.hasNext()) size += estimateValueBytes(iterator.next());
-            return size;
-        }
         return utf8Length(String.valueOf(value));
     }
 
-    private String uniqueColumnKey(String label, String nativeName, int index, HashSet<String> used) {
-        String base = !isBlank(label) ? label : (!isBlank(nativeName) ? nativeName : "column" + index);
+    private String uniqueColumnKey(String base, HashSet<String> used) {
         String candidate = base;
         int suffix = 2;
         while (used.contains(candidate)) {
