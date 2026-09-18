@@ -50,15 +50,6 @@ class AiTurnArtifactsTest {
         assertFalse(((Map<?, ?>) usage.get("cumulative")).isEmpty());
     }
 
-    @Test
-    void rebuildsInterruptedPartialOutputFromDeltaEvents() {
-        List<AiSseEvent> events = List.of(
-                new AiSseEvent("delta", "已经"),
-                new AiSseEvent("delta", "生成"));
-
-        assertEquals("已经生成", artifacts.partialOutput(events));
-    }
-
     private Map<String, Object> tool(String name, Boolean success) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("kind", "tool");

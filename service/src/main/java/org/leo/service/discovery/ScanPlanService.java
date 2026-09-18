@@ -1,9 +1,8 @@
-package org.leo.web.service.discovery;
+package org.leo.service.discovery;
 
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ResolvedTarget;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ScanConfig;
+import org.leo.service.discovery.NetworkDiscoveryDtos.ResolvedTarget;
+import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
 import org.springframework.stereotype.Service;
-import org.leo.web.service.NetworkProbeAnalysisService;
 
 import java.util.ArrayList;
 import java.util.Collections;

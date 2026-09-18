@@ -1,4 +1,4 @@
-package org.leo.web.dto.puppetnode.scan;
+package org.leo.service.discovery;
 
 import java.util.List;
 

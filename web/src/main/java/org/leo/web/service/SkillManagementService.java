@@ -1,17 +1,30 @@
 package org.leo.web.service;
 
 import org.leo.ai.service.LeoSkillsProvider;
+import org.leo.ai.service.SkillExportService;
+import org.leo.ai.service.SkillExportService.ConflictPolicy;
+import org.leo.ai.service.SkillExportService.ImportResult;
+import org.leo.ai.service.SkillExportService.NamedSkill;
+import org.leo.ai.service.SkillExportService.SkillImportException;
+import org.leo.ai.service.SkillFileService;
+import org.leo.ai.service.SkillFileService.SkillFileException;
 import org.leo.ai.service.SkillInspection;
 import org.leo.ai.service.SkillManifestService;
+import org.leo.ai.service.SkillOperationLock;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,15 +48,21 @@ public class SkillManagementService {
     private final SkillRegistryService skillRegistry;
     private final LeoSkillsProvider leoSkillsProvider;
     private final SkillManifestService manifestService;
+    private final SkillFileService skillFileService;
+    private final SkillExportService skillExportService;
     private final SkillOperationLock operationLock;
 
     public SkillManagementService(SkillRegistryService skillRegistry,
                                   LeoSkillsProvider leoSkillsProvider,
                                   SkillManifestService manifestService,
+                                  SkillFileService skillFileService,
+                                  SkillExportService skillExportService,
                                   SkillOperationLock operationLock) {
         this.skillRegistry = skillRegistry;
         this.leoSkillsProvider = leoSkillsProvider;
         this.manifestService = manifestService;
+        this.skillFileService = skillFileService;
+        this.skillExportService = skillExportService;
         this.operationLock = operationLock;
     }
 
@@ -93,22 +112,8 @@ public class SkillManagementService {
     }
 
     public BatchDeleteResult deleteBatch(String scope, List<?> requestedNames) {
-        if (isBlank(scope)) throw new IllegalArgumentException("scope 不能为空");
-        if (requestedNames == null || requestedNames.isEmpty()) {
-            throw new IllegalArgumentException("names 必须是非空数组");
-        }
-        LinkedHashSet<String> names = new LinkedHashSet<>();
-        for (Object value : requestedNames) {
-            if (!(value instanceof String name) || !SkillRegistryService.isValidSkillName(name)) {
-                throw new IllegalArgumentException("names 包含非法 skill 名称");
-            }
-            names.add(name.trim());
-        }
-        if (names.size() > MAX_BATCH_ITEMS) {
-            throw new IllegalArgumentException("单次最多处理 " + MAX_BATCH_ITEMS + " 个 skill");
-        }
+        LinkedHashSet<String> names = validateBatchNames(scope, requestedNames);
         String normalizedScope = scope.trim();
-        SkillRegistryService.validateScope(normalizedScope);
         List<Map<String, Object>> results = new ArrayList<>();
         int deleted = 0;
         for (String name : names) {
@@ -150,7 +155,6 @@ public class SkillManagementService {
             return OperationResult.failure(ApiResponse.CODE_ERROR, "skill 删除失败：" + e.getMessage());
         } finally {
             lock.unlock();
-            operationLock.removeIfUnused(normalizedScope, normalizedName, lock);
         }
     }
 
@@ -178,17 +182,9 @@ public class SkillManagementService {
         return result;
     }
 
-    public BatchToggleResult toggleBatch(String scope, List<String> requestedNames, boolean enabled) {
-        String normalizedScope = scope == null ? null : scope.trim();
-        LinkedHashSet<String> names = new LinkedHashSet<>();
-        if (requestedNames != null) {
-            for (String name : requestedNames) {
-                if (name != null && !name.isBlank()) names.add(name.trim());
-            }
-        }
-        if (names.size() > MAX_BATCH_ITEMS) {
-            throw new IllegalArgumentException("单次最多处理 " + MAX_BATCH_ITEMS + " 个 skill");
-        }
+    public BatchToggleResult toggleBatch(String scope, List<?> requestedNames, boolean enabled) {
+        LinkedHashSet<String> names = validateBatchNames(scope, requestedNames);
+        String normalizedScope = scope.trim();
         Map<String, SkillInspection> catalog = catalogByName(normalizedScope);
         List<ToggleResult> results = new ArrayList<>();
         int changed = 0;
@@ -286,6 +282,161 @@ public class SkillManagementService {
         return result;
     }
 
+    public Archive exportSkill(String scope, String name) {
+        if (isBlank(scope) || !SkillRegistryService.isValidSkillName(name)) {
+            throw ApiException.badRequest("scope/name 非法");
+        }
+        return exportArchive(scope, List.of(name.trim()), true);
+    }
+
+    public Archive exportSkills(String scope, List<?> requestedNames) {
+        if (isBlank(scope)) throw ApiException.badRequest("scope 不能为空");
+        if (requestedNames == null || requestedNames.isEmpty()) throw ApiException.badRequest("names 不能为空");
+        List<String> names = requestedNames.stream()
+                .filter(value -> value instanceof String name && SkillRegistryService.isValidSkillName(name))
+                .map(value -> ((String) value).trim()).distinct().toList();
+        return exportArchive(scope, names, false);
+    }
+
+    private Archive exportArchive(String scope, List<String> names, boolean single) {
+        String normalizedScope = scope.trim();
+        try {
+            SkillRegistryService.validateScope(normalizedScope);
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest(single ? "scope/name 非法" : "没有可导出的 skill");
+        }
+        List<ReentrantLock> heldLocks = new ArrayList<>();
+        try {
+            // Use one order regardless of request order, including overlapping batch exports.
+            for (String name : names.stream().sorted().toList()) {
+                ReentrantLock lock = operationLock.lockFor(normalizedScope, name);
+                lock.lock();
+                heldLocks.add(lock);
+            }
+            List<NamedSkill> skills = names.stream()
+                    .map(name -> new NamedSkill(name, resolveSkillDir(normalizedScope, name)))
+                    .filter(skill -> Files.exists(skill.dir())).toList();
+            if (skills.isEmpty()) {
+                if (single) throw ApiException.notFound("skill 不存在");
+                throw ApiException.badRequest("没有可导出的 skill");
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            if (single) skillExportService.exportSkill(skills.get(0).dir(), output);
+            else skillExportService.exportSkills(skills, output);
+            String filename = single ? names.get(0) + ".skill"
+                    : "skills_" + normalizedScope + "_" + LocalDate.now() + ".zip";
+            return new Archive(filename, output.toByteArray());
+        } catch (IOException e) {
+            throw ApiException.serverError("导出失败：" + e.getMessage());
+        } finally {
+            Collections.reverse(heldLocks);
+            heldLocks.forEach(ReentrantLock::unlock);
+        }
+    }
+
+    public List<ImportResult> importSkills(MultipartFile file, String scope,
+                                          String defaultName, String conflictPolicy) {
+        if (file == null || file.isEmpty()) throw ApiException.badRequest("file 不能为空");
+        if (isBlank(scope)) throw ApiException.badRequest("scope 不能为空");
+        Path scopeRoot;
+        try {
+            scopeRoot = skillRegistry.getSkillsRoot(scope.trim());
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest(e.getMessage());
+        }
+        try {
+            return skillExportService.importSkills(file, scopeRoot, defaultName, ConflictPolicy.parse(conflictPolicy));
+        } catch (SkillImportException e) {
+            throw ApiException.badRequest(e.getMessage());
+        } catch (IOException e) {
+            throw ApiException.serverError("导入失败：" + e.getMessage());
+        } finally {
+            // A later entry or cleanup may fail after earlier skills were already committed.
+            invalidateCatalog();
+        }
+    }
+
+    public OperationResult saveFile(String scope, String name, String path, String content, String encoding) {
+        return mutateFile(scope, name, isBlank(path) ? "path 不能为空" : null,
+                "文件已保存", "保存失败：", skillDir -> {
+                    if (SkillFileService.isRequiredMetadataFile(path)) {
+                        String metadataPath = path.replace('\\', '/').trim();
+                        while (metadataPath.startsWith("./")) metadataPath = metadataPath.substring(2);
+                        String skill = SKILL_FILE.equalsIgnoreCase(metadataPath)
+                                ? content : Files.readString(skillDir.resolve(SKILL_FILE), StandardCharsets.UTF_8);
+                        String manifest = MANIFEST_FILE.equalsIgnoreCase(metadataPath)
+                                ? content : Files.readString(skillDir.resolve(MANIFEST_FILE), StandardCharsets.UTF_8);
+                        SkillInspection inspection = manifestService.inspect(scope.trim(), name.trim(), skill, manifest);
+                        if (!inspection.valid()) {
+                            throw new SkillFileException("skill 校验失败：" + SkillManifestService.summarizeErrors(inspection));
+                        }
+                    }
+                    skillFileService.writeFile(skillDir, path, content, encoding);
+                });
+    }
+
+    public OperationResult deleteFile(String scope, String name, String path) {
+        return mutateFile(scope, name, isBlank(path) ? "path 不能为空" : null,
+                "已删除", "删除失败：", skillDir -> skillFileService.deleteFile(skillDir, path));
+    }
+
+    public OperationResult moveFile(String scope, String name, String from, String to) {
+        return mutateFile(scope, name, isBlank(from) || isBlank(to) ? "from/to 不能为空" : null,
+                "已重命名", "重命名失败：", skillDir -> skillFileService.moveFile(skillDir, from, to));
+    }
+
+    private OperationResult mutateFile(String scope, String name, String validationError,
+                                       String successMessage, String failurePrefix, FileMutation mutation) {
+        if (isBlank(scope) || isBlank(name) || !SkillRegistryService.isValidSkillName(name)) {
+            return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, "scope/name 非法");
+        }
+        Path skillDir;
+        try {
+            skillDir = resolveSkillDir(scope.trim(), name.trim());
+        } catch (IllegalArgumentException e) {
+            return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, "scope/name 非法");
+        }
+        ReentrantLock lock = operationLock.lockFor(scope.trim(), name.trim());
+        lock.lock();
+        try {
+            if (!Files.exists(skillDir)) return OperationResult.failure(ApiResponse.CODE_NOT_FOUND, "skill 不存在");
+            if (validationError != null) return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, validationError);
+            mutation.apply(skillDir);
+            invalidateCatalog();
+            return OperationResult.success(successMessage);
+        } catch (SkillFileException e) {
+            return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, e.getMessage());
+        } catch (IOException e) {
+            return OperationResult.failure(ApiResponse.CODE_ERROR, failurePrefix + e.getMessage());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @FunctionalInterface
+    private interface FileMutation {
+        void apply(Path skillDir) throws IOException;
+    }
+
+    private static LinkedHashSet<String> validateBatchNames(String scope, List<?> requestedNames) {
+        if (isBlank(scope)) throw new IllegalArgumentException("scope 不能为空");
+        if (requestedNames == null || requestedNames.isEmpty()) {
+            throw new IllegalArgumentException("names 必须是非空数组");
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (Object value : requestedNames) {
+            if (!(value instanceof String name) || !SkillRegistryService.isValidSkillName(name)) {
+                throw new IllegalArgumentException("names 包含非法 skill 名称");
+            }
+            names.add(name.trim());
+        }
+        if (names.size() > MAX_BATCH_ITEMS) {
+            throw new IllegalArgumentException("单次最多处理 " + MAX_BATCH_ITEMS + " 个 skill");
+        }
+        SkillRegistryService.validateScope(scope.trim());
+        return names;
+    }
+
     private Path resolveSkillDir(String scope, String name) {
         Path skillsRoot = skillRegistry.getSkillsRoot(scope);
         Path skillDir = skillsRoot.resolve(name).normalize();
@@ -316,6 +467,8 @@ public class SkillManagementService {
         static OperationResult failure(int code, String message) { return new OperationResult(code, message); }
         public boolean succeeded() { return code == ApiResponse.CODE_SUCCESS; }
     }
+
+    public record Archive(String filename, byte[] content) {}
 
     public record BatchDeleteResult(String scope, int requested, int deleted,
                                     List<Map<String, Object>> results) {

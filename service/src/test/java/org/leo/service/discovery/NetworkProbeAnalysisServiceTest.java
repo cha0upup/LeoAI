@@ -1,4 +1,4 @@
-package org.leo.web.service;
+package org.leo.service.discovery;
 
 import org.junit.jupiter.api.Test;
 import org.leo.service.fingerprint.FingerprintManageService;

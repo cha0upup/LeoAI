@@ -1,26 +1,28 @@
-package org.leo.web.service;
+package org.leo.service.discovery;
 
-import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.core.util.json.JsonUtil;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
-import java.util.TreeMap;
-import org.leo.web.service.discovery.NetworkProbeLimits;
+import org.leo.service.fingerprint.FingerprintManageService;
 import org.springframework.stereotype.Service;
 
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
+import static org.leo.service.discovery.NetworkProbePayloads.copyValue;
 
 /** Builds fingerprint probe plans and evaluates their bounded evidence on the service side. */
 @Service
@@ -58,7 +60,7 @@ public class NetworkProbeAnalysisService {
         List<Map<String, Object>> snapshots = new ArrayList<>();
         for (String id : ids) {
             try {
-                Map<String, Object> snapshot = castMap(fingerprintManageService.getFingerprintById(id));
+                Map<String, Object> snapshot = copyMap(fingerprintManageService.getFingerprintById(id));
                 toRule(snapshot);
                 snapshots.add(snapshot);
             } catch (Exception error) {
@@ -197,7 +199,7 @@ public class NetworkProbeAnalysisService {
                 if (!(value instanceof Map<?, ?> rawTarget)) {
                     throw new IllegalArgumentException("scan.targets中的项目必须是对象");
                 }
-                Map<String, Object> target = castMap(rawTarget);
+                Map<String, Object> target = copyMap(rawTarget);
                 String host = text(target.get("host"));
                 int port = boundedInt(target.get("port"), -1, -1, 65535);
                 if (host.isEmpty() || port < 1) {
@@ -288,7 +290,7 @@ public class NetworkProbeAnalysisService {
         if (context == null || componentResult == null) return;
         Object snapshotValue = componentResult.get("result");
         if (!(snapshotValue instanceof Map<?, ?> rawSnapshot)) return;
-        Map<String, Object> snapshot = castMap(rawSnapshot);
+        Map<String, Object> snapshot = copyMap(rawSnapshot);
         List<Map<String, Object>> page = mapListOrEmpty(snapshot.get("observations"));
         for (Map<String, Object> observation : page) {
             Map<String, Object> request = context.requests.get(text(observation.get("probeId")));
@@ -501,7 +503,7 @@ public class NetworkProbeAnalysisService {
         fingerprintManageService.validateRule(rawRule);
         if (!"http".equals(protocol)) throw new IllegalArgumentException("仅支持 HTTP 指纹: " + id);
         return new RuleDefinition(id, text(fingerprint.get("name")), protocol,
-                textSet(fingerprint.get("tags")), requests, castMap(rawMatch), rawRule.get("version") instanceof Map<?, ?> version ? castMap(version) : Map.of(), ruleHash(fingerprint));
+                textSet(fingerprint.get("tags")), requests, copyMap(rawMatch), rawRule.get("version") instanceof Map<?, ?> version ? copyMap(version) : Map.of(), ruleHash(fingerprint));
     }
 
     private Map<String, Object> buildProbe(Map<String, Object> source, String targetId,
@@ -536,7 +538,7 @@ public class NetworkProbeAnalysisService {
         }
         httpRequest.put("path", path);
         httpRequest.put("charset", defaultText(request.get("charset"), "UTF-8"));
-        httpRequest.put("headers", request.get("headers") == null ? Map.of() : wireValue(request.get("headers")));
+        httpRequest.put("headers", request.get("headers") == null ? Map.of() : copyValue(request.get("headers")));
         httpRequest.put("body", request.get("body") == null ? "" : String.valueOf(request.get("body")));
         probe.put("httpRequest", httpRequest);
         return probe;
@@ -553,7 +555,7 @@ public class NetworkProbeAnalysisService {
                 response.put("errorCode", observation.get("errorCode"));
             }
             Map<String, Object> evidence = observation.get("evidence") instanceof Map<?, ?> map
-                    ? castMap(map) : Collections.emptyMap();
+                    ? copyMap(map) : Collections.emptyMap();
             response.put("status", evidence.get("statusCode"));
             response.put("body", evidence.get("body") == null ? "" : String.valueOf(evidence.get("body")));
             response.put("bodyLength", evidence.getOrDefault("bodyLength", Integer.valueOf(0)));
@@ -586,7 +588,7 @@ public class NetworkProbeAnalysisService {
             if (incomplete != null) throw incomplete;
             return false;
         }
-        if (expression.get("not") instanceof Map<?, ?> child) return !evaluate(castMap(child), responses);
+        if (expression.get("not") instanceof Map<?, ?> child) return !evaluate(copyMap(child), responses);
 
         int requestIndex = boundedInt(expression.get("request"), 0, 0, Math.max(0, responses.size() - 1));
         Map<String, Object> response = responses.get(requestIndex);
@@ -687,11 +689,11 @@ public class NetworkProbeAnalysisService {
         for (String key : List.of("all", "any")) {
             if (expression.get(key) instanceof List<?> children) {
                 for (int i = 0; i < children.size(); i++)
-                    trace.addAll(conditionTrace(castMap((Map<?, ?>) children.get(i)), responses, path + "." + key + "[" + i + "]"));
+                    trace.addAll(conditionTrace(copyMap((Map<?, ?>) children.get(i)), responses, path + "." + key + "[" + i + "]"));
             }
         }
         if (expression.get("not") instanceof Map<?, ?> child)
-            trace.addAll(conditionTrace(castMap(child), responses, path + ".not"));
+            trace.addAll(conditionTrace(copyMap(child), responses, path + ".not"));
         return trace;
     }
 
@@ -791,7 +793,7 @@ public class NetworkProbeAnalysisService {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> map)) throw new IllegalArgumentException(field + "中的项目必须是对象");
-            result.add(castMap(map));
+            result.add(copyMap(map));
         }
         return result;
     }
@@ -800,37 +802,14 @@ public class NetworkProbeAnalysisService {
         return value instanceof List<?> ? mapList(value, "observations") : new ArrayList<>();
     }
 
-    private static Map<String, Object> castMap(Map<?, ?> source) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : source.entrySet()) {
-            if (entry.getKey() != null) result.put(String.valueOf(entry.getKey()), wireValue(entry.getValue()));
-        }
-        return result;
-    }
-
     private static void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
-        if (source.containsKey(key) && source.get(key) != null) target.put(key, wireValue(source.get(key)));
+        if (source.containsKey(key) && source.get(key) != null) target.put(key, copyValue(source.get(key)));
     }
 
     private static List<String> stageList(String... values) {
         List<String> result = new ArrayList<>();
         result.addAll(Arrays.asList(values));
         return result;
-    }
-
-    private static Object wireValue(Object value) {
-        if (value instanceof Map<?, ?> source) return castMap(source);
-        if (value instanceof Set<?> source) {
-            Set<Object> result = new LinkedHashSet<>();
-            for (Object item : source) result.add(wireValue(item));
-            return result;
-        }
-        if (value instanceof Collection<?> source) {
-            List<Object> result = new ArrayList<>();
-            for (Object item : source) result.add(wireValue(item));
-            return result;
-        }
-        return value;
     }
 
     private static int boundedInt(Object value, int fallback, int min, int max) {

@@ -1,12 +1,15 @@
 package org.leo.ai.runtime;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.leo.core.entity.AiSseEvent;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +44,25 @@ class AiTurnRecoveryContextTest {
     @Test
     void returnsEmptyContextWhenTheTurnProducedNoProgress() {
         assertTrue(AiTurnRecoveryContext.build(List.of(), null).isEmpty());
+    }
+
+    @ParameterizedTest
+    @MethodSource("visibleOutputs")
+    void restoresVisibleTextThroughTheActiveRecoveryPath(List<AiSseEvent> events) {
+        String context = AiTurnRecoveryContext.build(events, null);
+        assertTrue(context.startsWith("已经生成\n\n"));
+        assertFalse(context.contains("内部分析"));
+        assertFalse(context.contains("重复正文"));
+    }
+
+    private static Stream<List<AiSseEvent>> visibleOutputs() {
+        return Stream.of(
+                List.of(new AiSseEvent("delta", "已经"), new AiSseEvent("delta", "生成"),
+                        new AiSseEvent("node", Map.of("kind", "text", "content", "重复正文"))),
+                List.of(new AiSseEvent("delta", Map.of("text", "已经")),
+                        new AiSseEvent("delta", Map.of("delta", "生成"))),
+                List.of(new AiSseEvent("node", Map.of("kind", "thinking", "content", "内部分析")),
+                        new AiSseEvent("node", Map.of("kind", "text", "content", "已经生成"))));
     }
 
     @Test

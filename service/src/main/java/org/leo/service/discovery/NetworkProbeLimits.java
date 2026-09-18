@@ -1,4 +1,4 @@
-package org.leo.web.service.discovery;
+package org.leo.service.discovery;
 
 import java.util.List;
 

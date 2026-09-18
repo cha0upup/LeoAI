@@ -91,30 +91,6 @@ public class AiTurnArtifacts {
         return nodes;
     }
 
-    /** 从已发送事件重建中断前用户可见的 assistant 正文。 */
-    public String partialOutput(List<AiSseEvent> eventLog) {
-        if (eventLog == null || eventLog.isEmpty()) return "";
-        StringBuilder deltas = new StringBuilder();
-        for (AiSseEvent event : eventLog) {
-            if (event != null && "delta".equals(event.name()) && event.data() != null) {
-                deltas.append(event.data());
-            }
-        }
-        if (!deltas.isEmpty()) return deltas.toString().trim();
-
-        StringBuilder nodes = new StringBuilder();
-        for (AiSseEvent event : eventLog) {
-            if (event == null || !"node".equals(event.name())
-                    || !"text".equals(kindOf(event.data()))) {
-                continue;
-            }
-            if (event.data() instanceof Map<?, ?> map && map.get("content") != null) {
-                nodes.append(map.get("content"));
-            }
-        }
-        return nodes.toString().trim();
-    }
-
     public Map<String, Object> review(String output,
                                       List<AiSseEvent> eventLog,
                                       long durationMs) {

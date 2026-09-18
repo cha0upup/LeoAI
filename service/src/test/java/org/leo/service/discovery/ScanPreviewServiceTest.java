@@ -1,11 +1,11 @@
-package org.leo.web.service.discovery;
+package org.leo.service.discovery;
 
 import org.junit.jupiter.api.Test;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.PortPolicy;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.PreviewResponse;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ScanConfig;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.TargetInput;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ExecutionConfig;
+import org.leo.service.discovery.NetworkDiscoveryDtos.PortPolicy;
+import org.leo.service.discovery.NetworkDiscoveryDtos.PreviewResponse;
+import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
+import org.leo.service.discovery.NetworkDiscoveryDtos.TargetInput;
+import org.leo.service.discovery.NetworkDiscoveryDtos.ExecutionConfig;
 
 import java.util.List;
 import java.util.Map;
@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ScanPreviewServiceTest {
 
     private final ScanPlanService planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(),
-            new org.leo.web.service.NetworkProbeAnalysisService(new org.leo.service.fingerprint.FingerprintManageService()));
+            new NetworkProbeAnalysisService(new org.leo.service.fingerprint.FingerprintManageService()));
     private final ScanPreviewService service = new ScanPreviewService(planner);
 
     @Test
@@ -89,7 +89,7 @@ class ScanPreviewServiceTest {
 
     @Test
     void snapshotsRulesBeforeTheyCanBeChangedWhileWaitingForExecution() {
-        var analysis = org.mockito.Mockito.mock(org.leo.web.service.NetworkProbeAnalysisService.class);
+        var analysis = org.mockito.Mockito.mock(NetworkProbeAnalysisService.class);
         Map<String, Object> request = new java.util.LinkedHashMap<>(Map.of("method", "GET"));
         List<Map<String, Object>> requests = new java.util.ArrayList<>(List.of(request));
         Map<String, Object> rule = new java.util.LinkedHashMap<>(Map.of("id", "test-rule", "requests", requests));
@@ -150,16 +150,16 @@ class ScanPreviewServiceTest {
     }
 
     @Test
-    void validatesStageSelectionsAndKeepsLegacyJsonDefault() throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        ScanConfig legacy = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
+    void validatesStageSelectionsAndKeepsDefaultStages() {
+        ScanConfig legacy = new ScanConfig(null, new TargetInput(List.of("127.0.0.1:80"), null),
+                null, null, null, null);
         assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).stages().stream().map(Enum::name).toList());
         for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("PORT_SCAN", "FINGERPRINT"), List.of("UNKNOWN"))) {
             ScanConfig invalid = new ScanConfig("invalid", legacy.targets(), null, null, null, stages);
             var failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
             assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
         }
-        ScanConfig onlyAlive = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]},\"stages\":[\"REACHABILITY\"]}", ScanConfig.class);
+        ScanConfig onlyAlive = new ScanConfig(null, legacy.targets(), null, null, null, List.of("REACHABILITY"));
         assertEquals(List.of("REACHABILITY"), planner.plan(onlyAlive).stages().stream().map(Enum::name).toList());
     }
 

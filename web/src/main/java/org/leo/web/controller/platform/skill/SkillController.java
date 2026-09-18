@@ -1,11 +1,6 @@
 package org.leo.web.controller.platform.skill;
 
-import org.leo.ai.service.LeoSkillsProvider;
-import org.leo.ai.service.SkillExportService;
-import org.leo.ai.service.SkillExportService.ConflictPolicy;
 import org.leo.ai.service.SkillExportService.ImportResult;
-import org.leo.ai.service.SkillExportService.NamedSkill;
-import org.leo.ai.service.SkillExportService.SkillImportException;
 import org.leo.ai.service.SkillFileService;
 import org.leo.ai.service.SkillFileService.SkillFileException;
 import org.leo.ai.service.SkillMeta;
@@ -14,9 +9,9 @@ import org.leo.ai.service.SkillManifestService;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.ai.service.SkillValidationIssue;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.exception.ApiException;
 import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.service.SkillManagementService;
-import org.leo.web.service.SkillOperationLock;
 import org.leo.web.util.DownloadHeaders;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -28,19 +23,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * Skill 管理接口。
@@ -59,55 +50,16 @@ public class SkillController {
     private static final String PARAM_CONTENT = "content";
     private static final String PARAM_MANIFEST = "manifest";
 
-    private static final String SKILL_FILE = "SKILL.md";
-    private static final String MANIFEST_FILE = "manifest.yaml";
-    private static final int MAX_BATCH_TOGGLE_ITEMS = 500;
-
     private final SkillRegistryService skillRegistry;
-    private final LeoSkillsProvider leoSkillsProvider;
     private final SkillFileService skillFileService;
-    private final SkillExportService skillExportService;
-    private final SkillManifestService skillManifestService;
     private final SkillManagementService skillManagementService;
-    private final SkillOperationLock operationLock;
 
-    @org.springframework.beans.factory.annotation.Autowired
     public SkillController(SkillRegistryService skillRegistry,
-                           LeoSkillsProvider leoSkillsProvider,
                            SkillFileService skillFileService,
-                           SkillExportService skillExportService,
-                           SkillManifestService skillManifestService,
-                           SkillManagementService skillManagementService,
-                           SkillOperationLock operationLock) {
-        this.skillRegistry      = skillRegistry;
-        this.leoSkillsProvider   = leoSkillsProvider;
-        this.skillFileService    = skillFileService;
-        this.skillExportService  = skillExportService;
-        this.skillManifestService = skillManifestService;
+                           SkillManagementService skillManagementService) {
+        this.skillRegistry = skillRegistry;
+        this.skillFileService = skillFileService;
         this.skillManagementService = skillManagementService;
-        this.operationLock = operationLock;
-    }
-
-    /** 测试和非 Spring 使用场景。 */
-    public SkillController(SkillRegistryService skillRegistry,
-                           LeoSkillsProvider leoSkillsProvider,
-                           SkillFileService skillFileService,
-                           SkillExportService skillExportService,
-                           SkillManifestService skillManifestService) {
-        this(skillRegistry, leoSkillsProvider, skillFileService, skillExportService,
-                skillManifestService, new SkillOperationLock());
-    }
-
-    private SkillController(SkillRegistryService skillRegistry,
-                            LeoSkillsProvider leoSkillsProvider,
-                            SkillFileService skillFileService,
-                            SkillExportService skillExportService,
-                            SkillManifestService skillManifestService,
-                            SkillOperationLock operationLock) {
-        this(skillRegistry, leoSkillsProvider, skillFileService, skillExportService,
-                skillManifestService,
-                new SkillManagementService(skillRegistry, leoSkillsProvider,
-                        skillManifestService, operationLock), operationLock);
     }
 
     // ── 列表 ──────────────────────────────────────────────────────────────────
@@ -216,9 +168,7 @@ public class SkillController {
 
         SkillManagementService.OperationResult result =
                 skillManagementService.save(scope, name, content, manifest);
-        return result.succeeded()
-                ? ApiResponse.success(result.message())
-                : ApiResponse.error(result.code(), result.message());
+        return operationResponse(result);
     }
 
     // ── 删除 ──────────────────────────────────────────────────────────────────
@@ -237,9 +187,7 @@ public class SkillController {
         String name  = (String) params.get(PARAM_NAME);
 
         SkillManagementService.OperationResult result = skillManagementService.delete(scope, name);
-        return result.succeeded()
-                ? ApiResponse.success(result.message())
-                : ApiResponse.error(result.code(), result.message());
+        return operationResponse(result);
     }
 
     /**
@@ -356,24 +304,15 @@ public class SkillController {
             return ApiResponse.badRequest("enabled 必须是 boolean");
         }
 
-        LinkedHashSet<String> names = new LinkedHashSet<>();
-        for (Object rawName : rawNames) {
-            if (!(rawName instanceof String name) || !isSafeName(name)) {
-                return ApiResponse.badRequest("names 包含非法 skill 名称");
-            }
-            names.add(name.trim());
+        try {
+            SkillManagementService.BatchToggleResult batch =
+                    skillManagementService.toggleBatch(scope, rawNames, enabled);
+            String message = "批量" + (enabled ? "启用" : "禁用") + "完成：成功 "
+                    + batch.changed() + "，未变更 " + batch.unchanged() + "，失败 " + batch.failed();
+            return ApiResponse.success(message, batch.toMap());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
         }
-        if (names.size() > MAX_BATCH_TOGGLE_ITEMS) {
-            return ApiResponse.badRequest("单次最多处理 " + MAX_BATCH_TOGGLE_ITEMS + " 个 skill");
-        }
-
-        String normalizedScope = scope.trim();
-        SkillManagementService.BatchToggleResult batch =
-                skillManagementService.toggleBatch(normalizedScope, new ArrayList<>(names), enabled);
-        Map<String, Object> data = batch.toMap();
-        String message = "批量" + (enabled ? "启用" : "禁用") + "完成：成功 "
-                + batch.changed() + "，未变更 " + batch.unchanged() + "，失败 " + batch.failed();
-        return ApiResponse.success(message, data);
     }
 
     // ── 文件树 / 文件级操作 ───────────────────────────────────────────────────
@@ -437,42 +376,7 @@ public class SkillController {
         String content  = (String) params.get(PARAM_CONTENT);
         String encoding = (String) params.getOrDefault("encoding", "text");
 
-        Path skillDir = resolveSkillDir(scope, name);
-        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
-        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
-        if (relPath == null || relPath.isBlank()) return ApiResponse.badRequest("path 不能为空");
-
-        ReentrantLock lock = operationLock.lockFor(scope.trim(), name.trim());
-        lock.lock();
-        try {
-            if (SkillFileService.isRequiredMetadataFile(relPath)) {
-                String normalizedMetadataPath = relPath.replace('\\', '/').trim();
-                while (normalizedMetadataPath.startsWith("./")) {
-                    normalizedMetadataPath = normalizedMetadataPath.substring(2);
-                }
-                String candidateSkill = SkillFileService.SKILL_FILE.equalsIgnoreCase(normalizedMetadataPath)
-                        ? content : Files.readString(skillDir.resolve(SKILL_FILE), StandardCharsets.UTF_8);
-                String candidateManifest = SkillFileService.MANIFEST_FILE.equalsIgnoreCase(normalizedMetadataPath)
-                        ? content : Files.readString(skillDir.resolve(MANIFEST_FILE), StandardCharsets.UTF_8);
-                SkillInspection inspection = skillManifestService.inspect(
-                        scope.trim(), name.trim(), candidateSkill, candidateManifest);
-                if (!inspection.valid()) {
-                    return ApiResponse.badRequest("skill 校验失败："
-                            + SkillManifestService.summarizeErrors(inspection));
-                }
-            }
-            skillFileService.writeFile(skillDir, relPath, content, encoding);
-            // SKILL.md 内容变化要刷新 registry 缓存（其他文件不影响 listSkills，但保险起见统一失效）
-            skillRegistry.invalidate();
-            leoSkillsProvider.invalidate();
-            return ApiResponse.success("文件已保存");
-        } catch (SkillFileException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("保存失败：" + e.getMessage());
-        } finally {
-            lock.unlock();
-        }
+        return operationResponse(skillManagementService.saveFile(scope, name, relPath, content, encoding));
     }
 
     /**
@@ -489,23 +393,7 @@ public class SkillController {
         String name    = (String) params.get(PARAM_NAME);
         String relPath = (String) params.get("path");
 
-        Path skillDir = resolveSkillDir(scope, name);
-        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
-        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
-        if (relPath == null || relPath.isBlank()) return ApiResponse.badRequest("path 不能为空");
-
-        ReentrantLock lock = operationLock.lockFor(scope.trim(), name.trim());
-        lock.lock();
-        try {
-            skillFileService.deleteFile(skillDir, relPath);
-            return ApiResponse.success("已删除");
-        } catch (SkillFileException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("删除失败：" + e.getMessage());
-        } finally {
-            lock.unlock();
-        }
+        return operationResponse(skillManagementService.deleteFile(scope, name, relPath));
     }
 
     /**
@@ -523,25 +411,7 @@ public class SkillController {
         String from  = (String) params.get("from");
         String to    = (String) params.get("to");
 
-        Path skillDir = resolveSkillDir(scope, name);
-        if (skillDir == null) return ApiResponse.badRequest("scope/name 非法");
-        if (!Files.exists(skillDir)) return ApiResponse.notFound("skill 不存在");
-        if (from == null || from.isBlank() || to == null || to.isBlank()) {
-            return ApiResponse.badRequest("from/to 不能为空");
-        }
-
-        ReentrantLock lock = operationLock.lockFor(scope.trim(), name.trim());
-        lock.lock();
-        try {
-            skillFileService.moveFile(skillDir, from, to);
-            return ApiResponse.success("已重命名");
-        } catch (SkillFileException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("重命名失败：" + e.getMessage());
-        } finally {
-            lock.unlock();
-        }
+        return operationResponse(skillManagementService.moveFile(scope, name, from, to));
     }
 
     /**
@@ -572,33 +442,11 @@ public class SkillController {
             @RequestParam(PARAM_SCOPE) String scope,
             @RequestParam(PARAM_NAME) String name) {
 
-        Path skillDir = resolveSkillDir(scope, name);
-        if (skillDir == null) return ResponseEntity.badRequest().body(("scope/name 非法").getBytes(StandardCharsets.UTF_8));
-        if (!Files.exists(skillDir)) return ResponseEntity.notFound().build();
-
-        ReentrantLock lock = operationLock.lockFor(scope.trim(), name.trim());
-        lock.lock();
-        try {
-            ByteArrayOutputStream buf = new ByteArrayOutputStream();
-            skillExportService.exportSkill(skillDir, buf);
-            byte[] bytes = buf.toByteArray();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType("application/zip"));
-            headers.setContentDisposition(DownloadHeaders.attachment(name.trim() + ".skill"));
-            return ResponseEntity.ok().headers(headers).body(bytes);
-        } catch (IOException e) {
-            return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-        } finally {
-            lock.unlock();
-        }
+        return archiveResponse(() -> skillManagementService.exportSkill(scope, name));
     }
 
     /**
-     * 批量导出。请求体：{scope, names: [...]}，返回 zip，内含 {name}.skill 多个 entry，
-     * 整体再用一个外层 zip 包装。
-     *
-     * <p>简化做法：直接用 SkillExportService 的批量模式，每个 skill 的文件以 {name}/ 为前缀
+     * 批量导出。请求体：{scope, names: [...]}，每个 skill 的文件以 {name}/ 为前缀
      * 打入同一个 zip。下载文件名为 skills_{scope}_{date}.zip。
      */
     @RequestMapping(value = "/export/batch", method = RequestMethod.POST)
@@ -612,37 +460,7 @@ public class SkillController {
             return ResponseEntity.badRequest().body("names 不能为空".getBytes(StandardCharsets.UTF_8));
         }
 
-        // 收集所有目标目录，全部加锁
-        List<NamedSkill> namedSkills = new ArrayList<>();
-        List<ReentrantLock> heldLocks = new ArrayList<>();
-        try {
-            for (Object o : rawNames) {
-                if (!(o instanceof String n) || n.isBlank()) continue;
-                Path dir = resolveSkillDir(scope, n);
-                if (dir == null || !Files.exists(dir)) continue;
-                ReentrantLock lock = operationLock.lockFor(scope.trim(), n.trim());
-                lock.lock();
-                heldLocks.add(lock);
-                namedSkills.add(new NamedSkill(n.trim(), dir));
-            }
-            if (namedSkills.isEmpty()) {
-                return ResponseEntity.badRequest().body("没有可导出的 skill".getBytes(StandardCharsets.UTF_8));
-            }
-
-            ByteArrayOutputStream buf = new ByteArrayOutputStream();
-            skillExportService.exportSkills(namedSkills, buf);
-            byte[] bytes = buf.toByteArray();
-
-            String filename = "skills_" + scope.trim() + "_" + LocalDate.now() + ".zip";
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType("application/zip"));
-            headers.setContentDisposition(DownloadHeaders.attachment(filename));
-            return ResponseEntity.ok().headers(headers).body(bytes);
-        } catch (IOException e) {
-            return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-        } finally {
-            for (ReentrantLock l : heldLocks) l.unlock();
-        }
+        return archiveResponse(() -> skillManagementService.exportSkills(scope, rawNames));
     }
 
     /**
@@ -666,30 +484,31 @@ public class SkillController {
             @RequestParam(value = "defaultName", required = false) String defaultName,
             @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy) {
 
-        if (file == null || file.isEmpty()) return ApiResponse.badRequest("file 不能为空");
-        if (scope == null || scope.isBlank()) return ApiResponse.badRequest("scope 不能为空");
-
-        Path scopeRoot;
         try {
-            scopeRoot = skillRegistry.getSkillsRoot(scope.trim());
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.badRequest(e.getMessage());
+            List<ImportResult> results = skillManagementService.importSkills(file, scope, defaultName, conflictPolicy);
+            return ApiResponse.success(Map.of("results", results.stream().map(ImportResult::toMap).toList()));
+        } catch (ApiException e) {
+            return ApiResponse.error(e.getCode(), e.getMessage());
         }
+    }
 
-        ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
-
+    private static ResponseEntity<byte[]> archiveResponse(Supplier<SkillManagementService.Archive> export) {
         try {
-            List<ImportResult> results = skillExportService.importSkills(file, scopeRoot, defaultName, policy);
-            skillRegistry.invalidate();
-            leoSkillsProvider.invalidate();
-            HashMap<String, Object> data = new HashMap<>();
-            data.put("results", results.stream().map(ImportResult::toMap).toList());
-            return ApiResponse.success(data);
-        } catch (SkillImportException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("导入失败：" + e.getMessage());
+            SkillManagementService.Archive archive = export.get();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("application/zip"));
+            headers.setContentDisposition(DownloadHeaders.attachment(archive.filename()));
+            return ResponseEntity.ok().headers(headers).body(archive.content());
+        } catch (ApiException e) {
+            if (e.getCode() == ApiResponse.CODE_NOT_FOUND) return ResponseEntity.notFound().build();
+            return ResponseEntity.status(e.getHttpStatus()).body(e.getMessage().getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    private static HashMap<String, Object> operationResponse(SkillManagementService.OperationResult result) {
+        return result.succeeded()
+                ? ApiResponse.success(result.message())
+                : ApiResponse.error(result.code(), result.message());
     }
 
     /**

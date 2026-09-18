@@ -1,7 +1,7 @@
-package org.leo.web.service.discovery;
+package org.leo.service.discovery;
 
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.ResolvedTarget;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.TargetInput;
+import org.leo.service.discovery.NetworkDiscoveryDtos.ResolvedTarget;
+import org.leo.service.discovery.NetworkDiscoveryDtos.TargetInput;
 import org.springframework.stereotype.Service;
 
 import java.net.InetAddress;

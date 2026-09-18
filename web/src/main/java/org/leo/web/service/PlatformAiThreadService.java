@@ -5,14 +5,11 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,16 +27,16 @@ public class PlatformAiThreadService {
     private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
     private final PlatformAiAgentRegistry agentRegistry;
-    private final AiTurnProtocolService turnProtocolService;
+    private final AiThreadQueryService threadQueries;
 
     public PlatformAiThreadService(AiModelChannelResolver channelResolver,
                                    AiConversationStoreService conversationStore,
                                    PlatformAiAgentRegistry agentRegistry,
-                                   AiTurnProtocolService turnProtocolService) {
+                                   AiThreadQueryService threadQueries) {
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
-        this.turnProtocolService = turnProtocolService;
+        this.threadQueries = threadQueries;
     }
 
     public void createAgent(HttpSession httpSession, User user,
@@ -86,25 +83,13 @@ public class PlatformAiThreadService {
             item.put("runStatus",
                     runtime != null ? runtime.getRunStatus() : record.getRunStatus());
             item.put("executing", runtime != null && runtime.isExecuting());
-            AiTurnProtocolService.ThreadSnapshot snapshot =
-                    turnProtocolService.snapshotThread(
-                    record.getThreadId(),
-                    String.valueOf(item.get("runStatus")));
-            if (snapshot != null) item.putAll(snapshot.toMap());
+            threadQueries.applyProtocolSnapshot(item, record.getThreadId());
             item.put("configId", record.getConfigId());
             item.put("configName", record.getConfigName());
             item.put("configProtocol", record.getConfigProtocol());
             item.put("configModel", record.getConfigModel());
             return item;
         }).toList();
-    }
-
-    /** 返回属于指定用户的平台 AI 内存状态，不会创建新状态。 */
-    public PlatformAiState stateForUser(User user, String threadId) {
-        if (user == null || threadId == null || threadId.isBlank()) return null;
-        boolean owned = listThreads(user).stream()
-                .anyMatch(item -> threadId.equals(String.valueOf(item.get("threadId"))));
-        return owned ? PlatformAiStateStore.get(threadId) : null;
     }
 
     public Map<String, Object> createThread(HttpSession httpSession, User user,
@@ -168,87 +153,23 @@ public class PlatformAiThreadService {
                                       Long requestedAfterSeq, Integer requestedLimit) {
         AiThreadRecord persisted = requireOwnedThread(user, threadId);
         PlatformAiState state = PlatformAiStateStore.get(threadId);
-        long requestedCursor =
-                requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
-        long afterSeq = requestedCursor > 0L
-                ? requestedCursor
-                : Math.max(
-                        state != null ? state.getCurrentRunStartSeq() : 0L,
-                        conversationStore.findLatestTurnStartSeq(threadId));
-        int limit = requestedLimit != null ? requestedLimit : 200;
-        List<Map<String, Object>> events = new ArrayList<>();
-        for (AiSseEvent event :
-                conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
-            events.add(AiEventPayloadMapper.toMap(event));
-        }
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("events", events);
-        long lastSeq = Math.max(
-                state != null ? state.getLastSseEventSeq() : 0L,
-                conversationStore.findLastEventSeq(threadId));
         String runStatus = state != null && state.isExecuting()
                 ? state.getRunStatus() : persisted.getRunStatus();
-        AiTurnProtocolService.ThreadSnapshot protocolSnapshot =
-                turnProtocolService.snapshotThread(threadId, runStatus);
-        data.put("lastSeq", lastSeq);
-        data.putAll(protocolSnapshot.toMap());
-        if (state != null) {
-            data.putAll(runtimeSnapshot(state));
-            data.put("lastSeq", lastSeq);
-            data.putAll(protocolSnapshot.toMap());
-        } else {
-            data.put("elapsedMs", 0L);
-            data.put("stopReason", null);
-        }
+        Map<String, Object> data = threadQueries.events(threadId, state, runStatus, requestedAfterSeq, requestedLimit);
+        data.put("elapsedMs", 0L);
         return data;
-    }
-
-    public PlatformAiState currentState(HttpSession httpSession) {
-        if (httpSession == null) return null;
-        Object stateId = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
-        return stateId != null ? PlatformAiStateStore.get(String.valueOf(stateId)) : null;
     }
 
     public Map<String, Object> messages(User user, String threadId,
                                         Integer requestedOffset, Integer requestedLimit) {
         AiThreadRecord thread = requireOwnedThread(user, threadId);
-        int offset = requestedOffset != null ? Math.max(0, requestedOffset) : 0;
-        int limit = requestedLimit != null ? requestedLimit : 50;
-        Map<String, Object> data = new HashMap<>();
-        data.put("messages", conversationStore.listMessages(thread.getThreadId(), offset, limit));
-        data.put("total", conversationStore.countMessages(thread.getThreadId()));
-        data.put("offset", offset);
-        data.put("limit", limit);
-        return data;
+        return threadQueries.messages(thread.getThreadId(), requestedOffset, requestedLimit);
     }
 
     public List<org.leo.core.entity.AiSubagentInvocation> subagentInvocations(
             User user, String threadId) {
         return conversationStore.listSubagentInvocations(
                 requireOwnedThread(user, threadId).getThreadId());
-    }
-
-    public PlatformAiState getState(HttpSession httpSession) {
-        Object stateId = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
-        if (!(stateId instanceof String id) || id.isBlank()) return null;
-        return PlatformAiStateStore.get(id);
-    }
-
-    public PlatformAiState requireState(HttpSession httpSession, String message) {
-        PlatformAiState state = getState(httpSession);
-        if (state == null) throw ApiException.notFound(message);
-        return state;
-    }
-
-    private Map<String, Object> runtimeSnapshot(PlatformAiState state) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("status", state.getRunStatus());
-        payload.put("executing", state.isExecuting());
-        payload.put("elapsedMs", 0L);
-        payload.put("lastSeq", state.getLastSseEventSeq());
-        payload.put("stopReason", state.getStopReason());
-        return payload;
     }
 
     private AiModelConfig resolveOptionalChannel(Integer configId) {

@@ -3,11 +3,10 @@ package org.leo.web.service;
 import jakarta.annotation.PreDestroy;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
-import org.leo.web.service.discovery.NetworkProbeLimits;
+import org.leo.service.discovery.NetworkProbeLimits;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +24,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
+import static org.leo.service.discovery.NetworkProbePayloads.copyMapOrEmpty;
 
 /**
  * Runs one logical network probe as a sequence of bounded node-side tasks.
@@ -253,7 +255,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             final long requestedCursor = cursor;
             Map<String, Object> queried = invoke(task, () -> task.node.queryNetworkProbe(
                     childTaskId, requestedCursor, RESULT_PAGE_ITEMS, RESULT_PAGE_BYTES, true));
-            latest = map(queried.get("result"));
+            latest = copyMapOrEmpty(queried.get("result"));
             if (latest.isEmpty()) throw new IllegalStateException("节点网络探测子任务结果为空");
             boolean incremental = Boolean.TRUE.equals(latest.get("incremental"));
             synchronized (task.monitor) {
@@ -525,12 +527,12 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     }
 
     private static Map<String, Object> childPlan(Map<String, Object> source, List<Map<String, Object>> targets) {
-        Map<String, Object> plan = wireMap(source);
+        Map<String, Object> plan = copyMap(source);
         List<Map<String, Object>> safeTargets = new ArrayList<>();
-        for (Map<String, Object> target : targets) safeTargets.add(wireMap(target));
+        for (Map<String, Object> target : targets) safeTargets.add(copyMap(target));
         plan.put("targets", safeTargets);
         if (source.get("limits") instanceof Map<?, ?> rawLimits) {
-            Map<String, Object> limits = map(rawLimits);
+            Map<String, Object> limits = copyMapOrEmpty(rawLimits);
             int threads = Math.max(1, Math.min(targets.size(), integer(
                     limits.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS)));
             threads = Math.min(threads, NetworkProbeLimits.NODE_MAX_THREADS);
@@ -544,7 +546,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         Map<String, Object> plan = new LinkedHashMap<>();
         if (source.get("stages") instanceof List<?> stages) plan.put("stages", new ArrayList<>(stages));
         if (source.get("limits") instanceof Map<?, ?> rawLimits) {
-            Map<String, Object> limits = map(rawLimits);
+            Map<String, Object> limits = copyMapOrEmpty(rawLimits);
             plan.putAll(limits);
         }
         return plan;
@@ -561,7 +563,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> itemMap)) throw new IllegalArgumentException("plan.targets中的项目必须是对象");
-            result.add(map(itemMap));
+            result.add(copyMapOrEmpty(itemMap));
         }
         return result;
     }
@@ -572,34 +574,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         } catch (IllegalArgumentException ignored) {
             return new ArrayList<>();
         }
-    }
-
-    private static Map<String, Object> map(Object value) {
-        if (!(value instanceof Map<?, ?> source)) return new LinkedHashMap<>();
-        return wireMap(source);
-    }
-
-    private static Map<String, Object> wireMap(Map<?, ?> source) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : source.entrySet()) {
-            if (entry.getKey() != null) result.put(String.valueOf(entry.getKey()), wireValue(entry.getValue()));
-        }
-        return result;
-    }
-
-    private static Object wireValue(Object value) {
-        if (value instanceof Map<?, ?> source) return wireMap(source);
-        if (value instanceof Set<?> source) {
-            Set<Object> result = new LinkedHashSet<>();
-            for (Object item : source) result.add(wireValue(item));
-            return result;
-        }
-        if (value instanceof Collection<?> source) {
-            List<Object> result = new ArrayList<>();
-            for (Object item : source) result.add(wireValue(item));
-            return result;
-        }
-        return value;
     }
 
     private static void appendUnique(List<Map<String, Object>> target, List<Map<String, Object>> additions) {
@@ -696,12 +670,12 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             this.taskId = taskId;
             this.sessionId = sessionId;
             this.node = node;
-            this.plan = wireMap(plan);
-            Map<String, Object> limits = map(this.plan.get("limits"));
+            this.plan = copyMap(plan);
+            Map<String, Object> limits = copyMapOrEmpty(this.plan.get("limits"));
             this.requestedThreads = Math.max(1, Math.min(NetworkProbeLimits.NODE_MAX_THREADS,
                     integer(limits.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS)));
             this.targets = new ArrayList<>();
-            for (Map<String, Object> target : targets) this.targets.add(wireMap(target));
+            for (Map<String, Object> target : targets) this.targets.add(copyMap(target));
             this.batchCount = (targets.size() + NetworkProbeLimits.NODE_BATCH_SIZE - 1)
                     / NetworkProbeLimits.NODE_BATCH_SIZE;
         }

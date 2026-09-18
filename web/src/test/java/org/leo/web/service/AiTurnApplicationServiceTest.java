@@ -1,6 +1,7 @@
 package org.leo.web.service;
 
 import org.junit.jupiter.api.AfterEach;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.audit.AiAuditLogStore;
@@ -19,17 +20,18 @@ import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiThreadRecord;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.times;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -150,6 +152,34 @@ class AiTurnApplicationServiceTest {
         fixture.verifyReleased(true);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void preservesPreparedMessageAttachmentsAndProtocolIdentity(boolean puppet) {
+        Fixture fixture = fixture(puppet);
+        long beforeStart = System.currentTimeMillis();
+        fixture.application.execute(fixture.turn);
+
+        ArgumentCaptor<AiTurnExecutionRequest> captured = ArgumentCaptor.forClass(AiTurnExecutionRequest.class);
+        if (puppet) {
+            verify(fixture.puppetTurns).executeChat(
+                    eq(PuppetNodeSessionContainer.getSession("session-1")), eq((AiThread) fixture.state), captured.capture());
+        } else {
+            verify(fixture.platformTurns).executeChat(eq((PlatformAiState) fixture.state), captured.capture());
+        }
+        AiTurnExecutionRequest request = captured.getValue();
+        assertEquals("session-1", request.sessionId());
+        assertEquals("hello", request.userMessage());
+        assertEquals("resumed: guarded hello", request.messageForAgent());
+        assertEquals("high", request.reasoningEffort());
+        assertEquals(List.of(Map.of("name", "context.txt", "content", "context")), request.attachments());
+        assertEquals("turn-1", request.turnId());
+        assertEquals("user-1", request.userItemId());
+        assertEquals("assistant-1", request.assistantItemId());
+        assertNotNull(request.audit());
+        assertTrue(request.startMs() >= beforeStart && request.startMs() <= System.currentTimeMillis());
+        fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.COMPLETED, null));
+    }
+
     private static Fixture fixture(boolean puppet) {
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         AiConversationStoreService store = mock(AiConversationStoreService.class);
@@ -160,7 +190,7 @@ class AiTurnApplicationServiceTest {
         AiAuditLogStore auditLogStore = mock(AiAuditLogStore.class);
         AiUserInputService userInputService = mock(AiUserInputService.class);
         when(userInputService.resumePrompt(anyString(), nullable(String.class), anyString()))
-                .thenAnswer(invocation -> invocation.getArgument(2));
+                .thenAnswer(invocation -> "resumed: " + invocation.getArgument(2));
         AiTurnApplicationService application = new AiTurnApplicationService(
                 protocol, store, platformThreads, platformTurns,
                 puppetThreads, puppetTurns, auditLogStore, userInputService);
@@ -183,9 +213,8 @@ class AiTurnApplicationServiceTest {
                 thread.bindActiveLeaseToken("lease-1");
                 return true;
             });
-            when(puppetTurns.executeChat(eq(session), eq(thread), eq("thread-1"), eq("hello"),
-                    any(AiChatAuditEntry.class), isNull(), anyLong(), nullable(String.class), eq("hello"),
-                    any(), eq("turn-1"), eq("user-1"), eq("assistant-1"))).thenReturn(runtime);
+            when(puppetTurns.executeChat(eq(session), eq(thread), any(AiTurnExecutionRequest.class)))
+                    .thenReturn(runtime);
         } else {
             PlatformAiState platformState = PlatformAiStateStore.create("thread-1");
             state = platformState;
@@ -195,17 +224,16 @@ class AiTurnApplicationServiceTest {
             });
             AiChatAuditEntry audit = mock(AiChatAuditEntry.class);
             when(platformTurns.appendChatAudit(any(AiExecutionPolicy.class), eq("hello"))).thenReturn(audit);
-            when(platformTurns.executeChat(
-                    eq(platformState), eq("session-1"), eq("hello"), eq("hello"),
-                    eq(audit), isNull(), anyLong(), nullable(String.class),
-                    any(), eq("turn-1"), eq("user-1"), eq("assistant-1"))).thenReturn(runtime);
+            when(platformTurns.executeChat(eq(platformState), any(AiTurnExecutionRequest.class)))
+                    .thenReturn(runtime);
         }
         String scope = puppet ? AiTurnCommandPayload.SCOPE_PUPPET : AiTurnCommandPayload.SCOPE_PLATFORM;
 
         AiTurnCommandPayload command = AiTurnCommandPayload.create(
                 scope,
-                "session-1", "hello", "hello", null, null,
-                List.of(), AiExecutionPolicy.defaultPolicy());
+                "session-1", "hello", "guarded hello", null, "high",
+                List.of(Map.of("name", "context.txt", "content", "context")),
+                AiExecutionPolicy.defaultPolicy()).answerTo("question-1");
         AiTurnProtocolService.TurnSnapshot turn = new AiTurnProtocolService.TurnSnapshot(
                 "turn-1", "thread-1", "running", "client-1",
                 "user-1", "assistant-1", 1L, 2L, null,

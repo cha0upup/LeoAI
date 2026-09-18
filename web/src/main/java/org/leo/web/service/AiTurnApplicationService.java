@@ -113,10 +113,7 @@ public class AiTurnApplicationService {
                     turn.threadId(), command.getAnswerToQuestionId(),
                     command.getGuardedMessage());
             return platformTurns.executeChat(
-                            state, command.getSessionId(), command.getUserMessage(),
-                            messageForAgent, audit, null, startMs,
-                            command.getReasoningEffort(), command.getAttachments(),
-                            turn.id(), turn.userItemId(), turn.assistantItemId())
+                            state, AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs))
                     .handle((terminal, error) -> {
                         if (error != null) {
                             failTurn(turn, state, rootMessage(error), leaseToken,
@@ -185,11 +182,7 @@ public class AiTurnApplicationService {
                     turn.threadId(), command.getAnswerToQuestionId(),
                     command.getGuardedMessage());
             return puppetTurns.executeChat(
-                            session, thread, turn.threadId(),
-                            messageForAgent, audit, null, startMs,
-                            command.getReasoningEffort(), command.getUserMessage(),
-                            command.getAttachments(), turn.id(),
-                            turn.userItemId(), turn.assistantItemId())
+                            session, thread, AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs))
                     .handle((terminal, error) -> {
                         if (error != null) {
                             failTurn(turn, thread, rootMessage(error), leaseToken,

@@ -1,5 +1,6 @@
 package org.leo.web.service;
 
+import org.leo.service.discovery.NetworkProbeAnalysisService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -7,8 +8,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.component.NetworkProbeComponent;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.*;
-import org.leo.web.service.discovery.*;
+import org.leo.service.discovery.NetworkDiscoveryDtos.*;
+import org.leo.service.discovery.*;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;

@@ -1,6 +1,6 @@
-package org.leo.web.service.discovery;
+package org.leo.service.discovery;
 
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.PortPolicy;
+import org.leo.service.discovery.NetworkDiscoveryDtos.PortPolicy;
 import org.springframework.stereotype.Service;
 
 import java.util.*;

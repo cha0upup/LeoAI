@@ -1,5 +1,6 @@
 package org.leo.web.service;
 
+import org.leo.service.discovery.NetworkProbeAnalysisService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -9,10 +10,10 @@ import java.util.stream.Stream;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.*;
-import org.leo.web.service.discovery.PortPolicyResolver;
-import org.leo.web.service.discovery.ScanPlanService;
-import org.leo.web.service.discovery.TargetResolver;
+import org.leo.service.discovery.NetworkDiscoveryDtos.*;
+import org.leo.service.discovery.PortPolicyResolver;
+import org.leo.service.discovery.ScanPlanService;
+import org.leo.service.discovery.TargetResolver;
 
 import java.util.ArrayList;
 import java.util.HashMap;

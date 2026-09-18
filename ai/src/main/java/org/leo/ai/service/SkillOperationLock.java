@@ -1,4 +1,4 @@
-package org.leo.web.service;
+package org.leo.ai.service;
 
 import org.springframework.stereotype.Component;
 
@@ -12,12 +12,7 @@ public class SkillOperationLock {
     private final ConcurrentHashMap<String, ReentrantLock> locks = new ConcurrentHashMap<>();
 
     public ReentrantLock lockFor(String scope, String name) {
+        // Keep identity stable: another operation may already hold a reference before locking.
         return locks.computeIfAbsent(scope + "/" + name, ignored -> new ReentrantLock());
-    }
-
-    public void removeIfUnused(String scope, String name, ReentrantLock lock) {
-        if (!lock.isLocked() && !lock.hasQueuedThreads()) {
-            locks.remove(scope + "/" + name, lock);
-        }
     }
 }

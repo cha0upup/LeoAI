@@ -8,7 +8,6 @@ import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStatus;
-import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
@@ -44,7 +43,7 @@ public class PuppetNodeAiThreadService {
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final PuppetNodeAiAgentRegistry agentRegistry;
-    private final AiTurnProtocolService turnProtocolService;
+    private final AiThreadQueryService threadQueries;
     private final PuppetAiCheckpointRepository checkpointRepository;
 
     public PuppetNodeAiThreadService(AiModelConfigService modelConfigService,
@@ -52,14 +51,14 @@ public class PuppetNodeAiThreadService {
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      PuppetNodeAiAgentRegistry agentRegistry,
-                                     AiTurnProtocolService turnProtocolService,
+                                     AiThreadQueryService threadQueries,
                                      PuppetAiCheckpointRepository checkpointRepository) {
         this.modelConfigService = modelConfigService;
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
-        this.turnProtocolService = turnProtocolService;
+        this.threadQueries = threadQueries;
         this.checkpointRepository = checkpointRepository;
     }
 
@@ -136,7 +135,7 @@ public class PuppetNodeAiThreadService {
                 item.put("configModel", record.getConfigModel());
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, record.getThreadId()));
-                applyProtocolSnapshot(item, record.getThreadId());
+                threadQueries.applyProtocolSnapshot(item, record.getThreadId());
                 result.add(item);
             }
         }
@@ -147,18 +146,8 @@ public class PuppetNodeAiThreadService {
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, thread.getThreadId()));
             }
-            applyProtocolSnapshot(item, thread.getThreadId());
+            threadQueries.applyProtocolSnapshot(item, thread.getThreadId());
             result.add(item);
-        }
-        if (puppetId == null) {
-            for (AiThread thread : memoryThreads) {
-                if (result.stream().noneMatch(item ->
-                        thread.getThreadId().equals(item.get("threadId")))) {
-                    Map<String, Object> item = threadToMap(thread, 0);
-                    applyProtocolSnapshot(item, thread.getThreadId());
-                    result.add(item);
-                }
-            }
         }
         result.sort((left, right) -> Long.compare(
                 ControllerUtil.toLong(right.get("lastActiveAt")),
@@ -235,41 +224,14 @@ public class PuppetNodeAiThreadService {
     public Map<String, Object> threadMessages(
             PuppetNodeSession session, String threadId,
             Integer requestedOffset, Integer requestedLimit) {
-        int offset = requestedOffset != null ? Math.max(0, requestedOffset) : 0;
-        int limit = requestedLimit != null ? requestedLimit : 50;
-        Map<String, Object> data = new HashMap<>();
-        data.put("messages", conversationStore.listMessages(threadId, offset, limit));
-        data.put("total", conversationStore.countMessages(threadId));
-        data.put("offset", offset);
-        data.put("limit", limit);
-        return data;
+        return threadQueries.messages(threadId, requestedOffset, requestedLimit);
     }
 
     public Map<String, Object> threadEvents(
             PuppetNodeSession session, String threadId,
             Long requestedAfterSeq, Integer requestedLimit) {
         AiThread thread = requireThread(session, threadId);
-        long requestedCursor =
-                requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
-        long afterSeq = requestedCursor > 0L
-                ? requestedCursor
-                : Math.max(thread.getCurrentRunStartSeq(),
-                        conversationStore.findLatestTurnStartSeq(threadId));
-        int limit = requestedLimit != null ? requestedLimit : 200;
-        List<Map<String, Object>> events = new ArrayList<>();
-        for (AiSseEvent event :
-                conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
-            events.add(AiEventPayloadMapper.toMap(event));
-        }
-        Map<String, Object> data = new HashMap<>();
-        data.put("events", events);
-        data.put("lastSeq", Math.max(
-                thread.getLastSseEventSeq(),
-                conversationStore.findLastEventSeq(threadId)));
-        data.putAll(runtimeSnapshot(thread));
-        data.putAll(turnProtocolService.snapshotThread(
-                threadId, thread.getRunStatus()).toMap());
-        return data;
+        return threadQueries.events(threadId, thread, thread.getRunStatus(), requestedAfterSeq, requestedLimit);
     }
 
     public Map<String, Object> resetThread(
@@ -417,24 +379,6 @@ public class PuppetNodeAiThreadService {
         }
     }
 
-    private Map<String, Object> runtimeSnapshot(AiThread thread) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("status", thread.getRunStatus());
-        payload.put("stopReason", thread.getStopReason());
-        payload.put("lastSeq", thread.getLastSseEventSeq());
-        payload.put("executing", thread.isExecuting());
-        return payload;
-    }
-
-    private void applyProtocolSnapshot(Map<String, Object> target,
-                                       String threadId) {
-        String fallback = String.valueOf(
-                target.getOrDefault("runStatus", AiRunStatus.IDLE));
-        AiTurnProtocolService.ThreadSnapshot snapshot =
-                turnProtocolService.snapshotThread(threadId, fallback);
-        if (snapshot != null) target.putAll(snapshot.toMap());
-    }
-
     private Map<String, Object> threadToMap(AiThread thread, int messageCount) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("threadId", thread.getThreadId());
@@ -458,9 +402,6 @@ public class PuppetNodeAiThreadService {
         item.put("lastActiveAt", record.getLastActiveAt());
         item.put("messageCount", safeMessageCount(record.getMessageCount()));
         item.put("configId", record.getConfigId());
-        item.put("configName", record.getConfigName());
-        item.put("configProtocol", record.getConfigProtocol());
-        item.put("configModel", record.getConfigModel());
         item.put("runStatus", record.getRunStatus() != null
                 ? record.getRunStatus() : AiRunStatus.IDLE);
         item.put("executing", false);

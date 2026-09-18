@@ -2,9 +2,9 @@ package org.leo.web.controller.puppetnode.scan;
 
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.core.util.ApiResponse;
-import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.TargetInput;
+import org.leo.service.discovery.NetworkDiscoveryDtos.TargetInput;
 import org.leo.web.service.NetworkProbeWorkflowService;
-import org.leo.web.service.discovery.TargetResolver;
+import org.leo.service.discovery.TargetResolver;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.exception.ApiException;
 import org.springframework.web.bind.annotation.*;

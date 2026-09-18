@@ -13,7 +13,6 @@ import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiModelConfig;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -77,28 +76,17 @@ public class PlatformAiTurnService {
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(
-                            PlatformAiState state,
-                            String sessionId,
-                            String userMessage,
-                            String guardedMessage,
-                            AiChatAuditEntry audit,
-                            SseEmitter emitter,
-                            long startMs,
-                            String reasoningEffort,
-                            Object attachments,
-                            String protocolTurnId,
-                            String userItemId,
-                            String assistantItemId) {
+            PlatformAiState state, AiTurnExecutionRequest request) {
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(state);
         String memoryId = state.getStateId();
         AiTurnTrace trace = AiTurnTrace.start(
-                "platform", state.getStateId(), startMs);
+                "platform", state.getStateId(), request.startMs());
         AiSseTurnPresenter.Session presentation = sseTurnPresenter.open(
                 new AiSseTurnPresenter.Context(
-                        "Platform AI", state, turn, emitter, audit, startMs,
+                        "Platform AI", state, turn, null, request.audit(), request.startMs(),
                         trace,
                         () -> conversationStore.updateRuntime(
-                                sessionId, state.getStateId(),
+                                request.sessionId(), state.getStateId(),
                                 state.getLastActiveAt(), state.getRunStatus(),
                                 state.getActiveLeaseToken()),
                         null,
@@ -118,15 +106,15 @@ public class PlatformAiTurnService {
                 throw new InterruptedException("已停止");
             }
             state.touchLastActiveAt();
-            String messageForAgent = guardedMessage;
-            PlatformAiAgentRegistry.Runtime agentRuntime = threadAgent(state, reasoningEffort);
+            String messageForAgent = request.messageForAgent();
+            PlatformAiAgentRegistry.Runtime agentRuntime = threadAgent(state, request.reasoningEffort());
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(agentRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
-                    protocolTurnId, userItemId, assistantItemId, state.getStateId(),
+                    request.turnId(), request.userItemId(), request.assistantItemId(), state.getStateId(),
                     agentRuntime.effectiveConfigId(), messageForAgent,
-                    userMessage, attachments, startMs, agentRuntime.runtimeJson(),
+                    request.userMessage(), request.attachments(), request.startMs(), agentRuntime.runtimeJson(),
                     trace, state.getActiveLeaseToken());
             state.bindActiveItemId(persistedTurn.assistantMessageId());
             state.bindActiveRunId(persistedTurn.runId());
@@ -140,7 +128,7 @@ public class PlatformAiTurnService {
                                             memoryId, AiTurnCommand.RECOVERY_MESSAGE)),
                             new AiTurnTransaction.Context(
                                     persistedTurn, agentRuntime.effectiveConfigId(),
-                                    agentRuntime.agent(), memoryId, audit, startMs,
+                                    agentRuntime.agent(), memoryId, request.audit(), request.startMs(),
                                     trace),
                             presentation.eventLog(),
                             state::getCurrentPlan,

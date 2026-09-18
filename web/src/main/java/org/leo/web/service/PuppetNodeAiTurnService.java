@@ -7,7 +7,6 @@ import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.thread.AiConversationStoreService;
-import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStatus;
@@ -16,7 +15,6 @@ import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -68,26 +66,15 @@ public class PuppetNodeAiTurnService {
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(
-                            PuppetNodeSession session,
-                            AiThread thread,
-                            String threadId,
-                            String messageForAgent,
-                            AiChatAuditEntry audit,
-                            SseEmitter emitter,
-                            long startMs,
-                            String reasoningEffort,
-                            String userContent,
-                            Object attachments,
-                            String protocolTurnId,
-                            String userItemId,
-                            String assistantItemId) {
+            PuppetNodeSession session, AiThread thread, AiTurnExecutionRequest request) {
+        String threadId = thread.getThreadId();
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(thread);
         String memoryId = session.getSessionId() + ":" + threadId;
         AiTurnTrace trace = AiTurnTrace.start(
-                "puppet", threadId, startMs);
+                "puppet", threadId, request.startMs());
         AiSseTurnPresenter.Session presentation = sseTurnPresenter.open(
                 new AiSseTurnPresenter.Context(
-                        "Puppet AI", thread, turn, emitter, audit, startMs,
+                        "Puppet AI", thread, turn, null, request.audit(), request.startMs(),
                         trace,
                         () -> conversationStore.updateRuntime(
                                 session.getSessionId(), thread,
@@ -107,14 +94,14 @@ public class PuppetNodeAiTurnService {
         try {
             if (turn.isCancellationRequested()) throw new InterruptedException("已停止");
             PuppetNodeAiAgentRegistry.Runtime agentRuntime =
-                    resolveAgent(session, thread, reasoningEffort);
+                    resolveAgent(session, thread, request.reasoningEffort());
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(agentRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
-                    protocolTurnId, userItemId, assistantItemId, threadId,
-                    agentRuntime.effectiveConfigId(), messageForAgent,
-                    userContent, attachments, startMs, agentRuntime.runtimeJson(),
+                    request.turnId(), request.userItemId(), request.assistantItemId(), threadId,
+                    agentRuntime.effectiveConfigId(), request.messageForAgent(),
+                    request.userMessage(), request.attachments(), request.startMs(), agentRuntime.runtimeJson(),
                     trace, thread.getActiveLeaseToken());
             thread.bindActiveItemId(persistedTurn.assistantMessageId());
             thread.bindActiveRunId(persistedTurn.runId());
@@ -123,12 +110,12 @@ public class PuppetNodeAiTurnService {
                             new AiTurnCommand(
                                     threadId, memoryId, turn,
                                     () -> agentRuntime.agent().chat(
-                                            memoryId, messageForAgent),
+                                            memoryId, request.messageForAgent()),
                                     () -> agentRuntime.agent().chat(
                                             memoryId, AiTurnCommand.RECOVERY_MESSAGE)),
                             new AiTurnTransaction.Context(
                                     persistedTurn, agentRuntime.effectiveConfigId(),
-                                    agentRuntime.agent(), memoryId, audit, startMs,
+                                    agentRuntime.agent(), memoryId, request.audit(), request.startMs(),
                                     trace),
                             presentation.eventLog(),
                             thread::getCurrentPlan,

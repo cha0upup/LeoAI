@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -50,9 +51,11 @@ public class SkillExportService {
     private static final String MANIFEST_FILE = "manifest.yaml";
 
     private final SkillManifestService manifestService;
+    private final SkillOperationLock operationLock;
 
-    public SkillExportService(SkillManifestService manifestService) {
+    public SkillExportService(SkillManifestService manifestService, SkillOperationLock operationLock) {
         this.manifestService = manifestService;
+        this.operationLock = operationLock;
     }
 
     /** 单个 zip entry 最大尺寸，与 SkillFileService.MAX_FILE_BYTES 一致。 */
@@ -101,9 +104,9 @@ public class SkillExportService {
      * <p>调用方负责：
      * <ul>
      *   <li>resolveSkillRoot(scope) 提供目标 scope 的根目录</li>
-     *   <li>调用前后调用 lockFor 保证并发安全</li>
-     *   <li>导入完成后调用 invalidate 刷新缓存</li>
+     *   <li>导入结束后调用 invalidate 刷新缓存（包括部分写入后失败的情况）</li>
      * </ul>
+     * 每个目标的冲突检查和落盘使用与文件编辑相同的 SkillOperationLock。
      *
      * @param defaultName 当 zip 是单 skill（根有 SKILL.md）时，作为目标 name。
      *                    若为 null 或空，单 skill 会被拒绝（无法决定目录名）。
@@ -118,7 +121,7 @@ public class SkillExportService {
             // tempRoot/{skillName}/<files>
             extractToTemp(file, tempRoot, defaultName);
 
-            // 阶段 2：原子化移动到目标 scopeRoot/{name}/，按 policy 处理冲突
+            // 阶段 2：逐项加锁后写入目标 scopeRoot/{name}/，按 policy 处理冲突
             String scope = scopeRoot.getFileName() != null
                     ? scopeRoot.getFileName().toString() : null;
             SkillRegistryService.validateScope(scope);
@@ -306,30 +309,29 @@ public class SkillExportService {
                     continue;
                 }
 
-                String finalName = name;
-                ImportResult.Status status = ImportResult.Status.IMPORTED;
-
-                if (Files.exists(target)) {
-                    switch (policy) {
-                        case SKIP -> {
+                ReentrantLock lock = operationLock.lockFor(scope, name);
+                lock.lock();
+                try {
+                    ImportResult.Status status = ImportResult.Status.IMPORTED;
+                    if (Files.exists(target)) {
+                        if (policy == ConflictPolicy.SKIP) {
                             results.add(ImportResult.of(name, name, ImportResult.Status.SKIPPED));
                             continue;
                         }
-                        case OVERWRITE -> {
-                            deleteRecursively(target);
-                            status = ImportResult.Status.OVERWRITTEN;
-                        }
+                        deleteRecursively(target);
+                        status = ImportResult.Status.OVERWRITTEN;
                     }
+                    try {
+                        Files.move(skillTmpDir, target, StandardCopyOption.ATOMIC_MOVE);
+                    } catch (IOException atomicFail) {
+                        // 跨文件系统时退化为递归复制，整个过程仍持有目标锁。
+                        copyRecursively(skillTmpDir, target);
+                        deleteRecursively(skillTmpDir);
+                    }
+                    results.add(ImportResult.of(name, name, status));
+                } finally {
+                    lock.unlock();
                 }
-
-                try {
-                    Files.move(skillTmpDir, target, StandardCopyOption.ATOMIC_MOVE);
-                } catch (Exception atomicFail) {
-                    // 跨文件系统时 ATOMIC_MOVE 不支持，退化为非原子但等价的递归复制
-                    copyRecursively(skillTmpDir, target);
-                    deleteRecursively(skillTmpDir);
-                }
-                results.add(ImportResult.of(name, finalName, status));
             }
         }
         return results;
