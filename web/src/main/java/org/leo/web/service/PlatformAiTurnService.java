@@ -2,7 +2,6 @@ package org.leo.web.service;
 
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
-import org.leo.core.ai.AiRunStatus;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnOutcome;
@@ -62,21 +61,11 @@ public class PlatformAiTurnService {
     }
 
     public boolean tryClaimExecution(PlatformAiState state) {
-        boolean localClaimed = turnCoordinator.tryClaim(state);
-        if (!localClaimed
-                && AiRunStatus.CANCELLED.equals(state.getRunStatus())) {
-            localClaimed = turnCoordinator.tryClaimAfterRelease(
-                    state, state::isExecuting, 5_000L);
-        }
-        if (!localClaimed) return false;
-        String leaseToken = executionClaimService.tryAcquireAfterClaim(
+        return executionClaimService.tryClaim(
                 state, state.getStateId(),
                 () -> state.stopGeneration("执行租约已转移"),
                 error -> logger.warn("获取平台 AI 执行租约失败, threadId={}: {}",
                         state.getStateId(), error.getMessage()));
-        if (leaseToken == null) return false;
-        state.bindActiveLeaseToken(leaseToken);
-        return true;
     }
 
     public void failDetachedExecution(PlatformAiState state) {
@@ -84,10 +73,7 @@ public class PlatformAiTurnService {
     }
 
     public void releaseExecutionLease(PlatformAiState state) {
-        if (state != null) {
-            executionClaimService.release(state.getStateId());
-            state.bindActiveLeaseToken(null);
-        }
+        executionClaimService.release(state, state != null ? state.getStateId() : null);
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(

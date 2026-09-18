@@ -10,6 +10,7 @@ import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
+import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.springframework.stereotype.Service;
@@ -118,21 +119,24 @@ public class AiTurnApplicationService {
                             turn.id(), turn.userItemId(), turn.assistantItemId())
                     .handle((terminal, error) -> {
                         if (error != null) {
-                            failPlatform(
-                                    turn, state, rootMessage(error), leaseToken);
+                            failTurn(turn, state, rootMessage(error), leaseToken,
+                                    () -> platformTurns.failDetachedExecution(state),
+                                    () -> platformTurns.releaseExecutionLease(state));
                         } else {
-                            completePlatform(
+                            completeTurn(
                                     turn, state,
                                     state.isWaitingForUserInput()
                                             ? AiRunStatus.WAITING_FOR_USER
                                             : terminal.runtimeStatus(),
-                                    terminal.errorMessage(), leaseToken);
+                                    terminal.errorMessage(), leaseToken,
+                                    () -> platformTurns.releaseExecutionLease(state));
                         }
                         return true;
                     });
         } catch (Throwable error) {
-            failPlatform(
-                    turn, state, rootMessage(error), executionLeaseToken);
+            failTurn(turn, state, rootMessage(error), executionLeaseToken,
+                    () -> platformTurns.failDetachedExecution(state),
+                    () -> platformTurns.releaseExecutionLease(state));
             return CompletableFuture.completedFuture(true);
         }
     }
@@ -188,96 +192,50 @@ public class AiTurnApplicationService {
                             turn.userItemId(), turn.assistantItemId())
                     .handle((terminal, error) -> {
                         if (error != null) {
-                            failPuppet(
-                                    turn, thread, rootMessage(error), leaseToken);
+                            failTurn(turn, thread, rootMessage(error), leaseToken,
+                                    () -> puppetTurns.failDetachedExecution(thread),
+                                    () -> puppetTurns.releaseExecutionLease(thread));
                         } else {
-                            completePuppet(
+                            completeTurn(
                                     turn, thread,
                                     thread.isWaitingForUserInput()
                                             ? AiRunStatus.WAITING_FOR_USER
                                             : terminal.runtimeStatus(),
-                                    terminal.errorMessage(), leaseToken);
+                                    terminal.errorMessage(), leaseToken,
+                                    () -> puppetTurns.releaseExecutionLease(thread));
                         }
                         return true;
                     });
         } catch (Throwable error) {
-            failPuppet(
-                    turn, thread, rootMessage(error), executionLeaseToken);
+            failTurn(turn, thread, rootMessage(error), executionLeaseToken,
+                    () -> puppetTurns.failDetachedExecution(thread),
+                    () -> puppetTurns.releaseExecutionLease(thread));
             return CompletableFuture.completedFuture(true);
         }
     }
 
-    private void completePlatform(
-            AiTurnProtocolService.TurnSnapshot turn,
-            PlatformAiState state,
-            String runtimeStatus,
-            String errorMessage,
-            String leaseToken) {
+    private void completeTurn(AiTurnProtocolService.TurnSnapshot turn,
+                              AiRuntimeState runtime, String runtimeStatus,
+                              String errorMessage, String leaseToken, Runnable releaseLease) {
         try {
-            AiTurnProtocolService.TurnSnapshot completed =
-                    protocol.completeFromRuntime(
-                            turn.id(), runtimeStatus, errorMessage,
-                            leaseToken);
-            state.offerSseEvent(
-                    "turn/completed", Map.of("turn", completed.toMap()));
+            AiTurnProtocolService.TurnSnapshot completed = protocol.completeFromRuntime(
+                    turn.id(), runtimeStatus, errorMessage, leaseToken);
+            runtime.offerSseEvent("turn/completed", Map.of("turn", completed.toMap()));
         } finally {
-            platformTurns.releaseExecutionLease(state);
+            releaseLease.run();
         }
     }
 
-    private void completePuppet(
-            AiTurnProtocolService.TurnSnapshot turn,
-            AiThread thread,
-            String runtimeStatus,
-            String errorMessage,
-            String leaseToken) {
+    private void failTurn(AiTurnProtocolService.TurnSnapshot turn,
+                          AiRuntimeState runtime, String message, String leaseToken,
+                          Runnable failExecution, Runnable releaseLease) {
+        boolean owns = turn.id().equals(runtime.getActiveTurnId());
+        if (owns) failExecution.run();
         try {
-            AiTurnProtocolService.TurnSnapshot completed =
-                    protocol.completeFromRuntime(
-                            turn.id(), runtimeStatus, errorMessage,
-                            leaseToken);
-            thread.offerSseEvent(
-                    "turn/completed", Map.of("turn", completed.toMap()));
+            AiTurnProtocolService.TurnSnapshot failed = protocol.failStart(turn.id(), message, leaseToken);
+            if (owns) runtime.offerSseEvent("turn/completed", Map.of("turn", failed.toMap()));
         } finally {
-            puppetTurns.releaseExecutionLease(thread);
-        }
-    }
-
-    private void failPlatform(
-            AiTurnProtocolService.TurnSnapshot turn,
-            PlatformAiState state,
-            String message,
-            String leaseToken) {
-        boolean owns = turn.id().equals(state.getActiveTurnId());
-        if (owns) platformTurns.failDetachedExecution(state);
-        try {
-            AiTurnProtocolService.TurnSnapshot failed =
-                    protocol.failStart(turn.id(), message, leaseToken);
-            if (owns) {
-                state.offerSseEvent(
-                        "turn/completed", Map.of("turn", failed.toMap()));
-            }
-        } finally {
-            if (owns) platformTurns.releaseExecutionLease(state);
-        }
-    }
-
-    private void failPuppet(
-            AiTurnProtocolService.TurnSnapshot turn,
-            AiThread thread,
-            String message,
-            String leaseToken) {
-        boolean owns = turn.id().equals(thread.getActiveTurnId());
-        if (owns) puppetTurns.failDetachedExecution(thread);
-        try {
-            AiTurnProtocolService.TurnSnapshot failed =
-                    protocol.failStart(turn.id(), message, leaseToken);
-            if (owns) {
-                thread.offerSseEvent(
-                        "turn/completed", Map.of("turn", failed.toMap()));
-            }
-        } finally {
-            if (owns) puppetTurns.releaseExecutionLease(thread);
+            if (owns) releaseLease.run();
         }
     }
 
@@ -289,17 +247,9 @@ public class AiTurnApplicationService {
                 ? message : current.getClass().getSimpleName();
     }
 
-    private void bind(PlatformAiState state,
-                      AiTurnProtocolService.TurnSnapshot turn) {
-        state.bindActiveTurnId(turn.id());
-        state.bindActiveItemId(null);
-        state.bindActiveRunId(null);
-    }
-
-    private void bind(AiThread thread,
-                      AiTurnProtocolService.TurnSnapshot turn) {
-        thread.bindActiveTurnId(turn.id());
-        thread.bindActiveItemId(null);
-        thread.bindActiveRunId(null);
+    private void bind(AiRuntimeState runtime, AiTurnProtocolService.TurnSnapshot turn) {
+        runtime.bindActiveTurnId(turn.id());
+        runtime.bindActiveItemId(null);
+        runtime.bindActiveRunId(null);
     }
 }

@@ -80,6 +80,32 @@ class ScanPreviewServiceTest {
         assertEquals(1, plan.targets().size());
         assertEquals("http://127.0.0.1:8080/app", plan.targets().get(0).get("baseUrl"));
         assertThrows(UnsupportedOperationException.class, () -> plan.targets().get(0).put("port", 80));
+        assertThrows(UnsupportedOperationException.class, () -> plan.hosts().clear());
+        assertThrows(UnsupportedOperationException.class, () -> plan.ports().clear());
+        List<?> applications = (List<?>) plan.targets().get(0).get("applications");
+        assertThrows(UnsupportedOperationException.class, applications::clear);
+        assertThrows(UnsupportedOperationException.class, () -> ((Map<?, ?>) applications.get(0)).clear());
+    }
+
+    @Test
+    void snapshotsRulesBeforeTheyCanBeChangedWhileWaitingForExecution() {
+        var analysis = org.mockito.Mockito.mock(org.leo.web.service.NetworkProbeAnalysisService.class);
+        Map<String, Object> request = new java.util.LinkedHashMap<>(Map.of("method", "GET"));
+        List<Map<String, Object>> requests = new java.util.ArrayList<>(List.of(request));
+        Map<String, Object> rule = new java.util.LinkedHashMap<>(Map.of("id", "test-rule", "requests", requests));
+        org.mockito.Mockito.when(analysis.snapshotRules(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(rule));
+        var snapshotPlanner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(), analysis);
+        var plan = snapshotPlanner.plan(new ScanConfig("rules", new TargetInput(List.of("127.0.0.1:80"), List.of()),
+                null, null, null, List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT")));
+
+        request.put("method", "POST");
+        requests.clear();
+        rule.put("id", "changed");
+
+        assertEquals("test-rule", plan.fingerprintRules().get(0).get("id"));
+        List<?> snapshot = (List<?>) plan.fingerprintRules().get(0).get("requests");
+        assertEquals("GET", ((Map<?, ?>) snapshot.get(0)).get("method"));
+        assertThrows(UnsupportedOperationException.class, () -> ((Map<?, ?>) snapshot.get(0)).clear());
     }
 
     @Test
@@ -102,7 +128,7 @@ class ScanPreviewServiceTest {
         assertEquals(plan.hosts().size() * NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size(), plan.reachabilityTargets().size());
         assertEquals(0, preview.combinationCount());
         assertEquals(0, preview.serviceProbeCount());
-        assertEquals(List.of("REACHABILITY"), plan.workflowRequest().get("stages"));
+        assertEquals(List.of("REACHABILITY"), plan.stages().stream().map(Enum::name).toList());
     }
 
     @Test
@@ -127,14 +153,14 @@ class ScanPreviewServiceTest {
     void validatesStageSelectionsAndKeepsLegacyJsonDefault() throws Exception {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         ScanConfig legacy = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
-        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).workflowRequest().get("stages"));
+        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).stages().stream().map(Enum::name).toList());
         for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("PORT_SCAN", "FINGERPRINT"), List.of("UNKNOWN"))) {
             ScanConfig invalid = new ScanConfig("invalid", legacy.targets(), null, null, null, stages);
             var failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
             assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
         }
         ScanConfig onlyAlive = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]},\"stages\":[\"REACHABILITY\"]}", ScanConfig.class);
-        assertEquals(List.of("REACHABILITY"), planner.plan(onlyAlive).workflowRequest().get("stages"));
+        assertEquals(List.of("REACHABILITY"), planner.plan(onlyAlive).stages().stream().map(Enum::name).toList());
     }
 
 }

@@ -4,6 +4,7 @@ import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.discovery.NetworkProbeLimits;
 import org.leo.web.service.discovery.ScanStage;
+import org.leo.web.service.discovery.ScanPlanService.ScanPlan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -77,8 +78,11 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         this.resultStore = resultStore;
     }
 
-    public Map<String, Object> start(String sessionId, NetworkProbeCapable node, Map<String, Object> request) {
-        return start(sessionId, node, validate(request));
+    public Map<String, Object> start(String sessionId, NetworkProbeCapable node, ScanPlan plan) {
+        if (plan == null) throw new IllegalArgumentException("扫描计划不能为空");
+        return start(sessionId, node, new WorkflowSpec(plan.hosts(), plan.ports(), plan.targets(),
+                plan.timeoutMs(), plan.workers(), plan.stages(), plan.name(), plan.reachabilityTargets(),
+                plan.fingerprintRules(), List.of(), "", false));
     }
 
     private Map<String, Object> start(String sessionId, NetworkProbeCapable node, WorkflowSpec spec) {
@@ -854,43 +858,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 && now - entry.getValue().finishedAt > TASK_TTL_MS);
     }
 
-    private WorkflowSpec validate(Map<String, Object> request) {
-        if (request == null) throw new IllegalArgumentException("workflow必须是对象");
-        List<String> hosts = uniqueStrings(request.get("hosts"), "workflow.hosts");
-        if (hosts.isEmpty()) throw new IllegalArgumentException("workflow.hosts不能为空");
-        if (hosts.size() > NetworkProbeLimits.MAX_RESOLVED_HOSTS) {
-            throw new IllegalArgumentException("workflow.hosts不能超过"
-                    + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
-        }
-        Object requestedStages = request.get("stages");
-        if (requestedStages == null && Boolean.FALSE.equals(request.get("probeServices"))) {
-            requestedStages = List.of("REACHABILITY", "PORT_SCAN");
-        }
-        List<ScanStage> stages = ScanStage.resolve(requestedStages);
-        boolean scanPorts = stages.contains(ScanStage.PORT_SCAN);
-        List<Integer> ports = scanPorts ? uniquePorts(request.get("ports")) : List.of();
-        if (scanPorts && ports.isEmpty()) throw new IllegalArgumentException("workflow.ports不能为空");
-        if (scanPorts && request.get("targets") == null
-                && (long) hosts.size() * (long) ports.size() > NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS) {
-            throw new IllegalArgumentException("workflow目标组合数不能超过"
-                    + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
-        }
-        List<Map<String, Object>> targets = scanPorts ? workflowTargets(request.get("targets"), hosts, ports) : List.of();
-        int timeout = boundedInt(request.get("timeout"), NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS,
-                NetworkProbeLimits.NODE_MIN_TIMEOUT_MS, NetworkProbeLimits.NODE_MAX_TIMEOUT_MS);
-        int threads = boundedInt(request.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
-                1, NetworkProbeLimits.NODE_MAX_THREADS);
-        String name = text(request.get("name"));
-        List<Map<String, Object>> reachabilityTargets = !stages.contains(ScanStage.REACHABILITY)
-                || request.get("reachabilityTargets") == null
-                ? List.of() : exactReachabilityTargets(request.get("reachabilityTargets"), hosts);
-        List<Map<String, Object>> fingerprintRules = stages.contains(ScanStage.FINGERPRINT)
-                ? mapList(request.get("fingerprintRules")) : List.of();
-        if (stages.contains(ScanStage.FINGERPRINT) && fingerprintRules.isEmpty())
-            throw new IllegalArgumentException("组件识别缺少已校验的规则快照");
-        return new WorkflowSpec(hosts, ports, targets, timeout, threads, stages, name, reachabilityTargets, fingerprintRules, List.of(), "", false);
-    }
-
     private List<Map<String, Object>> fingerprintTargets(WorkflowSpec spec, List<Map<String, Object>> endpoints) {
         Map<String, Map<String, Object>> configured = new LinkedHashMap<>();
         for (Map<String, Object> target : spec.targets()) configured.put(endpointKey(target), target);
@@ -954,11 +921,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         Map<String, Object> scan = new LinkedHashMap<>();
         scan.put("kind", "reachability");
         scan.put("hosts", spec.hosts());
-        // The controller supplies the minimal exact probes for explicit
-        // endpoints. A plain workflow request keeps the three cheap defaults.
-        if (!spec.reachabilityTargets().isEmpty()) {
-            scan.put("targets", spec.reachabilityTargets());
-        }
+        scan.put("targets", spec.reachabilityTargets());
         scan.put("timeout", Integer.valueOf(spec.timeout()));
         scan.put("threads", Integer.valueOf(spec.threads()));
         return scan;
@@ -1174,88 +1137,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         }
     }
 
-    private List<Map<String, Object>> workflowTargets(Object value, List<String> hosts, List<Integer> ports) {
-        if (value == null) {
-            List<Map<String, Object>> targets = new ArrayList<>();
-            for (String host : hosts) for (Integer port : ports) {
-                Map<String, Object> target = new LinkedHashMap<>();
-                target.put("host", host);
-                target.put("port", port);
-                target.put("protocol", "tcp");
-                targets.add(target);
-            }
-            return targets;
-        }
-        if (!(value instanceof Collection<?> collection) || collection.isEmpty()) {
-            throw new IllegalArgumentException("workflow.targets必须是非空数组");
-        }
-        if (collection.size() > NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS) {
-            throw new IllegalArgumentException("workflow.targets不能超过"
-                    + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
-        }
-        Set<String> allowedHosts = new LinkedHashSet<>(hosts);
-        List<Map<String, Object>> targets = new ArrayList<>();
-        Set<String> keys = new LinkedHashSet<>();
-        for (Object item : collection) {
-            Map<String, Object> target = map(item);
-            String host = text(target.get("host"));
-            int port = integer(target.get("port"), -1);
-            if (!allowedHosts.contains(host) || port < 1 || port > 65535) {
-                throw new IllegalArgumentException("workflow.targets包含无效目标");
-            }
-            if (keys.add(host + ":" + port)) {
-                Map<String, Object> safeTarget = new LinkedHashMap<>();
-                safeTarget.put("host", host);
-                safeTarget.put("port", Integer.valueOf(port));
-                safeTarget.put("protocol", "tcp");
-                if (target.containsKey("baseUrl")) safeTarget.put("baseUrl", target.get("baseUrl"));
-                if (target.containsKey("applications")) safeTarget.put("applications", wireValue(target.get("applications")));
-                targets.add(safeTarget);
-            }
-        }
-        if (targets.isEmpty()) throw new IllegalArgumentException("workflow.targets不能为空");
-        return targets;
-    }
-
-    private List<Map<String, Object>> exactReachabilityTargets(Object value, List<String> hosts) {
-        if (!(value instanceof Collection<?> collection) || collection.isEmpty()) {
-            throw new IllegalArgumentException("workflow.reachabilityTargets必须是非空数组");
-        }
-        if (collection.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
-            throw new IllegalArgumentException("workflow.reachabilityTargets不能超过"
-                    + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个");
-        }
-        Set<String> allowedHosts = new LinkedHashSet<>(hosts);
-        Set<String> keys = new LinkedHashSet<>();
-        List<Map<String, Object>> targets = new ArrayList<>();
-        Map<String, Integer> targetsByHost = new LinkedHashMap<>();
-        for (Object item : collection) {
-            Map<String, Object> target = map(item);
-            String host = text(target.get("host"));
-            int port = integer(target.get("port"), -1);
-            if (!allowedHosts.contains(host) || port < 1 || port > 65535) {
-                throw new IllegalArgumentException("workflow.reachabilityTargets包含无效目标");
-            }
-            if (keys.add(host + ":" + port)) {
-                int hostTargetCount = targetsByHost.getOrDefault(host, 0) + 1;
-                if (hostTargetCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
-                    throw new IllegalArgumentException("单台主机的探活端口不能超过"
-                            + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
-                }
-                targetsByHost.put(host, hostTargetCount);
-                Map<String, Object> safeTarget = new LinkedHashMap<>();
-                safeTarget.put("host", host);
-                safeTarget.put("port", Integer.valueOf(port));
-                safeTarget.put("protocol", "tcp");
-                if (target.containsKey("baseUrl")) safeTarget.put("baseUrl", target.get("baseUrl"));
-                if (target.containsKey("applications")) safeTarget.put("applications", wireValue(target.get("applications")));
-                targets.add(safeTarget);
-            }
-        }
-        if (targets.isEmpty()) throw new IllegalArgumentException("workflow.reachabilityTargets不能为空");
-        return targets;
-    }
-
     private static String detectService(String banner, int port) {
         String value = banner == null ? "" : banner.toLowerCase(Locale.ROOT);
         if (value.startsWith("ssh-") || value.contains("openssh")) return "ssh";
@@ -1304,28 +1185,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private static int boundedProgress(Object value, int total, int completed) {
         int progress = integer(value, total > 0 ? completed * 100 / total : 0);
         return Math.max(0, Math.min(100, progress));
-    }
-
-    private static List<String> uniqueStrings(Object value, String field) {
-        if (!(value instanceof Collection<?> collection)) throw new IllegalArgumentException(field + "必须是数组");
-        Set<String> values = new LinkedHashSet<>();
-        for (Object item : collection) {
-            String text = text(item);
-            if (text.isEmpty()) throw new IllegalArgumentException(field + "必须是非空字符串数组");
-            values.add(text);
-        }
-        return new ArrayList<>(values);
-    }
-
-    private static List<Integer> uniquePorts(Object value) {
-        if (!(value instanceof Collection<?> collection)) throw new IllegalArgumentException("workflow.ports必须是数组");
-        Set<Integer> ports = new LinkedHashSet<>();
-        for (Object item : collection) {
-            int port = integer(item, -1);
-            if (port < 1 || port > 65535) throw new IllegalArgumentException("workflow.ports包含无效端口");
-            ports.add(port);
-        }
-        return new ArrayList<>(ports);
     }
 
     private static Map<String, Object> response(Map<String, Object> values) {
@@ -1411,11 +1270,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         } catch (NumberFormatException ignored) {
             return fallback;
         }
-    }
-
-    private static int boundedInt(Object value, int fallback, int min, int max) {
-        int result = integer(value, fallback);
-        return Math.max(min, Math.min(max, result));
     }
 
     private static String text(Object value) {

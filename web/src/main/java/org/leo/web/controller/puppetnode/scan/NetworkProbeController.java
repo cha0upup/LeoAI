@@ -55,9 +55,9 @@ public class NetworkProbeController {
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
             // Validate access before parsing user-controlled CIDR, DNS or range inputs.
             ControllerUtil.requireCapability(params, NetworkProbeCapable.class);
-            Map<String, Object> workflow = planService.plan(parseScanConfig(params.get("scan"))).workflowRequest();
+            ScanPlanService.ScanPlan plan = planService.plan(parseScanConfig(params.get("scan")));
             return ControllerUtil.handleCapabilityCall(params, NetworkProbeCapable.class,
-                    "启动扫描工作流失败", node -> workflowService.start(sessionId, node, workflow));
+                    "启动扫描工作流失败", node -> workflowService.start(sessionId, node, plan));
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
         } catch (ApiException error) {

@@ -2,6 +2,8 @@ package org.leo.core.init;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.leo.web.service.NetworkProbeResultStore;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
@@ -148,6 +150,63 @@ class DatabaseInitializerFreshStartTest {
                     "SELECT COUNT(*) FROM pragma_table_info('ai_operation_assessments') "
                             + "WHERE name='arguments_json'"));
         }
+    }
+
+    @Test
+    void upgradesScanSchemaBeforeTaskRecoveryAndCanRunTwice() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("old-scan-schema.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("ALTER TABLE scan_tasks DROP COLUMN error_message");
+                statement.executeUpdate("ALTER TABLE scan_tasks DROP COLUMN stage_json");
+                statement.executeUpdate("ALTER TABLE scan_endpoint_results DROP COLUMN fingerprint_json");
+                statement.executeUpdate("ALTER TABLE scan_endpoint_results DROP COLUMN response_size");
+                statement.executeUpdate("DROP TABLE scan_fingerprint_results");
+                statement.executeUpdate("""
+                        INSERT INTO scan_tasks (task_id, session_id, name, created_at, updated_at)
+                        VALUES ('old-task', 'session', 'existing task', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """);
+            }
+            // Spring SQL initialization creates new tables before the initializer upgrades existing ones.
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+
+        DatabaseInitializer initializer = new DatabaseInitializer(dataSource);
+        initializer.run();
+        initializer.run();
+        new NetworkProbeResultStore(dataSource, new ObjectMapper()).markInterruptedTasks();
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM pragma_table_info('scan_tasks') "
+                    + "WHERE name IN ('error_message', 'stage_json')"));
+            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM pragma_table_info('scan_endpoint_results') "
+                    + "WHERE name IN ('fingerprint_json', 'response_size')"));
+            assertEquals(1, scalar(statement, "SELECT COUNT(*) FROM sqlite_master "
+                    + "WHERE type='index' AND name='idx_scan_fingerprint_endpoint'"));
+            assertEquals(1, scalar(statement, "SELECT COUNT(*) FROM scan_tasks "
+                    + "WHERE task_id='old-task' AND name='existing task' AND status='FAILED' "
+                    + "AND error_message IS NOT NULL"));
+        }
+    }
+
+    @Test
+    void rejectsIncompleteScanSchemaBeforeRecovery() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("incomplete-scan-schema.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("ALTER TABLE scan_fingerprint_results DROP COLUMN rule_hash");
+            }
+        }
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new DatabaseInitializer(dataSource).run());
+        assertTrue(error.getMessage().contains("scan_fingerprint_results"));
+        assertTrue(error.getMessage().contains("rule_hash"));
     }
 
     @Test

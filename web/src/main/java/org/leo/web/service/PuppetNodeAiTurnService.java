@@ -12,7 +12,6 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.session.AiThread;
-import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,20 +52,11 @@ public class PuppetNodeAiTurnService {
     }
 
     public boolean tryClaimExecution(AiThread thread) {
-        boolean localClaimed = turnCoordinator.tryClaim(thread);
-        if (!localClaimed && AiRunStatus.CANCELLED.equals(thread.getRunStatus())) {
-            localClaimed = turnCoordinator.tryClaimAfterRelease(
-                    thread, thread::isExecuting, 5_000L);
-        }
-        if (!localClaimed) return false;
-        String leaseToken = executionClaimService.tryAcquireAfterClaim(
+        return executionClaimService.tryClaim(
                 thread, thread.getThreadId(),
                 () -> thread.stop("执行租约已转移"),
                 error -> logger.warn("获取 Puppet AI 执行租约失败, threadId={}: {}",
                         thread.getThreadId(), error.getMessage()));
-        if (leaseToken == null) return false;
-        thread.bindActiveLeaseToken(leaseToken);
-        return true;
     }
 
     public void failDetachedExecution(AiThread thread) {
@@ -74,10 +64,7 @@ public class PuppetNodeAiTurnService {
     }
 
     public void releaseExecutionLease(AiThread thread) {
-        if (thread != null) {
-            executionClaimService.release(thread.getThreadId());
-            thread.bindActiveLeaseToken(null);
-        }
+        executionClaimService.release(thread, thread != null ? thread.getThreadId() : null);
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(

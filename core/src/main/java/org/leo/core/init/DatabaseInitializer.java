@@ -79,6 +79,10 @@ public class DatabaseInitializer implements CommandLineRunner {
             // 其旧哈希不会匹配新的实际调用，待处理评估会要求模型重新评估。
             ensureColumn(connection, "ai_operation_assessments", "arguments_json",
                     "TEXT NOT NULL DEFAULT '{}' ");
+            ensureColumn(connection, "scan_tasks", "error_message", "TEXT");
+            ensureColumn(connection, "scan_tasks", "stage_json", "TEXT");
+            ensureColumn(connection, "scan_endpoint_results", "fingerprint_json", "TEXT");
+            ensureColumn(connection, "scan_endpoint_results", "response_size", "INTEGER");
             requireColumns(connection, "puppets",
                     Set.of("puppet_id", "create_by_user_id", "team_id", "permission"));
             normalizePuppetTeamOwnership(connection);
@@ -117,8 +121,16 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "arguments_json", "arguments_hash", "risk_level",
                             "requires_confirmation", "reason", "impact", "rollback",
                             "status", "created_at", "expires_at", "consumed_at"));
+            requireColumns(connection, "scan_tasks",
+                    Set.of("task_id", "session_id", "status", "outcome",
+                            "error_message", "stage_json"));
+            requireColumns(connection, "scan_endpoint_results",
+                    Set.of("task_id", "endpoint_id", "fingerprint_json", "response_size"));
+            requireColumns(connection, "scan_fingerprint_results",
+                    Set.of("task_id", "match_key", "endpoint_id", "target_id", "rule_id",
+                            "rule_hash", "rule_name", "status", "result_json", "updated_at"));
         } catch (SQLException error) {
-            throw new IllegalStateException("校验 AI 对话数据库结构失败", error);
+            throw new IllegalStateException("校验数据库结构失败", error);
         }
     }
 
@@ -207,7 +219,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             Set<String> missing = new HashSet<>(requiredColumns);
             missing.removeAll(actual);
             throw new IllegalStateException(
-                    "AI 数据库结构不完整，缺少 " + table + "." + missing);
+                    "数据库结构不完整，缺少 " + table + "." + missing);
         }
     }
 

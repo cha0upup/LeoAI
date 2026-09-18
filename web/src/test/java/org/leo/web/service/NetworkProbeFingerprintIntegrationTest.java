@@ -76,7 +76,7 @@ class NetworkProbeFingerprintIntegrationTest {
         try (var orchestration = new NetworkProbeOrchestrationService(Executors.newSingleThreadExecutor(), 10);
              var workflow = new NetworkProbeWorkflowService(analysis, orchestration, Executors.newSingleThreadExecutor(), 10)) {
             workflow.setResultStore(store);
-            String taskId = String.valueOf(workflow.start("session", new LocalNode(), plan.workflowRequest()).get("taskId"));
+            String taskId = String.valueOf(workflow.start("session", new LocalNode(), plan).get("taskId"));
             Map<String, Object> snapshot = Map.of();
             long deadline = System.currentTimeMillis() + 10000;
             while (System.currentTimeMillis() < deadline) {

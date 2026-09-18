@@ -40,7 +40,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -263,95 +262,12 @@ public class SkillController {
             return ApiResponse.badRequest("names 必须是非空数组");
         }
 
-        LinkedHashSet<String> names = new LinkedHashSet<>();
-        for (Object rawName : rawNames) {
-            if (!(rawName instanceof String name) || !isSafeName(name)) {
-                return ApiResponse.badRequest("names 包含非法 skill 名称");
-            }
-            names.add(name.trim());
-        }
-        if (names.size() > MAX_BATCH_TOGGLE_ITEMS) {
-            return ApiResponse.badRequest("单次最多处理 " + MAX_BATCH_TOGGLE_ITEMS + " 个 skill");
-        }
-
-        String normalizedScope = scope.trim();
-        Path skillsRoot;
         try {
-            skillsRoot = skillRegistry.getSkillsRoot(normalizedScope);
+            SkillManagementService.BatchDeleteResult result = skillManagementService.deleteBatch(scope, rawNames);
+            return ApiResponse.success(
+                    "批量删除完成：成功 " + result.deleted() + "，失败 " + result.failed(), result.toMap());
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
-        }
-
-        List<Map<String, Object>> results = new ArrayList<>();
-        int deleted = 0;
-        int failed = 0;
-        for (String name : names) {
-            BatchDeleteResult result = deleteOne(normalizedScope, skillsRoot, name);
-            results.add(result.toMap());
-            if (result.deleted()) deleted++;
-            else failed++;
-        }
-
-        if (deleted > 0) {
-            skillRegistry.invalidate();
-            leoSkillsProvider.invalidate();
-        }
-
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("scope", normalizedScope);
-        data.put("requested", names.size());
-        data.put("changed", deleted);
-        data.put("deleted", deleted);
-        data.put("unchanged", 0);
-        data.put("failed", failed);
-        data.put("results", results);
-        return ApiResponse.success(
-                "批量删除完成：成功 " + deleted + "，失败 " + failed,
-                data);
-    }
-
-    private BatchDeleteResult deleteOne(String scope, Path skillsRoot, String name) {
-        Path skillDir = skillsRoot.resolve(name).normalize();
-        if (!skillDir.startsWith(skillsRoot)) {
-            return BatchDeleteResult.failed(name, "路径非法");
-        }
-        if (!Files.exists(skillDir)) {
-            return BatchDeleteResult.failed(name, "skill 不存在：" + scope + "/" + name);
-        }
-
-        String lockKey = scope + "/" + name;
-        ReentrantLock lock = operationLock.lockFor(scope, name);
-        lock.lock();
-        try {
-            deleteRecursively(skillDir);
-            return BatchDeleteResult.deleted(name);
-        } catch (IOException e) {
-            return BatchDeleteResult.failed(name, "删除失败：" + e.getMessage());
-        } finally {
-            lock.unlock();
-            operationLock.removeIfUnused(scope, name, lock);
-        }
-    }
-
-    private record BatchDeleteResult(String name, String status, String message) {
-        static BatchDeleteResult deleted(String name) {
-            return new BatchDeleteResult(name, "deleted", "Skill 已删除");
-        }
-
-        static BatchDeleteResult failed(String name, String message) {
-            return new BatchDeleteResult(name, "failed", message);
-        }
-
-        boolean deleted() {
-            return "deleted".equals(status);
-        }
-
-        Map<String, Object> toMap() {
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("name", name);
-            result.put("status", status);
-            result.put("message", message);
-            return result;
         }
     }
 
@@ -783,17 +699,4 @@ public class SkillController {
         return SkillRegistryService.isValidSkillName(name);
     }
 
-    /**
-     * 递归删除目录（先删文件，再删目录）。
-     */
-    private static void deleteRecursively(Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            try (Stream<Path> children = Files.list(path)) {
-                for (Path child : children.toList()) {
-                    deleteRecursively(child);
-                }
-            }
-        }
-        Files.delete(path);
-    }
 }

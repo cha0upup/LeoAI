@@ -26,22 +26,6 @@ import java.util.Map;
 @Service
 public final class NetworkProbeResultStore {
 
-    private static final String FINGERPRINT_TABLE_SQL = """
-            CREATE TABLE IF NOT EXISTS scan_fingerprint_results (
-                task_id TEXT NOT NULL REFERENCES scan_tasks(task_id) ON DELETE CASCADE,
-                match_key TEXT NOT NULL,
-                endpoint_id TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                rule_id TEXT NOT NULL,
-                rule_hash TEXT NOT NULL,
-                rule_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                result_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (task_id, match_key)
-            )
-            """;
-    private static final String FINGERPRINT_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_scan_fingerprint_endpoint ON scan_fingerprint_results(task_id, endpoint_id, status)";
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_FILTER_VALUES = 256;
     private static final int MAX_SUMMARY_HOSTS = 160;
@@ -57,14 +41,6 @@ public final class NetworkProbeResultStore {
 
     @EventListener(ApplicationReadyEvent.class)
     public void markInterruptedTasks() {
-        ensureTaskErrorColumn();
-        ensureFingerprintColumn();
-        ensureResponseSizeColumn();
-        ensureStageColumn();
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
-            statement.executeUpdate(FINGERPRINT_TABLE_SQL);
-            statement.executeUpdate(FINGERPRINT_INDEX_SQL);
-        } catch (SQLException error) { throw new IllegalStateException("无法初始化组件识别结果存储", error); }
         String now = Instant.now().toString();
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -804,50 +780,6 @@ public final class NetworkProbeResultStore {
         summary.put("reachableHostCount", Integer.valueOf(count));
         summary.put("reachableHostList", hosts);
         return summary;
-    }
-
-    private void ensureFingerprintColumn() {
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
-            statement.executeUpdate("ALTER TABLE scan_endpoint_results ADD COLUMN fingerprint_json TEXT");
-        } catch (SQLException error) {
-            String message = error.getMessage();
-            if (message == null || !message.toLowerCase().contains("duplicate column")) {
-                logger.warn("Unable to ensure network fingerprint result column", error);
-            }
-        }
-    }
-
-    private void ensureResponseSizeColumn() {
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
-            statement.executeUpdate("ALTER TABLE scan_endpoint_results ADD COLUMN response_size INTEGER");
-        } catch (SQLException error) {
-            String message = error.getMessage();
-            if (message == null || !message.toLowerCase().contains("duplicate column")) {
-                logger.warn("Unable to ensure network response size result column", error);
-            }
-        }
-    }
-
-    private void ensureTaskErrorColumn() {
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
-            statement.executeUpdate("ALTER TABLE scan_tasks ADD COLUMN error_message TEXT");
-        } catch (SQLException error) {
-            String message = error.getMessage();
-            if (message == null || !message.toLowerCase().contains("duplicate column")) {
-                logger.warn("Unable to ensure network task error column", error);
-            }
-        }
-    }
-
-    private void ensureStageColumn() {
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
-            statement.executeUpdate("ALTER TABLE scan_tasks ADD COLUMN stage_json TEXT");
-        } catch (SQLException error) {
-            String message = error.getMessage();
-            if (message == null || !message.toLowerCase().contains("duplicate column")) {
-                logger.warn("Unable to ensure network task stage column", error);
-            }
-        }
     }
 
     private String endpointId(Map<String, Object> endpoint) {

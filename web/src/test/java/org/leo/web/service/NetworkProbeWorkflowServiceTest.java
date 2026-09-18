@@ -9,6 +9,10 @@ import java.util.stream.Stream;
 import org.leo.core.puppet.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
+import org.leo.web.dto.puppetnode.scan.NetworkDiscoveryDtos.*;
+import org.leo.web.service.discovery.PortPolicyResolver;
+import org.leo.web.service.discovery.ScanPlanService;
+import org.leo.web.service.discovery.TargetResolver;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -26,6 +30,9 @@ import java.lang.reflect.Method;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class NetworkProbeWorkflowServiceTest {
 
@@ -47,13 +54,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void runsReachabilityPortAndServiceIdentificationAsOneTask() throws Exception {
         WorkflowNode node = new WorkflowNode();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80, 22),
-                "timeout", 1000,
-                "threads", 4,
-                "probeServices", true,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80, 22), null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<?> stages = (List<?>) snapshot.get("stages");
@@ -73,9 +74,8 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void runsFingerprintStageAndSkipsItWhenThereAreNoHttpApplications() throws Exception {
         WorkflowNode node = new WorkflowNode();
-        var request = new HashMap<String, Object>(Map.of("hosts", List.of("host-a"), "ports", List.of(80),
-                "stages", List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"),
-                "fingerprintRules", analysis.snapshotRules(Map.of())));
+        var stages = List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT");
+        var request = plan(List.of(80), stages);
         String id = String.valueOf(service.start("session-1", node, request).get("taskId"));
         var snapshot = awaitTerminal(id);
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
@@ -83,7 +83,7 @@ class NetworkProbeWorkflowServiceTest {
         assertTrue(node.startedStages.contains("RECON"));
         WorkflowNode tcpOnly = new WorkflowNode();
         tcpOnly.openPorts = Set.of(5432);
-        request.put("ports", List.of(5432));
+        request = plan(List.of(5432), stages);
         id = String.valueOf(service.start("session-1", tcpOnly, request).get("taskId"));
         snapshot = awaitTerminal(id);
         assertEquals("COMPLETED", snapshot.get("outcome"));
@@ -95,11 +95,7 @@ class NetworkProbeWorkflowServiceTest {
     void probesUnknownNonStandardPortsForHttpAndSkipsKnownTcpServices() throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.openPorts = Set.of(80, 18080, 5432);
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80, 18080, 5432),
-                "probeServices", true,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80, 18080, 5432), null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<Map<String, Object>> openPorts = (List<Map<String, Object>>) snapshot.get("openPortResults");
@@ -122,11 +118,7 @@ class NetworkProbeWorkflowServiceTest {
     void skipsDependentStagesWhenNoHostIsReachable() throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.reachable = false;
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80),
-                "probeServices", true,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<?> stages = (List<?>) snapshot.get("stages");
@@ -139,13 +131,9 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
-    void legacyServiceFlagSelectsOnlyReachabilityAndPortStages() throws Exception {
+    void executesReachabilityAndPortsWithoutServiceIdentification() throws Exception {
         WorkflowNode node = new WorkflowNode();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80),
-                "probeServices", false,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("REACHABILITY", "PORT_SCAN"))).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<?> stages = (List<?>) snapshot.get("stages");
@@ -167,8 +155,7 @@ class NetworkProbeWorkflowServiceTest {
     void executesOnlySelectedStagesAndReportsConfirmedHosts(List<String> selected) throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.reachable = selected.contains("REACHABILITY"); // discovery would fail when bypassed
-        Map<String, Object> request = new HashMap<>(Map.of("hosts", List.of("host-a"), "stages", selected));
-        if (selected.contains("PORT_SCAN")) request.put("ports", List.of(80));
+        var request = plan(selected.contains("PORT_SCAN") ? List.of(80) : List.of(), selected);
         String taskId = String.valueOf(service.start("session-1", node, request).get("taskId"));
         Map<String, Object> snapshot = awaitTerminal(taskId);
 
@@ -186,9 +173,7 @@ class NetworkProbeWorkflowServiceTest {
     void bypassedDiscoveryDoesNotMarkClosedHostsAsAlive() throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.openPorts = Set.of();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"), "ports", List.of(80),
-                "stages", List.of("PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
         Map<String, Object> snapshot = awaitTerminal(taskId);
         assertEquals("COMPLETED", snapshot.get("outcome"));
         assertEquals(List.of(), snapshot.get("reachableHostList"));
@@ -222,11 +207,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void deletesCompletedWorkflowFromLiveRegistry() throws Exception {
         WorkflowNode node = new WorkflowNode();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80),
-                "probeServices", false,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("REACHABILITY", "PORT_SCAN"))).get("taskId"));
 
         awaitTerminal(taskId);
 
@@ -239,11 +220,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void preservesCancelledStageOutcomeAndDoesNotRunDependentStages() throws Exception {
         CancelledWorkflowNode node = new CancelledWorkflowNode();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80),
-                "probeServices", true,
-                "ruleSelector", Map.of())).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
 
@@ -255,11 +232,7 @@ class NetworkProbeWorkflowServiceTest {
     @ValueSource(booleans = {false, true})
     void controlsTheActiveStageAndChildTask(boolean skipReachability) throws Exception {
         ControlledWorkflowNode node = new ControlledWorkflowNode();
-        String taskId = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"),
-                "ports", List.of(80),
-                "probeServices", true,
-                "stages", skipReachability ? List.of("PORT_SCAN", "SERVICE_PROBE")
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), skipReachability ? List.of("PORT_SCAN", "SERVICE_PROBE")
                         : List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
 
         assertTrue(node.started.await(1L, TimeUnit.SECONDS));
@@ -280,10 +253,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void controlsFingerprintChildAfterServiceIdentificationHasFinished() throws Exception {
         var node = new FingerprintControlledNode();
-        String id = String.valueOf(service.start("session-1", node, Map.of(
-                "hosts", List.of("host-a"), "ports", List.of(80),
-                "stages", List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"),
-                "fingerprintRules", analysis.snapshotRules(Map.of()))).get("taskId"));
+        String id = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT"))).get("taskId"));
         assertTrue(node.control.started.await(2, TimeUnit.SECONDS));
         service.pause("session-1", id);
         awaitCount(node.control.pauseCalls);
@@ -294,6 +264,16 @@ class NetworkProbeWorkflowServiceTest {
         service.stop("session-1", id);
         assertEquals("CANCELLED", awaitTerminal(id).get("outcome"));
         awaitCount(node.control.stopCalls);
+    }
+
+    private ScanPlanService.ScanPlan plan(List<Integer> ports, List<String> stages) {
+        TargetResolver resolver = mock(TargetResolver.class);
+        when(resolver.resolve(any())).thenReturn(List.of(
+                new ResolvedTarget("host-a", "host-a", "host-a", null, "tcp", "host", "host-a")));
+        ScanPlanService planner = new ScanPlanService(resolver, new PortPolicyResolver(), analysis);
+        return planner.plan(new ScanConfig("test workflow", new TargetInput(List.of("host-a"), List.of()),
+                new PortPolicy("custom", List.of(), ports, List.of()),
+                new ExecutionConfig(4, 1000), null, stages));
     }
 
     private static final class FingerprintControlledNode implements NetworkProbeCapable {

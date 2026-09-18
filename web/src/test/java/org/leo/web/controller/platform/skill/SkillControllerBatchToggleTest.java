@@ -22,6 +22,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 class SkillControllerBatchToggleTest {
 
@@ -31,6 +35,7 @@ class SkillControllerBatchToggleTest {
     private String previousVfsPath;
     private SkillRegistryService registry;
     private SkillManifestService manifestService;
+    private LeoSkillsProvider provider;
     private SkillController controller;
 
     @BeforeEach
@@ -38,8 +43,8 @@ class SkillControllerBatchToggleTest {
         previousVfsPath = LeoConfig.getVfsPath();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
         manifestService = new SkillManifestService();
-        registry = new SkillRegistryService(manifestService);
-        LeoSkillsProvider provider = new LeoSkillsProvider(registry);
+        registry = spy(new SkillRegistryService(manifestService));
+        provider = spy(new LeoSkillsProvider(registry));
         controller = new SkillController(registry, provider, new SkillFileService(),
                 new SkillExportService(manifestService), manifestService);
     }
@@ -129,6 +134,64 @@ class SkillControllerBatchToggleTest {
         assertEquals(1, data.get("changed"));
         assertEquals(1, data.get("failed"));
         assertFalse(Files.exists(tempDir.resolve("skills/puppet-node/delete-me")));
+    }
+
+    @Test
+    void batchDeleteDeduplicatesNamesAndInvalidatesBothCachesOnce() throws Exception {
+        writeSkill("delete-one", "published", true, false);
+        writeSkill("delete-two", "published", true, false);
+        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("delete-one"));
+        clearInvocations(registry, provider);
+
+        HashMap<String, Object> response = controller.deleteBatch(new HashMap<>(Map.of(
+                "scope", " puppet-node ",
+                "names", List.of(" delete-one ", "delete-one", "delete-two", "missing-skill"))));
+
+        assertEquals(200, response.get("code"));
+        Map<?, ?> data = (Map<?, ?>) response.get("data");
+        assertEquals("puppet-node", data.get("scope"));
+        assertEquals(3, data.get("requested"));
+        assertEquals(2, data.get("deleted"));
+        assertEquals(2, data.get("changed"));
+        assertEquals(0, data.get("unchanged"));
+        assertEquals(1, data.get("failed"));
+        List<?> results = (List<?>) data.get("results");
+        assertEquals(Map.of("name", "delete-one", "status", "deleted", "message", "Skill 已删除"), results.get(0));
+        assertEquals("failed", ((Map<?, ?>) results.get(2)).get("status"));
+        verify(registry, times(1)).invalidate();
+        verify(provider, times(1)).invalidate();
+        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("delete-one"));
+        assertTrue(registry.listAllSkills("puppet-node").isEmpty());
+    }
+
+    @Test
+    void batchDeleteValidatesEntireRequestBeforeDeletingAnySkill() throws Exception {
+        writeSkill("keep-me", "published", true, false);
+
+        for (List<?> names : List.of(List.of("keep-me", "../outside"), List.of("keep-me", 1))) {
+            HashMap<String, Object> response = controller.deleteBatch(new HashMap<>(Map.of(
+                    "scope", "puppet-node", "names", names)));
+            assertEquals(400, response.get("code"));
+            assertTrue(Files.exists(tempDir.resolve("skills/puppet-node/keep-me")));
+        }
+        HashMap<String, Object> invalidScope = controller.deleteBatch(new HashMap<>(Map.of(
+                "scope", "invalid-scope", "names", List.of("keep-me"))));
+        assertEquals(400, invalidScope.get("code"));
+        assertTrue(Files.exists(tempDir.resolve("skills/puppet-node/keep-me")));
+    }
+
+    @Test
+    void singleDeleteInvalidatesBothCachesAndKeepsMissingSkillResponse() throws Exception {
+        writeSkill("delete-me", "published", true, false);
+        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("delete-me"));
+        clearInvocations(registry, provider);
+        HashMap<String, Object> params = new HashMap<>(Map.of("scope", "puppet-node", "name", "delete-me"));
+
+        assertEquals(200, controller.delete(params).get("code"));
+        assertEquals(404, controller.delete(params).get("code"));
+        verify(registry, times(1)).invalidate();
+        verify(provider, times(1)).invalidate();
+        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("delete-me"));
     }
 
     @Test

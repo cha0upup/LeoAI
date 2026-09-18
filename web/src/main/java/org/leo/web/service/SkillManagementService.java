@@ -16,7 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -88,6 +87,42 @@ public class SkillManagementService {
     }
 
     public OperationResult delete(String scope, String name) {
+        OperationResult result = deleteOne(scope, name);
+        if (result.succeeded()) invalidateCatalog();
+        return result;
+    }
+
+    public BatchDeleteResult deleteBatch(String scope, List<?> requestedNames) {
+        if (isBlank(scope)) throw new IllegalArgumentException("scope 不能为空");
+        if (requestedNames == null || requestedNames.isEmpty()) {
+            throw new IllegalArgumentException("names 必须是非空数组");
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (Object value : requestedNames) {
+            if (!(value instanceof String name) || !SkillRegistryService.isValidSkillName(name)) {
+                throw new IllegalArgumentException("names 包含非法 skill 名称");
+            }
+            names.add(name.trim());
+        }
+        if (names.size() > MAX_BATCH_ITEMS) {
+            throw new IllegalArgumentException("单次最多处理 " + MAX_BATCH_ITEMS + " 个 skill");
+        }
+        String normalizedScope = scope.trim();
+        SkillRegistryService.validateScope(normalizedScope);
+        List<Map<String, Object>> results = new ArrayList<>();
+        int deleted = 0;
+        for (String name : names) {
+            OperationResult result = deleteOne(normalizedScope, name);
+            results.add(Map.of("name", name,
+                    "status", result.succeeded() ? "deleted" : "failed",
+                    "message", result.succeeded() ? "Skill 已删除" : result.message()));
+            if (result.succeeded()) deleted++;
+        }
+        if (deleted > 0) invalidateCatalog();
+        return new BatchDeleteResult(normalizedScope, names.size(), deleted, List.copyOf(results));
+    }
+
+    private OperationResult deleteOne(String scope, String name) {
         if (isBlank(scope)) return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, "scope 不能为空");
         if (isBlank(name)) return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, "name 不能为空");
         String normalizedScope = scope.trim();
@@ -102,16 +137,14 @@ public class SkillManagementService {
         } catch (IllegalArgumentException e) {
             return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, e.getMessage());
         }
-        if (!Files.exists(skillDir)) {
-            return OperationResult.failure(ApiResponse.CODE_NOT_FOUND,
-                    "skill 不存在：" + scope + "/" + name);
-        }
-
         ReentrantLock lock = operationLock.lockFor(normalizedScope, normalizedName);
         lock.lock();
         try {
+            if (!Files.exists(skillDir)) {
+                return OperationResult.failure(ApiResponse.CODE_NOT_FOUND,
+                        "skill 不存在：" + scope + "/" + name);
+            }
             deleteRecursively(skillDir);
-            invalidateCatalog();
             return OperationResult.success("skill 删除成功");
         } catch (IOException e) {
             return OperationResult.failure(ApiResponse.CODE_ERROR, "skill 删除失败：" + e.getMessage());
@@ -282,6 +315,20 @@ public class SkillManagementService {
         static OperationResult success(String message) { return new OperationResult(ApiResponse.CODE_SUCCESS, message); }
         static OperationResult failure(int code, String message) { return new OperationResult(code, message); }
         public boolean succeeded() { return code == ApiResponse.CODE_SUCCESS; }
+    }
+
+    public record BatchDeleteResult(String scope, int requested, int deleted,
+                                    List<Map<String, Object>> results) {
+        public int failed() { return requested - deleted; }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("scope", scope); data.put("requested", requested);
+            data.put("changed", deleted); data.put("deleted", deleted);
+            data.put("unchanged", 0); data.put("failed", failed());
+            data.put("results", results);
+            return data;
+        }
     }
 
     public record ToggleResult(String name, String status, String message, int errorCode) {
