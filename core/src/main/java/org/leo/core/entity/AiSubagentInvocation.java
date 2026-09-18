@@ -4,15 +4,21 @@ package org.leo.core.entity;
  * 子 Agent 调用记录。父会话中通过 dispatchSubAgent 工具派发出隔离上下文的子会话时，
  * 用本记录跟踪「父-子」关系、任务描述、最终摘要。
  *
- * <p>状态机：{@code pending → running → completed | failed | cancelled}</p>
+ * <p>状态机：{@code pending → running → waiting_for_user | completed | failed | cancelled}</p>
  */
 public class AiSubagentInvocation {
 
     public static final String STATUS_PENDING = "pending";
     public static final String STATUS_RUNNING = "running";
+    public static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
     public static final String STATUS_COMPLETED = "completed";
     public static final String STATUS_FAILED = "failed";
     public static final String STATUS_CANCELLED = "cancelled";
+
+    public static boolean isTerminal(String status) {
+        return STATUS_COMPLETED.equals(status) || STATUS_FAILED.equals(status)
+                || STATUS_CANCELLED.equals(status);
+    }
 
     private String invocationId;
     private String parentThreadId;

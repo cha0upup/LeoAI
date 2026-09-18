@@ -58,7 +58,14 @@ public class AiTurnExecutionEngine {
         AtomicBoolean userInputRequested = new AtomicBoolean(false);
         AtomicInteger recoveryAttempts = new AtomicInteger();
         StringBuilder output = new StringBuilder();
-        turn.registerCancellation(() -> cancelCaptured(handleRef));
+        turn.registerCancellation(() -> {
+            try {
+                cancelCaptured(handleRef);
+            } finally {
+                fail(turn, listener,
+                        new InterruptedException(turn.cancellationReason()), toolErrorScope);
+            }
+        });
         if (turn.isCancellationRequested()) {
             fail(turn, listener,
                     new InterruptedException(turn.cancellationReason()),
@@ -88,26 +95,27 @@ public class AiTurnExecutionEngine {
             stream
                     .onPartialThinkingWithContext((thinking, context) -> {
                         capture(handleRef, context.streamingHandle(), turn);
-                        listener.onEvent(AiTurnEvent.thinkingDelta(thinking.text()));
+                        whileActive(turn, () -> listener.onEvent(AiTurnEvent.thinkingDelta(thinking.text())));
                     })
                     .onPartialResponseWithContext((partial, context) -> {
                         capture(handleRef, context.streamingHandle(), turn);
-                        if (partial.text() != null) {
-                            output.append(partial.text());
-                        }
-                        listener.onEvent(AiTurnEvent.textDelta(partial.text()));
+                        whileActive(turn, () -> {
+                            if (partial.text() != null) output.append(partial.text());
+                            listener.onEvent(AiTurnEvent.textDelta(partial.text()));
+                        });
                     })
                     .onPartialToolCallWithContext((partial, context) -> {
                         capture(handleRef, context.streamingHandle(), turn);
-                        listener.onEvent(AiTurnEvent.toolCallDelta(
-                                toolEvents.partial(partial)));
+                        whileActive(turn, () -> listener.onEvent(AiTurnEvent.toolCallDelta(
+                                toolEvents.partial(partial))));
                     })
                     .beforeToolExecution(execution -> {
-                        rejectToolWhenCancelled(turn);
-                        listener.onEvent(AiTurnEvent.toolStarted(
-                                toolEvents.started(execution)));
+                        synchronized (turn) {
+                            rejectToolWhenCancelled(turn);
+                            listener.onEvent(AiTurnEvent.toolStarted(toolEvents.started(execution)));
+                        }
                     })
-                    .onToolExecuted(execution -> {
+                    .onToolExecuted(execution -> whileActive(turn, () -> {
                         listener.onEvent(AiTurnEvent.toolCompleted(
                                 toolEvents.completed(execution)));
                         if (execution != null
@@ -116,8 +124,13 @@ public class AiTurnExecutionEngine {
                                 && !AiToolErrorHandler.isErrorResult(execution)) {
                             userInputRequested.set(true);
                         }
-                    })
-                    .onCompleteResponse(response -> {
+                    }))
+                    .onCompleteResponse(response -> whileActive(turn, () -> {
+                        if (turn.isCancellationRequested()) {
+                            fail(turn, listener, new InterruptedException(turn.cancellationReason()),
+                                    toolErrorScope);
+                            return;
+                        }
                         String modelOutput = output.toString();
                         if (!userInputRequested.get()
                                 && claimsUserInputCardWasSent(modelOutput)) {
@@ -135,7 +148,7 @@ public class AiTurnExecutionEngine {
                                         userInputRequested.get(),
                                         recoveryAttempts.get() > 0),
                                 toolErrorScope);
-                    })
+                    }))
                     .onError(error -> {
                         if (tryRecoverStream(
                                 command, listener, turn, toolErrorScope,
@@ -215,12 +228,21 @@ public class AiTurnExecutionEngine {
                           AiTurnExecutionListener listener,
                           AiTurnResult result,
                           AiToolErrorHandler.TurnScope toolErrorScope) {
-        try {
-            turn.finish(AiTurnOutcome.COMPLETED, () -> listener.onCompleted(result));
-        } catch (Throwable error) {
-            notifyTerminalFailure(listener, AiTurnOutcome.COMPLETED, asException(error));
-        } finally {
-            toolErrorScope.close();
+        synchronized (turn) {
+            try {
+                turn.finish(AiTurnOutcome.COMPLETED, () -> listener.onCompleted(result));
+            } catch (Throwable error) {
+                notifyTerminalFailure(listener, AiTurnOutcome.COMPLETED, asException(error));
+            } finally {
+                toolErrorScope.close();
+            }
+        }
+    }
+
+    /** 流式回调和外部取消串行提交事件，避免持久化终态时事件列表仍在写入。 */
+    private void whileActive(AiTurnCoordinator.Execution turn, Runnable action) {
+        synchronized (turn) {
+            if (!turn.isFinished()) action.run();
         }
     }
 
@@ -232,21 +254,23 @@ public class AiTurnExecutionEngine {
                       AiTurnExecutionListener listener,
                       Throwable error,
                       AiToolErrorHandler.TurnScope toolErrorScope) {
-        if (turn.isFinished()) {
-            toolErrorScope.close();
-            return;
-        }
-        AiTurnOutcome outcome = turn.isCancellation(error)
-                ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED;
-        AiTurnFailure failure = new AiTurnFailure(
-                error, outcome, outcome == AiTurnOutcome.CANCELLED
-                        ? turn.cancellationReason() : null);
-        try {
-            turn.finish(outcome, () -> listener.onFailed(failure));
-        } catch (Throwable terminalError) {
-            notifyTerminalFailure(listener, outcome, asException(terminalError));
-        } finally {
-            toolErrorScope.close();
+        synchronized (turn) {
+            if (turn.isFinished()) {
+                toolErrorScope.close();
+                return;
+            }
+            AiTurnOutcome outcome = turn.isCancellation(error)
+                    ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED;
+            AiTurnFailure failure = new AiTurnFailure(
+                    error, outcome, outcome == AiTurnOutcome.CANCELLED
+                            ? turn.cancellationReason() : null);
+            try {
+                turn.finish(outcome, () -> listener.onFailed(failure));
+            } catch (Throwable terminalError) {
+                notifyTerminalFailure(listener, outcome, asException(terminalError));
+            } finally {
+                toolErrorScope.close();
+            }
         }
     }
 
@@ -267,7 +291,7 @@ public class AiTurnExecutionEngine {
     }
 
     private void rejectToolWhenCancelled(AiTurnCoordinator.Execution turn) {
-        if (turn.isCancellationRequested() || Thread.currentThread().isInterrupted()) {
+        if (turn.isFinished() || turn.isCancellationRequested() || Thread.currentThread().isInterrupted()) {
             throw new RuntimeException(new InterruptedException(turn.cancellationReason()));
         }
     }
@@ -276,10 +300,9 @@ public class AiTurnExecutionEngine {
                          StreamingHandle candidate,
                          AiTurnCoordinator.Execution turn) {
         if (candidate == null) return;
-        handleRef.compareAndSet(null, candidate);
-        StreamingHandle handle = handleRef.get();
-        if (handle != null && turn.isCancellationRequested()) {
-            handle.cancel();
+        handleRef.set(candidate);
+        if (turn.isCancellationRequested()) {
+            candidate.cancel();
         }
     }
 

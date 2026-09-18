@@ -35,6 +35,7 @@ class PuppetNodeAiDelegationPresenterTest {
         fixture.presentation.onStarted();
         fixture.presentation.onEvent(AiTurnEvent.textDelta("answer"));
         fixture.presentation.beforeCommit();
+        fixture.thread.markCompleted();
         fixture.presentation.onCommitted(completed("answer"));
 
         Map<String, Object> response = fixture.presentation.await();
@@ -49,6 +50,18 @@ class PuppetNodeAiDelegationPresenterTest {
                         event.subagentInvocationId())));
         verify(fixture.store, times(2))
                 .updateRuntime("session-1", fixture.thread, null);
+    }
+
+    @Test
+    void waitingForUserIsPreservedInEventsAndResponse() throws Exception {
+        Fixture fixture = fixture();
+        fixture.thread.markWaitingForUserInput();
+        fixture.thread.markCompleted();
+
+        fixture.presentation.onCommitted(completed(""));
+
+        assertEquals("waiting_for_user", fixture.presentation.await().get("status"));
+        assertEquals("waiting_for_user", fixture.events.get(fixture.events.size() - 1).data());
     }
 
     @Test

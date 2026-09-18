@@ -21,12 +21,16 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 
 class AiTurnExecutionEngineTest {
@@ -106,6 +110,93 @@ class AiTurnExecutionEngineTest {
         assertFalse(streamCreated.get());
         assertTrue(listener.lastFailure.cancelled());
         assertEquals("启动前停止", listener.lastFailure.cancellationReason());
+    }
+
+    @Test
+    void cancellationFinishesWithoutProviderCallbackAndRejectsLateTools() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        TestHandle handle = new TestHandle();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream ->
+                tokenStream.response.accept(new PartialResponse("partial"),
+                        new PartialResponseContext(handle)));
+        RecordingListener listener = new RecordingListener();
+        engine.execute(command(turn, stream), listener);
+
+        runtime.requestStop("用户取消");
+
+        assertTrue(handle.isCancelled());
+        assertEquals(1, listener.failed.get());
+        assertFalse(runtime.claimed);
+        assertTrue(turn.isCancellationRequested());
+        assertThrows(RuntimeException.class, () -> stream.beforeTool.accept(null));
+        stream.response.accept(new PartialResponse("late"), new PartialResponseContext(handle));
+        stream.complete.accept(mock(ChatResponse.class));
+        assertEquals(1, listener.events.size());
+        assertEquals(0, listener.completed.get());
+        assertEquals(1, runtime.clearCount);
+    }
+
+    @Test
+    void cancellationUsesLatestModelRequestHandle() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        TestHandle previous = new TestHandle();
+        TestHandle current = new TestHandle();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
+            tokenStream.response.accept(new PartialResponse("first"),
+                    new PartialResponseContext(previous));
+            tokenStream.response.accept(new PartialResponse("second"),
+                    new PartialResponseContext(current));
+        });
+        engine.execute(command(turn, stream), new RecordingListener());
+
+        runtime.requestStop("停止当前请求");
+
+        assertTrue(current.isCancelled());
+        assertFalse(previous.isCancelled());
+    }
+
+    @Test
+    void cancellationWaitsForInFlightEventBeforePersistingTerminalState() throws Exception {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        TestHandle handle = new TestHandle();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {});
+        CountDownLatch writing = new CountDownLatch(1);
+        CountDownLatch releaseEvent = new CountDownLatch(1);
+        CountDownLatch terminal = new CountDownLatch(1);
+        AiTurnExecutionListener listener = new AiTurnExecutionListener() {
+            @Override
+            public void onEvent(AiTurnEvent event) {
+                writing.countDown();
+                try {
+                    if (!releaseEvent.await(5, TimeUnit.SECONDS)) throw new AssertionError("event blocked");
+                } catch (InterruptedException error) {
+                    throw new IllegalStateException(error);
+                }
+            }
+
+            @Override public void onCompleted(AiTurnResult result) { }
+            @Override public void onFailed(AiTurnFailure failure) { terminal.countDown(); }
+        };
+        engine.execute(command(turn, stream), listener);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var event = workers.submit(() -> stream.response.accept(
+                    new PartialResponse("partial"), new PartialResponseContext(handle)));
+            assertTrue(writing.await(5, TimeUnit.SECONDS));
+            var cancellation = workers.submit(() -> runtime.requestStop("用户停止"));
+            assertTrue(handle.cancelledSignal.await(5, TimeUnit.SECONDS));
+            assertFalse(terminal.await(100, TimeUnit.MILLISECONDS));
+            releaseEvent.countDown();
+            event.get(5, TimeUnit.SECONDS);
+            cancellation.get(5, TimeUnit.SECONDS);
+            assertEquals(0, terminal.getCount());
+        } finally {
+            releaseEvent.countDown();
+            workers.shutdownNow();
+        }
     }
 
     @Test
@@ -379,10 +470,12 @@ class AiTurnExecutionEngineTest {
 
     private static final class TestHandle implements StreamingHandle {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final CountDownLatch cancelledSignal = new CountDownLatch(1);
 
         @Override
         public void cancel() {
             cancelled.set(true);
+            cancelledSignal.countDown();
         }
 
         @Override

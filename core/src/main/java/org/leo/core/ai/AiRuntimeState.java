@@ -42,6 +42,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     private volatile String stopReason;
     private volatile long taskTimeoutAt;
     private volatile Runnable stopCallback;
+    private final Set<StopRegistration> stopListeners = ConcurrentHashMap.newKeySet();
 
     private final ReentrantReadWriteLock toolGate = new ReentrantReadWriteLock(true);
     private final LinkedBlockingQueue<AiSseEvent> sseEventQueue = new LinkedBlockingQueue<>();
@@ -81,6 +82,11 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     public void clearExecuting() {
         executingThread = null;
         stopCallback = null;
+        if (stopRequested.get() || AiRunStatus.CANCELLED.equals(runStatus)) {
+            stopListeners.forEach(listener -> listener.signal(stopReason));
+        } else {
+            stopListeners.forEach(StopRegistration::close);
+        }
         executionClaimed.set(false);
         stopRequested.set(false);
     }
@@ -105,6 +111,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         stopRequested.set(true);
         stopReason = reason != null && !reason.isBlank() ? reason : "已停止";
         runStatus = AiRunStatus.CANCELLED;
+        stopListeners.forEach(listener -> listener.signal(stopReason));
         Runnable callback = stopCallback;
         if (callback != null) {
             try { callback.run(); } catch (Exception ignored) { }
@@ -114,6 +121,38 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     }
 
     @Override public void setStopCallback(Runnable callback) { stopCallback = callback; }
+
+    /** 关联本轮的从属执行；注册与停止并发时也必须传递取消信号。 */
+    public StopRegistration onStop(Consumer<String> listener) {
+        StopRegistration registration = new StopRegistration(listener);
+        stopListeners.add(registration);
+        if (stopRequested.get() || AiRunStatus.CANCELLED.equals(runStatus)) {
+            registration.signal(stopReason);
+        }
+        return registration;
+    }
+
+    public final class StopRegistration implements AutoCloseable {
+        private final Consumer<String> listener;
+        private boolean active = true;
+
+        private StopRegistration(Consumer<String> listener) {
+            this.listener = java.util.Objects.requireNonNull(listener, "listener");
+        }
+
+        private synchronized void signal(String reason) {
+            if (!active) return;
+            active = false;
+            stopListeners.remove(this);
+            try { listener.accept(reason); } catch (RuntimeException ignored) { }
+        }
+
+        @Override
+        public synchronized void close() {
+            active = false;
+            stopListeners.remove(this);
+        }
+    }
 
     @Override
     public void markCompleted() {
@@ -253,6 +292,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     public void resetRuntimeState() {
         executingThread = null;
         stopCallback = null;
+        stopListeners.forEach(StopRegistration::close);
         executionClaimed.set(false);
         stopRequested.set(false);
         waitingForUserInput.set(false);

@@ -94,6 +94,22 @@ class AiTurnCoordinatorTest {
     }
 
     @Test
+    void cancellationBeforeCallbackRegistrationIsDeliveredOnce() throws Exception {
+        RecordingRuntime runtime = new RecordingRuntime();
+        AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
+        AtomicInteger callbacks = new AtomicInteger();
+
+        execution.cancel("父任务停止");
+        execution.registerCancellation(callbacks::incrementAndGet);
+        execution.cancel("重复停止");
+        execution.finish(AiTurnOutcome.CANCELLED, () -> {});
+
+        assertEquals(1, callbacks.get());
+        assertTrue(execution.isCancellationRequested());
+        assertEquals("父任务停止", execution.cancellationReason());
+    }
+
+    @Test
     void detachesCancellationCallbackFromBothRuntimeImplementations() throws Exception {
         List<AiTurnRuntime> runtimes = List.of(
                 new AiThread("thread-1", "节点会话"),

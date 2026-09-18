@@ -9,12 +9,15 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiSseEvent;
+import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 
 /** 执行平台 AI 派发给 Puppet AI 的同步隔离 Turn。 */
@@ -51,9 +54,10 @@ public class PuppetNodeAiDelegationService {
                                        String messageForAgent,
                                        AiChatAuditEntry audit,
                                        String subagentInvocationId,
-                                       Consumer<AiSseEvent> eventSink) {
-        if (session == null || thread == null) {
-            throw ApiException.badRequest("Puppet AI 会话或线程不存在");
+                                       Consumer<AiSseEvent> eventSink,
+                                       AiRuntimeState parent) {
+        if (session == null || thread == null || parent == null) {
+            throw ApiException.badRequest("Puppet AI 会话、线程或父任务不存在");
         }
         if (!turnCoordinator.tryClaim(thread)) {
             throw ApiException.badRequest("目标 Puppet AI 线程正在执行中");
@@ -78,24 +82,31 @@ public class PuppetNodeAiDelegationService {
         AiTurnTrace trace = AiTurnTrace.start(
                 "delegation", threadId, startMs);
         PuppetNodeAiDelegationPresenter.Session presentation = null;
-        try {
+        CompletableFuture<AiTurnOrchestrator.TerminalResult> completion = null;
+        boolean interrupted = false;
+        try (var cancellation = parent.onStop(thread::stop)) {
             presentation = delegationPresenter.open(
                         new PuppetNodeAiDelegationPresenter.Context(
                                 session, thread, audit, startMs,
                                 trace,
                                 subagentInvocationId, eventSink));
             thread.touchLastActiveAt();
+            requireActive(turn);
             PuppetNodeAiAgentRegistry.Runtime agentRuntime = resolveAgent(session, thread);
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(agentRuntime.failoverMessage());
+            requireActive(turn);
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
                     null, null, null, threadId,
                     agentRuntime.effectiveConfigId(), messageForAgent,
                     userMessage, null, startMs, agentRuntime.runtimeJson(),
                     trace, thread.getActiveLeaseToken());
+            thread.bindActiveTurnId(persistedTurn.turnId());
+            thread.bindActiveItemId(persistedTurn.assistantMessageId());
+            thread.bindActiveRunId(persistedTurn.runId());
 
-            turnOrchestrator.execute(
+            completion = turnOrchestrator.execute(
                     new AiTurnOrchestrator.Request(
                             new AiTurnCommand(
                                     threadId, memoryId, turn,
@@ -111,8 +122,15 @@ public class PuppetNodeAiDelegationService {
                             thread::getCurrentPlan,
                             null),
                     presentation);
+            completion.get();
             return presentation.await();
         } catch (Throwable error) {
+            interrupted = error instanceof InterruptedException;
+            if (turn.isCancellation(error)) {
+                if (!turn.isFinished()) thread.stop(turn.cancellationReason());
+                turn.cancel(turn.cancellationReason());
+                awaitCancellationCleanup(completion, error);
+            }
             if (presentation != null) {
                 throw presentation.executionFailure(turn, error);
             }
@@ -120,8 +138,29 @@ public class PuppetNodeAiDelegationService {
             throw error instanceof RuntimeException runtime
                     ? runtime : new IllegalStateException(error);
         } finally {
-            executionLeaseService.release(threadId);
-            thread.bindActiveLeaseToken(null);
+            try {
+                executionLeaseService.release(threadId);
+            } finally {
+                thread.bindActiveLeaseToken(null);
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** 租约覆盖全部终态写入；调用方中断不能提前释放仍在收口的任务。 */
+    private void awaitCancellationCleanup(
+            CompletableFuture<AiTurnOrchestrator.TerminalResult> completion, Throwable error) {
+        if (completion == null) return;
+        try {
+            completion.join();
+        } catch (CompletionException failure) {
+            if (failure != error) error.addSuppressed(failure);
+        }
+    }
+
+    private void requireActive(AiTurnCoordinator.Execution turn) throws InterruptedException {
+        if (turn.isCancellationRequested() || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException(turn.cancellationReason());
         }
     }
 

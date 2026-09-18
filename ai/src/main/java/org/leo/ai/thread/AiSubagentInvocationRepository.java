@@ -31,11 +31,10 @@ public class AiSubagentInvocationRepository {
         if (row == null || row.getInvocationId() == null) {
             throw new IllegalArgumentException("invocationId 不能为空");
         }
-        if (row.getStatus() != null
-                && !AiSubagentInvocation.STATUS_PENDING.equals(row.getStatus())
-                && !AiSubagentInvocation.STATUS_RUNNING.equals(row.getStatus())
-                && row.getCompletedAt() == null) {
+        if (AiSubagentInvocation.isTerminal(row.getStatus()) && row.getCompletedAt() == null) {
             row.setCompletedAt(System.currentTimeMillis());
+        } else if (!AiSubagentInvocation.isTerminal(row.getStatus())) {
+            row.setCompletedAt(null);
         }
         mapper.updateSubagentInvocation(row);
     }

@@ -147,9 +147,15 @@ public class AiToolExecutionBoundary {
             throw boundaryError;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            throw AiToolException.userActionRequired(
+            AiToolException boundaryError = AiToolException.userActionRequired(
                     "TOOL_INTERRUPTED", "工具执行被中断，执行结果未知。",
                     "请先查询目标状态，不要使用新的 tool-call ID 重复提交。");
+            if (!duplicate) {
+                invocation.result.completeExceptionally(boundaryError);
+                Future<?> task = invocation.task;
+                if (task != null) task.cancel(true);
+            }
+            throw boundaryError;
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();
             if (cause instanceof RuntimeException runtime) throw runtime;

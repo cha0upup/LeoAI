@@ -21,11 +21,16 @@ import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.service.user.UserService;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -55,6 +60,62 @@ class AiToolAuthorizationPolicyTest {
 
         assertTrue(tools.containsKey("safeAction"));
         assertFalse(tools.containsKey("adminAction"));
+    }
+
+    @Test
+    void stoppingRuntimeInterruptsActiveToolAndItsBoundaryWorker() throws Exception {
+        UserService users = mock(UserService.class);
+        User normal = user("user-1", "normal");
+        when(users.getUserById("user-1")).thenReturn(normal);
+        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        state.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        var boundaryExecutor = Executors.newSingleThreadExecutor();
+        BlockingTools source = new BlockingTools();
+        CompletableFuture<Throwable> failure = new CompletableFuture<>();
+        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users,
+                new AiToolExecutionBoundary(new org.leo.ai.config.AiAgentProperties(),
+                        boundaryExecutor, new AiToolResultArchive()), null);
+        AiServiceTool tool = providedTools(policy.toolProvider(
+                AiToolAuthorizationPolicy.AgentScope.PLATFORM, source), PLATFORM_STATE_ID)
+                .get("blockingAction");
+        Thread worker = new Thread(() -> {
+            try {
+                tool.toolExecutor().executeWithContext(request("blockingAction"), context(PLATFORM_STATE_ID));
+                failure.complete(new AssertionError("expected interruption"));
+            } catch (Throwable error) {
+                failure.complete(error);
+            }
+        });
+        try {
+            worker.start();
+            assertTrue(source.started.await(5, TimeUnit.SECONDS));
+            state.stop("用户停止");
+            Throwable error = failure.get(5, TimeUnit.SECONDS);
+            assertTrue(error instanceof AiToolException);
+            assertEquals("TOOL_INTERRUPTED", ((AiToolException) error).code());
+            assertTrue(source.cancelled.await(5, TimeUnit.SECONDS));
+        } finally {
+            worker.interrupt();
+            worker.join(5_000);
+            boundaryExecutor.shutdownNow();
+        }
+    }
+
+    public static class BlockingTools {
+        final CountDownLatch started = new CountDownLatch(1);
+        final CountDownLatch cancelled = new CountDownLatch(1);
+
+        @Tool
+        public String blockingAction() throws InterruptedException {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+                return "unexpected";
+            } catch (InterruptedException error) {
+                cancelled.countDown();
+                throw error;
+            }
+        }
     }
 
     @Test

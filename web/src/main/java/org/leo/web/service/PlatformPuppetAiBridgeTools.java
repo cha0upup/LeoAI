@@ -13,6 +13,7 @@ import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
@@ -115,11 +116,12 @@ public class PlatformPuppetAiBridgeTools {
         conversationStore.insertSubagentInvocation(invocation);
         emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolvePuppetId(session));
 
+        AiThread childThread = null;
         try {
             Map<String, Object> created = threadService.createChildThread(
                     session, childTitle(normalizedTask), effectiveConfigId, parentThreadId);
             String childThreadId = String.valueOf(created.get("threadId"));
-            AiThread childThread = session.getAiThread(childThreadId);
+            childThread = session.getAiThread(childThreadId);
             if (childThread == null) {
                 throw new IllegalStateException("Puppet AI 子线程创建失败");
             }
@@ -138,23 +140,40 @@ public class PlatformPuppetAiBridgeTools {
             String guardedMessage = ControllerUtil.buildAiPolicyPrompt(policy, normalizedTask);
             Map<String, Object> delegated = delegationService.execute(
                     session, childThread, normalizedTask, guardedMessage, audit,
-                    invocationId, event -> forwardChildEvent(caller.state(), invocation, event));
+                    invocationId, event -> forwardChildEvent(caller.state(), invocation, event),
+                    caller.state());
 
-            String summary = truncate(String.valueOf(delegated.get("summary")), MAX_SUMMARY_CHARS);
+            String status = String.valueOf(delegated.get("status"));
+            if (!AiSubagentInvocation.STATUS_COMPLETED.equals(status)
+                    && !AiSubagentInvocation.STATUS_WAITING_FOR_USER.equals(status)) {
+                throw new IllegalStateException("Puppet AI 返回了非预期状态: " + status);
+            }
+            String summary = truncate(java.util.Objects.toString(delegated.get("summary"), ""), MAX_SUMMARY_CHARS);
             invocation.setSummary(summary);
-            invocation.setStatus(AiSubagentInvocation.STATUS_COMPLETED);
-            invocation.setCompletedAt(System.currentTimeMillis());
+            invocation.setStatus(status);
+            invocation.setCompletedAt(AiSubagentInvocation.isTerminal(status)
+                    ? System.currentTimeMillis() : null);
             conversationStore.updateSubagentInvocation(invocation);
             emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolvePuppetId(session));
             return result(invocation, session, summary, null);
         } catch (RuntimeException error) {
-            invocation.setStatus(AiSubagentInvocation.STATUS_FAILED);
+            invocation.setStatus(isCancelled(childThread, error)
+                    ? AiSubagentInvocation.STATUS_CANCELLED : AiSubagentInvocation.STATUS_FAILED);
             invocation.setSummary(truncate(error.getMessage(), MAX_SUMMARY_CHARS));
             invocation.setCompletedAt(System.currentTimeMillis());
             conversationStore.updateSubagentInvocation(invocation);
             emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolvePuppetId(session));
             return result(invocation, session, null, error.getMessage());
         }
+    }
+
+    private boolean isCancelled(AiThread childThread, Throwable error) {
+        if (childThread != null && AiRunStatus.CANCELLED.equals(childThread.getRunStatus())) return true;
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof InterruptedException
+                    || cause instanceof java.util.concurrent.CancellationException) return true;
+        }
+        return Thread.currentThread().isInterrupted();
     }
 
     private Caller requireCaller(String parentThreadId) {

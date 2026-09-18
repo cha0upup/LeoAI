@@ -53,6 +53,10 @@ graph TD
 
 平台 AI 与 Puppet AI 共用 `AiSseExecutor` 和 `AiSseEventPump`。对话任务进入有界队列，事件下发采用独立的直接交付线程域，避免长连接占满对话执行线程；两类线程均为 daemon，并由 Spring 容器在退出阶段统一中断回收。事件泵集中维护 200ms 队列等待、5s 心跳、1s 停止等待和最终同步 flush。
 
+平台委派以隔离的节点 Turn 执行，并关联父任务的取消信号。用户停止父任务或委派等待被中断时，会取消节点当前模型流并中断仍在等待的工具调用；即使模型服务不再回调，执行引擎也会提交取消终态。取消信号保留在对应 Turn 内，迟到的工具调用和响应不能重新推进该 Turn。
+
+委派结果区分 `waiting_for_user`、`completed`、`failed` 和 `cancelled`。等待用户输入是非终态，不写入完成时间。委派仍采用同步等待方式，受工具执行超时约束；本轮对话结束不等于节点任务已完成。
+
 模型能力探测与 Puppet 会话预热共用 `AiBackgroundExecutor` 的两个隔离执行域：预热使用 4 个工作线程和 128 项队列，探测使用 4 个工作线程和 32 项队列。队列饱和时预热会释放幂等标记，后续访问可重新触发；模型探测具有独立的超时与取消语义。执行器由 Spring 统一关闭。
 
 内置 Skill 的唯一源码位于 `ai/src/main/resources/skills`。`SkillSeedInitializer` 在启动时

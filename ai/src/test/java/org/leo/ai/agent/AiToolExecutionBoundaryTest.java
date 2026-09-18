@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -152,6 +155,51 @@ class AiToolExecutionBoundaryTest {
         assertEquals(AiToolException.Recovery.MODEL, readTimeout.recovery());
         assertEquals("TOOL_TIMEOUT_UNKNOWN", writeTimeout.code());
         assertEquals(AiToolException.Recovery.USER, writeTimeout.recovery());
+    }
+
+    @Test
+    void interruptingOwnerCancelsWorkerAndPreservesWriteDeduplication() throws Exception {
+        AiToolExecutionBoundary boundary = boundary(5_000, 4_000);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch cancelled = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        CompletableFuture<AiToolException> failure = new CompletableFuture<>();
+        ToolExecutor tool = (request, memoryId) -> {
+            calls.incrementAndGet();
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+                return "unexpected";
+            } catch (InterruptedException error) {
+                cancelled.countDown();
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(error);
+            }
+        };
+        Thread owner = new Thread(() -> {
+            try {
+                boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                        "createItem", tool, request("cancel-call", "createItem"), context("memory-1"));
+                failure.completeExceptionally(new AssertionError("expected cancellation"));
+            } catch (AiToolException error) {
+                failure.complete(error);
+            }
+        });
+        try {
+            owner.start();
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            owner.interrupt();
+            assertEquals("TOOL_INTERRUPTED", failure.get(5, TimeUnit.SECONDS).code());
+            assertTrue(cancelled.await(5, TimeUnit.SECONDS));
+            AiToolException duplicate = assertThrows(AiToolException.class, () ->
+                    boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                            "createItem", tool, request("cancel-call", "createItem"), context("memory-1")));
+            assertEquals("TOOL_INTERRUPTED", duplicate.code());
+            assertEquals(1, calls.get());
+        } finally {
+            owner.interrupt();
+            owner.join(5_000);
+        }
     }
 
     @Test

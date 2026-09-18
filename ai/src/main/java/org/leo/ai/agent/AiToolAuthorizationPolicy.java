@@ -155,17 +155,15 @@ public class AiToolAuthorizationPolicy {
                 Object memoryId = context != null ? context.chatMemoryId() : null;
                 bindContext(scope, memoryId);
                 AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
-                AiRuntimeState.ToolLease lease;
-                try {
-                    lease = runtime != null
-                            ? runtime.acquireToolLease(descriptor.exclusive()) : null;
-                } catch (IllegalStateException terminal) {
-                    throw AiToolException.userActionRequired(
-                            "TERMINAL_CONTROL_ACTIVE",
-                            "当前 Turn 已执行终止控制动作，不能继续调用工具。",
-                            "立即结束本轮并等待用户操作。" );
-                }
-                try (lease) {
+                Thread toolThread = Thread.currentThread();
+                try (var cancellation = runtime != null
+                        ? runtime.onStop(reason -> toolThread.interrupt()) : null;
+                     var lease = acquireToolLease(runtime, descriptor)) {
+                    if (toolThread.isInterrupted()) {
+                        throw AiToolException.userActionRequired(
+                                "TOOL_INTERRUPTED", "当前任务已停止，不能继续调用工具。",
+                                "等待用户发起新的任务。");
+                    }
                     AiExecutionPolicy policy = AiToolContext.getExecutionPolicy();
                     if (!isAllowed(access, policy)) {
                         log.warn("拒绝 Agent 工具调用 scope={} tool={} userId={} privilege={}",
@@ -192,6 +190,18 @@ public class AiToolAuthorizationPolicy {
             }
         };
         return exposedTool.toBuilder().toolExecutor(securedExecutor).build();
+    }
+
+    private AiRuntimeState.ToolLease acquireToolLease(AiRuntimeState runtime,
+                                                     AiToolDescriptor descriptor) {
+        try {
+            return runtime != null ? runtime.acquireToolLease(descriptor.exclusive()) : null;
+        } catch (IllegalStateException terminal) {
+            throw AiToolException.userActionRequired(
+                    "TERMINAL_CONTROL_ACTIVE",
+                    "当前 Turn 已执行终止控制动作，不能继续调用工具。",
+                    "立即结束本轮并等待用户操作。");
+        }
     }
 
     /**

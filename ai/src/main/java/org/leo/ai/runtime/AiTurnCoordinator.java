@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 统一平台 AI 与节点 AI 的单轮执行生命周期。
@@ -71,26 +72,51 @@ public class AiTurnCoordinator {
 
         private final AiTurnRuntime runtime;
         private final AtomicBoolean finished = new AtomicBoolean(false);
+        private final AtomicReference<String> cancellationReason = new AtomicReference<>();
+        private final AtomicReference<Runnable> cancellationAction = new AtomicReference<>();
 
         private Execution(AiTurnRuntime runtime) {
             this.runtime = runtime;
         }
 
         public boolean isCancellationRequested() {
-            return runtime.isStopRequested();
+            if (!finished.get() && runtime.isStopRequested()) {
+                cancellationReason.compareAndSet(null, runtimeCancellationReason());
+            }
+            return cancellationReason.get() != null;
         }
 
         public boolean isCancellation(Throwable error) {
-            return runtime.isStopRequested() || hasInterruptedCause(error);
+            return isCancellationRequested() || hasInterruptedCause(error);
         }
 
         public String cancellationReason() {
+            String captured = cancellationReason.get();
+            return captured != null ? captured : runtimeCancellationReason();
+        }
+
+        private String runtimeCancellationReason() {
             String reason = runtime.getStopReason();
             return reason != null && !reason.isBlank() ? reason : DEFAULT_CANCEL_REASON;
         }
 
         public void registerCancellation(Runnable callback) {
-            runtime.setStopCallback(callback);
+            cancellationAction.set(Objects.requireNonNull(callback, "callback"));
+            runtime.setStopCallback(() -> cancel(runtimeCancellationReason()));
+            if (isCancellationRequested()) invokeCancellation();
+        }
+
+        /** 取消信号属于本轮，运行时释放后仍保留，以拒绝迟到的工具调用。 */
+        public void cancel(String reason) {
+            if (finished.get()) return;
+            cancellationReason.compareAndSet(null,
+                    reason != null && !reason.isBlank() ? reason : DEFAULT_CANCEL_REASON);
+            invokeCancellation();
+        }
+
+        private void invokeCancellation() {
+            Runnable action = cancellationAction.getAndSet(null);
+            if (action != null) action.run();
         }
 
         /**
@@ -114,6 +140,7 @@ public class AiTurnCoordinator {
                 }
                 throw (Error) error;
             } finally {
+                cancellationAction.set(null);
                 runtime.clearExecuting();
             }
             return true;

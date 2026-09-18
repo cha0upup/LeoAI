@@ -109,7 +109,7 @@ public class PuppetNodeAiDelegationPresenter {
                 AiTurnTransaction.CompletedTurn completed) {
             context.thread().touchLastActiveAt();
             refreshRuntime();
-            recordEvent("status", AiRunStatus.COMPLETED);
+            recordEvent("status", context.thread().getRunStatus());
             completion.complete(successResponse(completed.output()));
         }
 
@@ -133,7 +133,7 @@ public class PuppetNodeAiDelegationPresenter {
             refreshRuntimeSafely();
             try {
                 if (terminal.committed()) {
-                    recordEvent("status", AiRunStatus.COMPLETED);
+                    recordEvent("status", context.thread().getRunStatus());
                 } else if (terminal.discarded()) {
                     recordEvent("status", terminal.failed().status());
                 } else {
@@ -246,7 +246,7 @@ public class PuppetNodeAiDelegationPresenter {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("sessionId", context.session().getSessionId());
             response.put("threadId", context.thread().getThreadId());
-            response.put("status", AiRunStatus.COMPLETED);
+            response.put("status", context.thread().getRunStatus());
             response.put("summary", output);
             response.put("traceId", context.trace().traceId());
             if (context.trace().runId() != null) {
