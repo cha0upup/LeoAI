@@ -2,12 +2,9 @@ package org.leo.core.component;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.core.util.javassist.CloneWithJavassist;
 import org.sqlite.JDBC;
 
 import java.io.StringReader;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.sql.Clob;
 import java.sql.Connection;
@@ -22,14 +19,16 @@ import java.util.Map;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.leo.core.component.ComponentTestSupport.runComponent;
+import static org.leo.core.component.ComponentTestSupport.assertWireValue;
 import static org.mockito.Mockito.*;
 
 class DatabaseComponentBoundaryTest {
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void exactRowLimitKeepsAllDuplicateColumnsWithoutTruncation(String variant) throws Exception {
-        Map<String, Object> result = execute(variant, Map.of(
+    @ValueSource(booleans = {false, true})
+    void exactRowLimitKeepsAllDuplicateColumnsWithoutTruncation(boolean transformed) throws Exception {
+        Map<String, Object> result = execute(transformed, Map.of(
                 "sql", "SELECT 1 AS id, 2 AS id, 3 AS id_2", "maxRows", 1));
 
         assertEquals(200, result.get("code"));
@@ -44,10 +43,10 @@ class DatabaseComponentBoundaryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void resultByteLimitExcludesTheEntireOverflowRow(String variant) throws Exception {
+    @ValueSource(booleans = {false, true})
+    void resultByteLimitExcludesTheEntireOverflowRow(boolean transformed) throws Exception {
         String first = "a".repeat(500);
-        Map<String, Object> result = execute(variant, Map.of(
+        Map<String, Object> result = execute(transformed, Map.of(
                 "sql", "SELECT ? AS value UNION ALL SELECT ?",
                 "parameters", List.of(first, "b".repeat(600)), "maxResultBytes", 1024));
 
@@ -60,12 +59,12 @@ class DatabaseComponentBoundaryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void stringTruncationPreservesUnicodeAndExactByteLimits(String variant) throws Exception {
+    @ValueSource(booleans = {false, true})
+    void stringTruncationPreservesUnicodeAndExactByteLimits(boolean transformed) throws Exception {
         String[] inputs = {"x".repeat(255) + "😀", "中".repeat(84) + "😀", "中".repeat(85) + "😀"};
         String[] expected = {"x".repeat(255), inputs[1], "中".repeat(85)};
         for (int index = 0; index < inputs.length; index++) {
-            Map<String, Object> result = execute(variant, Map.of(
+            Map<String, Object> result = execute(transformed, Map.of(
                     "sql", "SELECT ? AS value", "parameters", List.of(inputs[index]), "maxCellBytes", 256));
 
             assertEquals(200, result.get("code"));
@@ -76,9 +75,9 @@ class DatabaseComponentBoundaryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void capabilityProbeReportsTrimmedUnavailableDriver(String variant) throws Exception {
-        Map<String, Object> result = invoke(component(variant), Map.of(
+    @ValueSource(booleans = {false, true})
+    void capabilityProbeReportsTrimmedUnavailableDriver(boolean transformed) throws Exception {
+        Map<String, Object> result = runComponent("DatabaseComponent", transformed, Map.of(
                 "operation", "capabilities", "requestedDriver", "  missing.jdbc.Driver  "));
 
         assertEquals(200, result.get("code"));
@@ -92,16 +91,17 @@ class DatabaseComponentBoundaryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void driverFailuresKeepDistinctCategoriesAndEmptyResults(String variant) throws Exception {
+    @ValueSource(booleans = {false, true})
+    void driverFailuresKeepDistinctCategoriesAndEmptyResults(boolean transformed) throws Exception {
         String[] drivers = {"missing.jdbc.Driver", "java.lang.String", "org.sqlite.JDBC"};
         String[] categories = {"DRIVER_NOT_FOUND", "EXECUTION_ERROR", "URL_MISMATCH"};
         int[] codes = {503, 500, 400};
         for (int index = 0; index < drivers.length; index++) {
-            Map<String, Object> result = execute(variant, Map.of(
+            Map<String, Object> result = execute(transformed, Map.of(
                     "driverClass", drivers[index], "jdbcUrl", "jdbc:unknown:test?password=secret-value",
                     "password", "secret-value", "sql", "SELECT 1"));
 
+            assertWireValue(result);
             assertEquals(codes[index], result.get("code"));
             assertEquals(categories[index], result.get("errorCategory"));
             assertEquals(List.of(), result.get("rows"));
@@ -112,8 +112,8 @@ class DatabaseComponentBoundaryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"source", "payload", "transformed"})
-    void clobReadIsBoundedAndClosesResourcesAcrossUnicodeChunks(String variant) throws Exception {
+    @ValueSource(booleans = {false, true})
+    void clobReadIsBoundedAndClosesResourcesAcrossUnicodeChunks(boolean transformed) throws Exception {
         String prefix = "x".repeat(2047) + "😀";
         TrackingReader reader = new TrackingReader(prefix + "中".repeat(1000));
         Clob clob = mock(Clob.class);
@@ -133,7 +133,7 @@ class DatabaseComponentBoundaryTest {
         when(rows.getObject(1)).thenReturn(clob);
         ClobDriver.CONNECTION.set(connection);
         try {
-            Map<String, Object> result = execute(variant, Map.of(
+            Map<String, Object> result = execute(transformed, Map.of(
                     "driverClass", ClobDriver.class.getName(), "sql", "SELECT value", "maxCellBytes", 2304));
 
             assertEquals(200, result.get("code"));
@@ -149,40 +149,12 @@ class DatabaseComponentBoundaryTest {
         }
     }
 
-    private Map<String, Object> execute(String variant, Map<String, Object> options) throws Exception {
+    private Map<String, Object> execute(boolean transformed, Map<String, Object> options) throws Exception {
         Map<String, Object> params = new HashMap<>();
         params.put("driverClass", "org.sqlite.JDBC");
         params.put("jdbcUrl", "jdbc:sqlite::memory:");
         params.putAll(options);
-        return invoke(component(variant), params);
-    }
-
-    private Runnable component(String variant) throws Exception {
-        if ("source".equals(variant)) return new DatabaseComponent();
-        byte[] bytes;
-        if ("transformed".equals(variant)) {
-            bytes = CloneWithJavassist.cloneClass("DatabaseComponent", "org.leo.generated.Database" + System.nanoTime());
-        } else {
-            try (var input = getClass().getResourceAsStream("/component/DatabaseComponent.payload")) {
-                assertNotNull(input);
-                bytes = input.readAllBytes();
-            }
-        }
-        return (Runnable) new BytecodeLoader().define(bytes).getDeclaredConstructor().newInstance();
-    }
-
-    private Map<String, Object> invoke(Runnable component, Map<String, Object> params) {
-        Thread thread = Thread.currentThread();
-        ClassLoader original = thread.getContextClassLoader();
-        ComponentBridge bridge = new ComponentBridge(original, params);
-        thread.setContextClassLoader(bridge);
-        try {
-            component.run();
-            assertNotNull(bridge.result);
-            return bridge.result;
-        } finally {
-            thread.setContextClassLoader(original);
-        }
+        return runComponent("DatabaseComponent", transformed, params);
     }
 
     public static class ClobDriver extends JDBC {
@@ -209,27 +181,5 @@ class DatabaseComponentBoundaryTest {
 
         @Override
         public void close() { closed = true; super.close(); }
-    }
-
-    private static class BytecodeLoader extends ClassLoader {
-        private Class<?> define(byte[] bytes) { return defineClass(null, bytes, 0, bytes.length); }
-    }
-
-    private static class ComponentBridge extends ClassLoader implements InvocationHandler {
-        private final Map<String, Object> params;
-        private Map<String, Object> result;
-
-        private ComponentBridge(ClassLoader parent, Map<String, Object> params) {
-            super(parent);
-            this.params = params;
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public Object invoke(Object proxy, Method method, Object[] args) {
-            if (args == null) return params;
-            result = (Map<String, Object>) args[0];
-            return null;
-        }
     }
 }

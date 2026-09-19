@@ -7,7 +7,6 @@ import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.memory.ManagedConversationMemory;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
-import org.leo.core.ai.AiTurnRuntime;
 import org.leo.core.entity.AiChatAuditEntry;
 
 import java.util.ArrayList;
@@ -197,7 +196,7 @@ class AiTurnOrchestratorTest {
         AiTurnTelemetryRegistry telemetry = new AiTurnTelemetryRegistry();
         AiTurnOrchestrator orchestrator =
                 new AiTurnOrchestrator(engine, transaction, telemetry);
-        TestRuntime runtime = new TestRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         runtime.claimed = true;
         AiTurnCoordinator.Execution execution =
                 new AiTurnCoordinator().attach(runtime);
@@ -237,7 +236,7 @@ class AiTurnOrchestratorTest {
                            TestExecutionEngine engine,
                            AiTurnOrchestrator orchestrator,
                            AiTurnOrchestrator.Request request,
-                           TestRuntime runtime,
+                           RecordingTurnRuntime runtime,
                            AiTurnTelemetryRegistry telemetry,
                            RecordingLifecycle lifecycle) {
     }
@@ -355,59 +354,6 @@ class AiTurnOrchestratorTest {
             COMPLETE,
             CANCEL,
             DEFER
-        }
-    }
-
-    private static final class TestRuntime implements AiTurnRuntime {
-        private boolean claimed;
-        private boolean stopRequested;
-        private String stopReason;
-        private AiTurnOutcome outcome;
-
-        @Override
-        public boolean claimExecution() {
-            if (claimed) return false;
-            claimed = true;
-            return true;
-        }
-
-        @Override
-        public void markExecuting(Thread thread) {
-            claimed = true;
-        }
-
-        @Override
-        public void clearExecuting() {
-            claimed = false;
-        }
-
-        @Override
-        public boolean isStopRequested() {
-            return stopRequested;
-        }
-
-        @Override
-        public String getStopReason() {
-            return stopReason;
-        }
-
-        @Override
-        public void setStopCallback(Runnable callback) {
-        }
-
-        @Override
-        public void markCompleted() {
-            outcome = AiTurnOutcome.COMPLETED;
-        }
-
-        @Override
-        public void markFailed() {
-            outcome = AiTurnOutcome.FAILED;
-        }
-
-        @Override
-        public void markCancelled() {
-            outcome = AiTurnOutcome.CANCELLED;
         }
     }
 }

@@ -390,8 +390,9 @@ class ExecCommandComponentTest {
 
     private void initializeQuietPipe(String processId) throws Exception {
         invoke(processId, 6, "");
-        // Startup prompts are asynchronous output, so silence them before testing an idle read.
-        invoke(processId, 4, "PS1=''; PS2=''; printf 'terminal-ready\\n'\n");
+        // Clearing PS1/PS2 does not suppress zsh's end-of-line marker or prompt hooks.
+        // Emit readiness from a non-interactive shell so later output comes only from test commands.
+        invoke(processId, 4, "exec /bin/sh -c 'printf \"terminal-ready\\n\"; exec /bin/sh'\n");
         assertTrue(readUntil(processId, "terminal-ready\n", 3000).contains("terminal-ready\n"));
     }
 
@@ -844,32 +845,6 @@ class ExecCommandComponentTest {
     }
 
     private Map<String, Object> invokePayload(Class<?> type, Map<String, Object> params) throws Exception {
-        PayloadContext context = new PayloadContext(params);
-        Thread thread = Thread.currentThread();
-        ClassLoader previous = thread.getContextClassLoader();
-        try {
-            thread.setContextClassLoader(context);
-            ((Runnable) type.getDeclaredConstructor().newInstance()).run();
-            return context.response;
-        } finally {
-            thread.setContextClassLoader(previous);
-        }
-    }
-
-    private static final class PayloadContext extends ClassLoader implements java.lang.reflect.InvocationHandler {
-        private final HashMap<String, Object> request;
-        private Map<String, Object> response;
-
-        private PayloadContext(Map<String, Object> request) {
-            this.request = new HashMap<>(request);
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public Object invoke(Object proxy, Method method, Object[] args) {
-            if (args == null) return request;
-            response = (Map<String, Object>) args[0];
-            return null;
-        }
+        return ComponentTestSupport.runComponent((Runnable) type.getDeclaredConstructor().newInstance(), params);
     }
 }

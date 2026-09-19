@@ -1,28 +1,16 @@
 package org.leo.web.controller.platform.skill;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.service.LeoSkillsProvider;
-import org.leo.ai.service.SkillExportService;
-import org.leo.ai.service.SkillFileService;
-import org.leo.ai.service.SkillManifestService;
 import org.leo.ai.service.SkillOperationLock;
-import org.leo.ai.service.SkillRegistryService;
-import org.leo.core.config.LeoConfig;
-import org.leo.web.service.SkillManagementService;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -42,40 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-class SkillControllerArchiveTest {
-
-    @TempDir Path tempDir;
-    private String previousVfsPath;
-    private SkillManifestService manifests;
-    private SkillRegistryService registry;
-    private LeoSkillsProvider provider;
-    private SkillOperationLock locks;
-    private SkillExportService archives;
-    private SkillManagementService management;
-    private SkillController controller;
-
-    @BeforeEach
-    void setUp() {
-        previousVfsPath = LeoConfig.getVfsPath();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
-        manifests = new SkillManifestService();
-        registry = spy(new SkillRegistryService(manifests));
-        provider = spy(new LeoSkillsProvider(registry));
-        configure(spy(new SkillOperationLock()));
-    }
-
-    private void configure(SkillOperationLock operationLock) {
-        locks = operationLock;
-        archives = spy(new SkillExportService(manifests, locks));
-        SkillFileService files = new SkillFileService();
-        management = new SkillManagementService(registry, provider, manifests, files, archives, locks);
-        controller = new SkillController(registry, files, management);
-    }
-
-    @AfterEach
-    void restoreConfig() {
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
-    }
+class SkillControllerArchiveTest extends SkillControllerTestSupport {
 
     @Test
     void singleExportRoundTripsMetadataAndBinaryResources() throws Exception {
@@ -98,7 +53,7 @@ class SkillControllerArchiveTest {
         assertEquals(200, imported.get("code"));
         assertEquals("imported", result(imported, "alpha").get("status"));
         assertArrayEquals(new byte[]{0, 1, -1}, Files.readAllBytes(skillDir("alpha").resolve("assets/data.bin")));
-        var descriptor = manifests.inspect(skillDir("alpha"), "puppet-node").descriptor();
+        var descriptor = manifestService.inspect(skillDir("alpha"), "puppet-node").descriptor();
         assertEquals("draft", descriptor.status());
         assertEquals("imported", descriptor.source());
         assertFalse(descriptor.enabled());
@@ -118,8 +73,8 @@ class SkillControllerArchiveTest {
         assertTrue(response.getHeaders().getContentDisposition().getFilename().startsWith("skills_puppet-node_"));
         assertEquals(Set.of("alpha/SKILL.md", "alpha/manifest.yaml", "beta/SKILL.md", "beta/manifest.yaml"),
                 unzip(response.getBody()).keySet());
-        assertFalse(locks.lockFor("puppet-node", "alpha").isLocked());
-        assertFalse(locks.lockFor("puppet-node", "beta").isLocked());
+        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("puppet-node", "beta").isLocked());
     }
 
     @Test
@@ -134,7 +89,7 @@ class SkillControllerArchiveTest {
         var response = controller.exportSkill("puppet-node", "alpha");
         assertEquals(500, response.getStatusCode().value());
         assertEquals("导出失败：read failed", new String(response.getBody(), StandardCharsets.UTF_8));
-        assertFalse(locks.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
     }
 
     @Test
@@ -158,19 +113,19 @@ class SkillControllerArchiveTest {
                 "puppet-node", null, "overwrite");
         assertEquals(400, response.get("code"));
         assertFalse(Files.exists(tempDir.resolve("skills/puppet-node")));
-        verify(locks, never()).lockFor(anyString(), anyString());
+        verify(operationLock, never()).lockFor(anyString(), anyString());
         assertEquals(400, controller.importSkills(null, "puppet-node", "alpha", null).get("code"));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"skip", "overwrite"})
     void importChecksConflictsAfterAcquiringTheSharedLock(String policy) throws Exception {
-        ReentrantLock targetLock = locks.lockFor("puppet-node", "alpha");
+        ReentrantLock targetLock = operationLock.lockFor("puppet-node", "alpha");
         CountDownLatch attempted = new CountDownLatch(1);
         doAnswer(invocation -> {
             attempted.countDown();
             return targetLock;
-        }).when(locks).lockFor("puppet-node", "alpha");
+        }).when(operationLock).lockFor("puppet-node", "alpha");
         var executor = Executors.newSingleThreadExecutor();
         targetLock.lock();
         try {
@@ -213,18 +168,18 @@ class SkillControllerArchiveTest {
         assertFalse(provider.getFormattedSkills("puppet-node", null).contains("alpha"));
         verify(registry).invalidate();
         verify(provider).invalidate();
-        assertFalse(locks.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
     }
 
     @Test
     void exportRechecksExistenceAfterAConcurrentDelete() throws Exception {
         writeSkill("alpha", "old");
-        ReentrantLock targetLock = locks.lockFor("puppet-node", "alpha");
+        ReentrantLock targetLock = operationLock.lockFor("puppet-node", "alpha");
         CountDownLatch attempted = new CountDownLatch(1);
         doAnswer(invocation -> {
             attempted.countDown();
             return targetLock;
-        }).when(locks).lockFor("puppet-node", "alpha");
+        }).when(operationLock).lockFor("puppet-node", "alpha");
         var executor = Executors.newSingleThreadExecutor();
         targetLock.lock();
         try {
@@ -284,41 +239,6 @@ class SkillControllerArchiveTest {
             executor.shutdownNow();
             assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
         }
-    }
-
-    private Path skillDir(String name) {
-        return tempDir.resolve("skills/puppet-node").resolve(name);
-    }
-
-    private void writeSkill(String name, String body) throws IOException {
-        Files.createDirectories(skillDir(name));
-        Files.writeString(skillDir(name).resolve("SKILL.md"), skill(name, body));
-        Files.writeString(skillDir(name).resolve("manifest.yaml"), manifest(name));
-    }
-
-    private static String skill(String name, String body) {
-        return "---\nname: " + name + "\ndescription: archive test\n---\n\n" + body + "\n";
-    }
-
-    private static String manifest(String name) {
-        return """
-                schemaVersion: 1
-                id: leo.test.%s
-                name: %s
-                version: 1.0.0
-                scope: puppet-node
-                domain: operation
-                category: discovery
-                mode: assess
-                platforms: [linux]
-                targets: [host]
-                risk: low
-                accessMode: read-only
-                status: published
-                source: custom
-                owner: test
-                enabled: true
-                """.formatted(name, name);
     }
 
     private static HashMap<String, Object> batch(Object... names) {

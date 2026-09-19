@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ComponentBytecodeProfileTest {
@@ -41,7 +42,8 @@ class ComponentBytecodeProfileTest {
             byte[] minimized = minimize(source);
             assertEquals(50, majorVersion(minimized), component);
             assertTrue(minimized.length <= source.length, component);
-            assertTrue(Runnable.class.isAssignableFrom(loader.define(className, minimized)), component);
+            assertInstanceOf(Runnable.class,
+                    loader.define(className, minimized).getDeclaredConstructor().newInstance(), component);
         }
     }
 

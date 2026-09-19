@@ -19,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
 import static org.leo.core.component.ComponentTestSupport.code;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
@@ -39,15 +38,6 @@ class ContainerManageComponentTest {
             assertSame(second, select.invoke(null, List.of(first, second), secondId));
             assertNull(select.invoke(null, List.of(first), secondId));
         }
-    }
-
-    @Test
-    void transformedContainerPayloadsInitializeAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("SpringFrameworkManageComponent");
-        assertTransformedRunnable("TomcatContainerManageComponent");
-        assertTransformedRunnable("WeblogicContainerManageComponent");
-        assertTransformedRunnable("GenericServletContainerManageComponent");
-        assertTransformedRunnable("JavaWebFrameworkManageComponent");
     }
 
     @Test

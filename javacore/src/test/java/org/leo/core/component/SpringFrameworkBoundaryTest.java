@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.leo.core.component.ComponentParameterBoundaryTest.*;
+import static org.leo.core.component.ComponentTestSupport.*;
 
 class SpringFrameworkBoundaryTest {
     @ParameterizedTest @ValueSource(booleans = {false, true})

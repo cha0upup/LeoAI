@@ -17,21 +17,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
 import static org.leo.core.component.ComponentTestSupport.code;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
 import static org.leo.core.component.ComponentTestSupport.setField;
 
 class ExecutionAndDatabaseComponentTest {
-
-    @Test
-    void transformedPayloadsRemainRunnableAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("DatabaseComponent");
-        assertTransformedRunnable("ExecCommandSimpleComponent");
-        assertTransformedRunnable("ExecScriptComponent");
-        assertTransformedRunnable("PluginComponent");
-    }
 
     @Test
     void databaseRequiresDriverAndKeepsStableErrorShape() throws Exception {

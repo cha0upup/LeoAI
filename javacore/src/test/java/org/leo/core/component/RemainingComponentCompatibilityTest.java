@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
 import static org.leo.core.component.ComponentTestSupport.code;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
@@ -31,14 +30,6 @@ class RemainingComponentCompatibilityTest {
 
     @TempDir
     Path tempDir;
-
-    @Test
-    void transformedPayloadsRemainRunnableAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("DecompressComponent");
-        assertTransformedRunnable("FileUploadComponent");
-        assertTransformedRunnable("ScreenComponent");
-        assertTransformedRunnable("ResourceComponent");
-    }
 
     @Test
     void decompressAcceptsMixedStringAndByteParameters() throws Exception {

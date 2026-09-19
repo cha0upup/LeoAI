@@ -6,18 +6,20 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.leo.core.component.ComponentTestSupport.assertWireValue;
+import static org.leo.core.component.ComponentTestSupport.component;
+import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 
 class FileSafetyTest {
     @TempDir Path directory;
@@ -46,7 +48,7 @@ class FileSafetyTest {
         Files.setLastModifiedTime(target, original);
         Files.createSymbolicLink(scope.resolve("directory-link"), outside);
         Files.createSymbolicLink(scope.resolve("file-link"), target);
-        Map<String, Object> result = invoke(component("FileEnhanceComponent", payload), Map.of(
+        Map<String, Object> result = invokeComponent(component("FileEnhanceComponent", payload), Map.of(
                 "action", 2, "path", scope.toString(), "recursive", true, "time", "2020-01-02 03:04:05"));
         assertEquals(200, result.get("code"));
         assertEquals(original, Files.getLastModifiedTime(target));
@@ -58,7 +60,7 @@ class FileSafetyTest {
         Path source = Files.createDirectory(directory.resolve("source"));
         Files.createSymbolicLink(source.resolve("broken"), source.resolve("missing"));
         Path destination = Files.writeString(directory.resolve("existing.zip"), "original archive");
-        Map<String, Object> result = invoke(component("CompressComponent", payload), Map.of(
+        Map<String, Object> result = invokeComponent(component("CompressComponent", payload), Map.of(
                 "src", utf8(source), "des", utf8(destination)));
         assertEquals(500, result.get("code"));
         assertEquals("original archive", Files.readString(destination));
@@ -74,7 +76,7 @@ class FileSafetyTest {
         Path destination = Files.writeString(source.resolve("out.zip"), "old");
         boolean posix = Files.getFileStore(directory).supportsFileAttributeView("posix");
         if (posix) Files.setPosixFilePermissions(destination, PosixFilePermissions.fromString("rw-------"));
-        Map<String, Object> result = invoke(component("CompressComponent", payload), Map.of(
+        Map<String, Object> result = invokeComponent(component("CompressComponent", payload), Map.of(
                 "src", utf8(source), "des", utf8(destination)));
         assertEquals(200, result.get("code"));
         if (posix) assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(destination)));
@@ -89,7 +91,7 @@ class FileSafetyTest {
     void compressionPreservesEmptyDirectoriesAndHonorsExclusions(boolean payload) throws Exception {
         Path source = Files.createDirectory(directory.resolve("source"));
         Path archivePath = directory.resolve("empty.zip");
-        assertEquals(200, invoke(component("CompressComponent", payload), Map.of(
+        assertEquals(200, invokeComponent(component("CompressComponent", payload), Map.of(
                 "src", utf8(source), "des", utf8(archivePath))).get("code"));
         try (ZipFile archive = new ZipFile(archivePath.toFile())) {
             assertEquals(1, archive.size());
@@ -98,7 +100,7 @@ class FileSafetyTest {
         Files.createDirectories(source.resolve("nested/empty"));
         Files.createDirectory(source.resolve("excluded"));
         Files.writeString(source.resolve("one.txt"), "one");
-        assertEquals(200, invoke(component("CompressComponent", payload), Map.of(
+        assertEquals(200, invokeComponent(component("CompressComponent", payload), Map.of(
                 "src", utf8(source), "des", utf8(archivePath), "exclude", "excluded")).get("code"));
         try (ZipFile archive = new ZipFile(archivePath.toFile())) {
             assertEquals(4, archive.size());
@@ -107,7 +109,7 @@ class FileSafetyTest {
             assertNotNull(archive.getEntry("source/one.txt"));
         }
         Path output = directory.resolve("unpacked");
-        assertEquals(200, invoke(component("DecompressComponent", payload), Map.of(
+        assertEquals(200, invokeComponent(component("DecompressComponent", payload), Map.of(
                 "src", archivePath.toString(), "des", output.toString(), "format", "zip")).get("code"));
         assertTrue(Files.isDirectory(output.resolve("source/nested/empty")));
         assertEquals("one", Files.readString(output.resolve("source/one.txt")));
@@ -115,7 +117,10 @@ class FileSafetyTest {
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void profileAdvertisesOnlyImplementedFileCapabilities(boolean payload) throws Exception {
-        Map<String, Object> result = invoke(component("FileComponent", payload), Map.of("action", "profile"));
+        Map<String, Object> result = invokeComponent(component("FileComponent", payload), Map.of("action", "profile"));
+        assertEquals(200, result.get("code"));
+        assertEquals(FileSystems.getDefault().getSeparator(), result.get("separator"));
+        assertWireValue(result);
         Map<?, ?> capabilities = (Map<?, ?>) result.get("capabilities");
         assertEquals(Boolean.TRUE, capabilities.get("rename"));
         assertEquals(Boolean.FALSE, capabilities.get("copyDirectory"));
@@ -123,25 +128,4 @@ class FileSafetyTest {
     }
 
     private byte[] utf8(Path path) { return path.toString().getBytes(StandardCharsets.UTF_8); }
-
-    private Object component(String name, boolean payload) throws Exception {
-        if (!payload) return Class.forName("org.leo.core.component." + name).getDeclaredConstructor().newInstance();
-        try (var input = getClass().getResourceAsStream("/component/" + name + ".payload")) {
-            assertNotNull(input);
-            return new BytecodeLoader().load(input.readAllBytes()).getDeclaredConstructor().newInstance();
-        }
-    }
-    private Map<String, Object> invoke(Object component, Map<String, Object> params) throws Exception {
-        HashMap<String, Object> results = new HashMap<>();
-        for (String name : new String[]{"params", "results"}) {
-            Field field = component.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            field.set(component, name.equals("params") ? new HashMap<>(params) : results);
-        }
-        component.getClass().getMethod("invoke").invoke(component);
-        return results;
-    }
-    private static class BytecodeLoader extends ClassLoader {
-        Class<?> load(byte[] data) { return defineClass(null, data, 0, data.length); }
-    }
 }

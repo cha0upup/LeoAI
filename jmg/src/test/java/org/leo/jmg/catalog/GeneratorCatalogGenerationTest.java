@@ -16,11 +16,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.InputStream;
 import java.util.Collection;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.jar.JarInputStream;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 import javassist.bytecode.ClassFile;
 import javassist.bytecode.MethodInfo;
@@ -29,51 +31,48 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** 确保能力目录中的每个公开组合都能走完整 Core → Shell → Injector 管线。 */
 import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
 import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 
+/** 相同模板组合只生成一次；目录别名的完整性由 GeneratorCatalogTest 检查。 */
 class GeneratorCatalogGenerationTest {
 
     @TestFactory
-    Collection<DynamicTest> everyCatalogEntryGeneratesValidClassBytes() {
-        AtomicLong seed = new AtomicLong(9000L);
-        return GeneratorCatalog.getAllDescriptors().stream()
-                .map(descriptor -> DynamicTest.dynamicTest(label(descriptor), () -> {
-                    GenerationResult result = generate(descriptor, seed.getAndIncrement());
-                    assertNotNull(result.getShellClassBytes());
-                    assertNotNull(result.getInjectorClassBytes());
-                    assertTrue(result.getShellClassBytes().length > 4);
-                    assertTrue(result.getInjectorClassBytes().length > 4);
-                    assertEquals((byte) 0xca, result.getInjectorClassBytes()[0]);
-                    assertEquals((byte) 0xfe, result.getInjectorClassBytes()[1]);
-                    assertEquals((byte) 0xba, result.getInjectorClassBytes()[2]);
-                    assertEquals((byte) 0xbe, result.getInjectorClassBytes()[3]);
+    Collection<DynamicTest> distinctTemplateCombinationsGenerateValidClasses() {
+        List<DynamicTest> tests = new ArrayList<>();
+        Set<List<?>> combinations = new HashSet<>();
+        for (InjectorDescriptor descriptor : GeneratorCatalog.getAllDescriptors()) {
+            for (ServletNamespace namespace : Arrays.asList(ServletNamespace.JAVAX, ServletNamespace.JAKARTA)) {
+                if (!descriptor.supportsServletNamespace(namespace)) continue;
+                // Listener 会注入服务器专属取响应逻辑，Valve 可能改写容器接口，保留各服务器用例。
+                Object container = descriptor.getMountType() == MountType.LISTENER
+                        || descriptor.getMountType() == MountType.VALVE ? descriptor.getServerType() : null;
+                if (!combinations.add(Arrays.asList(descriptor.getShellTemplateName(),
+                        descriptor.getInjectorTemplateName(), descriptor.getInjectorName(),
+                        descriptor.getProtocol(), namespace, descriptor.getSupportedServerVersions(),
+                        descriptor.getSupportedPackers(), container))) continue;
+                final long seed = 9000L + tests.size();
+                tests.add(DynamicTest.dynamicTest(label(descriptor) + " / " + namespace, () -> {
+                    GenerationResult result = generate(descriptor, seed, namespace);
+                    assertClassFile(result.getCoreClassBytes());
+                    assertClassFile(result.getShellClassBytes());
+                    assertClassFile(result.getInjectorClassBytes());
                     if (isGlobalMount(descriptor.getMountType())) {
                         assertFieldAbsent(result.getInjectorClassBytes(), "urlPattern");
                     }
                     if (descriptor.getProtocol() == TransportProtocol.WEBSOCKET) {
                         assertFieldAbsent(result.getShellClassBytes(), "respCode");
                     }
-                }))
-                .collect(Collectors.toList());
+                }));
+            }
+        }
+        return tests;
     }
 
-    @TestFactory
-    Collection<DynamicTest> everyJakartaCapabilityGeneratesValidClassBytes() {
-        AtomicLong seed = new AtomicLong(12000L);
-        return GeneratorCatalog.getAllDescriptors().stream()
-                .filter(descriptor -> descriptor.supportsServletNamespace(ServletNamespace.JAKARTA))
-                .map(descriptor -> DynamicTest.dynamicTest(
-                        label(descriptor) + " / jakarta", () -> {
-                            GenerationResult result = generate(
-                                    descriptor, seed.getAndIncrement(), ServletNamespace.JAKARTA);
-                            assertNotNull(result.getShellClassBytes());
-                            assertNotNull(result.getInjectorClassBytes());
-                            assertEquals((byte) 0xca, result.getShellClassBytes()[0]);
-                            assertEquals((byte) 0xca, result.getInjectorClassBytes()[0]);
-                        }))
-                .collect(Collectors.toList());
+    private static void assertClassFile(byte[] bytes) throws Exception {
+        assertNotNull(bytes);
+        // 解析整个 class 文件，比逐字节检查魔数更能发现损坏的生成结果。
+        new ClassFile(new DataInputStream(new ByteArrayInputStream(bytes)));
     }
 
     @Test
@@ -285,11 +284,6 @@ class GeneratorCatalogGenerationTest {
                     "(L" + internal + "/connector/Request;L"
                             + internal + "/connector/Response;)V");
         }
-    }
-
-    private static GenerationResult generate(InjectorDescriptor descriptor,
-                                             long seed) throws Exception {
-        return generate(descriptor, seed, ServletNamespace.JAVAX);
     }
 
     private static GenerationResult generate(InjectorDescriptor descriptor,

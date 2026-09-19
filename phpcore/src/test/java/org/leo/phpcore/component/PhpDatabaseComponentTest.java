@@ -3,6 +3,7 @@ package org.leo.phpcore.component;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
@@ -33,10 +34,14 @@ class PhpDatabaseComponentTest {
     private Path component;
     private Path database;
 
-    @BeforeEach
-    void setUp() throws Exception {
+    @BeforeAll
+    static void requirePhp() {
         Assumptions.assumeTrue(phpAvailable(), "PHP CLI is not installed");
         Assumptions.assumeTrue(pdoSqliteAvailable(), "pdo_sqlite is not installed");
+    }
+
+    @BeforeEach
+    void setUp() throws Exception {
         URL resource = Objects.requireNonNull(getClass().getResource("/components/DatabaseComponent.php"));
         component = Paths.get(resource.toURI());
         database = Files.createTempFile("leo-php-database-", ".sqlite");
@@ -187,7 +192,7 @@ class PhpDatabaseComponentTest {
         assertEquals("pdo", ((Map<?, ?>) response.get("runtimeMetadata")).get("provider"));
     }
 
-    private boolean pdoSqliteAvailable() {
+    private static boolean pdoSqliteAvailable() {
         return commandSucceeds("php", "-r", "exit(in_array('sqlite',PDO::getAvailableDrivers(),true)?0:1);");
     }
 }

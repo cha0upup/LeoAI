@@ -3,6 +3,7 @@ package org.leo.phpcore.component;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.leo.core.util.json.PortableJsonCodec;
 
@@ -40,9 +41,13 @@ class PhpNetworkProxyComponentTest {
     private String reverseListenId;
     private String reverseConnId;
 
+    @BeforeAll
+    static void requirePhp() {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI is not installed");
+    }
+
     @BeforeEach
     void setUp() throws Exception {
-        Assumptions.assumeTrue(phpAvailable(), "PHP CLI is not installed");
         forwardComponent = component("ProxyForwardComponent.php");
         reverseComponent = component("ReverseTunnelComponent.php");
         forwardConnId = "forward-" + UUID.randomUUID().toString().replace("-", "");

@@ -5,16 +5,11 @@ import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.model.chat.response.PartialThinkingContext;
-import dev.langchain4j.model.chat.response.PartialToolCall;
-import dev.langchain4j.model.chat.response.PartialToolCallContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
-import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.BeforeToolExecution;
-import dev.langchain4j.service.tool.ToolExecution;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolErrorHandler;
-import org.leo.core.ai.AiTurnRuntime;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.RETURNS_SELF;
+import static org.mockito.ArgumentMatchers.any;
 
 class AiTurnExecutionEngineTest {
 
@@ -41,7 +39,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void emitsTransportIndependentDeltasAndCompletesOnlyOnce() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         TestHandle handle = new TestHandle();
         ChatResponse response = mock(ChatResponse.class);
@@ -72,7 +70,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void cancelsStreamingHandleEvenWhenItArrivesAfterStopRequest() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         TestHandle handle = new TestHandle();
         ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
@@ -95,7 +93,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void doesNotCreateModelStreamWhenTurnWasAlreadyCancelled() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         runtime.requestStop("启动前停止");
         AtomicBoolean streamCreated = new AtomicBoolean(false);
@@ -104,7 +102,7 @@ class AiTurnExecutionEngineTest {
         engine.execute(new AiTurnCommand(
                 "thread-1", "memory-1", turn, () -> {
                     streamCreated.set(true);
-                    return new ScriptedTokenStream(tokenStream -> {});
+                    return new ScriptedTokenStream(tokenStream -> {}).stream;
                 }), listener);
 
         assertFalse(streamCreated.get());
@@ -114,7 +112,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void cancellationFinishesWithoutProviderCallbackAndRejectsLateTools() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         TestHandle handle = new TestHandle();
         ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream ->
@@ -139,7 +137,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void cancellationUsesLatestModelRequestHandle() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         TestHandle previous = new TestHandle();
         TestHandle current = new TestHandle();
@@ -159,7 +157,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void cancellationWaitsForInFlightEventBeforePersistingTerminalState() throws Exception {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         TestHandle handle = new TestHandle();
         ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {});
@@ -201,7 +199,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void convertsSynchronousStartFailureIntoFailedTurn() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         RecordingListener listener = new RecordingListener();
 
@@ -217,7 +215,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void continuesOnceFromCurrentMemoryWhenProviderReturnsNoValue() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         AtomicInteger primaryCalls = new AtomicInteger();
         AtomicInteger recoveryCalls = new AtomicInteger();
@@ -239,11 +237,11 @@ class AiTurnExecutionEngineTest {
                 "thread-1", "memory-1", turn,
                 () -> {
                     primaryCalls.incrementAndGet();
-                    return primary;
+                    return primary.stream;
                 },
                 () -> {
                     recoveryCalls.incrementAndGet();
-                    return recovery;
+                    return recovery.stream;
                 }), listener);
 
         assertEquals(1, primaryCalls.get());
@@ -257,7 +255,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void stopsAfterOneNoValueRecoveryAttempt() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         AtomicInteger primaryCalls = new AtomicInteger();
         AtomicInteger recoveryCalls = new AtomicInteger();
@@ -271,11 +269,11 @@ class AiTurnExecutionEngineTest {
                 "thread-1", "memory-1", turn,
                 () -> {
                     primaryCalls.incrementAndGet();
-                    return primary;
+                    return primary.stream;
                 },
                 () -> {
                     recoveryCalls.incrementAndGet();
-                    return recovery;
+                    return recovery.stream;
                 }), listener);
 
         assertEquals(1, primaryCalls.get());
@@ -287,7 +285,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void rejectsClaimedQuestionCardWhenControlToolWasNotCalled() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         RecordingListener listener = new RecordingListener();
         ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
@@ -308,7 +306,7 @@ class AiTurnExecutionEngineTest {
 
     @Test
     void reportsTerminalPersistenceFailureAndMarksRuntimeFailed() {
-        RecordingRuntime runtime = claimedRuntime();
+        RecordingTurnRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
         RecordingListener listener = new RecordingListener();
         listener.failCompletion = true;
@@ -322,14 +320,14 @@ class AiTurnExecutionEngineTest {
         assertFalse(runtime.claimed);
     }
 
-    private RecordingRuntime claimedRuntime() {
-        RecordingRuntime runtime = new RecordingRuntime();
+    private RecordingTurnRuntime claimedRuntime() {
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         assertTrue(coordinator.tryClaim(runtime));
         return runtime;
     }
 
-    private AiTurnCommand command(AiTurnCoordinator.Execution turn, TokenStream stream) {
-        return new AiTurnCommand("thread-1", "memory-1", turn, () -> stream);
+    private AiTurnCommand command(AiTurnCoordinator.Execution turn, ScriptedTokenStream stream) {
+        return new AiTurnCommand("thread-1", "memory-1", turn, () -> stream.stream);
     }
 
     private static final class RecordingListener implements AiTurnExecutionListener {
@@ -373,98 +371,39 @@ class AiTurnExecutionEngineTest {
         }
     }
 
-    private static final class ScriptedTokenStream implements TokenStream {
-        private final Consumer<ScriptedTokenStream> script;
-        private BiConsumer<PartialResponse, PartialResponseContext> response = (value, context) -> {};
-        private BiConsumer<PartialThinking, PartialThinkingContext> thinking = (value, context) -> {};
-        private BiConsumer<PartialToolCall, PartialToolCallContext> partialTool = (value, context) -> {};
-        private Consumer<BeforeToolExecution> beforeTool = value -> {};
-        private Consumer<ToolExecution> toolExecuted = value -> {};
-        private Consumer<ChatResponse> complete = value -> {};
-        private Consumer<Throwable> error = value -> {};
+    private static final class ScriptedTokenStream {
+        private final TokenStream stream = mock(TokenStream.class, RETURNS_SELF);
+        private BiConsumer<PartialResponse, PartialResponseContext> response;
+        private BiConsumer<PartialThinking, PartialThinkingContext> thinking;
+        private Consumer<BeforeToolExecution> beforeTool;
+        private Consumer<ChatResponse> complete;
+        private Consumer<Throwable> error;
 
         private ScriptedTokenStream(Consumer<ScriptedTokenStream> script) {
-            this.script = script;
-        }
-
-        @Override
-        public TokenStream onPartialResponse(Consumer<String> consumer) {
-            return this;
-        }
-
-        @Override
-        public TokenStream onPartialResponseWithContext(
-                BiConsumer<PartialResponse, PartialResponseContext> consumer) {
-            response = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onPartialThinking(Consumer<PartialThinking> consumer) {
-            return this;
-        }
-
-        @Override
-        public TokenStream onPartialThinkingWithContext(
-                BiConsumer<PartialThinking, PartialThinkingContext> consumer) {
-            thinking = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onPartialToolCall(Consumer<PartialToolCall> consumer) {
-            return this;
-        }
-
-        @Override
-        public TokenStream onPartialToolCallWithContext(
-                BiConsumer<PartialToolCall, PartialToolCallContext> consumer) {
-            partialTool = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onRetrieved(Consumer<List<Content>> consumer) {
-            return this;
-        }
-
-        @Override
-        public TokenStream onIntermediateResponse(Consumer<ChatResponse> consumer) {
-            return this;
-        }
-
-        @Override
-        public TokenStream beforeToolExecution(Consumer<BeforeToolExecution> consumer) {
-            beforeTool = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onToolExecuted(Consumer<ToolExecution> consumer) {
-            toolExecuted = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onCompleteResponse(Consumer<ChatResponse> consumer) {
-            complete = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream onError(Consumer<Throwable> consumer) {
-            error = consumer;
-            return this;
-        }
-
-        @Override
-        public TokenStream ignoreErrors() {
-            return this;
-        }
-
-        @Override
-        public void start() {
-            script.accept(this);
+            doAnswer(call -> {
+                response = call.getArgument(0);
+                return stream;
+            }).when(stream).onPartialResponseWithContext(any());
+            doAnswer(call -> {
+                thinking = call.getArgument(0);
+                return stream;
+            }).when(stream).onPartialThinkingWithContext(any());
+            doAnswer(call -> {
+                beforeTool = call.getArgument(0);
+                return stream;
+            }).when(stream).beforeToolExecution(any());
+            doAnswer(call -> {
+                complete = call.getArgument(0);
+                return stream;
+            }).when(stream).onCompleteResponse(any());
+            doAnswer(call -> {
+                error = call.getArgument(0);
+                return stream;
+            }).when(stream).onError(any());
+            doAnswer(call -> {
+                script.accept(this);
+                return null;
+            }).when(stream).start();
         }
     }
 
@@ -481,75 +420,6 @@ class AiTurnExecutionEngineTest {
         @Override
         public boolean isCancelled() {
             return cancelled.get();
-        }
-    }
-
-    private static final class RecordingRuntime implements AiTurnRuntime {
-        private boolean claimed;
-        private boolean stopRequested;
-        private String stopReason;
-        private Runnable stopCallback;
-        private AiTurnOutcome outcome;
-        private int clearCount;
-
-        @Override
-        public boolean claimExecution() {
-            if (claimed) return false;
-            claimed = true;
-            stopRequested = false;
-            stopReason = null;
-            return true;
-        }
-
-        @Override
-        public void markExecuting(Thread thread) {
-            claimed = true;
-        }
-
-        @Override
-        public void clearExecuting() {
-            claimed = false;
-            stopRequested = false;
-            stopCallback = null;
-            clearCount++;
-        }
-
-        @Override
-        public boolean isStopRequested() {
-            return stopRequested;
-        }
-
-        @Override
-        public String getStopReason() {
-            return stopReason;
-        }
-
-        @Override
-        public void setStopCallback(Runnable callback) {
-            stopCallback = callback;
-        }
-
-        @Override
-        public void markCompleted() {
-            outcome = AiTurnOutcome.COMPLETED;
-        }
-
-        @Override
-        public void markFailed() {
-            outcome = AiTurnOutcome.FAILED;
-        }
-
-        @Override
-        public void markCancelled() {
-            outcome = AiTurnOutcome.CANCELLED;
-        }
-
-        private void requestStop(String reason) {
-            stopRequested = true;
-            stopReason = reason;
-            if (stopCallback != null) {
-                stopCallback.run();
-            }
         }
     }
 }

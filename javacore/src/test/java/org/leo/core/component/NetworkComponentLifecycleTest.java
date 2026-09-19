@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
 
@@ -36,12 +35,6 @@ class NetworkComponentLifecycleTest {
         clearMap(ReverseTunnelComponent.class, "connMap", true);
         clearMap(ReverseTunnelComponent.class, "connToListen", false);
         clearMap(ReverseTunnelComponent.class, "connLastActivity", false);
-    }
-
-    @Test
-    void transformedNetworkPayloadsInitializeAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("ProxyForwardComponent");
-        assertTransformedRunnable("ReverseTunnelComponent");
     }
 
     @Test

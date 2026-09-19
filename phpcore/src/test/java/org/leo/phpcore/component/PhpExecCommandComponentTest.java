@@ -3,6 +3,7 @@ package org.leo.phpcore.component;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.util.json.PortableJsonCodec;
@@ -17,29 +18,31 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.leo.phpcore.PhpTestSupport.commandSucceeds;
 
 class PhpExecCommandComponentTest {
     @TempDir Path directory;
     private Path component;
+    private static String componentSource;
     private final List<Request> requests = new ArrayList<>();
 
     private record Request(Process process, Path output) {}
 
+    @BeforeAll
+    static void requirePhp() throws Exception {
+        Assumptions.assumeFalse(System.getProperty("os.name").toLowerCase().contains("windows"));
+        Assumptions.assumeTrue(commandSucceeds("php", "-r",
+                "exit(function_exists('proc_open') ? 0 : 1);"), "PHP proc_open unavailable");
+        try (var stream = Objects.requireNonNull(PhpExecCommandComponentTest.class
+                .getResourceAsStream("/components/ExecCommandComponent.php"))) {
+            componentSource = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
     @BeforeEach
     void setUp() throws Exception {
-        Assumptions.assumeFalse(System.getProperty("os.name").toLowerCase().contains("windows"));
-        try {
-            Process php = new ProcessBuilder("php", "-r", "exit(function_exists('proc_open') ? 0 : 1);").start();
-            Assumptions.assumeTrue(php.waitFor(5, TimeUnit.SECONDS) && php.exitValue() == 0);
-        } catch (java.io.IOException unavailable) {
-            Assumptions.abort("PHP CLI unavailable");
-        }
-        String source;
-        try (var stream = Objects.requireNonNull(getClass().getResourceAsStream("/components/ExecCommandComponent.php"))) {
-            source = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        }
         component = directory.resolve("terminal.php");
-        Files.writeString(component, source.replace("$state = $startPty($paths, 80, 24);", "$state = null;"));
+        Files.writeString(component, componentSource.replace("$state = $startPty($paths, 80, 24);", "$state = null;"));
         assertEquals("unix-command", call("init", "").get("backend"));
         call("read", "");
     }
@@ -156,22 +159,33 @@ class PhpExecCommandComponentTest {
     }
 
     @Test
-    void batchReadsBoundOutputAndPreserveMissingNumericIdentifiers() throws Exception {
-        call("write", "head -c 70000 /dev/zero | tr '\\000' A\nexit\n");
-        Map<String, Object> params = Map.of("processIds", List.of("test-terminal", "0"));
-        Map<?, ?> terminals = (Map<?, ?>) finish(start("read-batch", params)).get("terminals");
-        Map<?, ?> first = (Map<?, ?>) terminals.get("test-terminal");
-        assertEquals(65536, ((byte[]) first.get("data")).length);
-        assertEquals(Boolean.TRUE, first.get("hasMore"));
+    void normalAndBatchReadsDrainExitedOutputAndPreserveNumericIdentifiers() throws Exception {
+        call("write", "head -c 700000 /dev/zero | tr '\\000' A\n"
+                + "head -c 700000 /dev/zero | tr '\\000' B\nexit\n");
+        Map<String, Object> first = call("read", "");
+        assertEquals(Boolean.FALSE, first.get("alive"));
         assertEquals(Boolean.FALSE, first.get("eof"));
+        assertEquals(Boolean.TRUE, first.get("hasMore"));
+        assertEquals(1048576, ((byte[]) first.get("data")).length);
+
+        Map<?, ?> terminals = (Map<?, ?>) finish(start("read-batch",
+                Map.of("processIds", List.of("test-terminal", "0")))).get("terminals");
+        Map<?, ?> middle = (Map<?, ?>) terminals.get("test-terminal");
+        assertEquals(65536, ((byte[]) middle.get("data")).length);
+        assertEquals(Boolean.TRUE, middle.get("hasMore"));
+        assertEquals(Boolean.FALSE, middle.get("eof"));
         assertEquals(Boolean.TRUE, ((Map<?, ?>) terminals.get("0")).get("missing"));
-        Map<?, ?> last = (Map<?, ?>) ((Map<?, ?>) finish(start("read-batch", params)).get("terminals")).get("test-terminal");
+
+        Map<String, Object> last = call("read", "");
         assertEquals(Boolean.TRUE, last.get("eof"));
-        String output = new String((byte[]) first.get("data"), StandardCharsets.UTF_8)
-                + new String((byte[]) last.get("data"), StandardCharsets.UTF_8);
-        assertTrue(output.contains("A".repeat(70000)));
-        Map<?, ?> numeric = (Map<?, ?>) finish(start("read-batch", Map.of("processIds", List.of("0", "1")))).get("terminals");
-        assertEquals(Boolean.TRUE, ((Map<?, ?>) numeric.get("1")).get("missing"));
+        String output = text(first) + text(middle) + text(last);
+        assertTrue(output.contains("A".repeat(700000)));
+        assertTrue(output.contains("B".repeat(700000)));
+        Map<?, ?> numeric = (Map<?, ?>) finish(start("read-batch",
+                Map.of("processIds", List.of("0", "1")))).get("terminals");
+        for (String id : List.of("0", "1")) {
+            assertEquals(Boolean.TRUE, ((Map<?, ?>) numeric.get(id)).get("missing"));
+        }
     }
 
     @Test
@@ -206,11 +220,14 @@ class PhpExecCommandComponentTest {
     }
 
     @Test
-    void streamsOutputAndInterruptsWhileTheWriteIsStillRunning() throws Exception {
+    void streamsOutputRejectsOverlapAndKeepsCwdAfterInterrupt() throws Exception {
+        call("write", "cd /\n");
+        call("read", "");
         Request running = start("write", "printf stream-start; sleep 10; printf should-not-run\n");
         String early = readUntil("\r\nstream-start");
         assertTrue(running.process.isAlive(), "write should still be executing");
         assertTrue(early.endsWith("stream-start"), early);
+        assertEquals(409, call("write", "printf overlap\n").get("code"));
         long began = System.nanoTime();
         assertEquals(200, call("write", "\u0003").get("code"));
         finish(running);
@@ -218,8 +235,10 @@ class PhpExecCommandComponentTest {
         String output = text(call("read", ""));
         assertTrue(output.contains("^C"), output);
         assertFalse(output.contains("should-not-run"), output);
-        call("write", "printf usable-again\n");
-        assertTrue(text(call("read", "")).contains("usable-again"));
+        call("write", "pwd; printf usable-again\n");
+        String reused = text(call("read", ""));
+        assertTrue(reused.contains("\n/\n"), reused);
+        assertTrue(reused.contains("usable-again"), reused);
     }
 
     @Test
@@ -236,20 +255,6 @@ class PhpExecCommandComponentTest {
     }
 
     @Test
-    void drainsMultipleChunksAfterExit() throws Exception {
-        call("write", "head -c 700000 /dev/zero | tr '\\000' A\n"
-                + "head -c 700000 /dev/zero | tr '\\000' B\nexit\n");
-        Map<String, Object> first = call("read", "");
-        assertEquals(Boolean.FALSE, first.get("alive"));
-        assertEquals(Boolean.FALSE, first.get("eof"));
-        assertEquals(Boolean.TRUE, first.get("hasMore"));
-        assertEquals(1048576, ((byte[]) first.get("data")).length);
-        Map<String, Object> last = call("read", "");
-        assertEquals(Boolean.TRUE, last.get("eof"));
-        assertTrue(((byte[]) last.get("data")).length > 350000);
-    }
-
-    @Test
     void consumesSplitArrowSequencesAndBackspacesCompleteUtf8Characters() throws Exception {
         call("write", "printf '");
         call("write", "\u001b");
@@ -260,20 +265,6 @@ class PhpExecCommandComponentTest {
         String output = text(call("read", ""));
         assertFalse(output.contains("�"), output);
         assertTrue(output.contains("OK"), output);
-    }
-
-    @Test
-    void retainsCwdAndRejectsAnOverlappingCommand() throws Exception {
-        call("write", "cd /\n");
-        call("read", "");
-        Request running = start("write", "printf started; sleep 10\n");
-        readUntil("\r\nstarted");
-        assertEquals(409, call("write", "printf overlap\n").get("code"));
-        call("write", "\u0003");
-        finish(running);
-        call("read", "");
-        call("write", "pwd\n");
-        assertTrue(text(call("read", "")).contains("\n/\n"));
     }
 
     @Test
@@ -294,13 +285,8 @@ class PhpExecCommandComponentTest {
     void drainsNativePtyOutputBeforeReportingEof() throws Exception {
         startNativePty();
         call("write", "stty -echo; printf '\\npty-ready\\n'\r");
+        readUntil("pty-ready\r\n");
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        StringBuilder ready = new StringBuilder();
-        while (ready.indexOf("pty-ready\r\n") < 0 && System.nanoTime() < deadline) {
-            ready.append(text(call("read", "")));
-            Thread.sleep(20);
-        }
-        assertTrue(ready.toString().contains("pty-ready\r\n"), ready.toString());
         call("write", "head -c 1400000 /dev/zero | tr '\\000' X; printf tail-marker; exit 7\r");
         StringBuilder output = new StringBuilder();
         Map<String, Object> response;
@@ -322,13 +308,7 @@ class PhpExecCommandComponentTest {
     void boundsNativePtyInputWhenTheChildDoesNotRead() throws Exception {
         startNativePty();
         call("write", "stty raw -echo; printf '\\nblocked-ready\\n'; exec sleep 30\r");
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
-        StringBuilder ready = new StringBuilder();
-        while (ready.indexOf("\nblocked-ready\n") < 0 && System.nanoTime() < deadline) {
-            ready.append(text(call("read", "")));
-            Thread.sleep(20);
-        }
-        assertTrue(ready.indexOf("\nblocked-ready\n") >= 0, ready.toString());
+        readUntil("\nblocked-ready\n");
         Request writing = start("write", "x".repeat(512 * 1024));
         try {
             assertTrue(writing.process.waitFor(4, TimeUnit.SECONDS), "blocked PTY input must release the session lock");
@@ -344,13 +324,8 @@ class PhpExecCommandComponentTest {
     void preservesTheRotationNoticeAfterEarlierOutputWasConsumed() throws Exception {
         startNativePty();
         call("write", "stty -echo; head -c 8192 /dev/zero | tr '\\000' A; printf '\\nrotation-ready\\n'\r");
+        readUntil("\r\nrotation-ready\r\n");
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        StringBuilder ready = new StringBuilder();
-        while (ready.indexOf("\r\nrotation-ready\r\n") < 0 && System.nanoTime() < deadline) {
-            ready.append(text(call("read", "")));
-            Thread.sleep(20);
-        }
-        assertTrue(ready.indexOf("\r\nrotation-ready\r\n") >= 0, ready.toString());
         call("write", "head -c 12000000 /dev/zero | tr '\\000' X; printf rotation-%s tail\r");
         while (!Boolean.TRUE.equals(call("has-tail", "").get("found")) && System.nanoTime() < deadline) Thread.sleep(20);
         assertEquals(Boolean.TRUE, call("has-tail", "").get("found"));
@@ -368,13 +343,7 @@ class PhpExecCommandComponentTest {
     void expiresAnUnresponsivePtyShellWithoutMoreRequests() throws Exception {
         startNativePty();
         call("write", "trap '' HUP TERM; printf '\\nstubborn-ready\\n'\r");
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
-        StringBuilder ready = new StringBuilder();
-        while (ready.indexOf("\r\nstubborn-ready\r\n") < 0 && System.nanoTime() < deadline) {
-            ready.append(text(call("read", "")));
-            Thread.sleep(20);
-        }
-        assertTrue(ready.indexOf("\r\nstubborn-ready\r\n") >= 0);
+        readUntil("\r\nstubborn-ready\r\n");
         call("expire", "");
         Thread.sleep(1500);
         Map<String, Object> response = call("read", "");
@@ -384,26 +353,24 @@ class PhpExecCommandComponentTest {
 
     private void startNativePty() throws Exception {
         call("stop", "");
-        try (var stream = Objects.requireNonNull(getClass().getResourceAsStream("/components/ExecCommandComponent.php"))) {
-            Files.write(component, stream.readAllBytes());
-        }
+        Files.writeString(component, componentSource);
         Map<String, Object> initialized = call("init", "");
         Assumptions.assumeTrue(Boolean.TRUE.equals(initialized.get("pty")), "Python PTY unavailable");
     }
 
     private String readUntil(String expected) throws Exception {
         StringBuilder output = new StringBuilder();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         do {
             Map<String, Object> response = call("read", "");
             output.append(text(response));
-            if (Boolean.TRUE.equals(response.get("busy")) && output.indexOf(expected) >= 0) return output.toString();
+            if (output.indexOf(expected) >= 0) return output.toString();
             Thread.sleep(20);
         } while (System.nanoTime() < deadline);
         throw new AssertionError("missing live output: " + output);
     }
 
-    private String text(Map<String, Object> response) {
+    private String text(Map<?, ?> response) {
         return new String((byte[]) response.get("data"), StandardCharsets.UTF_8);
     }
 

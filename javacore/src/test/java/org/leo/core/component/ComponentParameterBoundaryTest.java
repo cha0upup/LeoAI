@@ -5,15 +5,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.leo.core.component.ComponentTestSupport.*;
 
 class ComponentParameterBoundaryTest {
     @TempDir Path directory;
@@ -71,35 +69,5 @@ class ComponentParameterBoundaryTest {
         Field max = component.getClass().getDeclaredField("MAX_TIMEOUT_MS");
         max.setAccessible(true);
         assertEquals(max.get(null), call(component, "parseTimeoutMs", new Class[0]));
-    }
-
-    static byte[] utf8(String value) { return value.getBytes(StandardCharsets.UTF_8); }
-
-    static Object component(String name, boolean payload) throws Exception {
-        if (!payload) return Class.forName("org.leo.core.component." + name).getDeclaredConstructor().newInstance();
-        try (var input = ComponentParameterBoundaryTest.class.getResourceAsStream("/component/" + name + ".payload")) {
-            assertNotNull(input);
-            return new BytecodeLoader().load(input.readAllBytes()).getDeclaredConstructor().newInstance();
-        }
-    }
-
-    static Map<String, Object> prepare(Object component, Map<String, Object> params) throws Exception {
-        HashMap<String, Object> result = new HashMap<>();
-        for (String name : List.of("params", "results")) {
-            Field field = component.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            field.set(component, name.equals("params") ? new HashMap<>(params) : result);
-        }
-        return result;
-    }
-
-    static Object call(Object component, String name, Class<?>[] types, Object... arguments) throws Exception {
-        Method method = component.getClass().getDeclaredMethod(name, types);
-        method.setAccessible(true);
-        return method.invoke(component, arguments);
-    }
-
-    static class BytecodeLoader extends ClassLoader {
-        Class<?> load(byte[] bytes) { return defineClass(null, bytes, 0, bytes.length); }
     }
 }

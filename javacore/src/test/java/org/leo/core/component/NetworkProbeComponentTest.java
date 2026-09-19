@@ -3,7 +3,6 @@ package org.leo.core.component;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.leo.core.util.javassist.CloneWithJavassist;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -237,15 +236,6 @@ class NetworkProbeComponentTest {
         assertEquals(0, snapshot.get("completed"));
     }
 
-    @Test
-    void transformedPayloadInitializesAfterMethodRandomization() throws Exception {
-        String className = "org.leo.generated.NetworkProbe" + System.nanoTime();
-        byte[] bytecode = CloneWithJavassist.cloneClass("NetworkProbeComponent", className);
-        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
-        assertTrue(Runnable.class.isAssignableFrom(transformed));
-        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
-    }
-
     private Map<String, Object> plan(List<Map<String, Object>> targets, List<String> stages) {
         return new HashMap<>(Map.of("targets", targets, "stages", stages,
                 "limits", new HashMap<>(Map.of("threads", 1, "timeout", 1000, "maxReadBytes", 1024))));
@@ -274,9 +264,5 @@ class NetworkProbeComponentTest {
     private Map<Object, Object> state(String name) throws Exception {
         Field field = NetworkProbeComponent.class.getDeclaredField(name); field.setAccessible(true);
         return (Map<Object, Object>) field.get(null);
-    }
-
-    private static final class BytecodeLoader extends ClassLoader {
-        private Class<?> define(String name, byte[] bytecode) { return defineClass(name, bytecode, 0, bytecode.length); }
     }
 }

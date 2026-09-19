@@ -6,11 +6,13 @@ import javassist.CannotCompileException;
 import javassist.expr.ExprEditor;
 import javassist.expr.NewExpr;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.*;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,7 +24,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.leo.core.component.ComponentParameterBoundaryTest.*;
+import static org.leo.core.component.ComponentTestSupport.*;
 
 public class ArchiveFailureBoundaryTest {
     @TempDir Path directory;
@@ -32,6 +34,15 @@ public class ArchiveFailureBoundaryTest {
     void closeTrackedFiles() throws Exception {
         for (TrackingInput input : inputs) input.close();
         inputs.clear();
+    }
+
+    @Test
+    void rejectsOversizedEntry() {
+        InvocationTargetException failure = assertThrows(InvocationTargetException.class,
+                () -> call(new DecompressComponent(), "ensureExtractionLimit",
+                        new Class[]{long.class, long.class, String.class},
+                        268435457L, 268435457L, "large.bin"));
+        assertInstanceOf(IOException.class, failure.getCause());
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})

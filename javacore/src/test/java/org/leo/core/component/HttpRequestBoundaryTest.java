@@ -1,6 +1,7 @@
 package org.leo.core.component;
 
 import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import java.net.InetSocketAddress;
@@ -9,9 +10,20 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.leo.core.component.ComponentParameterBoundaryTest.*;
+import static org.leo.core.component.ComponentTestSupport.*;
 
 class HttpRequestBoundaryTest {
+    @Test
+    void rejectsInvalidRequestsBeforeConnecting() throws Exception {
+        assertEquals(400, invoke(false, Map.of(
+                "method", "CONNECT", "url", "http://127.0.0.1:1/")).get("code"));
+        assertEquals(400, invoke(false, Map.of(
+                "method", "GET", "url", "file:///tmp/example")).get("code"));
+        assertEquals(413, invoke(false, Map.of(
+                "method", "POST", "url", "http://127.0.0.1:1/",
+                "body", new byte[10 * 1024 * 1024 + 1])).get("code"));
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void preservesRedirectErrorBodyAndBinaryResponseBehavior(boolean payload) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -86,9 +98,6 @@ class HttpRequestBoundaryTest {
     }
 
     private Map<String, Object> invoke(boolean payload, Map<String, Object> params) throws Exception {
-        Object component = component("HttpRequestComponent", payload);
-        Map<String, Object> result = prepare(component, params);
-        call(component, "invoke", new Class[0]);
-        return result;
+        return invokeComponent(component("HttpRequestComponent", payload), params);
     }
 }

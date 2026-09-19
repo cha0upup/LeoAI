@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.leo.core.util.json.PortableJsonCodec;
 
@@ -35,9 +36,13 @@ class PhpHttpRequestComponentTest {
     private Path component;
     private String baseUrl;
 
+    @BeforeAll
+    static void requirePhp() {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI is not installed");
+    }
+
     @BeforeEach
     void setUp() throws Exception {
-        Assumptions.assumeTrue(phpAvailable(), "PHP CLI is not installed");
         URL resource = Objects.requireNonNull(getClass().getResource("/components/HttpRequestComponent.php"));
         component = Paths.get(resource.toURI());
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

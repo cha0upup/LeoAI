@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import static org.leo.core.component.ComponentTestSupport.assertTransformedRunnable;
 import static org.leo.core.component.ComponentTestSupport.code;
+import static org.leo.core.component.ComponentTestSupport.assertWireValue;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
 import static org.leo.core.component.ComponentTestSupport.setField;
@@ -31,13 +31,6 @@ class InformationAndFileEnhanceComponentTest {
 
     @TempDir
     Path temporaryDirectory;
-
-    @Test
-    void transformedPayloadsInitializeAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("BasicInfoComponent");
-        assertTransformedRunnable("CredentialHarvestComponent");
-        assertTransformedRunnable("FileEnhanceComponent");
-    }
 
     @Test
     void basicInfoCollectsStableResponseWithoutKeepingRequestState() throws Exception {
@@ -63,6 +56,7 @@ class InformationAndFileEnhanceComponentTest {
 
         Map<String, Object> disks = invokeComponent(new BasicInfoComponent(), params("action", "disks"));
         assertEquals(200, code(disks));
+        assertWireValue(disks);
         assertTrue(((List<?>) disks.get("disks")).size() > 0);
         List<?> diskList = (List<?>) disks.get("disks");
         Map<?, ?> disk = (Map<?, ?>) diskList.get(0);

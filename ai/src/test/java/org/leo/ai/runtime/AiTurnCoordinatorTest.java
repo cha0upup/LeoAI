@@ -19,7 +19,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void onlyFirstTerminalSignalCanFinalizeRun() throws Exception {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         assertTrue(coordinator.tryClaim(runtime));
         assertFalse(coordinator.tryClaim(runtime));
 
@@ -37,7 +37,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void clearsExecutionEvenWhenTerminalActionFails() {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         assertTrue(coordinator.tryClaim(runtime));
         AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
 
@@ -54,7 +54,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void marksRunFailedEvenWhenTerminalActionThrowsAnError() {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         assertTrue(coordinator.tryClaim(runtime));
         AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
 
@@ -70,7 +70,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void treatsNestedInterruptedExceptionAsCancellation() {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
 
         RuntimeException error = new RuntimeException(new InterruptedException("interrupted"));
@@ -81,7 +81,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void usesRuntimeCancellationReasonAndCallback() {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
         AtomicInteger callbacks = new AtomicInteger();
         execution.registerCancellation(callbacks::incrementAndGet);
@@ -95,7 +95,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void cancellationBeforeCallbackRegistrationIsDeliveredOnce() throws Exception {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         AiTurnCoordinator.Execution execution = coordinator.attach(runtime);
         AtomicInteger callbacks = new AtomicInteger();
 
@@ -135,7 +135,7 @@ class AiTurnCoordinatorTest {
 
     @Test
     void aNewTurnAfterStopStartsWithFreshCancellationState() throws Exception {
-        RecordingRuntime runtime = new RecordingRuntime();
+        RecordingTurnRuntime runtime = new RecordingTurnRuntime();
         assertTrue(coordinator.tryClaim(runtime));
         AiTurnCoordinator.Execution stopped = coordinator.attach(runtime);
         runtime.requestStop("用户停止");
@@ -148,77 +148,5 @@ class AiTurnCoordinatorTest {
         assertEquals("已停止", next.cancellationReason());
         next.finish(AiTurnOutcome.COMPLETED, () -> {});
         assertEquals(AiTurnOutcome.COMPLETED, runtime.outcome);
-    }
-
-    private static final class RecordingRuntime implements AiTurnRuntime {
-
-        private boolean claimed;
-        private boolean stopRequested;
-        private String stopReason;
-        private Runnable stopCallback;
-        private AiTurnOutcome outcome;
-        private int clearCount;
-
-        @Override
-        public boolean claimExecution() {
-            if (claimed) {
-                return false;
-            }
-            claimed = true;
-            stopRequested = false;
-            stopReason = null;
-            return true;
-        }
-
-        @Override
-        public void markExecuting(Thread thread) {
-            claimed = true;
-        }
-
-        @Override
-        public void clearExecuting() {
-            claimed = false;
-            stopRequested = false;
-            stopCallback = null;
-            clearCount++;
-        }
-
-        @Override
-        public boolean isStopRequested() {
-            return stopRequested;
-        }
-
-        @Override
-        public String getStopReason() {
-            return stopReason;
-        }
-
-        @Override
-        public void setStopCallback(Runnable callback) {
-            stopCallback = callback;
-        }
-
-        @Override
-        public void markCompleted() {
-            outcome = AiTurnOutcome.COMPLETED;
-        }
-
-        @Override
-        public void markFailed() {
-            outcome = AiTurnOutcome.FAILED;
-        }
-
-        @Override
-        public void markCancelled() {
-            outcome = AiTurnOutcome.CANCELLED;
-        }
-
-        private void requestStop(String reason) {
-            stopRequested = true;
-            stopReason = reason;
-            if (stopCallback != null) {
-                stopCallback.run();
-            }
-        }
     }
 }
