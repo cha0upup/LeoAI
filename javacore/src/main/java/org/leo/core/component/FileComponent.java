@@ -572,8 +572,8 @@ public class FileComponent implements Runnable {
         fileInfo.put("modified", Long.valueOf(file.lastModified()));
         fileInfo.put("isDirectory", Boolean.valueOf(file.isDirectory()));
         fileInfo.put("isFile", Boolean.valueOf(file.isFile()));
-        fileInfo.put("canRead", Boolean.valueOf(file.canRead()));
-        fileInfo.put("canWrite", Boolean.valueOf(file.canWrite()));
+        fileInfo.put("canRead", Boolean.valueOf(canRead(file)));
+        fileInfo.put("canWrite", Boolean.valueOf(canWrite(file)));
         fileInfo.put("canExecute", Boolean.valueOf(canExecute(file)));
         fileInfo.put("exists", Boolean.valueOf(file.exists()));
 
@@ -586,9 +586,23 @@ public class FileComponent implements Runnable {
         return fileInfo;
     }
 
-    /**
-     * 检查文件是否可执行
-     */
+    // 安全策略可能直接拒绝权限查询；按无权限展示，避免中断整个目录列表。
+    private boolean canRead(File file) {
+        try {
+            return file.canRead();
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    private boolean canWrite(File file) {
+        try {
+            return file.canWrite();
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
     private boolean canExecute(File file) {
         try {
             return file.canExecute();
