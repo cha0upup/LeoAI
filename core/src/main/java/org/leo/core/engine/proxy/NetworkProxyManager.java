@@ -36,15 +36,19 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Map<String, Object> startSocks5Proxy(int port) throws Exception {
+    public synchronized Map<String, Object> startSocks5Proxy(int port, String bindAddr) throws Exception {
         requirePort(port, "port");
+        String address = ProxyBindAddress.normalize(bindAddr);
         if (socks5Proxy != null && socks5Proxy.isRunning()) {
-            return result(200, "already running", "port", socks5Proxy.getListenPort());
+            if (socks5Proxy.getListenPort() != port || !socks5Proxy.getBindAddr().equals(address)) {
+                return result(409, "代理已启动，请先停止再修改监听地址或端口");
+            }
+            return listenerResult(socks5Proxy, "already running");
         }
-        Socks5ProxyServer server = new Socks5ProxyServer(puppetNode, port);
+        Socks5ProxyServer server = new Socks5ProxyServer(puppetNode, port, address);
         server.start();
         socks5Proxy = server;
-        return result(200, "started", "port", port);
+        return listenerResult(server, "started");
     }
 
     @Override
@@ -61,6 +65,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         boolean enabled = socks5Proxy != null && socks5Proxy.isRunning();
         status.put("enabled", enabled);
         status.put("port", enabled ? socks5Proxy.getListenPort() : null);
+        status.put("bindAddr", enabled ? socks5Proxy.getBindAddr() : null);
         return status;
     }
 
@@ -70,15 +75,19 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Map<String, Object> startHttpProxy(int port) throws Exception {
+    public synchronized Map<String, Object> startHttpProxy(int port, String bindAddr) throws Exception {
         requirePort(port, "port");
+        String address = ProxyBindAddress.normalize(bindAddr);
         if (httpProxy != null && httpProxy.isRunning()) {
-            return result(200, "already running", "port", httpProxy.getListenPort());
+            if (httpProxy.getListenPort() != port || !httpProxy.getBindAddr().equals(address)) {
+                return result(409, "代理已启动，请先停止再修改监听地址或端口");
+            }
+            return listenerResult(httpProxy, "already running");
         }
-        HttpProxyServer server = new HttpProxyServer(puppetNode, port);
+        HttpProxyServer server = new HttpProxyServer(puppetNode, port, address);
         server.start();
         httpProxy = server;
-        return result(200, "started", "port", port);
+        return listenerResult(server, "started");
     }
 
     @Override
@@ -94,7 +103,10 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         Map<String, Object> status = new LinkedHashMap<>();
         boolean running = httpProxy != null && httpProxy.isRunning();
         status.put("running", running);
-        if (running) status.put("port", httpProxy.getListenPort());
+        if (running) {
+            status.put("port", httpProxy.getListenPort());
+            status.put("bindAddr", httpProxy.getBindAddr());
+        }
         return status;
     }
 
@@ -105,16 +117,18 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public synchronized Map<String, Object> startLocalForward(
-            int localPort, String targetHost, int targetPort) throws Exception {
+            int localPort, String bindAddr, String targetHost, int targetPort) throws Exception {
         requirePort(localPort, "localPort");
+        String address = ProxyBindAddress.normalize(bindAddr);
         requireTarget(targetHost, targetPort, "targetHost", "targetPort");
         if (localForwards.containsKey(localPort)) {
             return result(409, "forward already exists", "localPort", localPort);
         }
-        LocalForwardServer server = new LocalForwardServer(puppetNode, localPort, targetHost.trim(), targetPort);
+        LocalForwardServer server = new LocalForwardServer(puppetNode, localPort, address, targetHost.trim(), targetPort);
         server.start();
         localForwards.put(localPort, server);
         Map<String, Object> response = result(200, "started", "localPort", localPort);
+        response.put("bindAddr", server.getBindAddr());
         response.put("targetHost", targetHost.trim());
         response.put("targetPort", targetPort);
         return response;
@@ -144,6 +158,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
                 .forEach(server -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("localPort", server.getLocalPort());
+                    item.put("bindAddr", server.getBindAddr());
                     item.put("targetHost", server.getTargetHost());
                     item.put("targetPort", server.getTargetPort());
                     item.put("running", server.isRunning());
@@ -254,6 +269,12 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     private String normalizeBindAddress(String bindAddr) {
         return bindAddr == null || bindAddr.isBlank() ? "127.0.0.1" : bindAddr.trim();
+    }
+
+    private Map<String, Object> listenerResult(LocalProxyServer server, String message) {
+        Map<String, Object> response = result(200, message, "port", server.getListenPort());
+        response.put("bindAddr", server.getBindAddr());
+        return response;
     }
 
     private Map<String, Object> result(int code, String message) {

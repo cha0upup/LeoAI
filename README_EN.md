@@ -138,7 +138,7 @@ The exact PHP feature set depends on the target environment: database operations
 - **Fingerprint Identification**: Web service identification from HTTP request and response evidence, with support for custom rules
 - **Reconnaissance Scanning**: Concurrent multi-target, multi-rule recon with results automatically aggregated into AI context
 - **HTTP Requester**: Repeater (single request) and Fuzzer (bulk fuzzing)
-- **Proxy & Tunneling**: Open HTTP proxy, SOCKS5 proxy, local port forwarding (ssh -L), or reverse tunnel (ssh -R) on target nodes — with connection count and traffic monitoring
+- **Proxy & Tunneling**: Use HTTP proxy, SOCKS5 proxy, local port forwarding (ssh -L), or reverse tunnel (ssh -R) through target nodes — with connection count and traffic monitoring
 
 #### System Management
 - **Screenshot**: Real-time capture of target desktop
@@ -146,7 +146,7 @@ The exact PHP feature set depends on the target environment: database operations
 - **Scheduled Tasks**: Windows scheduled task management
 - **Service Manager**: Start, stop, restart Windows services
 - **Docker Manager**: List, start, stop, and inspect containers and images
-- **Application Manager**: runtime profiles for Tomcat 6–11, WebLogic 10/12/14, Jetty, Undertow, JBoss/WildFly, WebSphere, Spring MVC, and Spring WebFlux; supports removing Filter / Servlet / Valve / Listener / Controller / Interceptor
+- **Java Web Runtime Management**: runtime profiles for Tomcat 6–11, WebLogic 10/12/14, Jetty, Undertow, JBoss/WildFly, WebSphere, Spring MVC, and Spring WebFlux; supports removing Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### Security & Permissions
 - **Credential Harvesting**: System credentials and browser data
@@ -517,12 +517,14 @@ In the **Proxy** panel of the node console, four traffic forwarding modes are av
 
 | Mode | Description | Typical Use Case |
 |------|-------------|-----------------|
-| **SOCKS5 Proxy** | Opens a SOCKS5 listener on the node; C2 uses it to reach the intranet | Proxychains / Burp upstream proxy |
-| **HTTP Proxy** | Same as above but via HTTP CONNECT tunnel — better compatibility | Browser manual proxy |
+| **SOCKS5 Proxy** | Opens a SOCKS5 listener on the LeoAI server and reaches the intranet through the node | Proxychains / Burp upstream proxy |
+| **HTTP Proxy** | Listens on the LeoAI server; supports plain HTTP forwarding and CONNECT tunnels | Browser manual proxy |
 | **Local Port Forwarding** (ssh -L) | C2 local port → node → intranet host:port | Direct access to a single intranet service (RDP, DB, etc.) |
 | **Reverse Tunnel** (ssh -R) | Node opens a listener → intranet client connects back → C2 dials in | Have an intranet machine call back to your payload server |
 
 All modes provide connection count, upload/download traffic statistics, and a one-click stop button.
+
+SOCKS5, HTTP, and local port forwarding let you configure the **listen address on the machine running the LeoAI backend** in the panel (API parameter `bindAddr`). The default is `0.0.0.0`, listening on all IPv4 interfaces; select `127.0.0.1` to accept local connections only, or enter a specific local IPv4 or IPv6 address. Stop a running proxy before changing its listen address or port and starting it again. Stopping closes the listener and existing client connections, then attempts to clean up node-side connections. Remote cleanup cannot be confirmed when the node is unreachable. Reverse tunnels use `bindAddr` for their node-side listener, defaulting to `127.0.0.1`.
 
 ### Skill Manager
 

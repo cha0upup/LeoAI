@@ -4,11 +4,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Test;
 import org.leo.core.util.json.PortableJsonCodec;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
@@ -121,6 +124,66 @@ class PhpNetworkProxyComponentTest {
             assertArrayEquals("from-platform".getBytes(StandardCharsets.UTF_8),
                     client.getInputStream().readNBytes("from-platform".length()));
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void stalledWritesCanBeStoppedAndHaveABoundedTimeout(boolean stopExplicitly) throws Exception {
+        try (ServerSocket target = new ServerSocket()) {
+            target.setReceiveBufferSize(1024);
+            target.bind(new InetSocketAddress("127.0.0.1", 0));
+            target.setSoTimeout(3000);
+            assertEquals(200, code(invoke(forwardComponent, Map.of(
+                    "op", 0, "connId", forwardConnId, "targetHost", "127.0.0.1",
+                    "targetPort", target.getLocalPort(), "connectTimeout", 3000))));
+            try (Socket peer = target.accept()) {
+                // Keep the receiver open without reading, so the worker encounters backpressure.
+                String enqueue = "$component=require $argv[1];"
+                        + "echo json_encode(call_user_func($component['handle'],'',array("
+                        + "'op'=>1,'connId'=>$argv[2],'data'=>str_repeat('x',8388608))));";
+                assertEquals(200, code(runJson(15, "php", "-r", enqueue,
+                        forwardComponent.toString(), forwardConnId)));
+
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                long previous = -1;
+                long lastProgress = System.nanoTime();
+                boolean stalled = false;
+                do {
+                    Map<String, Object> status = forwardWorkerStatus();
+                    long pending = ((Number) status.get("pendingBytes")).longValue();
+                    if (pending != previous) lastProgress = System.nanoTime();
+                    if (pending > 0 && pending < 8388608
+                            && System.nanoTime() - lastProgress >= TimeUnit.MILLISECONDS.toNanos(700)) {
+                        stalled = true;
+                        break;
+                    }
+                    previous = pending;
+                    Thread.sleep(100);
+                } while (System.nanoTime() < deadline);
+                assertTrue(stalled, "worker did not reach socket backpressure");
+
+                if (stopExplicitly) assertEquals(200, code(invoke(forwardComponent, Map.of("op", 3, "connId", forwardConnId))));
+                // The kernel may accept another chunk before its receive window is fully exhausted.
+                // The worker's five-second deadline applies to each chunk, not the whole file queue.
+                deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(stopExplicitly ? 3 : 20);
+                Map<String, Object> status;
+                do {
+                    status = forwardWorkerStatus();
+                    if (!"open".equals(status.get("state"))) break;
+                    Thread.sleep(40);
+                } while (System.nanoTime() < deadline);
+                assertEquals(stopExplicitly ? "closed" : "failed", status.get("state"));
+                if (!stopExplicitly) assertEquals("socket write timeout", status.get("msg"));
+            }
+        }
+    }
+
+    private Map<String, Object> forwardWorkerStatus() throws Exception {
+        String script = "$component=require $argv[1];$directory=$pfPath($argv[2]);"
+                + "$status=$pfReadJson($directory.DIRECTORY_SEPARATOR.$pfName('status'));"
+                + "$status['pendingBytes']=(int)@filesize($directory.DIRECTORY_SEPARATOR.$pfName('output'));"
+                + "echo json_encode($status);";
+        return runJson(15, "php", "-r", script, forwardComponent.toString(), forwardConnId);
     }
 
     private Map<String, Object> pollAccepted() throws Exception {

@@ -21,8 +21,9 @@ public class HttpProxyController {
     public HashMap<String, Object> start(@RequestBody HashMap<String, Object> params) {
         return ProxyControllerSupport.call("启动HTTP代理失败", Map.of(), () -> {
             int port = ProxyControllerSupport.requirePort(params, "port");
+            String bindAddr = ProxyControllerSupport.optionalBindAddress(params);
             HttpProxyCapable node = ControllerUtil.requireCapability(params, HttpProxyCapable.class);
-            return node.startHttpProxy(port);
+            return node.startHttpProxy(port, bindAddr);
         });
     }
 

@@ -17,16 +17,17 @@ public class LocalForwardController {
 
     /**
      * 启动本地端口转发规则
-     * Body: { puppetId, localPort, targetHost, targetPort }
+     * Body: { puppetId, localPort, bindAddr?, targetHost, targetPort }
      */
     @PostMapping("/start")
     public HashMap<String, Object> start(@RequestBody HashMap<String, Object> params) {
         return ProxyControllerSupport.call("启动本地端口转发失败", Map.of(), () -> {
             int localPort = ProxyControllerSupport.requirePort(params, "localPort");
+            String bindAddr = ProxyControllerSupport.optionalBindAddress(params);
             String targetHost = ProxyControllerSupport.requireText(params, "targetHost");
             int targetPort = ProxyControllerSupport.requirePort(params, "targetPort");
             LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
-            return node.startLocalForward(localPort, targetHost, targetPort);
+            return node.startLocalForward(localPort, bindAddr, targetHost, targetPort);
         });
     }
 

@@ -770,8 +770,8 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> startSocks5Proxy(int port) throws Exception {
-        return networkProxyManager.startSocks5Proxy(port);
+    public Map<String, Object> startSocks5Proxy(int port, String bindAddr) throws Exception {
+        return networkProxyManager.startSocks5Proxy(port, bindAddr);
     }
 
     @Override
@@ -790,8 +790,8 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> startHttpProxy(int port) throws Exception {
-        return networkProxyManager.startHttpProxy(port);
+    public Map<String, Object> startHttpProxy(int port, String bindAddr) throws Exception {
+        return networkProxyManager.startHttpProxy(port, bindAddr);
     }
 
     @Override
@@ -810,8 +810,8 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
-        return networkProxyManager.startLocalForward(localPort, targetHost, targetPort);
+    public Map<String, Object> startLocalForward(int localPort, String bindAddr, String targetHost, int targetPort) throws Exception {
+        return networkProxyManager.startLocalForward(localPort, bindAddr, targetHost, targetPort);
     }
 
     @Override

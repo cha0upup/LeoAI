@@ -1,79 +1,40 @@
 package org.leo.core.engine.socks5;
 
-
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.engine.proxy.ProxyConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.Socket;
-import java.util.HashMap;
-import java.util.Map;
-
 public class ReadDataThread implements Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(ReadDataThread.class);
+    private static final Logger log = LoggerFactory.getLogger(ReadDataThread.class);
+    private final ProxyConnection connection;
 
-    private final Socket clientSocket;
-    private final String connId;
-    private final ComponentInvokeCapable puppetNode;
-    private final Socks5ProxyStatistics statistics;
-
-    public ReadDataThread(Socket clientSocket, String connId, ComponentInvokeCapable puppetNode, Socks5ProxyStatistics statistics) {
-        this.clientSocket = clientSocket;
-        this.connId = connId;
-        this.puppetNode = puppetNode;
-        this.statistics = statistics;
+    public ReadDataThread(ProxyConnection connection) {
+        this.connection = connection;
     }
 
     @Override
     public void run() {
         long idleDelay = 100L;
-        while (true) {
-            if (this.clientSocket == null) {
-                return;
-            }
-            if (this.clientSocket.isClosed()) {
-                return;
-            }
-            try {
-                Map<String, Object> params = new HashMap<String, Object>();
-                params.put("op", 2);
-                params.put("connId", this.connId);
-                Map<String, Object> res = puppetNode.invokeComponent("ProxyForwardComponent", params);
-                int code = (int) res.get("code");
-                if (code == 200) {
-                    byte[] data = (byte[]) res.get("data");
-                    logger.debug("读取数据: connId={}, size={}", this.connId, data.length);
-                    if (data.length > 0) {
-                        this.clientSocket.getOutputStream().write(data);
-                        this.clientSocket.getOutputStream().flush();
-                        // 记录下载数据量
-                        if (statistics != null && connId != null) {
-                            statistics.addDownloadBytes(connId, data.length);
-                        }
-                    }
-                    idleDelay = 100L; // 有数据，重置退避
-                    continue;
-                }
-                if (code == 204) {
+        try {
+            while (!connection.isClosed()) {
+                byte[] data = connection.read();
+                if (data == null || data.length == 0) {
                     Thread.sleep(idleDelay);
-                    if (idleDelay < 800L) idleDelay = Math.min(idleDelay * 2, 800L);
+                    idleDelay = Math.min(idleDelay * 2, 800L);
                     continue;
                 }
-                if (code == 500) {
-                    logger.debug((String) res.get("msg"));
-                    break;
-                }
-                if (code == 404) {
-                    //404 对端关闭退出线程
-                    logger.debug("对端关闭连接: connId={}", this.connId);
-                    this.clientSocket.close();
-                    break;
-                }
-            } catch (Exception e) {
-                logger.error("读取数据异常: connId={}", this.connId, e);
-                return;
+                connection.socket().getOutputStream().write(data);
+                connection.socket().getOutputStream().flush();
+                connection.recordDownload(data.length);
+                idleDelay = 100L;
             }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        } catch (Exception error) {
+            if (!connection.isClosed()) log.debug("代理读取结束: {}", error.getMessage());
+        } finally {
+            // Wake the upload direction; its handler owns remote cleanup.
+            connection.closeLocal();
         }
-
     }
 }

@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.proxy;
 
+import org.leo.core.engine.proxy.ProxyBindAddress;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
@@ -21,6 +22,11 @@ final class ProxyControllerSupport {
                                         ProxyAction action) {
         try {
             Object result = action.execute();
+            if (result instanceof Map<?, ?> response && response.get("code") instanceof Number code
+                    && code.intValue() >= 400) {
+                Object message = response.get("msg");
+                return ApiResponse.error(code.intValue(), message == null ? failureMessage : String.valueOf(message));
+            }
             return ApiResponse.success(result == null ? nullFallback : result);
         } catch (ApiException error) {
             throw error;
@@ -47,6 +53,14 @@ final class ProxyControllerSupport {
         } catch (Exception error) {
             return ApiResponse.error(failureMessage + ": " + error.getMessage());
         }
+    }
+
+    static String optionalBindAddress(Map<String, Object> params) {
+        Object value = params == null ? null : params.get("bindAddr");
+        if (value != null && !(value instanceof String)) {
+            throw new IllegalArgumentException("bindAddr必须是字符串类型");
+        }
+        return ProxyBindAddress.normalize((String) value);
     }
 
     static int requirePort(Map<String, Object> params, String name) {

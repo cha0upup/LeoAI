@@ -10,7 +10,11 @@ import java.util.Map;
  */
 public interface LocalForwardCapable {
 
-    Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception;
+    default Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
+        return startLocalForward(localPort, null, targetHost, targetPort);
+    }
+
+    Map<String, Object> startLocalForward(int localPort, String bindAddr, String targetHost, int targetPort) throws Exception;
 
     Map<String, Object> stopLocalForward(int localPort);
 

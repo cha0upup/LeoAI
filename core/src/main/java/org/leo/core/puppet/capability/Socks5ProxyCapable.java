@@ -9,7 +9,11 @@ import java.util.Map;
  */
 public interface Socks5ProxyCapable {
 
-    Map<String, Object> startSocks5Proxy(int port) throws Exception;
+    default Map<String, Object> startSocks5Proxy(int port) throws Exception {
+        return startSocks5Proxy(port, null);
+    }
+
+    Map<String, Object> startSocks5Proxy(int port, String bindAddr) throws Exception;
 
     Map<String, Object> stopSocks5Proxy();
 

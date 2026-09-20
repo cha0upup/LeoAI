@@ -21,8 +21,9 @@ public class Socks5ProxyController {
     public HashMap<String, Object> start(@RequestBody HashMap<String, Object> params) {
         return ProxyControllerSupport.call("启动SOCKS5代理失败", Map.of(), () -> {
             int port = ProxyControllerSupport.requirePort(params, "port");
+            String bindAddr = ProxyControllerSupport.optionalBindAddress(params);
             Socks5ProxyCapable socks5ProxyNode = ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
-            return socks5ProxyNode.startSocks5Proxy(port);
+            return socks5ProxyNode.startSocks5Proxy(port, bindAddr);
         });
     }
 

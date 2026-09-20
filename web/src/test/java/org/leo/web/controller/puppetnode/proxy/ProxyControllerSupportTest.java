@@ -29,6 +29,24 @@ class ProxyControllerSupportTest {
     }
 
     @Test
+    void preservesBusinessFailuresAtTheTopLevel() {
+        HashMap<String, Object> response = ProxyControllerSupport.call("启动失败", Map.of(),
+                () -> Map.of("code", 409, "msg", "forward already exists", "localPort", 1080));
+
+        assertEquals(409, response.get("code"));
+        assertEquals("forward already exists", response.get("msg"));
+    }
+
+    @Test
+    void keepsSuccessfulResultPayloadsCompatible() {
+        Map<String, Object> payload = Map.of("code", 200, "msg", "started", "port", 1080);
+        HashMap<String, Object> response = ProxyControllerSupport.call("启动失败", Map.of(), () -> payload);
+
+        assertEquals(200, response.get("code"));
+        assertEquals(payload, response.get("data"));
+    }
+
+    @Test
     void mapsStatisticsSnapshotsInOneStableShape() {
         Socks5ProxyStatistics statistics = new Socks5ProxyStatistics(1080);
         statistics.addConnection("connection-1", "target.internal", 443, "127.0.0.1");

@@ -122,14 +122,20 @@ $pfWorker = static function ($directory) use ($pfName, $pfReadJson, $pfWriteJson
     $output = $directory . DIRECTORY_SEPARATOR . $pfName('output');
     $heartbeat = $directory . DIRECTORY_SEPARATOR . $pfName('heartbeat');
     try {
-        while (!is_file($stop) && !feof($socket)) {
+        while (!feof($socket)) {
+            clearstatcache(true, $stop);
+            if (is_file($stop)) break;
             clearstatcache(true, $heartbeat);
             $heartbeatAt = is_file($heartbeat) ? (int)@filemtime($heartbeat) : 0;
             if (time() - max($lastActivity, $heartbeatAt) >= 600) break;
             $outgoing = $pfTake($output, 65536);
             if ($outgoing !== '') {
                 $offset = 0; $length = strlen($outgoing);
+                $writeDeadline = microtime(true) + 5.0;
                 while ($offset < $length) {
+                    clearstatcache(true, $stop);
+                    if (is_file($stop)) break 2;
+                    if (microtime(true) >= $writeDeadline) throw new RuntimeException('socket write timeout');
                     $written = @fwrite($socket, substr($outgoing, $offset));
                     if ($written === false) throw new RuntimeException('socket write failed');
                     if ($written === 0) { usleep(10000); continue; }

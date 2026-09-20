@@ -63,6 +63,30 @@ class NetworkProxyManagerTest {
     }
 
     @Test
+    void reportsBoundAddressesAndRequiresStoppingBeforeChangingListeners() throws Exception {
+        int socksPort = freePort();
+        Map<String, Object> socks = manager.startSocks5Proxy(socksPort, " 0.0.0.0 ");
+        assertEquals("0.0.0.0", socks.get("bindAddr"));
+        assertEquals("0.0.0.0", manager.getSocks5ProxyStatus().get("bindAddr"));
+        assertEquals(200, code(manager.startSocks5Proxy(socksPort, "0.0.0.0")));
+        assertEquals(409, code(manager.startSocks5Proxy(socksPort, "127.0.0.1")));
+        assertEquals("0.0.0.0", manager.getSocks5ProxyStatus().get("bindAddr"));
+        manager.stopSocks5Proxy();
+        assertEquals("0.0.0.0", manager.startSocks5Proxy(socksPort).get("bindAddr"));
+
+        int httpPort = freePort();
+        assertEquals("0.0.0.0", manager.startHttpProxy(httpPort, "0.0.0.0").get("bindAddr"));
+        assertEquals("0.0.0.0", manager.getHttpProxyStatus().get("bindAddr"));
+        assertEquals(409, code(manager.startHttpProxy(httpPort, "127.0.0.1")));
+
+        int forwardPort = freePort();
+        Map<String, Object> forward = manager.startLocalForward(forwardPort, "0.0.0.0", "target.internal", 80);
+        assertEquals("0.0.0.0", forward.get("bindAddr"));
+        assertEquals("0.0.0.0", manager.listLocalForwards().get(0).get("bindAddr"));
+        assertEquals(409, code(manager.startLocalForward(forwardPort, "127.0.0.1", "target.internal", 80)));
+    }
+
+    @Test
     void validatesPortsAndTargetsBeforeOpeningListeners() {
         assertThrows(IllegalArgumentException.class, () -> manager.startSocks5Proxy(0));
         assertThrows(IllegalArgumentException.class, () -> manager.startHttpProxy(65536));

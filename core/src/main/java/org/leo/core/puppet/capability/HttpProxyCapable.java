@@ -9,7 +9,11 @@ import java.util.Map;
  */
 public interface HttpProxyCapable {
 
-    Map<String, Object> startHttpProxy(int port) throws Exception;
+    default Map<String, Object> startHttpProxy(int port) throws Exception {
+        return startHttpProxy(port, null);
+    }
+
+    Map<String, Object> startHttpProxy(int port, String bindAddr) throws Exception;
 
     Map<String, Object> stopHttpProxy();
 
