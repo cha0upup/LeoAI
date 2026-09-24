@@ -2,14 +2,27 @@ package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
 import org.leo.service.config.SystemConfigService;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class LoginAttemptServiceTest {
+
+    @Test
+    void createsServiceThroughSpringConstructorInjection() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(SystemConfigService.class, () -> mock(SystemConfigService.class));
+            context.register(LoginAttemptService.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(LoginAttemptService.class));
+        }
+    }
 
     @Test
     void locksAfterConfiguredFailuresAndClearsAfterSuccess() {

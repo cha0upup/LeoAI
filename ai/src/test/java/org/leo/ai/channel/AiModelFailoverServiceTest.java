@@ -3,9 +3,11 @@ package org.leo.ai.channel;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelConfig;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -14,6 +16,17 @@ import static org.mockito.Mockito.when;
 class AiModelFailoverServiceTest {
 
     private final AiErrorClassifier classifier = new AiErrorClassifier();
+
+    @Test
+    void createsServiceThroughSpringConstructorInjection() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(AiModelConfigService.class, () -> mock(AiModelConfigService.class));
+            context.register(AiModelFailoverService.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(AiModelFailoverService.class));
+        }
+    }
 
     @Test
     void circuitWithoutFallbackRejectsAndAllowsOnlyOneRecoveryRequest() throws Exception {

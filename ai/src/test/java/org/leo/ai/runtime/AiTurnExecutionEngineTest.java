@@ -9,7 +9,9 @@ import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import org.junit.jupiter.api.Test;
+import org.leo.ai.agent.AiToolCatalog;
 import org.leo.ai.agent.AiToolErrorHandler;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -36,6 +39,15 @@ class AiTurnExecutionEngineTest {
     private final AiTurnCoordinator coordinator = new AiTurnCoordinator();
     private final AiTurnExecutionEngine engine =
             new AiTurnExecutionEngine(new AiToolErrorHandler());
+
+    @Test
+    void createsEngineThroughSpringConstructorInjection() {
+        try (var context = new AnnotationConfigApplicationContext(
+                AiToolErrorHandler.class, AiToolCatalog.class,
+                AiToolEventNormalizer.class, AiTurnExecutionEngine.class)) {
+            assertNotNull(context.getBean(AiTurnExecutionEngine.class));
+        }
+    }
 
     @Test
     void emitsTransportIndependentDeltasAndCompletesOnlyOnce() {

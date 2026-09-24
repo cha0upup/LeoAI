@@ -2,6 +2,7 @@ package org.leo.ai.channel;
 
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelConfig;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +36,7 @@ public class AiModelFailoverService {
     @Value("${leo.ai.failover.cooldown-seconds:120}")
     private long cooldownSeconds = 120L;
 
+    @Autowired
     public AiModelFailoverService(AiModelConfigService configService) {
         this(configService, System::currentTimeMillis);
     }
