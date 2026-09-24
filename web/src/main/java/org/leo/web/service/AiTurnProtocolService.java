@@ -205,9 +205,7 @@ public class AiTurnProtocolService {
     private TurnSnapshot snapshot(AiTurnRecord row) {
         if (row == null) return null;
         String status = STATUS_IN_PROGRESS.equals(row.getProtocolStatus())
-                ? (isBlank(row.getDispatchStatus())
-                    ? STATUS_RUNNING : row.getDispatchStatus())
-                : row.getProtocolStatus();
+                ? row.getDispatchStatus() : row.getProtocolStatus();
         return new TurnSnapshot(
                 row.getTurnId(), row.getThreadId(), status,
                 row.getClientUserMessageId(), row.getUserItemId(),

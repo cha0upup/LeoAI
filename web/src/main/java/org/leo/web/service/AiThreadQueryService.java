@@ -45,8 +45,6 @@ public class AiThreadQueryService {
         data.put("lastSeq", Math.max(runtime != null ? runtime.getLastSseEventSeq() : 0L,
                 conversationStore.findLastEventSeq(threadId)));
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
-        data.put("runStatus", runStatus);
-        data.put("executing", runtime != null && runtime.isExecuting());
         applyProtocolSnapshot(data, threadId, runStatus);
         return data;
     }
@@ -57,7 +55,6 @@ public class AiThreadQueryService {
     }
 
     private void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
-        AiTurnProtocolService.ThreadSnapshot snapshot = turnProtocolService.snapshotThread(threadId, fallback);
-        if (snapshot != null) target.putAll(snapshot.toMap());
+        target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
     }
 }

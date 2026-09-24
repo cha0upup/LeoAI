@@ -76,8 +76,7 @@ public class AiTurnArtifacts {
             AiSseEvent event = eventLog.get(index);
             String name = event.name();
             String kind = kindOf(event.data());
-            if ("thinking".equals(name)
-                    || ("node".equals(name) && ("thinking".equals(kind)
+            if (("node".equals(name) && ("thinking".equals(kind)
                             || (includeTextNodes && "text".equals(kind))
                             || "plan".equals(kind)
                             || "subtask".equals(kind)

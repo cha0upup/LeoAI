@@ -22,7 +22,8 @@ class AiTurnArtifactsTest {
         List<AiSseEvent> events = List.of(
                 new AiSseEvent("node", Map.of("kind", "thinking", "content", "分析")),
                 new AiSseEvent("node", toolStart),
-                new AiSseEvent("patch", toolResult));
+                new AiSseEvent("patch", toolResult),
+                new AiSseEvent("thinking", Map.of("content", "obsolete event")));
 
         Map<String, Object> review = artifacts.review("完成", events, 25);
         List<Object> nodes = artifacts.assistantNodes(events);
