@@ -135,7 +135,6 @@ public class PuppetNodeAiThreadService {
                 item.put("configModel", record.getConfigModel());
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, record.getThreadId()));
-                threadQueries.applyProtocolSnapshot(item, record.getThreadId());
                 result.add(item);
             }
         }
@@ -146,7 +145,6 @@ public class PuppetNodeAiThreadService {
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, thread.getThreadId()));
             }
-            threadQueries.applyProtocolSnapshot(item, thread.getThreadId());
             result.add(item);
         }
         result.sort((left, right) -> Long.compare(
@@ -387,8 +385,7 @@ public class PuppetNodeAiThreadService {
         item.put("lastActiveAt", thread.getLastActiveAt());
         item.put("messageCount", messageCount);
         item.put("configId", thread.getAiConfigId());
-        item.put("runStatus", thread.getRunStatus());
-        item.put("executing", thread.isExecuting());
+        threadQueries.applyProtocolSnapshot(item, thread.getThreadId(), thread.getRunStatus());
         item.put("parentThreadId", thread.getParentThreadId());
         item.put("inMemory", true);
         return item;
@@ -402,9 +399,8 @@ public class PuppetNodeAiThreadService {
         item.put("lastActiveAt", record.getLastActiveAt());
         item.put("messageCount", safeMessageCount(record.getMessageCount()));
         item.put("configId", record.getConfigId());
-        item.put("runStatus", record.getRunStatus() != null
+        threadQueries.applyProtocolSnapshot(item, record.getThreadId(), record.getRunStatus() != null
                 ? record.getRunStatus() : AiRunStatus.IDLE);
-        item.put("executing", false);
         item.put("parentThreadId", record.getParentThreadId());
         item.put("inMemory", false);
         return item;

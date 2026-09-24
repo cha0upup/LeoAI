@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -111,6 +112,22 @@ class PlatformAiThreadServiceTest {
         assertEquals("model", item.get("configModel"));
         assertEquals(0, item.get("messageCount"));
         assertFalse(state.isExecuting());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"completed", "failed"})
+    void listPassesPersistedStatusDirectlyToTheProtocolSnapshot(String status) {
+        Fixture fixture = fixture("user-1");
+        fixture.record.setRunStatus(status);
+        fixture.record.setLastActiveAt(100L);
+        when(fixture.conversationStore.listPlatformThreads("user-1")).thenReturn(List.of(fixture.record));
+
+        Map<String, Object> item = fixture.service.listThreads(user("user-1")).get(0);
+
+        assertEquals(status, item.get("runStatus"));
+        assertEquals(false, item.get("executing"));
+        verify(fixture.protocol).snapshotThread(THREAD_ID, status);
     }
 
     private Fixture fixture(String ownerId) {

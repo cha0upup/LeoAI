@@ -1,7 +1,6 @@
 package org.leo.web.service;
 
 import org.leo.ai.thread.AiConversationStoreService;
-import org.leo.core.ai.AiRunStatus;
 import org.leo.core.ai.AiRuntimeState;
 import org.springframework.stereotype.Service;
 
@@ -49,12 +48,7 @@ public class AiThreadQueryService {
         return data;
     }
 
-    public void applyProtocolSnapshot(Map<String, Object> target, String threadId) {
-        String fallback = String.valueOf(target.getOrDefault("runStatus", AiRunStatus.IDLE));
-        applyProtocolSnapshot(target, threadId, fallback);
-    }
-
-    private void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
+    public void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
         target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
     }
 }

@@ -80,10 +80,8 @@ public class PlatformAiThreadService {
                     : record.getLastActiveAt());
             item.put("messageCount",
                     record.getMessageCount() != null ? record.getMessageCount() : 0);
-            item.put("runStatus",
+            threadQueries.applyProtocolSnapshot(item, record.getThreadId(),
                     runtime != null ? runtime.getRunStatus() : record.getRunStatus());
-            item.put("executing", runtime != null && runtime.isExecuting());
-            threadQueries.applyProtocolSnapshot(item, record.getThreadId());
             item.put("configId", record.getConfigId());
             item.put("configName", record.getConfigName());
             item.put("configProtocol", record.getConfigProtocol());
