@@ -102,28 +102,23 @@ public class AiTurnArtifacts {
         List<String> tools = new ArrayList<>();
         if (eventLog != null) {
             for (AiSseEvent event : eventLog) {
-                if (!isCompletedTool(event)) continue;
-                if (event.data() instanceof Map<?, ?> map) {
-                    Object rawKind = map.get("toolKind");
-                    String toolKind = rawKind != null ? String.valueOf(rawKind) : "COMMAND";
-                    boolean business = !Boolean.FALSE.equals(map.get("businessTool"));
-                    if (business) toolCount++;
-                    else if ("CONTROL".equals(toolKind)) controlCount++;
+                Map<?, ?> data = completedToolData(event);
+                if (data == null) continue;
+                if (Boolean.FALSE.equals(data.get("businessTool"))) {
+                    if ("CONTROL".equals(data.get("toolKind"))) controlCount++;
                     else contextCount++;
-                    if (!business) continue;
-                    if (Boolean.FALSE.equals(map.get("success"))) {
-                        failureCount++;
-                    } else {
-                        successCount++;
-                    }
-                    Object toolName = map.get("toolName");
-                    if (toolName instanceof String name
-                            && !name.isBlank() && !tools.contains(name)) {
-                        tools.add(name);
-                    }
+                    continue;
+                }
+                toolCount++;
+                if (Boolean.FALSE.equals(data.get("success"))) {
+                    failureCount++;
                 } else {
-                    toolCount++;
                     successCount++;
+                }
+                Object toolName = data.get("toolName");
+                if (toolName instanceof String name
+                        && !name.isBlank() && !tools.contains(name)) {
+                    tools.add(name);
                 }
             }
         }
@@ -143,21 +138,20 @@ public class AiTurnArtifacts {
         if (eventLog == null) return 0;
         int count = 0;
         for (AiSseEvent event : eventLog) {
-            if (isCompletedBusinessTool(event)) count++;
+            Map<?, ?> data = completedToolData(event);
+            if (data != null && !Boolean.FALSE.equals(data.get("businessTool"))) count++;
         }
         return count;
     }
 
-    private boolean isCompletedTool(AiSseEvent event) {
-        return event != null
+    private Map<?, ?> completedToolData(AiSseEvent event) {
+        if (event != null
                 && "patch".equals(event.name())
-                && "tool".equals(kindOf(event.data()));
-    }
-
-    private boolean isCompletedBusinessTool(AiSseEvent event) {
-        if (!isCompletedTool(event)) return false;
-        return !(event.data() instanceof Map<?, ?> map)
-                || !Boolean.FALSE.equals(map.get("businessTool"));
+                && event.data() instanceof Map<?, ?> data
+                && "tool".equals(data.get("kind"))) {
+            return data;
+        }
+        return null;
     }
 
     private Object withSequence(AiSseEvent event, long sequence) {

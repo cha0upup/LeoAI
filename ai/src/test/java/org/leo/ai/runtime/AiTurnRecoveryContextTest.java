@@ -59,9 +59,9 @@ class AiTurnRecoveryContextTest {
         return Stream.of(
                 List.of(new AiSseEvent("delta", "已经"), new AiSseEvent("delta", "生成"),
                         new AiSseEvent("node", Map.of("kind", "text", "content", "重复正文"))),
-                List.of(new AiSseEvent("delta", Map.of("text", "已经")),
-                        new AiSseEvent("delta", Map.of("delta", "生成"))),
-                List.of(new AiSseEvent("node", Map.of("kind", "thinking", "content", "内部分析")),
+                List.of(new AiSseEvent("delta", Map.of("text", "重复正文")),
+                        new AiSseEvent("delta", Map.of("delta", "重复正文")),
+                        new AiSseEvent("node", Map.of("kind", "thinking", "content", "内部分析")),
                         new AiSseEvent("node", Map.of("kind", "text", "content", "已经生成"))));
     }
 

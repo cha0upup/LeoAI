@@ -132,8 +132,9 @@ public final class AiTurnRecoveryContext {
         if (eventLog == null || eventLog.isEmpty()) return "";
         StringBuilder deltas = new StringBuilder();
         for (AiSseEvent event : eventLog) {
-            if (event != null && "delta".equals(event.name()) && event.data() != null) {
-                deltas.append(textPayload(event.data()));
+            if (event != null && "delta".equals(event.name())
+                    && event.data() instanceof String text) {
+                deltas.append(text);
             }
         }
         if (!deltas.isEmpty()) return deltas.toString().trim();
@@ -149,16 +150,6 @@ public final class AiTurnRecoveryContext {
             if (content != null) nodes.append(content);
         }
         return nodes.toString().trim();
-    }
-
-    private static String textPayload(Object value) {
-        if (value instanceof String text) return text;
-        if (value instanceof Map<?, ?> map) {
-            Object text = map.get("text");
-            if (text == null) text = map.get("delta");
-            if (text != null) return String.valueOf(text);
-        }
-        return String.valueOf(value);
     }
 
     private static String compact(Object value, int maxChars) {
