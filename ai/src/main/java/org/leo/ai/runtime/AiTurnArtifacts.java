@@ -74,8 +74,9 @@ public class AiTurnArtifacts {
         List<Object> nodes = new ArrayList<>();
         for (int index = 0; index < eventLog.size(); index++) {
             AiSseEvent event = eventLog.get(index);
+            if (!(event.data() instanceof Map<?, ?> data)) continue;
             String name = event.name();
-            String kind = kindOf(event.data());
+            Object kind = data.get("kind");
             if (("node".equals(name) && ("thinking".equals(kind)
                             || (includeTextNodes && "text".equals(kind))
                             || "plan".equals(kind)
@@ -83,8 +84,10 @@ public class AiTurnArtifacts {
                             || "user_input".equals(kind)))
                     || ("patch".equals(name) && ("tool".equals(kind)
                             || "subtask".equals(kind)))) {
-                long sequence = event.seq() > 0 ? event.seq() : index + 1L;
-                nodes.add(withSequence(event, sequence));
+                // 保留独立快照，避免计划等嵌套对象的后续更新修改已完成的节点。
+                Map<String, Object> node = JSON.parseObject(JSON.toJSONString(data));
+                node.putIfAbsent("seq", event.seq() > 0 ? event.seq() : index + 1L);
+                nodes.add(node);
             }
         }
         return nodes;
@@ -150,28 +153,6 @@ public class AiTurnArtifacts {
                 && event.data() instanceof Map<?, ?> data
                 && "tool".equals(data.get("kind"))) {
             return data;
-        }
-        return null;
-    }
-
-    private Object withSequence(AiSseEvent event, long sequence) {
-        Object payload = event.data();
-        if (payload == null) return null;
-        try {
-            String json = JSON.toJSONString(payload);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = JSON.parseObject(json, Map.class);
-            if (map == null) return payload;
-            map.putIfAbsent("seq", sequence);
-            return map;
-        } catch (Exception ignored) {
-            return payload;
-        }
-    }
-
-    private String kindOf(Object data) {
-        if (data instanceof Map<?, ?> map && map.get("kind") instanceof String kind) {
-            return kind;
         }
         return null;
     }

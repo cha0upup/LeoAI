@@ -1,6 +1,8 @@
 package org.leo.ai.runtime;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
@@ -33,6 +35,30 @@ class AiTurnArtifactsTest {
         assertEquals(List.of("scan"), review.get("tools"));
         assertEquals(2, nodes.size());
         assertEquals(1, artifacts.toolCallCount(events));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void snapshotsNodesWithoutMutatingEvents(boolean includeTextNodes) {
+        Map<String, Object> step = new LinkedHashMap<>(Map.of("status", "IN_PROGRESS"));
+        Map<String, Object> plan = new LinkedHashMap<>(Map.of("kind", "plan", "steps", List.of(step)));
+        Map<String, Object> text = Map.of("kind", "text", "content", "answer", "seq", 7);
+        List<AiSseEvent> events = List.of(
+                new AiSseEvent("node", "not a node"),
+                new AiSseEvent(12L, 1000L, "node", plan, null, null, null, null),
+                new AiSseEvent("node", Map.of("kind", "thinking", "content", "analysis")),
+                new AiSseEvent("node", text));
+
+        List<Object> nodes = artifacts.assistantNodes(events, includeTextNodes);
+        step.put("status", "COMPLETED");
+
+        assertEquals(includeTextNodes ? 3 : 2, nodes.size());
+        Map<?, ?> savedPlan = (Map<?, ?>) nodes.get(0);
+        assertEquals(12L, ((Number) savedPlan.get("seq")).longValue());
+        assertEquals(List.of(Map.of("status", "IN_PROGRESS")), savedPlan.get("steps"));
+        assertFalse(plan.containsKey("seq"));
+        assertEquals(3L, ((Number) ((Map<?, ?>) nodes.get(1)).get("seq")).longValue());
+        if (includeTextNodes) assertEquals(text, nodes.get(2));
     }
 
     @Test
