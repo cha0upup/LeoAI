@@ -280,19 +280,11 @@ public class AiTurnProtocolService {
             value.put("answerToQuestionId", answerToQuestionId);
             value.put("items", List.of(
                     messageItem(userItemId, "user", "completed"),
-                    messageItem(assistantItemId, "assistant", itemStatus())));
+                    messageItem(assistantItemId, "assistant",
+                            STATUS_RUNNING.equals(status) ? STATUS_IN_PROGRESS : status)));
             value.put("error", errorMessage != null
                     ? Map.of("message", errorMessage) : null);
             return value;
-        }
-
-        private String itemStatus() {
-            if (STATUS_COMPLETED.equals(status)) return "completed";
-            if (STATUS_INTERRUPTED.equals(status)) return "interrupted";
-            if (STATUS_FAILED.equals(status)) return "failed";
-            if (STATUS_QUEUED.equals(status)) return "queued";
-            if (STATUS_CANCELLING.equals(status)) return "cancelling";
-            return "inProgress";
         }
 
         private Map<String, Object> messageItem(

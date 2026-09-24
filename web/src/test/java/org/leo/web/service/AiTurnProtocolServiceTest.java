@@ -1,10 +1,13 @@
 package org.leo.web.service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiTurnRecord;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -20,9 +23,20 @@ class AiTurnProtocolServiceTest {
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
     private final AiTurnProtocolService service = new AiTurnProtocolService(store);
 
-    @Test
-    void reusesIdempotencyKeyOnlyForTheSameCommand() {
+    @ParameterizedTest
+    @CsvSource({
+            "inProgress,queued,queued,queued",
+            "inProgress,running,running,inProgress",
+            "inProgress,cancelling,cancelling,cancelling",
+            "completed,completed,completed,completed",
+            "interrupted,interrupted,interrupted,interrupted",
+            "failed,failed,failed,failed"
+    })
+    void reusesSameCommandWithCurrentTurnAndMessageStatuses(
+            String protocolStatus, String dispatchStatus, String turnStatus, String itemStatus) {
         AiTurnRecord existing = existingTurn();
+        existing.setProtocolStatus(protocolStatus);
+        existing.setDispatchStatus(dispatchStatus);
         when(store.findProtocolTurnByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
 
@@ -31,6 +45,11 @@ class AiTurnProtocolServiceTest {
                 "{\"message\":\"hello\"}", "hello", null);
 
         assertTrue(reservation.reused());
+        Map<String, Object> turn = reservation.turn().toMap();
+        assertEquals(turnStatus, turn.get("status"));
+        List<?> items = (List<?>) turn.get("items");
+        assertEquals("completed", ((Map<?, ?>) items.get(0)).get("status"));
+        assertEquals(itemStatus, ((Map<?, ?>) items.get(1)).get("status"));
     }
 
     @Test
