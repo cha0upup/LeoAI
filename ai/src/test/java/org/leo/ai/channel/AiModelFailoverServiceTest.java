@@ -7,12 +7,59 @@ import org.leo.core.entity.AiModelConfig;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class AiModelFailoverServiceTest {
 
     private final AiErrorClassifier classifier = new AiErrorClassifier();
+
+    @Test
+    void circuitWithoutFallbackRejectsAndAllowsOnlyOneRecoveryRequest() throws Exception {
+        var clock = new java.util.concurrent.atomic.AtomicLong(1000L);
+        AiModelFailoverService service = new AiModelFailoverService(mock(AiModelConfigService.class), clock::get);
+        AiModelConfig model = model(1, "primary", null);
+        service.recordFailure(1, classifier.classify("HTTP 503 Service Unavailable"));
+        service.recordFailure(1, classifier.classify("HTTP 503 Service Unavailable"));
+        assertThrows(IllegalStateException.class, () -> service.selectForExecution(model));
+        clock.addAndGet(120_001L);
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            var attempts = new java.util.ArrayList<java.util.concurrent.Callable<Boolean>>();
+            for (int i = 0; i < 8; i++) attempts.add(() -> {
+                try { service.selectForExecution(model); return true; }
+                catch (IllegalStateException unavailable) { return false; }
+            });
+            int accepted = 0;
+            for (var result : executor.invokeAll(attempts)) if (result.get()) accepted++;
+            assertEquals(1, accepted);
+            assertEquals("half_open", service.snapshot(1).status());
+        } finally {
+            executor.shutdownNow();
+        }
+        service.recordFailure(1, classifier.classify("HTTP 502 Bad Gateway"));
+        assertThrows(IllegalStateException.class, () -> service.selectForExecution(model));
+        clock.addAndGet(120_001L);
+        assertEquals(1, service.selectForExecution(model).effectiveConfig().getId());
+        service.recordSuccess(1);
+        assertEquals(1, service.selectForExecution(model).effectiveConfig().getId());
+        assertFalse(service.snapshot(1).circuitOpen());
+    }
+
+    @Test
+    void anAbandonedRecoveryPermitExpires() {
+        var clock = new java.util.concurrent.atomic.AtomicLong(1000L);
+        AiModelFailoverService service = new AiModelFailoverService(mock(AiModelConfigService.class), clock::get);
+        AiModelConfig model = model(1, "primary", null);
+        service.recordFailure(1, classifier.classify("timeout"));
+        service.recordFailure(1, classifier.classify("timeout"));
+        clock.addAndGet(120_001L);
+        service.selectForExecution(model);
+        assertThrows(IllegalStateException.class, () -> service.selectForExecution(model));
+        clock.addAndGet(300_001L);
+        assertEquals(1, service.selectForExecution(model).effectiveConfig().getId());
+    }
 
     @Test
     void switchesOnlyNewSelectionsAfterTransientFailureCircuitOpens() {

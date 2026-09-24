@@ -21,7 +21,7 @@ public final class NetworkDiscoveryDtos {
             ExecutionConfig execution,
             /** Used only when FINGERPRINT is explicitly enabled. */
             FingerprintConfig fingerprint,
-            List<String> stages        // null = REACHABILITY / PORT_SCAN / SERVICE_PROBE
+            List<String> stages        // 必须显式选择执行阶段
     ) {}
 
     /**

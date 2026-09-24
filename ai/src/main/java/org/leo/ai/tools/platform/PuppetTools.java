@@ -19,6 +19,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
+import static org.leo.ai.tools.platform.PlatformToolArguments.*;
+
 @Component("platformPuppetTools")
 @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
         operation = org.leo.ai.agent.AiToolOperation.WRITE)
@@ -340,30 +342,5 @@ public class PuppetTools {
         result.put("puppetId", puppetId);
         result.put("puppetName", puppetName);
         return result;
-    }
-
-    private String requireNonBlank(String value, String message) {
-        String trimmed = trimToNull(value);
-        if (trimmed == null) {
-            throw new IllegalArgumentException(message);
-        }
-        return trimmed;
-    }
-
-    private String defaultIfBlank(String value, String defaultValue) {
-        String trimmed = trimToNull(value);
-        return trimmed == null ? defaultValue : trimmed;
-    }
-
-    private String trimToNull(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    private boolean isBlank(String value) {
-        return trimToNull(value) == null;
     }
 }

@@ -97,8 +97,8 @@ class PuppetNodeAiThreadServiceTest {
         Map<String, Object> data = fixture.service.threadEvents(session, "thread-1", 1L, null);
 
         assertEquals(20L, data.get("lastSeq"));
-        assertEquals("idle", data.get("status"));
-        assertFalse(data.containsKey("elapsedMs"));
+        assertEquals("idle", data.get("runStatus"));
+        assertFalse(data.containsKey("status"));
         verify(fixture.conversationStore).listEventsAfter("thread-1", 1L, 200);
         verify(fixture.conversationStore).attachEventJournal("thread-1", thread);
     }
@@ -204,7 +204,7 @@ class PuppetNodeAiThreadServiceTest {
         SessionWarmupService sessionWarmupService = mock(SessionWarmupService.class);
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
-                new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of()));
+                new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
         PuppetAiCheckpointRepository checkpoints = mock(PuppetAiCheckpointRepository.class);
         PuppetNodeAiThreadService service = new PuppetNodeAiThreadService(
                 mock(AiModelConfigService.class),

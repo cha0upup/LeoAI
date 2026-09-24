@@ -8,7 +8,6 @@ import org.leo.web.dto.platform.session.SessionDtos.SetReconSummaryRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.ReconSummaryService;
 import org.leo.web.util.ControllerUtil;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,7 +36,6 @@ public class ReconSummaryController {
 
     private final ReconSummaryService reconSummaryService;
 
-    @Autowired
     public ReconSummaryController(ReconSummaryService reconSummaryService) {
         this.reconSummaryService = reconSummaryService;
     }

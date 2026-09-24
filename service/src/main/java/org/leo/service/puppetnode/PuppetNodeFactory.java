@@ -97,10 +97,6 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
         return Collections.unmodifiableMap(indexed);
     }
 
-    public Puppet resolveTransportPuppet(Puppet puppet) {
-        return routeResolver.resolve(puppet).transport();
-    }
-
     public Proxy getProxy(Puppet puppet) {
         if (puppet == null) return Proxy.NO_PROXY;
         Integer proxyEnabled = puppet.getProxyEnabled();

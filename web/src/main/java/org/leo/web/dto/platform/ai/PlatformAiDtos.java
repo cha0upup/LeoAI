@@ -17,23 +17,6 @@ public final class PlatformAiDtos {
                               List<AiFileAttachment> attachments,
                               String clientUserMessageId,
                               String answerToQuestionId) {
-        public ChatRequest(String threadId,
-                           String message,
-                           Integer configId,
-                           String reasoningEffort,
-                           List<AiFileAttachment> attachments) {
-            this(threadId, message, configId, reasoningEffort, attachments, null, null);
-        }
-
-        public ChatRequest(String threadId,
-                           String message,
-                           Integer configId,
-                           String reasoningEffort,
-                           List<AiFileAttachment> attachments,
-                           String clientUserMessageId) {
-            this(threadId, message, configId, reasoningEffort, attachments,
-                    clientUserMessageId, null);
-        }
     }
 
     public record AgentConfigRequest(String threadId, Integer configId) {

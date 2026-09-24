@@ -61,11 +61,9 @@ class AiSseTransportTest {
     }
 
     @Test
-    void extractsSubagentAssociationFromBothSupportedFields() {
+    void extractsSubagentAssociation() {
         assertEquals("child-1", AiSseTransport.extractSubagentInvocationId(
                 Map.of("subagentInvocationId", "child-1")));
-        assertEquals("parent-1", AiSseTransport.extractSubagentInvocationId(
-                Map.of("parentSubagentInvocationId", "parent-1")));
     }
 
     private Fixture fixture() {

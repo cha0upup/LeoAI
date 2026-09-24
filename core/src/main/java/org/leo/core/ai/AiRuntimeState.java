@@ -40,7 +40,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     private volatile String activeRunId;
     private volatile String activeLeaseToken;
     private volatile String stopReason;
-    private volatile long taskTimeoutAt;
     private volatile Runnable stopCallback;
     private final Set<StopRegistration> stopListeners = ConcurrentHashMap.newKeySet();
 
@@ -67,7 +66,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
             terminalControlName = null;
             runStatus = AiRunStatus.RUNNING;
             stopReason = null;
-            taskTimeoutAt = 0L;
         }
         return claimed;
     }
@@ -104,9 +102,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     @Override public String getActiveLeaseToken() { return activeLeaseToken; }
     @Override public void bindActiveLeaseToken(String leaseToken) { activeLeaseToken = leaseToken; }
     @Override public String getStopReason() { return stopReason; }
-    public long getTaskTimeoutAt() { return taskTimeoutAt; }
-    public void setTaskTimeoutAt(long timeoutAt) { taskTimeoutAt = Math.max(0L, timeoutAt); }
-
     public void stop(String reason) {
         stopRequested.set(true);
         stopReason = reason != null && !reason.isBlank() ? reason : "已停止";
@@ -158,27 +153,23 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     public void markCompleted() {
         runStatus = waitingForUserInput.get()
                 ? AiRunStatus.WAITING_FOR_USER : AiRunStatus.COMPLETED;
-        taskTimeoutAt = 0L;
     }
 
     public void markWaitingForUserInput() {
         waitingForUserInput.set(true);
         runStatus = AiRunStatus.WAITING_FOR_USER;
-        taskTimeoutAt = 0L;
     }
 
     @Override
     public void markFailed() {
         waitingForUserInput.set(false);
         runStatus = AiRunStatus.FAILED;
-        taskTimeoutAt = 0L;
     }
 
     @Override
     public void markCancelled() {
         waitingForUserInput.set(false);
         runStatus = AiRunStatus.CANCELLED;
-        taskTimeoutAt = 0L;
     }
 
     /**
@@ -300,7 +291,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         terminalControlName = null;
         runStatus = AiRunStatus.IDLE;
         stopReason = null;
-        taskTimeoutAt = 0L;
         activatedSkills.clear();
         resetTurnCount();
         clearSseEvents();

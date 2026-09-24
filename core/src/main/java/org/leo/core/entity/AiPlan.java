@@ -70,13 +70,13 @@ public class AiPlan {
      * @return 找到并更新返回 true，否则 false
      */
     public boolean startStep(int stepIndex) {
-        AiPlanStep step = findStep(stepIndex);
+        AiPlanStep step = getStep(stepIndex);
         if (step == null) return false;
         if (this.status == AiPlanStatus.COMPLETED) return false;
         // 依赖步骤必须真实完成；FAILED/SKIPPED 不等价于满足依赖。
         if (step.getDependsOn() != null && !step.getDependsOn().isEmpty()) {
             for (int depIndex : step.getDependsOn()) {
-                AiPlanStep dep = findStep(depIndex);
+                AiPlanStep dep = getStep(depIndex);
                 if (dep == null || dep.getStatus() != AiStepStatus.COMPLETED) {
                     return false;
                 }
@@ -96,7 +96,7 @@ public class AiPlan {
      * @return 找到并更新返回 true，否则 false
      */
     public boolean completeStep(int stepIndex, String result) {
-        AiPlanStep step = findStep(stepIndex);
+        AiPlanStep step = getStep(stepIndex);
         if (step == null) return false;
         String effectiveResult = result != null && !result.isBlank()
                 ? result : step.getResult();
@@ -116,7 +116,7 @@ public class AiPlan {
      * 所有步骤终结后，只要存在失败步骤，计划自动转为 FAILED。
      */
     public boolean failStep(int stepIndex, String reason) {
-        AiPlanStep step = findStep(stepIndex);
+        AiPlanStep step = getStep(stepIndex);
         if (step == null) return false;
         if (!step.markFailed(reason)) return false;
         reconcileStatus();
@@ -128,7 +128,7 @@ public class AiPlan {
      * 更新指定步骤为已跳过。
      */
     public boolean skipStep(int stepIndex, String reason) {
-        AiPlanStep step = findStep(stepIndex);
+        AiPlanStep step = getStep(stepIndex);
         if (step == null) return false;
         if (!step.markSkipped(reason)) return false;
         reconcileStatus();
@@ -160,23 +160,11 @@ public class AiPlan {
 
     // ── 查询 ──────────────────────────────────────────────────────────────────
 
-    private AiPlanStep findStep(int index) {
+    public AiPlanStep getStep(int index) {
         for (AiPlanStep s : steps) {
             if (s.getIndex() == index) return s;
         }
         return null;
-    }
-
-    public AiPlanStep getStep(int index) {
-        return findStep(index);
-    }
-
-    /** 返回第一个 PENDING 步骤的序号，全部完成时返回 -1。 */
-    public int nextPendingStepIndex() {
-        for (AiPlanStep s : steps) {
-            if (s.getStatus() == AiStepStatus.PENDING) return s.getIndex();
-        }
-        return -1;
     }
 
     /** 是否所有步骤都已终结（COMPLETED / FAILED / SKIPPED）。 */

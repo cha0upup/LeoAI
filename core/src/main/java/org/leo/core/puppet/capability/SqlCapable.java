@@ -11,31 +11,15 @@ import java.util.Map;
  */
 public interface SqlCapable {
 
-    Map<String, Object> executeSql(DatabaseConnectionSpec connection,
-                                   String sqlScript) throws Exception;
-
-    /**
-     * Executes a SQL command with values kept separate from the SQL text.
-     * Implementations backed by prepared statements should override this
-     * method. The default preserves the original functional-interface shape.
-     */
     default Map<String, Object> executeSql(DatabaseConnectionSpec connection,
-                                           SqlCommand command) throws Exception {
-        return executeSql(connection, command.sql());
+                                           String sqlScript) throws Exception {
+        return executeSql(connection, SqlCommand.raw(sqlScript));
     }
 
-    /**
-     * Inspects the database provider inside the remote Puppet runtime.
-     *
-     * <p>The request is intentionally an incomplete connection description:
-     * capability inspection must work before a connection can be validated.</p>
-     */
-    default Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception {
-        return Map.of(
-                "code", 501,
-                "runtime", "unknown",
-                "provider", "unknown",
-                "available", false,
-                "msg", "当前 Puppet 不支持数据库运行时能力探测");
-    }
+    /** Executes SQL with parameter values kept separate from the statement. */
+    Map<String, Object> executeSql(DatabaseConnectionSpec connection,
+                                   SqlCommand command) throws Exception;
+
+    /** Inspects the provider before a complete connection is available. */
+    Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception;
 }

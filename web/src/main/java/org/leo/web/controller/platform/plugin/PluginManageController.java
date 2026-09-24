@@ -25,7 +25,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -163,15 +162,9 @@ public class PluginManageController {
 
         String pluginId = generatePluginId(identifier, componentPlugin.getVersion());
         componentPlugin.setPluginId(pluginId);
-        pluginManager.inStallPlugin(componentPlugin);
-        boolean result = savePlugin(componentPlugin);
-        if (result) {
-            HashMap<String, Object> data = new HashMap<>();
-            data.put(RESULT_PLUGIN_ID, pluginId);
-            return ApiResponse.success(data);
-        } else {
-            return ApiResponse.error("保存插件失败");
-        }
+        pluginManager.installPlugin(componentPlugin);
+        savePlugin(componentPlugin);
+        return ApiResponse.success(Map.of(RESULT_PLUGIN_ID, pluginId));
     }
 
     private boolean isJavaPlugin(String pluginType) {
@@ -208,27 +201,16 @@ public class PluginManageController {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    private boolean savePlugin(Plugin componentPlugin) throws Exception {
-        if (componentPlugin == null || componentPlugin.getPluginId() == null) {
+    private void savePlugin(Plugin plugin) throws Exception {
+        if (plugin == null || plugin.getPluginId() == null) {
             throw new IllegalArgumentException("componentPlugin或pluginId不能为空");
         }
-        File root = new File(LeoConfig.getVfsPath());
-        File plugin = new File(root, PLUGIN_DIR_NAME);
-        if (!plugin.exists()) {
-            plugin.mkdirs();
-        }
-        // 文件名直接使用插件ID（格式：类名_版本号.plugin）
-        String pluginId = componentPlugin.getPluginId();
-        // 安全检查：确保文件名安全，防止路径遍历攻击
-        String safeName = getSafeFileName(pluginId);
-        File pluginFile = new File(plugin, safeName);
-        try (FileOutputStream fileOutputStream = new FileOutputStream(pluginFile)) {
-            String encrypted = AesUtil.encrypt(componentPlugin.toString(), LeoConfig.getPluginEncryptKey());
-            fileOutputStream.write(encrypted.getBytes(StandardCharsets.UTF_8));
-            fileOutputStream.flush();
-        }
-        return true;
+        File directory = new File(LeoConfig.getVfsPath(), PLUGIN_DIR_NAME);
+        Files.createDirectories(directory.toPath());
+        File file = new File(directory, getSafeFileName(plugin.getPluginId()));
+        Files.writeString(file.toPath(), AesUtil.encrypt(plugin.toString(), LeoConfig.getPluginEncryptKey()));
     }
+
     @RequestMapping(value = "/plugins/delete", method = RequestMethod.POST)
     @AdminOnlyEndpoint
     public HashMap<String, Object> delPlugin(@RequestBody HashMap<String, Object> params) {
@@ -289,22 +271,14 @@ public class PluginManageController {
         existingPlugin.setUpdateTime(String.valueOf(System.currentTimeMillis()));
         
         // 保存插件
-        boolean saved = savePlugin(existingPlugin);
-        if (saved) {
-            // 重新加载插件到PluginManager
-            pluginManager.inStallPlugin(existingPlugin);
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put(RESULT_PLUGIN_ID, existingPlugin.getPluginId());
-            return ApiResponse.success("插件更新成功", data);
-        } else {
-            return ApiResponse.error("插件保存失败");
-        }
+        savePlugin(existingPlugin);
+        pluginManager.installPlugin(existingPlugin);
+        return ApiResponse.success("插件更新成功", Map.of(RESULT_PLUGIN_ID, existingPlugin.getPluginId()));
     }
 
     @RequestMapping(value = "/plugins", method = RequestMethod.GET)
     public HashMap<String, Object> getPlugin() {
-        ArrayList<Plugin> plugins = (ArrayList<Plugin>) pluginManager.getPluginAsList();
-        return ApiResponse.success(plugins);
+        return ApiResponse.success(pluginManager.getPluginAsList());
     }
 
     // ── 导出 ──────────────────────────────────────────────────────────────────
@@ -485,7 +459,7 @@ public class PluginManageController {
         try {
             plugin.setCreateUserId(user.getUserId());
             plugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
-            pluginManager.inStallPlugin(plugin);
+            pluginManager.installPlugin(plugin);
             savePlugin(plugin);
             result.put("pluginId", pluginId);
             result.put("pluginName", plugin.getPluginName());

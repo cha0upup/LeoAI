@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.LongSupplier;
 
 /**
  * 模型调用健康状态与熔断选择。
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentMap;
 public class AiModelFailoverService {
 
     private final AiModelConfigService configService;
+    private final LongSupplier clock;
     private final ConcurrentMap<Integer, HealthState> states = new ConcurrentHashMap<>();
 
     @Value("${leo.ai.failover.failure-threshold:2}")
@@ -34,7 +36,12 @@ public class AiModelFailoverService {
     private long cooldownSeconds = 120L;
 
     public AiModelFailoverService(AiModelConfigService configService) {
+        this(configService, System::currentTimeMillis);
+    }
+
+    AiModelFailoverService(AiModelConfigService configService, LongSupplier clock) {
         this.configService = configService;
+        this.clock = clock;
     }
 
     /** 返回本轮实际应使用的模型；主模型正常时不会改变用户选中的模型。 */
@@ -42,7 +49,7 @@ public class AiModelFailoverService {
         if (requested == null) {
             throw new IllegalArgumentException("AI 模型不能为空");
         }
-        if (!isCircuitOpen(requested.getId())) {
+        if (tryAcquire(requested.getId())) {
             return ModelSelection.direct(requested);
         }
 
@@ -57,24 +64,24 @@ public class AiModelFailoverService {
             if (!isEligible(candidate)) {
                 break;
             }
-            if (!isCircuitOpen(candidate.getId())) {
+            if (tryAcquire(candidate.getId())) {
                 return ModelSelection.failover(requested, candidate, attempted,
                         "主模型暂时熔断，已切换到备用模型「" + candidate.getName() + "」");
             }
             cursor = candidate;
         }
-        return ModelSelection.direct(requested, attempted,
-                "主模型处于熔断冷却期，但没有可用的备用模型");
+        throw new IllegalStateException("AI 模型处于熔断冷却期或恢复探测中，且没有可用的备用模型，请稍后重试");
     }
 
     /** 成功响应会立即关闭该模型的熔断并清空连续失败计数。 */
     public void recordSuccess(Integer configId) {
         if (configId == null) return;
-        synchronized (state(configId)) {
-            HealthState state = state(configId);
+        HealthState state = state(configId);
+        synchronized (state) {
             state.consecutiveFailures = 0;
             state.openUntil = 0L;
-            state.lastSuccessAt = System.currentTimeMillis();
+            state.probeUntil = 0L;
+            state.lastSuccessAt = clock.getAsLong();
             state.lastCategory = null;
             state.lastMessage = null;
         }
@@ -86,15 +93,21 @@ public class AiModelFailoverService {
      */
     public void recordFailure(Integer configId, AiErrorClassifier.Classification classification) {
         if (configId == null || classification == null) return;
-        synchronized (state(configId)) {
-            HealthState state = state(configId);
-            long now = System.currentTimeMillis();
+        HealthState state = state(configId);
+        synchronized (state) {
+            long now = clock.getAsLong();
             state.lastFailureAt = now;
             state.lastCategory = classification.category();
             state.lastMessage = classification.message();
-            if (!isTransient(classification.category())) return;
+            boolean recovering = state.probeUntil > 0L;
+            state.probeUntil = 0L;
+            if (!isTransient(classification.category())) {
+                state.openUntil = 0L;
+                state.consecutiveFailures = 0;
+                return;
+            }
             state.consecutiveFailures++;
-            if (state.consecutiveFailures >= effectiveThreshold()) {
+            if (recovering || state.consecutiveFailures >= effectiveThreshold()) {
                 state.openUntil = now + effectiveCooldownSeconds() * 1000L;
             }
         }
@@ -111,8 +124,9 @@ public class AiModelFailoverService {
         HealthState state = states.get(configId);
         if (state == null) return HealthSnapshot.unknown(configId);
         synchronized (state) {
-            boolean open = isCircuitOpenLocked(state, System.currentTimeMillis());
-            String status = open ? "open"
+            long now = clock.getAsLong();
+            boolean open = state.openUntil > now || state.probeUntil > now;
+            String status = state.openUntil > 0L && state.openUntil <= now ? "half_open" : open ? "open"
                     : state.consecutiveFailures > 0 || state.lastFailureAt > state.lastSuccessAt
                     ? "degraded" : "healthy";
             return new HealthSnapshot(configId, status, open, state.consecutiveFailures, state.openUntil,
@@ -135,12 +149,17 @@ public class AiModelFailoverService {
         return list;
     }
 
-    private boolean isCircuitOpen(Integer configId) {
-        if (configId == null) return false;
+    private boolean tryAcquire(Integer configId) {
+        if (configId == null) return true;
         HealthState state = states.get(configId);
-        if (state == null) return false;
+        if (state == null) return true;
         synchronized (state) {
-            return isCircuitOpenLocked(state, System.currentTimeMillis());
+            if (state.openUntil <= 0L) return true;
+            long now = clock.getAsLong();
+            if (now < state.openUntil || now < state.probeUntil) return false;
+            // Permit one recovery request; a cancelled/abandoned turn cannot hold it forever.
+            state.probeUntil = now + Math.max(300L, effectiveCooldownSeconds()) * 1000L;
+            return true;
         }
     }
 
@@ -152,15 +171,8 @@ public class AiModelFailoverService {
         return AiErrorClassifier.CATEGORY_RATE_LIMIT.equals(category)
                 || AiErrorClassifier.CATEGORY_TIMEOUT.equals(category)
                 || AiErrorClassifier.CATEGORY_NETWORK.equals(category)
+                || AiErrorClassifier.CATEGORY_SERVER_ERROR.equals(category)
                 || AiErrorClassifier.CATEGORY_MALFORMED_RESPONSE.equals(category);
-    }
-
-    private static boolean isCircuitOpenLocked(HealthState state, long now) {
-        if (state.openUntil <= 0L) return false;
-        if (now < state.openUntil) return true;
-        state.openUntil = 0L;
-        state.consecutiveFailures = 0;
-        return false;
     }
 
     private HealthState state(Integer configId) {
@@ -178,6 +190,7 @@ public class AiModelFailoverService {
     private static final class HealthState {
         private int consecutiveFailures;
         private long openUntil;
+        private long probeUntil;
         private String lastCategory;
         private String lastMessage;
         private long lastSuccessAt;

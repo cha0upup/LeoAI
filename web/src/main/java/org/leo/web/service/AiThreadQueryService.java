@@ -45,7 +45,6 @@ public class AiThreadQueryService {
         data.put("lastSeq", Math.max(runtime != null ? runtime.getLastSseEventSeq() : 0L,
                 conversationStore.findLastEventSeq(threadId)));
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
-        data.put("status", runStatus);
         data.put("runStatus", runStatus);
         data.put("executing", runtime != null && runtime.isExecuting());
         applyProtocolSnapshot(data, threadId, runStatus);

@@ -8,7 +8,6 @@ import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.Map;
@@ -30,17 +29,10 @@ public final class SessionLifecycleManager {
     private final NetworkProbeResultStore resultStore;
     private final Consumer<String> sessionDestroyListener = this::cleanupDestroyedSession;
 
-    @Autowired
     public SessionLifecycleManager(NetworkProbeWorkflowService workflowService,
                                    NetworkProbeResultStore resultStore) {
         this.workflowService = workflowService;
         this.resultStore = resultStore;
-    }
-
-    /** Compatibility constructor for unit tests that only exercise registration. */
-    SessionLifecycleManager() {
-        this.workflowService = null;
-        this.resultStore = null;
     }
 
     @PostConstruct
@@ -99,10 +91,8 @@ public final class SessionLifecycleManager {
 
     private void cleanupDestroyedSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return;
-        if (workflowService != null) workflowService.cleanupSession(sessionId);
-        if (resultStore != null) {
-            int deleted = resultStore.deleteTasksBySession(sessionId);
-            logger.info("[SessionLifecycle] cleaned session {}: {} scan task(s)", sessionId, deleted);
-        }
+        workflowService.cleanupSession(sessionId);
+        int deleted = resultStore.deleteTasksBySession(sessionId);
+        logger.info("[SessionLifecycle] cleaned session {}: {} scan task(s)", sessionId, deleted);
     }
 }

@@ -5,7 +5,6 @@ import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.core.puppet.database.SqlCommand;
 import org.leo.service.sql.dialect.AbstractSqlDialect;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -15,7 +14,6 @@ public class PuppetNodeSqlService {
 
     private final SqlDialectRegistry sqlDialectRegistry;
 
-    @Autowired
     public PuppetNodeSqlService(SqlDialectRegistry sqlDialectRegistry) {
         this.sqlDialectRegistry = sqlDialectRegistry;
     }
@@ -24,22 +22,22 @@ public class PuppetNodeSqlService {
         long startedAt = System.nanoTime();
         List<Map<String, Object>> diagnostics = new ArrayList<Map<String, Object>>();
         Map<String, Object> capabilities = getRuntimeCapabilities(puppetNode, connection);
-        boolean inspectionSupported = isSuccessCode(capabilities.get("code"));
-        if (inspectionSupported) {
-            boolean providerAvailable = !Boolean.FALSE.equals(capabilities.get("available"));
-            boolean driverAvailable = requestedDriverAvailable(capabilities);
-            if (!providerAvailable || !driverAvailable) {
-                String message = capabilityFailureMessage(capabilities, providerAvailable);
-                diagnostics.add(diagnostic("driver", "failed", message));
-                return failedConnectionTest(startedAt, diagnostics, capabilities,
-                        "driver", providerAvailable ? "DRIVER_NOT_FOUND" : "PROVIDER_NOT_FOUND",
-                        message);
-            }
-            diagnostics.add(diagnostic("driver", "passed", capabilitySuccessMessage(capabilities)));
-        } else {
-            diagnostics.add(diagnostic("driver", "warning",
-                    safeString(capabilities.getOrDefault("msg", "运行时不支持驱动预检，将直接测试连接"))));
+        if (!isSuccessCode(capabilities.get("code"))) {
+            String message = safeString(capabilities.get("msg"));
+            diagnostics.add(diagnostic("driver", "failed", message));
+            return failedConnectionTest(startedAt, diagnostics, capabilities,
+                    "driver", "CAPABILITY_INSPECTION_FAILED", message);
         }
+        boolean providerAvailable = !Boolean.FALSE.equals(capabilities.get("available"));
+        boolean driverAvailable = requestedDriverAvailable(capabilities);
+        if (!providerAvailable || !driverAvailable) {
+            String message = capabilityFailureMessage(capabilities, providerAvailable);
+            diagnostics.add(diagnostic("driver", "failed", message));
+            return failedConnectionTest(startedAt, diagnostics, capabilities,
+                    "driver", providerAvailable ? "DRIVER_NOT_FOUND" : "PROVIDER_NOT_FOUND",
+                    message);
+        }
+        diagnostics.add(diagnostic("driver", "passed", capabilitySuccessMessage(capabilities)));
 
         try {
             AbstractSqlDialect dialect = dialect(connection);

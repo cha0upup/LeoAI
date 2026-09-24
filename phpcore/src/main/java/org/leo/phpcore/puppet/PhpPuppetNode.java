@@ -862,12 +862,6 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
 
     @Override
     public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
-                                          String sqlScript) throws Exception {
-        return executeSql(connection, org.leo.core.puppet.database.SqlCommand.raw(sqlScript));
-    }
-
-    @Override
-    public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
                                           org.leo.core.puppet.database.SqlCommand command) throws Exception {
         Map<String, Object> params = new LinkedHashMap<>(databaseConnectionAdapter.adapt(connection));
         params.put("sql", command.sql());

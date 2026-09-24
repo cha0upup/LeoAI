@@ -1,9 +1,9 @@
 package org.leo.core.init;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.io.TempDir;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.leo.web.service.NetworkProbeResultStore;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
@@ -46,10 +46,10 @@ class DatabaseInitializerFreshStartTest {
                     INSERT INTO puppets
                       (puppet_id, puppet_name, parent_puppet_id, create_by_user_id,
                        conn_link, req_disguise_id, resp_disguise_id, permission,
-                       create_time, update_time)
+                       create_time, update_time, team_id)
                     VALUES ('team-puppet', 'team-puppet', 'root', 'owner-1', '/',
                             'request', 'response', 'team',
-                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'team-a')
                     """);
         }
         initializer.run();
@@ -109,86 +109,36 @@ class DatabaseInitializerFreshStartTest {
         }
     }
 
-    @Test
-    void addsMissingCheckpointMetadataColumn() throws Exception {
+    @ParameterizedTest
+    @CsvSource({
+            "ai_threads, context_checkpoint_json",
+            "ai_turns, answer_to_question_id",
+            "ai_user_input_requests, confirmation_consumed_at",
+            "puppets, payload_key",
+            "ai_operation_assessments, arguments_json",
+            "scan_tasks, error_message",
+            "scan_tasks, stage_json",
+            "scan_endpoint_results, fingerprint_json",
+            "scan_endpoint_results, response_size"
+    })
+    void rejectsMissingColumnsWithoutMigrating(String table, String column) throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("missing-checkpoint.db"));
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("missing-column.db"));
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate(
-                        "ALTER TABLE ai_threads DROP COLUMN context_checkpoint_json");
+                statement.executeUpdate("ALTER TABLE " + table + " DROP COLUMN " + column);
             }
         }
 
-        new DatabaseInitializer(dataSource).run();
-
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new DatabaseInitializer(dataSource).run());
+        assertTrue(error.getMessage().contains(table));
+        assertTrue(error.getMessage().contains(column));
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM pragma_table_info('ai_threads') "
-                            + "WHERE name='context_checkpoint_json'"));
-        }
-    }
-
-    @Test
-    void addsMissingOperationAssessmentArgumentsColumn() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("missing-assessment-arguments.db"));
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("ALTER TABLE ai_operation_assessments DROP COLUMN arguments_json");
-            }
-        }
-
-        new DatabaseInitializer(dataSource).run();
-
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM pragma_table_info('ai_operation_assessments') "
-                            + "WHERE name='arguments_json'"));
-        }
-    }
-
-    @Test
-    void upgradesScanSchemaBeforeTaskRecoveryAndCanRunTwice() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("old-scan-schema.db"));
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("ALTER TABLE scan_tasks DROP COLUMN error_message");
-                statement.executeUpdate("ALTER TABLE scan_tasks DROP COLUMN stage_json");
-                statement.executeUpdate("ALTER TABLE scan_endpoint_results DROP COLUMN fingerprint_json");
-                statement.executeUpdate("ALTER TABLE scan_endpoint_results DROP COLUMN response_size");
-                statement.executeUpdate("DROP TABLE scan_fingerprint_results");
-                statement.executeUpdate("""
-                        INSERT INTO scan_tasks (task_id, session_id, name, created_at, updated_at)
-                        VALUES ('old-task', 'session', 'existing task', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                        """);
-            }
-            // Spring SQL initialization creates new tables before the initializer upgrades existing ones.
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
-
-        DatabaseInitializer initializer = new DatabaseInitializer(dataSource);
-        initializer.run();
-        initializer.run();
-        new NetworkProbeResultStore(dataSource, new ObjectMapper()).markInterruptedTasks();
-
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM pragma_table_info('scan_tasks') "
-                    + "WHERE name IN ('error_message', 'stage_json')"));
-            assertEquals(2, scalar(statement, "SELECT COUNT(*) FROM pragma_table_info('scan_endpoint_results') "
-                    + "WHERE name IN ('fingerprint_json', 'response_size')"));
-            assertEquals(1, scalar(statement, "SELECT COUNT(*) FROM sqlite_master "
-                    + "WHERE type='index' AND name='idx_scan_fingerprint_endpoint'"));
-            assertEquals(1, scalar(statement, "SELECT COUNT(*) FROM scan_tasks "
-                    + "WHERE task_id='old-task' AND name='existing task' AND status='FAILED' "
-                    + "AND error_message IS NOT NULL"));
+            assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM pragma_table_info('"
+                    + table + "') WHERE name='" + column + "'"));
         }
     }
 

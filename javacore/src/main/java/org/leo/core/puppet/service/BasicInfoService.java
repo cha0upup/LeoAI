@@ -32,13 +32,13 @@ public class BasicInfoService extends ComponentService {
         for (Object value : (List<?>) fileSystemsValue) {
             if (!(value instanceof Map)) continue;
             Map<?, ?> source = (Map<?, ?>) value;
-            long total = number(source.get("totalBytes"), number(source.get("TotalSpaceMB"), 0L) * 1024L * 1024L);
-            long free = number(source.get("freeBytes"), number(source.get("UsableSpaceMB"), 0L) * 1024L * 1024L);
+            long total = number(source.get("totalBytes"), 0L);
+            long free = number(source.get("freeBytes"), 0L);
             long used = Math.max(0L, total - free);
             Map<String, Object> disk = new HashMap<String, Object>();
-            disk.put("Name", text(source.get("Name"), text(source.get("name"), text(source.get("mount"), "-"))));
-            disk.put("Root", text(source.get("Root"), text(source.get("mount"), "-")));
-            disk.put("Type", text(source.get("Type"), text(source.get("fsType"), "File System")));
+            disk.put("Name", text(source.get("name"), text(source.get("mount"), "-")));
+            disk.put("Root", text(source.get("mount"), "-"));
+            disk.put("Type", text(source.get("fsType"), "File System"));
             disk.put("TotalSpaceMB", Long.valueOf(total / 1024L / 1024L));
             disk.put("UsableSpaceMB", Long.valueOf(free / 1024L / 1024L));
             disk.put("UsedSpaceMB", Long.valueOf(used / 1024L / 1024L));

@@ -1,9 +1,6 @@
 package org.leo.core.session;
 
 import org.leo.core.config.LeoConfig;
-import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.AiRuntimeStats;
-import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.HostScopedCapable;
@@ -21,7 +18,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -189,60 +185,6 @@ public class PuppetNodeSession {
                     aiThreads.remove(t.getThreadId());
                     t.stop();
                 });
-    }
-
-    // ── 活跃线程委托方法 ────────────────────────────────────
-
-    /** 获取活跃线程的 SSE 事件队列。 */
-    public LinkedBlockingQueue<AiSseEvent> getAiSseEventQueue() {
-        AiThread t = getActiveThread();
-        return t != null ? t.getSseEventQueue() : new LinkedBlockingQueue<>();
-    }
-
-    /** 获取活跃线程的运行统计。 */
-    public AiRuntimeStats getAiRuntimeStats() {
-        AiThread t = getActiveThread();
-        return t != null ? t.getRuntimeStats() : new AiRuntimeStats();
-    }
-
-    /** 获取活跃线程的执行策略。 */
-    public AiExecutionPolicy getAiExecutionPolicy() {
-        AiThread t = getActiveThread();
-        return t != null ? t.getExecutionPolicy() : AiExecutionPolicy.defaultPolicy();
-    }
-
-    /** 设置活跃线程的执行策略。 */
-    public void setAiExecutionPolicy(AiExecutionPolicy policy) {
-        AiThread t = getActiveThread();
-        if (t != null) t.setExecutionPolicy(policy);
-    }
-
-    /** 活跃线程轮次计数 +1，达到阈值时返回警告文本。 */
-    public String incrementAndCheckAiTurnCount() {
-        AiThread t = getActiveThread();
-        return t != null ? t.incrementAndCheckTurnCount() : null;
-    }
-
-    /** 向活跃线程的 SSE 队列推送系统 warn 消息。 */
-    public void offerSystemWarn(String message) {
-        AiThread t = getActiveThread();
-        if (t != null) t.offerSystemWarn(message);
-    }
-
-    /**
-     * 重置活跃线程的 AI 状态（停止执行、清空队列、重置统计）。
-     */
-    public synchronized void resetAiState() {
-        AiThread t = getActiveThread();
-        if (t != null) {
-            t.stop();
-            t.getSseEventQueue().clear();
-            t.resetRuntimeStats();
-            t.setExecutionPolicy(AiExecutionPolicy.defaultPolicy());
-            t.resetTurnCount();
-        }
-        if (aiContextCache != null) aiContextCache.clear();
-        lastActiveTime = System.currentTimeMillis();
     }
 
     // ── 最后活跃时间 ──────────────────────────────────────────────────────────
@@ -423,7 +365,6 @@ public class PuppetNodeSession {
         reconSummaryDigestDirty.set(false);
     }
     public boolean isReconSummaryDigestDirty()           { return reconSummaryDigestDirty.get(); }
-    public void    invalidateReconSummaryDigest()        { reconSummaryDigestDirty.set(true); }
     public boolean hasFreshReconSummaryDigest() {
         return reconSummaryDigest != null && !reconSummaryDigest.isBlank() && !reconSummaryDigestDirty.get();
     }

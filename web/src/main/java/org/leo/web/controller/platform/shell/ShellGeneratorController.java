@@ -234,18 +234,9 @@ public class ShellGeneratorController {
             // 获取必需参数
             String reqDisguiseId = ControllerUtil.getRequiredStringParam(params, "reqDisguiseId");
             String respDisguiseId = ControllerUtil.getRequiredStringParam(params, "respDisguiseId");
-            String serverType = firstNonBlankParam(params, "serverType");
-            if (serverType == null) {
-                return ApiResponse.badRequest("serverType 不能为空");
-            }
-            String shellType = firstNonBlankParam(params, "shellType");
-            if (shellType == null) {
-                return ApiResponse.badRequest("shellType 不能为空");
-            }
-            String packerType = firstNonBlankParam(params, "packerType");
-            if (packerType == null) {
-                return ApiResponse.badRequest("packerType 不能为空");
-            }
+            String serverType = ControllerUtil.getRequiredStringParam(params, "serverType").trim();
+            String shellType = ControllerUtil.getRequiredStringParam(params, "shellType").trim();
+            String packerType = ControllerUtil.getRequiredStringParam(params, "packerType").trim();
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
             String serverVersion = ControllerUtil.getOptionalStringParam(params, "serverVersion");
             String headerName = ControllerUtil.getOptionalStringParam(params, "headerName");
@@ -322,22 +313,6 @@ public class ShellGeneratorController {
         } catch (Exception e) {
             return ApiResponse.error("生成内存马失败: " + e.getMessage());
         }
-    }
-
-    /**
-     * 依次读取多个键，返回第一个非空字符串（trim 后）；均无则返回 null
-     */
-    private static String firstNonBlankParam(HashMap<String, Object> params, String... keys) {
-        if (params == null || keys == null) {
-            return null;
-        }
-        for (String key : keys) {
-            String v = ControllerUtil.getOptionalStringParam(params, key);
-            if (v != null && !v.isBlank()) {
-                return v.trim();
-            }
-        }
-        return null;
     }
 
     // 辅助方法：获取可选的Integer参数

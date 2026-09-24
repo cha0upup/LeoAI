@@ -18,15 +18,16 @@ public final class AiControllerUtil {
 
     /**
      * 安全地向 SseEmitter 发送 error 事件并关闭连接。
-     * 如果发送本身也失败，则直接 completeWithError。
+     * 发送失败或连接已断开时仍尝试结束流。
      */
     public static void safeSendError(SseEmitter emitter, String message) {
         if (emitter == null) return;
         try {
             emitter.send(SseEmitter.event().name("error")
                     .data(message != null ? message : "未知错误"));
-            safeComplete(emitter);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
+            // The client may already have disconnected.
+        } finally {
             safeComplete(emitter);
         }
     }
@@ -41,8 +42,9 @@ public final class AiControllerUtil {
             }
             emitter.send(SseEmitter.event().name("error")
                     .data(message != null ? message : "未知错误"));
-            safeComplete(emitter);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
+            // The client may already have disconnected.
+        } finally {
             safeComplete(emitter);
         }
     }

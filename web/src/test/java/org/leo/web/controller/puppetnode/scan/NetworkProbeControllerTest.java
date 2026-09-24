@@ -30,13 +30,12 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class NetworkProbeControllerTest {
 
     @Test
-    void parsesLegacyAndExplicitStagesFromJson() throws Exception {
+    void requiresExplicitStagesFromJson() throws Exception {
         var mapper = new ObjectMapper();
         var planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(),
                 new NetworkProbeAnalysisService(mock(FingerprintManageService.class)));
-        var legacy = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
-        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"),
-                planner.plan(legacy).stages().stream().map(Enum::name).toList());
+        var missingStages = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]}}", ScanConfig.class);
+        assertThrows(IllegalArgumentException.class, () -> planner.plan(missingStages));
         var explicit = mapper.readValue("{\"targets\":{\"items\":[\"127.0.0.1:80\"]},\"stages\":[\"REACHABILITY\"]}", ScanConfig.class);
         assertEquals(List.of("REACHABILITY"), planner.plan(explicit).stages().stream().map(Enum::name).toList());
     }

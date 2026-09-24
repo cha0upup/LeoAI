@@ -11,7 +11,6 @@ import org.leo.web.dto.platform.session.SessionDtos.OrganizeResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ReconSummaryMutateResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ReconSummaryResponse;
 import org.leo.web.exception.ApiException;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -27,7 +26,6 @@ public class ReconSummaryService {
     private final ReconSummaryDigestService reconSummaryDigestService;
     private final PuppetReconRepository repository;
 
-    @Autowired
     public ReconSummaryService(ReconSummaryOrganizeService reconSummaryOrganizeService,
                                ReconSummaryDigestService reconSummaryDigestService,
                                PuppetReconRepository repository) {

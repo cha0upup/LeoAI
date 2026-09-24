@@ -25,8 +25,6 @@ import java.util.HashMap;
 @RequestMapping("/platform/session")
 public class HostIdController {
 
-    public HostIdController() {}
-
     @PostMapping("/current-host-id")
     public HashMap<String, Object> getCurrentHostId(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");

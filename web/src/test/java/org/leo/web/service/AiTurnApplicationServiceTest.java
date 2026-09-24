@@ -238,7 +238,7 @@ class AiTurnApplicationServiceTest {
                 "turn-1", "thread-1", "running", "client-1",
                 "user-1", "assistant-1", 1L, 2L, null,
                 false, null, scope,
-                command.toJson());
+                command.toJson(), "question-1");
         when(protocol.completeFromRuntime(
                 eq("turn-1"), anyString(), nullable(String.class), eq("lease-1")))
                 .thenAnswer(invocation -> completedTurn(
@@ -259,7 +259,7 @@ class AiTurnApplicationServiceTest {
         return new AiTurnProtocolService.TurnSnapshot(
                 "turn-1", "thread-1", protocolStatus, "client-1",
                 "user-1", "assistant-1", 1L, 2L, 3L,
-                false, errorMessage, AiTurnCommandPayload.SCOPE_PLATFORM, "{}");
+                false, errorMessage, AiTurnCommandPayload.SCOPE_PLATFORM, "{}", null);
     }
 
     private record Fixture(

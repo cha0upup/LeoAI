@@ -3,12 +3,14 @@ package org.leo.service.sql;
 import org.junit.jupiter.api.Test;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.puppet.database.SqlCommand;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -19,14 +21,14 @@ class PuppetNodeSqlServiceResultBoundaryTest {
     void tableMetadataReturnsStructuredRefsWithoutPerTableCountQueries() throws Exception {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         AtomicInteger executions = new AtomicInteger();
-        SqlCapable puppet = (connection, sqlScript) -> {
+        SqlCapable puppet = sqlNode((connection, sqlScript) -> {
             executions.incrementAndGet();
             return Map.of(
                     "code", 200,
                     "rows", List.of(
                             Map.of("name", "orders", "schema_name", "sales"),
                             Map.of("name", "customers", "schema_name", "sales")));
-        };
+        });
 
         Map<String, Object> result = service.getTables(puppet,
                 Map.of("dialect", "postgresql", "connectionMode", "standard",
@@ -45,10 +47,10 @@ class PuppetNodeSqlServiceResultBoundaryTest {
     void skipsCountQueryWhenCallerAlreadyHasPaginationTotal() throws Exception {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         AtomicInteger executions = new AtomicInteger();
-        SqlCapable puppet = (connection, sqlScript) -> {
+        SqlCapable puppet = sqlNode((connection, sqlScript) -> {
             executions.incrementAndGet();
             return Map.of("code", 200, "rows", List.of(Map.of("id", 1)));
-        };
+        });
 
         Map<String, Object> result = service.queryTable(
                 puppet,
@@ -72,7 +74,12 @@ class PuppetNodeSqlServiceResultBoundaryTest {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         SqlCapable puppet = new SqlCapable() {
             @Override
-            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
+            public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) {
+                return Map.of("code", 200, "available", true);
+            }
+
+            @Override
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
                 return Map.of(
                         "code", 200,
                         "columns", List.of(Map.of("name", "value", "label", "value", "type", "TEXT")),
@@ -103,10 +110,10 @@ class PuppetNodeSqlServiceResultBoundaryTest {
     void genericDialectUsesConfiguredHealthCheckAndRejectsStructuredMetadata() throws Exception {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         String[] executedSql = new String[1];
-        SqlCapable puppet = (connection, sqlScript) -> {
-            executedSql[0] = sqlScript;
+        SqlCapable puppet = sqlNode((connection, sqlScript) -> {
+            executedSql[0] = sqlScript.sql();
             return Map.of("code", 200, "rows", List.of(Map.of("status", "ok")));
-        };
+        });
         Map<String, Object> connection = Map.of(
                 "dialect", "generic",
                 "connectionMode", "custom",
@@ -133,11 +140,11 @@ class PuppetNodeSqlServiceResultBoundaryTest {
             @Override
             public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) {
                 inspectedDialect[0] = String.valueOf(connection.get("dialect"));
-                return Map.of("code", 501, "available", true, "msg", "inspection unsupported");
+                return Map.of("code", 200, "available", true);
             }
 
             @Override
-            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
                 executedDialect[0] = connection.getDialect();
                 return Map.of("code", 200, "rows", List.of(Map.of("version", "DM8")));
             }
@@ -158,7 +165,7 @@ class PuppetNodeSqlServiceResultBoundaryTest {
         AtomicBoolean executed = new AtomicBoolean();
         SqlCapable puppet = new SqlCapable() {
             @Override
-            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
                 executed.set(true);
                 return Map.of("code", 200);
             }
@@ -193,7 +200,7 @@ class PuppetNodeSqlServiceResultBoundaryTest {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         SqlCapable missingProvider = new SqlCapable() {
             @Override
-            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
                 throw new AssertionError("provider preflight must stop execution");
             }
 
@@ -210,16 +217,16 @@ class PuppetNodeSqlServiceResultBoundaryTest {
 
         Map<String, Object> connection = Map.of(
                 "dialect", "sqlite", "connectionMode", "standard", "file", ":memory:");
-        SqlCapable authenticationFailure = (spec, sql) -> Map.of(
+        SqlCapable authenticationFailure = sqlNode((spec, sql) -> Map.of(
                 "code", 401, "errorCategory", "AUTHENTICATION_FAILED",
-                "msg", "invalid credentials");
+                "msg", "invalid credentials"));
         Map<String, Object> authenticationResult =
                 service.testConnection(authenticationFailure, connection);
         assertEquals("authentication", authenticationResult.get("failureStage"));
 
-        SqlCapable networkFailure = (spec, sql) -> Map.of(
+        SqlCapable networkFailure = sqlNode((spec, sql) -> Map.of(
                 "code", 503, "errorCategory", "CONNECTION_TIMEOUT",
-                "msg", "connection timed out");
+                "msg", "connection timed out"));
         Map<String, Object> networkResult = service.testConnection(networkFailure, connection);
         assertEquals("network", networkResult.get("failureStage"));
     }
@@ -227,13 +234,13 @@ class PuppetNodeSqlServiceResultBoundaryTest {
     @Test
     void preservesStructuredRuntimeErrorsForTheApiBoundary() {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
-        SqlCapable puppet = (spec, sql) -> Map.of(
+        SqlCapable puppet = sqlNode((spec, sql) -> Map.of(
                 "code", 504,
                 "msg", "statement timed out",
                 "errorCategory", "QUERY_TIMEOUT",
                 "sqlState", "HYT00",
                 "retryable", true,
-                "vendorCode", 17);
+                "vendorCode", 17));
 
         SqlExecutionException error = assertThrows(SqlExecutionException.class,
                 () -> service.executeSql(puppet,
@@ -251,10 +258,10 @@ class PuppetNodeSqlServiceResultBoundaryTest {
     void appliesValidatedRequestLevelQueryTimeoutsWithoutMutatingTheConnection() throws Exception {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         DatabaseConnectionSpec[] captured = new DatabaseConnectionSpec[1];
-        SqlCapable puppet = (spec, sql) -> {
+        SqlCapable puppet = sqlNode((spec, sql) -> {
             captured[0] = spec;
             return Map.of("code", 200, "rows", List.of(Map.of("value", 1)));
-        };
+        });
         Map<String, Object> connection = Map.of(
                 "dialect", "sqlite",
                 "connectionMode", "standard",
@@ -269,4 +276,38 @@ class PuppetNodeSqlServiceResultBoundaryTest {
         assertThrows(IllegalArgumentException.class,
                 () -> service.executeSql(puppet, connection, "SELECT 1", 301));
     }
+
+    @Test
+    void failedRuntimeInspectionStopsBeforeSqlExecution() throws Exception {
+        SqlCapable node = new SqlCapable() {
+            @Override
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
+                throw new AssertionError("failed inspection must stop execution");
+            }
+
+            @Override
+            public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) {
+                return Map.of("code", 501, "msg", "unsupported");
+            }
+        };
+        Map<String, Object> result = new PuppetNodeSqlService(new SqlDialectRegistry()).testConnection(
+                node, Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"));
+        assertEquals(false, result.get("success"));
+        assertEquals("CAPABILITY_INSPECTION_FAILED", result.get("errorCategory"));
+    }
+
+    private static SqlCapable sqlNode(BiFunction<DatabaseConnectionSpec, SqlCommand, Map<String, Object>> execute) {
+        return new SqlCapable() {
+            @Override
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) {
+                return execute.apply(connection, command);
+            }
+
+            @Override
+            public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) {
+                return Map.of("code", 200, "available", true);
+            }
+        };
+    }
+
 }

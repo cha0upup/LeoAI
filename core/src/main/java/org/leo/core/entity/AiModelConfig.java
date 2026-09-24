@@ -5,7 +5,7 @@ package org.leo.core.entity;
  *
  * <p>任意时刻只有一条 {@code is_active=1}，主 Agent、子 Agent和摘要任务使用同一条记录。
  * {@link #thinkingEnabled} 三态：1=显式启用 reasoning，0=显式禁用，null=按
- * {@link ModelDefaults} 推断。
+ * 模型能力库决定。
  */
 public class AiModelConfig {
 

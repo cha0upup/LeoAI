@@ -31,11 +31,12 @@ class AiModelConfigServiceTest {
     @Mock private AiModelCapabilityMapper capabilityMapper;
     @Mock private AiSecretCryptoService secretCryptoService;
 
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
     private AiModelConfigService service;
 
     @BeforeEach
     void setUp() {
-        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, secretCryptoService);
+        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, secretCryptoService, events);
     }
 
     @Test
@@ -69,7 +70,7 @@ class AiModelConfigServiceTest {
     @Test
     void repeatedProviderReadsDoNotDecryptTheMyBatisCachedEntityInPlace() {
         AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
-        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto);
+        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto, events);
         AiProvider stored = new AiProvider();
         stored.setId(1);
         stored.setApiKey(crypto.encrypt("sk-provider"));
@@ -113,24 +114,30 @@ class AiModelConfigServiceTest {
     @Test
     void appliesOnlyConclusiveProbeFlagsToNewCapability() {
         AiModelConfig model = new AiModelConfig();
+        model.setProviderId(1);
         model.setModel("custom-model");
         model.setProviderKey("custom");
         when(capabilityMapper.findByModelName("custom-model")).thenReturn(null);
 
-        service.applyProbeResult(model, Map.of(
+        AiModelCapability report = service.applyProbeResult(model, Map.of(
                 "textGeneration", true,
                 "streaming", false,
                 "functionCalling", true));
 
         ArgumentCaptor<AiModelCapability> captured = ArgumentCaptor.forClass(AiModelCapability.class);
-        verify(capabilityMapper).insert(captured.capture());
+        verify(capabilityMapper).saveObservation(org.mockito.ArgumentMatchers.eq(1), org.mockito.ArgumentMatchers.eq("chat_completions"),
+                org.mockito.ArgumentMatchers.eq("custom-model"), org.mockito.ArgumentMatchers.anyString(), captured.capture());
         AiModelCapability row = captured.getValue();
-        assertEquals("probe", row.getSource());
+        assertEquals("provider_probe", report.getSource());
         assertEquals(1, row.getSupportsTextGeneration());
         assertEquals(0, row.getSupportsStreaming());
         assertEquals(1, row.getSupportsFunctionCalling());
         // 没有证据的能力保持保守默认，不因探测不确定而被误判。
-        assertEquals(0, row.getSupportsReasoning());
-        assertEquals(0, row.getSupportsStructuredOutput());
+        assertNull(row.getSupportsReasoning());
+        assertNull(row.getSupportsStructuredOutput());
+        assertEquals(0, report.getSupportsReasoning());
+        assertEquals(0, report.getSupportsStructuredOutput());
+        verify(capabilityMapper, org.mockito.Mockito.never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(capabilityMapper, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.any());
     }
 }

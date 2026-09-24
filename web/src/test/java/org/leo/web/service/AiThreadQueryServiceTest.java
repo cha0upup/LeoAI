@@ -44,14 +44,15 @@ class AiThreadQueryServiceTest {
         when(store.findLatestTurnStartSeq("thread")).thenReturn(persistedStart);
         when(store.findLastEventSeq("thread")).thenReturn(50L);
         when(protocol.snapshotThread("thread", "running"))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("running", true, null, List.of()));
+                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("running", true, null, List.of(), null));
 
         Map<String, Object> data = queries.events("thread", runtime, "running", cursor, null);
 
         verify(store).listEventsAfter("thread", expectedCursor, 200);
         if (cursor != null && cursor > 0) verify(store, never()).findLatestTurnStartSeq("thread");
         assertEquals(50L, data.get("lastSeq"));
-        assertEquals("running", data.get("status"));
+        assertEquals("running", data.get("runStatus"));
+        assertFalse(data.containsKey("status"));
         assertEquals(true, data.get("executing"));
     }
 
@@ -71,8 +72,8 @@ class AiThreadQueryServiceTest {
         Map<String, Object> data = queries.events("thread", runtime, "cancelled", 2L, 10);
 
         assertEquals(Math.max(memorySequence, 50L), data.get("lastSeq"));
-        assertEquals("waiting_for_user", data.get("status"));
         assertEquals("waiting_for_user", data.get("runStatus"));
+        assertFalse(data.containsKey("status"));
         assertEquals(false, data.get("executing"));
         assertEquals("user stopped", data.get("stopReason"));
         assertEquals(Map.of("id", "question-1"), data.get("pendingUserInput"));
@@ -88,7 +89,7 @@ class AiThreadQueryServiceTest {
         when(store.findLastEventSeq("thread")).thenReturn(42L);
         when(store.listEventsAfter("thread", 40L, 200)).thenReturn(List.of(tagged, untagged));
         when(protocol.snapshotThread("thread", "completed"))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("completed", false, null, List.of()));
+                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("completed", false, null, List.of(), null));
 
         Map<String, Object> data = queries.events("thread", null, "completed", null, null);
 
@@ -97,7 +98,8 @@ class AiThreadQueryServiceTest {
                         "subagentInvocationId", "subagent-1", "turnId", "turn-1", "itemId", "item-1", "runId", "run-1"),
                 Map.of("seq", 42L, "timestamp", 101L, "name", "delta", "data", "hello")), data.get("events"));
         assertEquals(42L, data.get("lastSeq"));
-        assertEquals("completed", data.get("status"));
+        assertEquals("completed", data.get("runStatus"));
+        assertFalse(data.containsKey("status"));
         assertFalse((boolean) data.get("executing"));
         assertTrue(data.containsKey("stopReason"));
         assertNull(data.get("stopReason"));
@@ -106,16 +108,15 @@ class AiThreadQueryServiceTest {
     }
 
     @Test
-    void preservesNullStatusForHistoricalThreadsWithoutRuntimeStatus() {
+    void omitsThreadStatusForHistoricalThreadsWithoutRuntimeStatus() {
         when(protocol.snapshotThread("thread", null))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot(null, false, null, List.of()));
+                .thenReturn(new AiTurnProtocolService.ThreadSnapshot(null, false, null, List.of(), null));
 
         Map<String, Object> data = queries.events("thread", null, null, null, null);
 
         verify(protocol).snapshotThread("thread", null);
-        assertTrue(data.containsKey("status"));
         assertTrue(data.containsKey("runStatus"));
-        assertNull(data.get("status"));
+        assertFalse(data.containsKey("status"));
         assertNull(data.get("runStatus"));
     }
 }

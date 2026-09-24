@@ -8,6 +8,21 @@ class AiErrorClassifierTest {
 
     private final AiErrorClassifier classifier = new AiErrorClassifier();
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "HTTP 503 Service Unavailable", "status code: 502", "500 upstream failure", "HTTP/1.1 504 Gateway Timeout"
+    })
+    void classifiesServerFailuresAsTransient(String message) {
+        assertEquals(AiErrorClassifier.CATEGORY_SERVER_ERROR, classifier.classify(message).category());
+    }
+
+    @Test
+    void usesHttpStatusWhenResponseBodyDoesNotDescribeTheFailure() {
+        var error = new RuntimeException("SDK failed",
+                new dev.langchain4j.exception.HttpException(503, "maintenance"));
+        assertEquals(AiErrorClassifier.CATEGORY_SERVER_ERROR, classifier.classify(error).category());
+    }
+
     @Test
     void classifiesThinkingModeCompatibilityErrors_openai() {
         // DeepSeek / OpenAI-compatible protocol

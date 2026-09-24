@@ -1,7 +1,6 @@
 package org.leo.web.security;
 
 import org.leo.service.config.SystemConfigService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -20,7 +19,6 @@ public class LoginAttemptService {
     private final LongSupplier nowMillis;
     private final ConcurrentHashMap<String, AttemptState> attempts = new ConcurrentHashMap<>();
 
-    @Autowired
     public LoginAttemptService(SystemConfigService configService) {
         this(configService, System::currentTimeMillis);
     }

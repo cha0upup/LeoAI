@@ -7,7 +7,6 @@ import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.dao.mapper.PuppetMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -40,7 +39,6 @@ public class PuppetService {
 
     private final PuppetMapper puppetMapper;
 
-    @Autowired
     public PuppetService(PuppetMapper puppetMapper) {
         this.puppetMapper = puppetMapper;
     }
@@ -50,12 +48,6 @@ public class PuppetService {
     public Puppet findPuppetById(String id) {
         if (id == null || id.isBlank()) return null;
         return puppetMapper.findPuppetById(id.trim());
-    }
-
-    public List<Puppet> findPuppetByCreateUserId(String createUserId) {
-        if (createUserId == null || createUserId.isBlank()) return new ArrayList<>();
-        List<Puppet> list = puppetMapper.findPuppetByCreateUser(createUserId.trim());
-        return list != null ? list : new ArrayList<>();
     }
 
     public List<Puppet> findPuppetByParentPuppetId(String puppetId) {

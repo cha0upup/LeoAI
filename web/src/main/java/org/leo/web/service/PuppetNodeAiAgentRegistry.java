@@ -2,7 +2,6 @@ package org.leo.web.service;
 
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PuppetNodeAgent;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.core.entity.AiModelConfig;
@@ -21,18 +20,15 @@ import java.util.function.Consumer;
 public class PuppetNodeAiAgentRegistry {
 
     private final AiAgentFactory agentFactory;
-    private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider modelProvider;
     private final AiModelFailoverService failoverService;
     private final ConcurrentMap<String, Runtime> agents = new ConcurrentHashMap<>();
     private final Consumer<String> sessionDestroyListener = this::evictSession;
 
     public PuppetNodeAiAgentRegistry(AiAgentFactory agentFactory,
-                                     AiModelConfigService modelConfigService,
                                      DynamicModelProvider modelProvider,
                                      AiModelFailoverService failoverService) {
         this.agentFactory = agentFactory;
-        this.modelConfigService = modelConfigService;
         this.modelProvider = modelProvider;
         this.failoverService = failoverService;
     }
@@ -70,7 +66,7 @@ public class PuppetNodeAiAgentRegistry {
                     modelRuntime.streamingModel(),
                     modelRuntime.chatModel(),
                     modelRuntime.supportsFunctionCalling(),
-                    modelConfigService.getContextWindowTokens(effective));
+                    modelRuntime.contextWindowTokens());
             return new Runtime(
                     runtimeKey,
                     agent,

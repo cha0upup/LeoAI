@@ -9,7 +9,7 @@ import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -26,7 +26,7 @@ public class JavaPluginTools {
     @Tool("列出当前平台侧已加载的插件。pluginType 可选；为空返回全部插件。适用于调用前查看 pluginId、runtime、参数示例和备注。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public ArrayList<Plugin> listJavaPlugins(
+    public List<Plugin> listJavaPlugins(
             @P(value = "可选 pluginType", required = false) String pluginType) {
         return pluginType == null || pluginType.isBlank()
                 ? pluginExecutionService.getAllPlugins()

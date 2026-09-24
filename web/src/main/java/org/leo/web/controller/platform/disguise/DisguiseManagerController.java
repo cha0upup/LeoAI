@@ -11,7 +11,6 @@ import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.util.DownloadHeaders;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -40,7 +39,6 @@ public class DisguiseManagerController {
 
     private final DisguiseService disguiseService;
 
-    @Autowired
     public DisguiseManagerController(DisguiseService disguiseService) {
         this.disguiseService = disguiseService;
     }

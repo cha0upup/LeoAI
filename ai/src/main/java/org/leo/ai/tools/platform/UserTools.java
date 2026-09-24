@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.leo.ai.tools.platform.PlatformToolArguments.*;
+
 /**
  * 平台用户管理 AI 工具。
  *
@@ -197,27 +199,6 @@ public class UserTools {
         result.put("userId",   userId);
         result.put("userName", userName);
         return result;
-    }
-
-    private String requireNonBlank(String value, String message) {
-        String t = trimToNull(value);
-        if (t == null) throw new IllegalArgumentException(message);
-        return t;
-    }
-
-    private String defaultIfBlank(String value, String def) {
-        String t = trimToNull(value);
-        return t == null ? def : t;
-    }
-
-    private String trimToNull(String value) {
-        if (value == null) return null;
-        String t = value.trim();
-        return t.isEmpty() ? null : t;
-    }
-
-    private boolean isBlank(String value) {
-        return trimToNull(value) == null;
     }
 
     private Integer normalizeStatus(Integer status, Integer fallback) {

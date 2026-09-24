@@ -37,7 +37,12 @@ import static org.mockito.Mockito.when;
 class AiConversationStoreServiceTest {
 
     private final AiConversationMapper mapper = mock(AiConversationMapper.class);
-    private final AiConversationStoreService service = new AiConversationStoreService(mapper);
+    private final AiEventJournalRepository eventJournal = new AiEventJournalRepository(mapper);
+    private final AiConversationStoreService service = new AiConversationStoreService(
+            mapper, eventJournal, new AiExecutionLeaseRepository(mapper, eventJournal),
+            new AiTurnTerminalRepository(mapper), new AiProtocolTurnRepository(mapper),
+            new AiUserInputRepository(mapper), new AiSubagentInvocationRepository(mapper),
+            new AiMessageRepository(mapper), new AiContextCheckpointRepository(mapper));
 
     @Test
     void storesAndRestoresVersionedContextCheckpointMetadata() {

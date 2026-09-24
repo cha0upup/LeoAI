@@ -39,7 +39,6 @@ public final class PhpRpcClient implements AutoCloseable {
     private final Communication communication;
     private final List<RequestLayer> requestLayers;
     private final List<ResponseLayer> responseLayers;
-    private final PhpPayloadCodec payloadCodec;
     private final Map<String, PhpPayloadCodec> layerPayloadCodecs = new ConcurrentHashMap<>();
     private volatile String hostId;
     /** 最大请求总数，包含首次请求。 */
@@ -56,12 +55,10 @@ public final class PhpRpcClient implements AutoCloseable {
 
     public PhpRpcClient(Communication communication,
                         List<RequestLayer> requestLayers,
-                        List<ResponseLayer> responseLayers,
-                        String payloadKey) {
+                        List<ResponseLayer> responseLayers) {
         this.communication = communication;
         this.requestLayers = requestLayers == null ? List.of() : new ArrayList<>(requestLayers);
         this.responseLayers = responseLayers == null ? List.of() : new ArrayList<>(responseLayers);
-        this.payloadCodec = new PhpPayloadCodec(payloadKey);
     }
 
     public void setHostId(String hostId) {
@@ -268,10 +265,7 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     private PhpPayloadCodec payloadCodec(String layerPayloadKey) {
-        if (layerPayloadKey == null || layerPayloadKey.trim().isEmpty()) {
-            return payloadCodec;
-        }
-        return layerPayloadCodecs.computeIfAbsent(layerPayloadKey.trim(), PhpPayloadCodec::new);
+        return layerPayloadCodecs.computeIfAbsent(layerPayloadKey, PhpPayloadCodec::new);
     }
 
     private record EncodedPayload(byte[] data, List<String> requestIds) { }

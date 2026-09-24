@@ -10,7 +10,6 @@ import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.core.util.json.JsonUtil;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -40,7 +39,6 @@ public class DisguiseService {
     private final DisguiseManager disguiseManager;
     private final List<DisguiseRuntimeValidator> runtimeValidators;
 
-    @Autowired
     public DisguiseService(DisguiseManager disguiseManager,
                            List<DisguiseRuntimeValidator> runtimeValidators) {
         this.disguiseManager = disguiseManager;

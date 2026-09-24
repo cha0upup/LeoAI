@@ -4,11 +4,7 @@ import org.leo.core.entity.Disguise;
 
 public class ResponseLayer {
     private Disguise disguise;
-    private String payloadKey;
-
-    public ResponseLayer(Disguise disguise) {
-        this(disguise, null);
-    }
+    private final String payloadKey;
 
     public ResponseLayer(Disguise disguise, String payloadKey) {
         this.disguise = disguise;
@@ -23,13 +19,9 @@ public class ResponseLayer {
         this.disguise = disguise;
     }
 
-    /** PayloadCodec key for this hop; null keeps legacy single-layer fallback behavior. */
+    /** Explicit PayloadCodec key for this hop. */
     public String getPayloadKey() {
         return payloadKey;
-    }
-
-    public void setPayloadKey(String payloadKey) {
-        this.payloadKey = normalizePayloadKey(payloadKey);
     }
 
     /** Removes the traffic wrapper and returns the opaque payload bytes. */
@@ -41,8 +33,9 @@ public class ResponseLayer {
     }
 
     private static String normalizePayloadKey(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("传输层 payloadKey 不能为空");
+        }
+        return value.trim();
     }
 }

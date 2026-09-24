@@ -1,7 +1,6 @@
 package org.leo.ai.util;
 
 import org.leo.ai.agent.AiToolException;
-import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
@@ -96,9 +95,5 @@ public class PuppetNodeSessionUtils {
 
     public static void removeAiContextByPrefix(String sessionId, String prefix) {
         getSession(sessionId).removeAiContextByPrefix(prefix);
-    }
-
-    public static AiRuntimeStats getAiRuntimeStats(String sessionId) {
-        return getSession(sessionId).getAiRuntimeStats();
     }
 }

@@ -96,6 +96,6 @@ class AiTurnQueueServiceTest {
         return new AiTurnProtocolService.TurnSnapshot(
                 id, "thread-1", "running", "client-1",
                 "user-1", "assistant-1", 1L, 2L, null,
-                false, null, AiTurnCommandPayload.SCOPE_PLATFORM, "{}");
+                false, null, AiTurnCommandPayload.SCOPE_PLATFORM, "{}", null);
     }
 }

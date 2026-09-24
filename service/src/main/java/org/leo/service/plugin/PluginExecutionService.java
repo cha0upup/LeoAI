@@ -10,7 +10,7 @@ import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.List;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -82,11 +82,11 @@ public class PluginExecutionService {
         return plugin;
     }
 
-    public ArrayList<Plugin> getAllPlugins() {
+    public List<Plugin> getAllPlugins() {
         return PluginManager.getInstance().getPluginAsList();
     }
 
-    public ArrayList<Plugin> getPluginsByType(String pluginType) {
+    public List<Plugin> getPluginsByType(String pluginType) {
         return PluginManager.getInstance().getPluginAsListByType(
                 requireNonBlank(pluginType, "pluginType不能为空"));
     }

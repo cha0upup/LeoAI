@@ -27,10 +27,6 @@ public class SkillActivationTools {
     private final String scope;
     private final AgentRuntimeResolver runtimeResolver;
 
-    public SkillActivationTools(SkillRegistryService skillRegistry, String scope) {
-        this(skillRegistry, scope, null);
-    }
-
     public SkillActivationTools(SkillRegistryService skillRegistry, String scope,
                                 AgentRuntimeResolver runtimeResolver) {
         this.skillRegistry = skillRegistry;
@@ -79,8 +75,7 @@ public class SkillActivationTools {
                     "skill manifest 校验失败，不能激活：name=" + normalizedName + "。",
                     "停止执行该 skill，并让管理员通过 Skill 健康检查修复 manifest。");
         }
-        AiRuntimeState runtime = runtimeResolver != null
-                ? runtimeResolver.resolveCurrent() : null;
+        AiRuntimeState runtime = runtimeResolver.resolveCurrent();
         if (SkillRegistryService.SCOPE_PLATFORM.equals(scope)
                 && !PlatformSkillAccessPolicy.mayUse(runtime, descriptor.requiredTools())) {
             throw new SecurityException("当前身份无权激活该 skill: " + normalizedName);

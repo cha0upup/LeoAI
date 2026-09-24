@@ -10,11 +10,7 @@ public class RequestLayer {
     private String url;
     private Map<String, String> headers;
     private Disguise disguise;
-    private String payloadKey;
-
-    public RequestLayer(String url, Map<String, String> headers, Disguise disguise) {
-        this(url, headers, disguise, null);
-    }
+    private final String payloadKey;
 
     public RequestLayer(String url, Map<String, String> headers, Disguise disguise,
                         String payloadKey) {
@@ -36,13 +32,9 @@ public class RequestLayer {
         return disguise;
     }
 
-    /** PayloadCodec key for this hop; null keeps legacy single-layer fallback behavior. */
+    /** Explicit PayloadCodec key for this hop. */
     public String getPayloadKey() {
         return payloadKey;
-    }
-
-    public void setPayloadKey(String payloadKey) {
-        this.payloadKey = normalizePayloadKey(payloadKey);
     }
 
     /** Wraps already encoded payload bytes with the traffic-only disguise. */
@@ -98,14 +90,14 @@ public class RequestLayer {
 
     private static String canonicalHeaderName(String name) {
         if (name == null || name.isBlank()) return null;
-        String trimmed = name.trim();
-        return "ContentType".equalsIgnoreCase(trimmed) ? "Content-Type" : trimmed;
+        return name.trim();
     }
 
     private static String normalizePayloadKey(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("传输层 payloadKey 不能为空");
+        }
+        return value.trim();
     }
 
     private static boolean containsIgnoreCase(Map<String, String> headers, String name) {

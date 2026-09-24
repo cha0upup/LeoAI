@@ -43,7 +43,6 @@ public class ComponentService {
 
     private List<RequestLayer> requestLayers = new ArrayList<>();
     private List<ResponseLayer> responseLayers = new ArrayList<>();
-    private PayloadCodec payloadCodec;
     private final Map<String, PayloadCodec> layerPayloadCodecs = new ConcurrentHashMap<>();
 
     protected String hostId;
@@ -82,11 +81,6 @@ public class ComponentService {
     // ================= 初始化 =================
 
 
-//    public ComponentService(Communication communication) {
-//        this.communication = communication;
-//    }
-
-
     public String getHostId() {
         return hostId;
     }
@@ -111,10 +105,6 @@ public class ComponentService {
     public void setResponseLayers(List<ResponseLayer> responseLayers) {
         this.responseLayers = responseLayers;
         this.pipelineInitialized = false;
-    }
-
-    public void setPayloadCodec(PayloadCodec payloadCodec) {
-        this.payloadCodec = payloadCodec;
     }
 
     public void setUrlStrategy(UrlStrategy urlStrategy) {
@@ -576,18 +566,8 @@ public class ComponentService {
         return payloadCodec(layer.getPayloadKey()).decode(layer.decodeTraffic(body));
     }
 
-    private PayloadCodec requirePayloadCodec() {
-        if (payloadCodec == null) {
-            throw new IllegalStateException("Java PayloadCodec 未配置");
-        }
-        return payloadCodec;
-    }
-
     private PayloadCodec payloadCodec(String layerPayloadKey) {
-        if (layerPayloadKey == null || layerPayloadKey.trim().isEmpty()) {
-            return requirePayloadCodec();
-        }
-        return layerPayloadCodecs.computeIfAbsent(layerPayloadKey.trim(), PayloadCodec::new);
+        return layerPayloadCodecs.computeIfAbsent(layerPayloadKey, PayloadCodec::new);
     }
 
     private record EncodedPayload(byte[] data, List<String> requestIds) { }

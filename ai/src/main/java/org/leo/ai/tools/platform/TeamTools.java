@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.leo.ai.tools.platform.PlatformToolArguments.*;
+
 /**
  * 平台团队管理 AI 工具。
  *
@@ -180,26 +182,5 @@ public class TeamTools {
         result.put("teamId",   teamId);
         result.put("teamName", teamName);
         return result;
-    }
-
-    private String requireNonBlank(String value, String message) {
-        String t = trimToNull(value);
-        if (t == null) throw new IllegalArgumentException(message);
-        return t;
-    }
-
-    private String defaultIfBlank(String value, String def) {
-        String t = trimToNull(value);
-        return t == null ? def : t;
-    }
-
-    private String trimToNull(String value) {
-        if (value == null) return null;
-        String t = value.trim();
-        return t.isEmpty() ? null : t;
-    }
-
-    private boolean isBlank(String value) {
-        return trimToNull(value) == null;
     }
 }

@@ -7,7 +7,6 @@ import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.service.PuppetService;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.exception.ApiException;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -32,7 +31,6 @@ public class SessionReportService {
     private final PuppetHostCacheRepository hostCacheRepository;
     private final PuppetReconRepository reconRepository;
 
-    @Autowired
     public SessionReportService(PuppetService puppetService, PuppetHostCacheRepository hostCacheRepository,
                                 PuppetReconRepository reconRepository) {
         this.puppetService = puppetService;

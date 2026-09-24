@@ -20,9 +20,19 @@ public class AiErrorClassifier {
     public static final String CATEGORY_TIMEOUT = "timeout";
     public static final String CATEGORY_NETWORK = "network";
     public static final String CATEGORY_MALFORMED_RESPONSE = "malformed_response";
+    public static final String CATEGORY_SERVER_ERROR = "server_error";
     public static final String CATEGORY_UNKNOWN = "unknown";
 
     public Classification classify(Throwable error) {
+        for (Throwable cursor = error; cursor != null; cursor = cursor.getCause()) {
+            if (cursor instanceof dev.langchain4j.exception.HttpException http
+                    && http.statusCode() >= 500 && http.statusCode() <= 599) {
+                return classifyCategory(CATEGORY_SERVER_ERROR, rootMessage(error));
+            }
+            if (cursor instanceof dev.langchain4j.exception.InternalServerException) {
+                return classifyCategory(CATEGORY_SERVER_ERROR, rootMessage(error));
+            }
+        }
         return classify(rootMessage(error));
     }
 
@@ -30,7 +40,12 @@ public class AiErrorClassifier {
         String text = message == null ? "" : message.trim();
         String lower = text.toLowerCase(Locale.ROOT);
         String category;
-        if (isThinkingPassbackError(lower)) {
+        if (lower.matches("(?s).*(?:\\bhttp(?:/\\d(?:\\.\\d)?)?\\s+|\\bstatus(?:\\s+code)?[\\s:=]+)5\\d\\d\\b.*")
+                || lower.matches("(?s)^5\\d\\d\\b.*")
+                || lower.contains("service unavailable") || lower.contains("bad gateway")
+                || lower.contains("internal server error")) {
+            category = CATEGORY_SERVER_ERROR;
+        } else if (isThinkingPassbackError(lower)) {
             category = CATEGORY_THINKING_MODE;
         } else if ((lower.contains("responses api") || lower.contains("/v1/responses"))
                 && (lower.contains("不支持") || lower.contains("unsupported")
@@ -116,6 +131,7 @@ public class AiErrorClassifier {
             case CATEGORY_MODEL_NOT_FOUND -> "模型不可用，请检查模型名称";
             case CATEGORY_UNSUPPORTED_PARAMETER -> "接口不支持当前请求参数，请检查 Thinking、Extra Body 或协议路径";
             case CATEGORY_CONTEXT_LIMIT -> "上下文或输出 token 超出模型限制";
+            case CATEGORY_SERVER_ERROR -> "模型服务暂时不可用，请稍后重试或切换通道";
             case CATEGORY_RATE_LIMIT -> "接口限流，请稍后重试或切换通道";
             case CATEGORY_TIMEOUT -> "请求超时，请检查网络、Base URL 或网关状态";
             case CATEGORY_NETWORK -> "网络连接失败，请检查 Base URL、代理或出网限制";
@@ -147,7 +163,7 @@ public class AiErrorClassifier {
             case CATEGORY_RATE_LIMIT -> List.of(
                     new Action("retry_later", "稍后重试"),
                     new Action("switch_channel", "切换备用通道"));
-            case CATEGORY_TIMEOUT, CATEGORY_NETWORK -> List.of(
+            case CATEGORY_SERVER_ERROR, CATEGORY_TIMEOUT, CATEGORY_NETWORK -> List.of(
                     new Action("check_network", "检查 Base URL、代理和出网限制"),
                     new Action("probe_channel", "重新测试连接"));
             case CATEGORY_MALFORMED_RESPONSE -> List.of(

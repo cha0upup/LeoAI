@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -64,7 +63,7 @@ public class AiModelCapabilityProbeService {
         List<ProbeItem> items = new ArrayList<>();
         DynamicModelProvider.ModelRuntime runtime;
         try {
-            runtime = dynamicModelProvider.buildRuntime(config);
+            runtime = dynamicModelProvider.buildProbeRuntime(config, false);
         } catch (Exception error) {
             items.add(failure("textGeneration", error, false));
             items.add(ProbeItem.skipped("streaming", "基础文本调用未通过，未继续探测"));
@@ -153,6 +152,9 @@ public class AiModelCapabilityProbeService {
             return ProbeItem.inconclusive("streaming", "探测被中断", System.currentTimeMillis() - startedAt);
         } catch (Exception error) {
             return failure("streaming", error, true, startedAt);
+        } finally {
+            StreamingHandle handle = handleRef.get();
+            if (completed.getCount() > 0 && handle != null) handle.cancel();
         }
     }
 
@@ -259,9 +261,11 @@ public class AiModelCapabilityProbeService {
                 () -> runtime.chatModel().chat(request));
         try {
             return future.get(BLOCKING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (TimeoutException error) {
-            future.cancel(true);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
             throw error;
+        } finally {
+            if (!future.isDone()) future.cancel(true);
         }
     }
 

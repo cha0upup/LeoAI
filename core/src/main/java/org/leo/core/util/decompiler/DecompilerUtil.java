@@ -102,19 +102,4 @@ public class DecompilerUtil {
         }
     }
 
-    /**
-     * 验证字节码是否有效
-     */
-    public static boolean validateBytecode(byte[] bytecode) {
-        if (bytecode == null || bytecode.length == 0) {
-            return false;
-        }
-
-        try {
-            decompile(bytecode);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
 }

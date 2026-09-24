@@ -5,7 +5,6 @@ import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedWriter;
@@ -37,7 +36,6 @@ public class SqlExportService {
     private final PuppetNodeSqlService puppetNodeSqlService;
     private final ServiceTaskExecutor taskExecutor;
 
-    @Autowired
     public SqlExportService(PuppetNodeSqlService puppetNodeSqlService,
                             ServiceTaskExecutor taskExecutor) {
         this.puppetNodeSqlService = puppetNodeSqlService;

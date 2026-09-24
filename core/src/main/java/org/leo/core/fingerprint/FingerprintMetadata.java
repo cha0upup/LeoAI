@@ -8,7 +8,7 @@ import java.util.Map;
 public final class FingerprintMetadata {
 
     private static final List<String> DEFINITION_FIELDS = List.of(
-            "fingerprintId", "id", "name", "protocol", "tags", "rule");
+            "fingerprintId", "name", "protocol", "tags", "rule");
     private static final List<String> INFO_FIELDS = List.of("version", "author", "description", "remark");
 
     private FingerprintMetadata() { }

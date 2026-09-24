@@ -12,13 +12,15 @@ import org.leo.ai.agent.AiToolException;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static org.leo.ai.tools.platform.PlatformToolArguments.*;
 
 @Component
 @AiToolAccess(AiToolAccess.Level.ADMIN)
@@ -111,7 +113,7 @@ public class PluginTools {
         plugin.setBytecode(payloadBytes);
         plugin.setPluginId(generatePluginId(identifier, plugin.getVersion()));
 
-        pluginManager.inStallPlugin(plugin);
+        pluginManager.installPlugin(plugin);
         savePlugin(plugin);
         return buildResult("created", plugin.getPluginId(), plugin.getPluginName());
     }
@@ -181,7 +183,7 @@ public class PluginTools {
         }
 
         existing.setUpdateTime(String.valueOf(System.currentTimeMillis()));
-        pluginManager.inStallPlugin(existing);
+        pluginManager.installPlugin(existing);
         savePlugin(existing);
         return buildResult("updated", existing.getPluginId(), existing.getPluginName());
     }
@@ -298,11 +300,8 @@ public class PluginTools {
                     null);
         }
         String safeName = getSafeFileName(plugin.getPluginId());
-        try (FileOutputStream fileOutputStream = new FileOutputStream(new File(pluginDir, safeName))) {
-            String encrypted = AesUtil.encrypt(plugin.toString(), LeoConfig.getPluginEncryptKey());
-            fileOutputStream.write(encrypted.getBytes(StandardCharsets.UTF_8));
-            fileOutputStream.flush();
-        }
+        Files.writeString(new File(pluginDir, safeName).toPath(),
+                AesUtil.encrypt(plugin.toString(), LeoConfig.getPluginEncryptKey()));
     }
 
     private void deletePluginFileIfExists(String safeFileName) {
@@ -331,30 +330,5 @@ public class PluginTools {
             throw new IllegalArgumentException("文件名包含非法字符");
         }
         return safeName;
-    }
-
-    private String defaultIfBlank(String value, String defaultValue) {
-        String trimmed = trimToNull(value);
-        return trimmed == null ? defaultValue : trimmed;
-    }
-
-    private String requireNonBlank(String value, String message) {
-        String trimmed = trimToNull(value);
-        if (trimmed == null) {
-            throw new IllegalArgumentException(message);
-        }
-        return trimmed;
-    }
-
-    private String trimToNull(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    private boolean isBlank(String value) {
-        return trimToNull(value) == null;
     }
 }

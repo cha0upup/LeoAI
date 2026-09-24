@@ -31,7 +31,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enableWalMode();
-        reconcileAndValidateSchema();
+        validateSchema();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             executeScript("sql/data.sql");
@@ -66,26 +66,11 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    /** 补齐允许在线添加的结构，并校验其余数据库约束。 */
-    private void reconcileAndValidateSchema() {
+    /** 校验当前数据库基线，不迁移历史结构或数据。 */
+    private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
-            ensureColumn(connection, "ai_threads", "context_checkpoint_json", "TEXT");
-            ensureColumn(connection, "ai_turns", "answer_to_question_id", "VARCHAR(64)");
-            ensureUserInputRequestTable(connection);
-            ensureColumn(connection, "ai_user_input_requests",
-                    "confirmation_consumed_at", "INTEGER");
-            ensureColumn(connection, "puppets", "payload_key", "TEXT");
-            // 旧版本已存在评估表但没有保存规范化参数；默认空对象仅用于完成结构迁移，
-            // 其旧哈希不会匹配新的实际调用，待处理评估会要求模型重新评估。
-            ensureColumn(connection, "ai_operation_assessments", "arguments_json",
-                    "TEXT NOT NULL DEFAULT '{}' ");
-            ensureColumn(connection, "scan_tasks", "error_message", "TEXT");
-            ensureColumn(connection, "scan_tasks", "stage_json", "TEXT");
-            ensureColumn(connection, "scan_endpoint_results", "fingerprint_json", "TEXT");
-            ensureColumn(connection, "scan_endpoint_results", "response_size", "INTEGER");
             requireColumns(connection, "puppets",
-                    Set.of("puppet_id", "create_by_user_id", "team_id", "permission"));
-            normalizePuppetTeamOwnership(connection);
+                    Set.of("puppet_id", "create_by_user_id", "team_id", "permission", "payload_key"));
             requireColumns(connection, "ai_threads",
                     Set.of("thread_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",
@@ -132,84 +117,6 @@ public class DatabaseInitializer implements CommandLineRunner {
         } catch (SQLException error) {
             throw new IllegalStateException("校验数据库结构失败", error);
         }
-    }
-
-    /** 让团队可见 Puppet 的团队归属与创建者保持一致。 */
-    private void normalizePuppetTeamOwnership(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            int updated = statement.executeUpdate("""
-                    UPDATE puppets
-                    SET team_id = (
-                        SELECT users.team_id
-                        FROM users
-                        WHERE users.user_id = puppets.create_by_user_id
-                    )
-                    WHERE permission = 'team'
-                      AND (team_id IS NULL OR TRIM(team_id) = '')
-                      AND EXISTS (
-                          SELECT 1
-                          FROM users
-                          WHERE users.user_id = puppets.create_by_user_id
-                            AND users.team_id IS NOT NULL
-                            AND TRIM(users.team_id) <> ''
-                      )
-                    """);
-            if (updated > 0) {
-                log.info("已补齐 {} 个 Puppet 的团队归属", updated);
-            }
-        }
-    }
-
-    private void ensureUserInputRequestTable(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            statement.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS ai_user_input_requests (
-                        request_id VARCHAR(64) PRIMARY KEY,
-                        thread_id VARCHAR(64) NOT NULL,
-                        turn_id VARCHAR(64),
-                        item_id VARCHAR(64),
-                        request_type VARCHAR(32) NOT NULL,
-                        prompt TEXT NOT NULL,
-                        options_json TEXT,
-                        allow_free_text INTEGER NOT NULL DEFAULT 1,
-                        action_summary TEXT,
-                        tool_name VARCHAR(128),
-                        arguments_hash VARCHAR(128),
-                        risk VARCHAR(32),
-                        status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-                        answer TEXT,
-                        created_at INTEGER NOT NULL,
-                        answered_at INTEGER,
-                        confirmation_consumed_at INTEGER,
-                        expires_at INTEGER,
-                        FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
-                        FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE SET NULL,
-                        FOREIGN KEY (item_id) REFERENCES ai_messages(message_id) ON DELETE SET NULL
-                    )
-                    """);
-            statement.executeUpdate("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
-                    ON ai_user_input_requests(thread_id) WHERE status = 'PENDING'
-                    """);
-            statement.executeUpdate("""
-                    CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
-                    ON ai_user_input_requests(thread_id, created_at)
-                    """);
-        }
-    }
-
-    /** 幂等补齐允许在线添加的 nullable 字段。 */
-    private void ensureColumn(Connection connection,
-                              String table,
-                              String column,
-                              String definition) throws SQLException {
-        Set<String> existingColumns = tableColumns(connection, table);
-        if (existingColumns.isEmpty() || existingColumns.contains(column)) return;
-        try (Statement statement = connection.createStatement()) {
-            statement.executeUpdate("ALTER TABLE " + table
-                    + " ADD COLUMN " + column + " " + definition);
-        }
-        log.info("数据库字段已补齐: {}.{}", table, column);
     }
 
     private void requireColumns(Connection connection, String table,

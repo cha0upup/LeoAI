@@ -14,7 +14,6 @@ import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.dao.mapper.AiConversationMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,7 +43,6 @@ public class AiConversationStoreService {
     private final AiMessageRepository messages;
     private final AiContextCheckpointRepository checkpoints;
 
-    @Autowired
     public AiConversationStoreService(AiConversationMapper mapper,
                                       AiEventJournalRepository eventJournal,
                                       AiExecutionLeaseRepository executionLease,
@@ -63,19 +61,6 @@ public class AiConversationStoreService {
         this.subagentInvocations = subagentInvocations;
         this.messages = messages;
         this.checkpoints = checkpoints;
-    }
-
-    /** Test and non-Spring construction convenience. */
-    public AiConversationStoreService(AiConversationMapper mapper) {
-        this.mapper = mapper;
-        this.eventJournal = new AiEventJournalRepository(mapper);
-        this.executionLease = new AiExecutionLeaseRepository(mapper, eventJournal);
-        this.turnTerminal = new AiTurnTerminalRepository(mapper);
-        this.protocolTurn = new AiProtocolTurnRepository(mapper);
-        this.userInput = new AiUserInputRepository(mapper);
-        this.subagentInvocations = new AiSubagentInvocationRepository(mapper);
-        this.messages = new AiMessageRepository(mapper);
-        this.checkpoints = new AiContextCheckpointRepository(mapper);
     }
 
     public List<AiThreadRecord> listPuppetThreads(String userId, String puppetId) {
@@ -669,11 +654,7 @@ public class AiConversationStoreService {
                                 long startedAt, String leaseToken) {
     }
 
-    public record ConversationMessage(Long sequence, String role, String content) {
-        public ConversationMessage(String role, String content) {
-            this(null, role, content);
-        }
-    }
+    public record ConversationMessage(Long sequence, String role, String content) {}
 
     public record ConversationCheckpoint(String summary,
                                          long boundarySequence,

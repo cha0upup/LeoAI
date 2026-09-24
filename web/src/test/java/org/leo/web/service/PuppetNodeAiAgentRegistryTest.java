@@ -5,7 +5,6 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PuppetNodeAgent;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.core.entity.AiModelConfig;
@@ -30,7 +29,6 @@ class PuppetNodeAiAgentRegistryTest {
     @Test
     void scopesCacheBySessionAndThreadAndRebuildsOnRuntimeChange() {
         AiAgentFactory agentFactory = mock(AiAgentFactory.class);
-        AiModelConfigService configService = mock(AiModelConfigService.class);
         DynamicModelProvider modelProvider = mock(DynamicModelProvider.class);
         AiModelFailoverService failoverService = mock(AiModelFailoverService.class);
         AiModelConfig config = config(9);
@@ -42,15 +40,14 @@ class PuppetNodeAiAgentRegistryTest {
         when(failoverService.selectForExecution(config)).thenReturn(
                 new AiModelFailoverService.ModelSelection(
                         config, config, false, null, List.of(9)));
-        when(configService.getContextWindowTokens(config)).thenReturn(16_384);
         when(modelProvider.plannedRuntimeCacheKey(config, "low")).thenReturn("runtime-a");
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(eq(config), any())).thenReturn(modelRuntime);
         when(agentFactory.createPuppetNodeAgent(
-                same(streamingModel), same(chatModel), eq(true), anyInt()))
+                same(streamingModel), same(chatModel), eq(true), eq(16_384)))
                 .thenReturn(firstAgent, secondAgent);
         PuppetNodeAiAgentRegistry registry = new PuppetNodeAiAgentRegistry(
-                agentFactory, configService, modelProvider, failoverService);
+                agentFactory, modelProvider, failoverService);
         PuppetNodeSession session = new PuppetNodeSession();
         session.setSessionId("session-1");
         AiThread thread = new AiThread("thread-1", "test");
@@ -82,6 +79,6 @@ class PuppetNodeAiAgentRegistryTest {
         return new DynamicModelProvider.ModelRuntime(
                 streamingModel, chatModel, "chat-completions", "openai",
                 "https://example.test", "test-model", 4096,
-                false, null, true, false);
+                false, null, true, false, 16_384);
     }
 }

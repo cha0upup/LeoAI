@@ -28,7 +28,7 @@ class ScanPreviewServiceTest {
                 "explicit ports",
                 new TargetInput(List.of("127.0.0.1:80", "127.0.0.2:443"), List.of()),
                 new PortPolicy("custom", List.of(), List.of(80, 443, 8080), List.of()),
-                null, null, null);
+                null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"));
 
         PreviewResponse response = service.preview(scan);
 
@@ -48,7 +48,7 @@ class ScanPreviewServiceTest {
                 "large reachability",
                 new TargetInput(List.of("192.0.0.0/20"), List.of()),
                 new PortPolicy("custom", List.of(), ports, List.of()),
-                null, null, null));
+                null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
 
         assertTrue(response.preview() == null);
         assertTrue(response.errors().stream().anyMatch(error -> error.contains("探活目标数")));
@@ -58,9 +58,9 @@ class ScanPreviewServiceTest {
     void mixedTargetsReserveExplicitPortsRegardlessOfInputOrder() {
         PortPolicy policy = new PortPolicy("custom", List.of("1-100"), List.of(), List.of());
         var first = planner.plan(new ScanConfig("mixed", new TargetInput(
-                List.of("127.0.0.1", "127.0.0.1:45678"), List.of()), policy, null, null, null));
+                List.of("127.0.0.1", "127.0.0.1:45678"), List.of()), policy, null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
         ScanConfig reversed = new ScanConfig("mixed", new TargetInput(
-                List.of("127.0.0.1:45678", "127.0.0.1"), List.of()), policy, null, null, null);
+                List.of("127.0.0.1:45678", "127.0.0.1"), List.of()), policy, null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"));
         var second = planner.plan(reversed);
 
         assertEquals(Set.copyOf(first.reachabilityTargets()), Set.copyOf(second.reachabilityTargets()));
@@ -75,7 +75,7 @@ class ScanPreviewServiceTest {
     void deduplicatesEndpointsWithoutLosingTheExplicitUrl() {
         var plan = planner.plan(new ScanConfig("url", new TargetInput(
                 List.of("127.0.0.1", "http://127.0.0.1:8080/app"), List.of()),
-                new PortPolicy("custom", List.of(), List.of(8080), List.of()), null, null, null));
+                new PortPolicy("custom", List.of(), List.of(8080), List.of()), null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
 
         assertEquals(1, plan.targets().size());
         assertEquals("http://127.0.0.1:8080/app", plan.targets().get(0).get("baseUrl"));
@@ -111,7 +111,7 @@ class ScanPreviewServiceTest {
     @Test
     void previewAndExecutionRejectTheSameInvalidConfiguration() {
         ScanConfig invalid = new ScanConfig("invalid", new TargetInput(List.of("127.0.0.1"), List.of()),
-                null, new ExecutionConfig(257, 1000), null, null);
+                null, new ExecutionConfig(257, 1000), null, List.of("PORT_SCAN"));
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
         assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
         assertNull(service.preview(null).preview());
@@ -150,16 +150,16 @@ class ScanPreviewServiceTest {
     }
 
     @Test
-    void validatesStageSelectionsAndKeepsDefaultStages() {
-        ScanConfig legacy = new ScanConfig(null, new TargetInput(List.of("127.0.0.1:80"), null),
+    void requiresExplicitValidStageSelections() {
+        ScanConfig missingStages = new ScanConfig(null, new TargetInput(List.of("127.0.0.1:80"), null),
                 null, null, null, null);
-        assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE"), planner.plan(legacy).stages().stream().map(Enum::name).toList());
+        assertThrows(IllegalArgumentException.class, () -> planner.plan(missingStages));
         for (List<String> stages : List.of(List.<String>of(), List.of("SERVICE_PROBE"), List.of("PORT_SCAN", "FINGERPRINT"), List.of("UNKNOWN"))) {
-            ScanConfig invalid = new ScanConfig("invalid", legacy.targets(), null, null, null, stages);
+            ScanConfig invalid = new ScanConfig("invalid", missingStages.targets(), null, null, null, stages);
             var failure = assertThrows(IllegalArgumentException.class, () -> planner.plan(invalid));
             assertEquals(List.of(failure.getMessage()), service.preview(invalid).errors());
         }
-        ScanConfig onlyAlive = new ScanConfig(null, legacy.targets(), null, null, null, List.of("REACHABILITY"));
+        ScanConfig onlyAlive = new ScanConfig(null, missingStages.targets(), null, null, null, List.of("REACHABILITY"));
         assertEquals(List.of("REACHABILITY"), planner.plan(onlyAlive).stages().stream().map(Enum::name).toList());
     }
 

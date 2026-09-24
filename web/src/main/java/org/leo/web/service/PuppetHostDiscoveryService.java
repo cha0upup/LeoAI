@@ -154,20 +154,6 @@ public class PuppetHostDiscoveryService {
         return new DiscoveryResult(hostIds, discoveredAt == null ? null : String.valueOf(discoveredAt), reused);
     }
 
-    public List<String> known(Puppet puppet, User user) {
-        return known(puppet, user != null ? user.getUserId() : null);
-    }
-
-    public List<String> known(Puppet puppet, String userId) {
-        return hostIdsFrom(repository.loadHostDiscovery(
-                userId, puppet.getPuppetId(), connectionFingerprint(puppet)));
-    }
-
-    public Map<String, Object> knownDetails(Puppet puppet, User user) {
-        return repository.loadHostDiscovery(
-                user != null ? user.getUserId() : null, puppet.getPuppetId(), connectionFingerprint(puppet));
-    }
-
     private List<String> hostIdsFrom(Map<String, Object> data) {
         if (data == null || !(data.get("hostIds") instanceof Collection<?> raw)) return List.of();
         LinkedHashSet<String> ids = new LinkedHashSet<>();

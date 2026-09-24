@@ -72,9 +72,9 @@ class PlatformAiThreadServiceTest {
 
         Map<String, Object> data = fixture.service.events(user("user-1"), THREAD_ID, 1L, null);
 
-        assertEquals("running".equals(runtimeState) ? "running" : "failed", data.get("status"));
+        assertEquals("running".equals(runtimeState) ? "running" : "failed", data.get("runStatus"));
+        assertFalse(data.containsKey("status"));
         assertEquals(20L, data.get("lastSeq"));
-        assertEquals(0L, data.get("elapsedMs"));
         assertNull(data.get("stopReason"));
         verify(fixture.conversationStore).listEventsAfter(THREAD_ID, 1L, 200);
     }
@@ -99,7 +99,7 @@ class PlatformAiThreadServiceTest {
         when(fixture.conversationStore.listPlatformThreads("user-1")).thenReturn(List.of(fixture.record));
         PlatformAiState state = PlatformAiStateStore.create(THREAD_ID);
         when(fixture.protocol.snapshotThread(THREAD_ID, state.getRunStatus()))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of()));
+                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));
 
         Map<String, Object> item = fixture.service.listThreads(user("user-1")).get(0);
 
@@ -125,7 +125,7 @@ class PlatformAiThreadServiceTest {
         when(conversationStore.findThread(THREAD_ID)).thenReturn(record);
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
-                new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of()));
+                new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
         PlatformAiThreadService service = new PlatformAiThreadService(
                 mock(AiModelChannelResolver.class), conversationStore,
                 agentRegistry, new AiThreadQueryService(conversationStore, protocol));

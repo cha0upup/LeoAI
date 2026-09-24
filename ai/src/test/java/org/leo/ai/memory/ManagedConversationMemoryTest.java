@@ -58,8 +58,8 @@ class ManagedConversationMemoryTest {
         when(agent.getChatMemory(memoryId)).thenReturn(memory);
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
         when(conversationStore.contextMessages("thread-1", 200)).thenReturn(List.of(
-                new ConversationMessage("user", "已提交问题"),
-                new ConversationMessage("assistant", "已提交回答")));
+                new ConversationMessage(null, "user", "已提交问题"),
+                new ConversationMessage(null, "assistant", "已提交回答")));
 
         boolean rebuilt = new ManagedConversationMemory(conversationStore).rebuild(agent, memoryId);
 

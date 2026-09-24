@@ -55,9 +55,6 @@ public interface PuppetMapper {
     @Select("SELECT * FROM puppets WHERE parent_puppet_id = #{parentPuppetId}")
     List<Puppet> findPuppetByParentPuppetId(@Param("parentPuppetId") String parentPuppetId);
 
-    @Select("SELECT * FROM puppets WHERE create_by_user_id = #{createByUserId}")
-    List<Puppet> findPuppetByCreateUser(@Param("createByUserId") String createByUserId);
-
     @Select("SELECT * FROM puppets WHERE permission = #{permission}")
     List<Puppet> findPuppetByPermission(@Param("permission") String permission);
 

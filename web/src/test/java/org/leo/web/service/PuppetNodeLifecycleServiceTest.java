@@ -39,7 +39,8 @@ class PuppetNodeLifecycleServiceTest {
     private final PuppetCacheService cacheService = mock(PuppetCacheService.class);
     private final PuppetNodeLifecycleService lifecycleService = new PuppetNodeLifecycleService(
             mock(PuppetService.class), nodeFactory, cacheService,
-            mock(PuppetReconRepository.class), new SessionLifecycleManager());
+            mock(PuppetReconRepository.class), new SessionLifecycleManager(
+                    mock(NetworkProbeWorkflowService.class), mock(NetworkProbeResultStore.class)));
     private final Puppet puppet = new Puppet();
     private final User user = new User();
 

@@ -12,7 +12,6 @@ import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -69,7 +68,6 @@ public class AuditLogController {
     private final AuditPolicyService auditPolicyService;
     private final PermissionService permissionService;
     
-    @Autowired
     public AuditLogController(AuditLogService auditLogService,
                               AuditPolicyService auditPolicyService,
                               PermissionService permissionService) {

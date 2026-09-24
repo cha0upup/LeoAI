@@ -4,7 +4,6 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAgent;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
@@ -20,7 +19,6 @@ import java.util.function.Consumer;
 public class PlatformAiAgentRegistry {
 
     private final AiAgentFactory agentFactory;
-    private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider modelProvider;
     private final AiModelFailoverService failoverService;
     private final PlatformPuppetAiBridgeTools bridgeTools;
@@ -28,12 +26,10 @@ public class PlatformAiAgentRegistry {
     private final Consumer<String> stateDestroyListener = this::evict;
 
     public PlatformAiAgentRegistry(AiAgentFactory agentFactory,
-                                   AiModelConfigService modelConfigService,
                                    DynamicModelProvider modelProvider,
                                    AiModelFailoverService failoverService,
                                    PlatformPuppetAiBridgeTools bridgeTools) {
         this.agentFactory = agentFactory;
-        this.modelConfigService = modelConfigService;
         this.modelProvider = modelProvider;
         this.failoverService = failoverService;
         this.bridgeTools = bridgeTools;
@@ -70,7 +66,7 @@ public class PlatformAiAgentRegistry {
             PlatformAgent agent = agentFactory.createPlatformAgent(
                     modelRuntime.streamingModel(),
                     modelRuntime.supportsFunctionCalling(),
-                    modelConfigService.getContextWindowTokens(effective),
+                    modelRuntime.contextWindowTokens(),
                     bridgeTools);
             return new Runtime(
                     cacheKey,

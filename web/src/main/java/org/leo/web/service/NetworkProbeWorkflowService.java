@@ -153,13 +153,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return response(Map.of("result", snapshot(requireTask(sessionId, taskId))));
     }
 
-    /** Compact task state for polling; result rows are fetched through results/query. */
-    public Map<String, Object> querySummary(String sessionId, String taskId) {
-        cleanup();
-        Map<String, Object> full = snapshot(requireTask(sessionId, taskId));
-        return response(Map.of("result", compactSnapshot(full)));
-    }
-
     public Map<String, Object> querySummaryIfPresent(String sessionId, String taskId) {
         cleanup();
         if (sessionId == null || sessionId.isBlank() || taskId == null || taskId.isBlank()) {
@@ -168,16 +161,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         WorkflowTask task = tasks.get(taskId.trim());
         if (task == null || !task.sessionId.equals(sessionId.trim())) return Map.of();
         return compactSnapshot(snapshot(task));
-    }
-
-    public List<Map<String, Object>> listSummaries(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("sessionId不能为空");
-        cleanup();
-        return tasks.values().stream()
-                .filter(task -> task.sessionId.equals(sessionId.trim()))
-                .sorted((left, right) -> Long.compare(right.createdAt, left.createdAt))
-                .map(task -> compactSnapshot(snapshot(task)))
-                .toList();
     }
 
     public Map<String, Object> pause(String sessionId, String taskId) {
@@ -312,7 +295,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             Map<String, Object> portResult = executeStage(task, portScan,
                     portPlan(task.spec, new ArrayList<>(portHosts)), null, null);
             if (task.cancelRequested || task.terminal()) return;
-            List<Map<String, Object>> openEndpoints = openEndpoints(portResult);
+            List<Map<String, Object>> openEndpoints = mapList(portResult.get("openPortResults"));
             enrichPortResult(portScan, openEndpoints);
 
             StageState serviceProbe = task.stages.get("SERVICE_PROBE");
@@ -343,7 +326,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                     // A failed plaintext request may mean that the port is
                     // HTTPS. Apply the first response before selecting the
                     // small HTTPS fallback set.
-                    applyServiceEvidence(openEndpoints, httpServiceResult);
+                    applyServiceEvidence(openEndpoints, mapList(httpServiceResult.get("serviceObservations")));
                     List<Map<String, Object>> httpsCandidates = httpsCandidates(httpCandidates, openEndpoints);
                     if (!httpsCandidates.isEmpty()) {
                         int serviceProbeTotalWithHttps = serviceProbeTotal + httpsCandidates.size();
@@ -356,7 +339,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                     }
                 }
                 Map<String, Object> serviceResult = mergeServiceResults(tcpServiceResult, httpServiceResult);
-                applyServiceEvidence(openEndpoints, serviceResult);
+                applyServiceEvidence(openEndpoints, mapList(serviceResult.get("serviceObservations")));
                 enrichPortResult(serviceProbe, openEndpoints);
                 enrichPortResult(portScan, openEndpoints);
             }
@@ -456,7 +439,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 List<Map<String, Object>> observations = mapList(latest.get("observations"));
                 List<Map<String, Object>> errors = mapList(latest.get("errors"));
                 if ("PORT_SCAN".equals(stage.name)) {
-                    for (Map<String, Object> endpoint : openEndpoints(Map.of("observations", observations))) {
+                    for (Map<String, Object> endpoint : openEndpoints(observations)) {
                         openEndpointsByKey.putIfAbsent(endpointKey(endpoint), endpoint);
                     }
                     enrichPortResult(stage, new ArrayList<>(openEndpointsByKey.values()));
@@ -466,9 +449,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                         serviceObservationsByKey.putIfAbsent(key, observation);
                     }
                     if (liveEndpoints != null) {
-                        Map<String, Object> serviceEvidence = new LinkedHashMap<>();
-                        serviceEvidence.put("observations", new ArrayList<>(serviceObservationsByKey.values()));
-                        applyServiceEvidence(liveEndpoints, serviceEvidence);
+                        applyServiceEvidence(liveEndpoints, new ArrayList<>(serviceObservationsByKey.values()));
                         enrichPortResult(stage, liveEndpoints);
                     }
                 }
@@ -1021,10 +1002,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         Map<String, Object> result = new LinkedHashMap<>(first);
         List<Map<String, Object>> observations = new ArrayList<>();
         observations.addAll(mapList(first.get("serviceObservations")));
-        if (observations.isEmpty()) observations.addAll(mapList(first.get("observations")));
-        List<Map<String, Object>> secondObservations = mapList(second.get("serviceObservations"));
-        if (secondObservations.isEmpty()) secondObservations = mapList(second.get("observations"));
-        observations.addAll(secondObservations);
+        observations.addAll(mapList(second.get("serviceObservations")));
         result.put("serviceObservations", observations);
         return result;
     }
@@ -1041,27 +1019,9 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return plan;
     }
 
-    private List<Map<String, Object>> openEndpoints(Map<String, Object> result) {
+    private List<Map<String, Object>> openEndpoints(List<Map<String, Object>> observations) {
         Map<String, Map<String, Object>> byEndpoint = new LinkedHashMap<>();
-        // executeStage() compacts the final port-scan snapshot into
-        // openPortResults after it has consumed incremental observations.
-        // Prefer that derived list when present; otherwise inspect raw
-        // observations (used by incremental responses and older nodes).
-        List<Map<String, Object>> candidates = mapList(result.get("openPortResults"));
-        boolean derivedEndpoints = !candidates.isEmpty();
-        if (!derivedEndpoints) candidates = mapList(result.get("observations"));
-        for (Map<String, Object> observation : candidates) {
-            if (derivedEndpoints) {
-                Map<String, Object> endpoint = new LinkedHashMap<>(observation);
-                String host = text(endpoint.get("host"));
-                int port = integer(endpoint.get("port"), -1);
-                if (host.isEmpty() || port < 1) continue;
-                endpoint.putIfAbsent("protocol", "tcp");
-                endpoint.putIfAbsent("state", "open");
-                endpoint.putIfAbsent("endpointId", "tcp|" + host + "|" + port);
-                byEndpoint.putIfAbsent(host + ":" + port, endpoint);
-                continue;
-            }
+        for (Map<String, Object> observation : observations) {
             if (!"tcp-connect".equals(text(observation.get("stage")))
                     || !"open".equalsIgnoreCase(text(observation.get("state")))) continue;
             String host = text(observation.get("host"));
@@ -1081,11 +1041,9 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return new ArrayList<>(byEndpoint.values());
     }
 
-    private void applyServiceEvidence(List<Map<String, Object>> endpoints, Map<String, Object> serviceResult) {
+    private void applyServiceEvidence(List<Map<String, Object>> endpoints, List<Map<String, Object>> observations) {
         Map<String, List<Map<String, Object>>> evidenceByEndpoint = new LinkedHashMap<>();
-        Object rawObservations = serviceResult.get("serviceObservations");
-        if (rawObservations == null) rawObservations = serviceResult.get("observations");
-        for (Map<String, Object> observation : mapList(rawObservations)) {
+        for (Map<String, Object> observation : observations) {
             String key = text(observation.get("host")) + ":" + integer(observation.get("port"), -1);
             evidenceByEndpoint.computeIfAbsent(key, ignored -> new ArrayList<>()).add(observation);
         }

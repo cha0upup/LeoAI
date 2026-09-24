@@ -14,7 +14,6 @@ import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.SessionLifecycleManager;
 import org.leo.web.util.ControllerUtil;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,7 +45,6 @@ public class SessionManageController {
     private final PuppetService puppetService;
     private final SessionLifecycleManager sessionLifecycleManager;
 
-    @Autowired
     public SessionManageController(PuppetService puppetService,
                                    SessionLifecycleManager sessionLifecycleManager) {
         this.puppetService = puppetService;

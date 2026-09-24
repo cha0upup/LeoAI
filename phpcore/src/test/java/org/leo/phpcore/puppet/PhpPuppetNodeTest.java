@@ -423,8 +423,8 @@ class PhpPuppetNodeTest {
 
     private PhpPuppetNode node(Communication communication, Disguise disguise) {
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/", Map.of(), disguise)),
-                List.of(new ResponseLayer(disguise)), KEY);
+                List.of(new RequestLayer("/", Map.of(), disguise, KEY)),
+                List.of(new ResponseLayer(disguise, KEY)));
         return new PhpPuppetNode(client, new PhpComponentArtifactRegistry());
     }
 

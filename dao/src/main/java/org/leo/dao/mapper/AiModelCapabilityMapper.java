@@ -55,4 +55,26 @@ public interface AiModelCapabilityMapper {
 
     @Delete("DELETE FROM ai_model_capabilities WHERE model_name = #{modelName}")
     int deleteByModelName(@Param("modelName") String modelName);
+
+    @Select("SELECT supports_text_generation AS supportsTextGeneration, supports_reasoning AS supportsReasoning, "
+            + "supports_streaming AS supportsStreaming, supports_function_calling AS supportsFunctionCalling, "
+            + "supports_structured_output AS supportsStructuredOutput, update_time AS updateTime "
+            + "FROM ai_model_capability_observations WHERE provider_id=#{providerId} AND protocol=#{protocol} "
+            + "AND model_name=#{modelName} AND connection_key=#{connectionKey}")
+    AiModelCapability findObservation(@Param("providerId") Integer providerId, @Param("protocol") String protocol,
+                                      @Param("modelName") String modelName, @Param("connectionKey") String connectionKey);
+
+    @Insert("INSERT INTO ai_model_capability_observations "
+            + "(provider_id, protocol, model_name, connection_key, supports_text_generation, supports_reasoning, "
+            + "supports_streaming, supports_function_calling, supports_structured_output, update_time) "
+            + "VALUES (#{providerId}, #{protocol}, #{modelName}, #{connectionKey}, #{row.supportsTextGeneration}, "
+            + "#{row.supportsReasoning}, #{row.supportsStreaming}, #{row.supportsFunctionCalling}, "
+            + "#{row.supportsStructuredOutput}, #{row.updateTime}) "
+            + "ON CONFLICT(provider_id, protocol, model_name) DO UPDATE SET connection_key=excluded.connection_key, "
+            + "supports_text_generation=excluded.supports_text_generation, supports_reasoning=excluded.supports_reasoning, "
+            + "supports_streaming=excluded.supports_streaming, supports_function_calling=excluded.supports_function_calling, "
+            + "supports_structured_output=excluded.supports_structured_output, update_time=excluded.update_time")
+    int saveObservation(@Param("providerId") Integer providerId, @Param("protocol") String protocol,
+                        @Param("modelName") String modelName, @Param("connectionKey") String connectionKey,
+                        @Param("row") AiModelCapability row);
 }

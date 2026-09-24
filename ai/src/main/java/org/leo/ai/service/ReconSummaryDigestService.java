@@ -9,7 +9,6 @@ import org.leo.ai.agent.AiAsyncExecutionConfig;
 import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -47,7 +46,6 @@ public class ReconSummaryDigestService {
 
     private final ChatModel chatModel;
 
-    @Autowired
     public ReconSummaryDigestService(ChatModel chatModel) {
         this.chatModel = chatModel;
     }

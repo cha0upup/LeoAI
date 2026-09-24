@@ -15,7 +15,6 @@ import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -37,11 +36,6 @@ public class AiUserInputService {
     private final AiConversationStoreService store;
     private final AiToolCatalog toolCatalog;
 
-    public AiUserInputService(AiConversationStoreService store) {
-        this(store, new AiToolCatalog());
-    }
-
-    @Autowired
     public AiUserInputService(AiConversationStoreService store, AiToolCatalog toolCatalog) {
         this.store = store;
         this.toolCatalog = toolCatalog;

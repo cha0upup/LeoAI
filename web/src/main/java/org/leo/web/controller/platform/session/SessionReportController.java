@@ -7,7 +7,6 @@ import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.SessionReportService;
 import org.leo.web.util.ControllerUtil;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,7 +28,6 @@ public class SessionReportController {
 
     private final SessionReportService sessionReportService;
 
-    @Autowired
     public SessionReportController(SessionReportService sessionReportService) {
         this.sessionReportService = sessionReportService;
     }

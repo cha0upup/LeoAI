@@ -270,9 +270,9 @@ class ComponentServiceEnvelopeTest {
                     "data", Map.of("body", innerResponse)));
         };
         TestService service = new TestService(communication,
-                List.of(new RequestLayer("/inner", Map.of(), disguise),
-                        new RequestLayer("/outer", Map.of(), disguise)),
-                List.of(new ResponseLayer(disguise), new ResponseLayer(disguise)));
+                List.of(new RequestLayer("/inner", Map.of(), disguise, "component-test-key"),
+                        new RequestLayer("/outer", Map.of(), disguise, "component-test-key")),
+                List.of(new ResponseLayer(disguise, "component-test-key"), new ResponseLayer(disguise, "component-test-key")));
         service.setHostId("host-1");
         service.setMaxReqCount(1);
 
@@ -475,8 +475,8 @@ class ComponentServiceEnvelopeTest {
 
     private TestService service(Communication communication, Disguise disguise) {
         TestService service = new TestService(communication,
-                List.of(new RequestLayer("/", Map.of(), disguise)),
-                List.of(new ResponseLayer(disguise)));
+                List.of(new RequestLayer("/", Map.of(), disguise, "component-test-key")),
+                List.of(new ResponseLayer(disguise, "component-test-key")));
         service.setHostId("host-1");
         service.setMaxReqCount(1);
         return service;
@@ -487,7 +487,6 @@ class ComponentServiceEnvelopeTest {
                             List<RequestLayer> requestLayers,
                             List<ResponseLayer> responseLayers) {
             super(communication, requestLayers, responseLayers);
-            setPayloadCodec(new PayloadCodec("component-test-key"));
         }
 
         private Map<String, Object> execute(PuppetOperation operation, String component,

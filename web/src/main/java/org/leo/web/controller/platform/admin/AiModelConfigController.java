@@ -1,12 +1,10 @@
 package org.leo.web.controller.platform.admin;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelDiscoveryService;
 import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
@@ -22,12 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,17 +40,20 @@ public class AiModelConfigController {
     private final AiErrorClassifier aiErrorClassifier;
     private final AiModelFailoverService failoverService;
     private final AiModelCapabilityProbeService capabilityProbeService;
+    private final AiModelDiscoveryService discoveryService;
 
     public AiModelConfigController(AiModelConfigService configService,
                                    DynamicModelProvider dynamicModelProvider,
                                    AiErrorClassifier aiErrorClassifier,
                                    AiModelFailoverService failoverService,
-                                   AiModelCapabilityProbeService capabilityProbeService) {
+                                   AiModelCapabilityProbeService capabilityProbeService,
+                                   AiModelDiscoveryService discoveryService) {
         this.configService = configService;
         this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
         this.failoverService = failoverService;
         this.capabilityProbeService = capabilityProbeService;
+        this.discoveryService = discoveryService;
     }
 
     @RequestMapping(method = RequestMethod.GET)
@@ -204,7 +200,7 @@ public class AiModelConfigController {
     }
 
     private ChatResponse testConnectionWithRuntime(AiModelConfig config) {
-        return dynamicModelProvider.buildRuntime(config).chatModel().chat(ChatRequest.builder()
+        return dynamicModelProvider.buildProbeRuntime(config, false).chatModel().chat(ChatRequest.builder()
                 .messages(List.of(new UserMessage("请只回复 OK。")))
                 .build());
     }
@@ -214,32 +210,25 @@ public class AiModelConfigController {
      */
     @RequestMapping(value = "/providers", method = RequestMethod.GET)
     public HashMap<String, Object> providers() {
+        List<AiModelCapability> catalog = configService.listModelCapabilities();
         List<Map<String, Object>> list = new ArrayList<>();
         list.add(provider("OpenAI (Responses API)", "openai", "https://api.openai.com/v1",
-                DynamicModelProvider.PROTOCOL_RESPONSES,
-                Arrays.asList("gpt-5.5", "gpt-5.4")));
+                DynamicModelProvider.PROTOCOL_RESPONSES, models(catalog, "gpt-")));
         list.add(provider("DeepSeek", "deepseek", "https://api.deepseek.com",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("deepseek-v4-pro", "deepseek-v4-flash")));
-        list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("qwen3-max", "qwen3-coder")));
-        list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("glm-5.2", "glm-5.1")));
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "deepseek-")));
+        list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "qwen")));
+        list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas/v4",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "glm-")));
         list.add(provider("Gemini (OpenAI compat)", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("gemini-2.5-pro", "gemini-2.5-flash")));
-        list.add(provider("小米 MiMo", "mimo", "https://api.mimo.ai/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("mimo-v2.5-pro", "mimo-v2.5-flash")));
-        list.add(provider("OpenRouter", "openrouter", "https://openrouter.ai/api",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("openai/gpt-5.5", "deepseek/deepseek-v4-pro", "zhipu/glm-5.2")));
-        list.add(provider("Ollama (本地)", "ollama", "http://localhost:11434",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS,
-                Arrays.asList("qwen3", "deepseek-v4-flash")));
-        list.add(provider("自定义", "custom", "", DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, new ArrayList<>()));
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "gemini-")));
+        list.add(provider("小米 MiMo", "mimo", "https://api.xiaomimimo.com/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "mimo-")));
+        list.add(provider("OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
+        list.add(provider("Ollama (本地)", "ollama", "http://localhost:11434/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
+        list.add(provider("自定义", "custom", "", DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
         return ApiResponse.success(list);
     }
 
@@ -282,6 +271,11 @@ public class AiModelConfigController {
         return ApiResponse.success();
     }
 
+    private static List<String> models(List<AiModelCapability> catalog, String prefix) {
+        return catalog.stream().map(AiModelCapability::getModelName)
+                .filter(name -> name.startsWith(prefix)).toList();
+    }
+
     private static Map<String, Object> provider(String label, String key, String baseUrl,
                                                 String protocol, List<String> models) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -300,9 +294,14 @@ public class AiModelConfigController {
      */
     @RequestMapping(value = "/fetch-models", method = RequestMethod.POST)
     public HashMap<String, Object> fetchModels(@RequestBody Map<String, String> body) {
-        String baseUrl = body.getOrDefault("baseUrl", "").trim();
-        String apiKey  = body.getOrDefault("apiKey", "").trim();
-        return fetchModelIds(baseUrl, apiKey);
+        AiProvider provider = new AiProvider();
+        provider.setBaseUrl(body.get("baseUrl"));
+        provider.setApiKey(body.get("apiKey"));
+        provider.setProviderKey(body.get("providerKey"));
+        provider.setProtocol(body.get("protocol"));
+        provider.setCompletionsPath(body.get("completionsPath"));
+        provider.setHeadersJson(body.get("headersJson"));
+        return fetchModelIds(provider);
     }
 
     /**
@@ -314,79 +313,14 @@ public class AiModelConfigController {
         if (provider == null) {
             return ApiResponse.notFound("供应商不存在，id: " + providerId);
         }
-        if (provider.getBaseUrl() == null || provider.getBaseUrl().isBlank()
-                || provider.getApiKey() == null || provider.getApiKey().isBlank()) {
-            return ApiResponse.badRequest("供应商 Base URL 或 API Key 未配置");
-        }
-        return fetchModelIds(provider.getBaseUrl(), provider.getApiKey());
+        return fetchModelIds(provider);
     }
 
-    private HashMap<String, Object> fetchModelIds(String baseUrl, String apiKey) {
-        baseUrl = baseUrl == null ? "" : baseUrl.trim();
-        apiKey = apiKey == null ? "" : apiKey.trim();
-        if (baseUrl.isEmpty() || apiKey.isEmpty()) {
-            return ApiResponse.badRequest("baseUrl 和 apiKey 不能为空");
-        }
-        String modelsPath = inferModelsPath(baseUrl);
-        String url = baseUrl.replaceAll("/+$", "") + modelsPath;
+    private HashMap<String, Object> fetchModelIds(AiProvider provider) {
         try {
-            HttpURLConnection conn = (HttpURLConnection)
-                    URI.create(url).toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setConnectTimeout(10_000);
-            conn.setReadTimeout(15_000);
-            int status = conn.getResponseCode();
-            if (status != 200) {
-                return ApiResponse.badRequest("服务商返回 HTTP " + status + "，请检查 baseUrl / apiKey");
-            }
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                String line;
-                while ((line = br.readLine()) != null) sb.append(line);
-            }
-            String json = sb.toString();
-            List<String> ids = parseModelIds(json);
-            ids.sort(String::compareToIgnoreCase);
-            return ApiResponse.success(ids);
-        } catch (Exception e) {
-            return ApiResponse.badRequest("请求失败: " + e.getMessage());
-        }
-    }
-
-    private static String inferModelsPath(String baseUrl) {
-        String normalized = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
-        if (normalized.endsWith("/v1")) {
-            return "/models";
-        }
-        return "/v1/models";
-    }
-
-    private static List<String> parseModelIds(String json) {
-        List<String> ids = new ArrayList<>();
-        Object parsed = JSON.parse(json);
-        if (parsed instanceof JSONObject object) {
-            collectModelIds(object.get("data"), ids);
-            collectModelIds(object.get("models"), ids);
-        } else {
-            collectModelIds(parsed, ids);
-        }
-        return ids;
-    }
-
-    private static void collectModelIds(Object value, List<String> ids) {
-        if (value instanceof JSONArray array) {
-            for (Object item : array) {
-                collectModelIds(item, ids);
-            }
-        } else if (value instanceof JSONObject object) {
-            String id = object.getString("id");
-            if (id == null || id.isBlank()) id = object.getString("name");
-            if (id == null || id.isBlank()) id = object.getString("model");
-            if (id != null && !id.isBlank()) ids.add(id.trim());
-        } else if (value instanceof String s && !s.isBlank()) {
-            ids.add(s.trim());
+            return ApiResponse.success(discoveryService.fetch(provider));
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
         }
     }
 

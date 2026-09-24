@@ -315,11 +315,7 @@ public class FingerprintManageService {
 
     private void normalizeFingerprintId(HashMap<String, Object> content, String fallbackId) {
         Object fingerprintId = content.get("fingerprintId");
-        if (fingerprintId == null) {
-            fingerprintId = content.get("id");
-        }
         content.put("fingerprintId", fingerprintId != null ? fingerprintId : fallbackId);
-        content.remove("id");
     }
 
     private HashMap<String, Object> normalizeInfo(Object infoObj) {

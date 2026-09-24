@@ -3,7 +3,6 @@ package org.leo.ai.service;
 import org.leo.core.config.LeoConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -49,14 +48,8 @@ public class SkillRegistryService {
     private final AtomicLong cacheFilledAt = new AtomicLong(0L);
     private final Object refreshLock = new Object();
 
-    @Autowired
     public SkillRegistryService(SkillManifestService manifestService) {
         this.manifestService = manifestService;
-    }
-
-    /** 测试和非 Spring 使用场景。 */
-    public SkillRegistryService() {
-        this(new SkillManifestService());
     }
 
     /** 仅列出严格校验通过、已发布且启用的 skill，供 AI 运行时使用。 */

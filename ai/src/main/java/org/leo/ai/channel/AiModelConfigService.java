@@ -8,6 +8,7 @@ import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.SimpleDateFormat;
@@ -32,21 +33,18 @@ public class AiModelConfigService {
     private final AiProviderMapper providerMapper;
     private final AiModelCapabilityMapper capabilityMapper;
     private final AiSecretCryptoService secretCryptoService;
-    private volatile DynamicModelProvider dynamicModelProvider;
+    private final ApplicationEventPublisher events;
 
     public AiModelConfigService(AiModelConfigMapper mapper,
                                 AiProviderMapper providerMapper,
                                 AiModelCapabilityMapper capabilityMapper,
-                                AiSecretCryptoService secretCryptoService) {
+                                AiSecretCryptoService secretCryptoService,
+                                ApplicationEventPublisher events) {
         this.mapper = mapper;
         this.providerMapper = providerMapper;
         this.capabilityMapper = capabilityMapper;
         this.secretCryptoService = secretCryptoService;
-    }
-
-    /** 由 DynamicModelProvider 在初始化后回调注入，避免循环依赖。 */
-    public void setDynamicModelProvider(DynamicModelProvider provider) {
-        this.dynamicModelProvider = provider;
+        this.events = events;
     }
 
     public List<AiModelConfig> listAll() {
@@ -81,9 +79,31 @@ public class AiModelConfigService {
     }
 
     public ProviderCapabilities capabilitiesForModel(AiModelConfig config) {
-        return config == null
-                ? ProviderCapabilities.missing()
-                : capabilitiesForModel(config.getProviderKey(), config.getModel());
+        if (config == null) return ProviderCapabilities.missing();
+        ProviderCapabilities baseline = capabilitiesForModel(config.getProviderKey(), config.getModel());
+        return mergeCapabilities(baseline, findObservation(config));
+    }
+
+    private static ProviderCapabilities mergeCapabilities(ProviderCapabilities baseline, AiModelCapability observed) {
+        if (observed == null) return baseline;
+        return new ProviderCapabilities(true, "recognized", "provider_probe",
+                baseline.contextWindowTokens(), baseline.maxOutputTokens(),
+                observedFlag(observed.getSupportsTextGeneration(), baseline.supportsTextGeneration()),
+                observedFlag(observed.getSupportsReasoning(), baseline.supportsReasoning()),
+                observedFlag(observed.getSupportsStreaming(), baseline.supportsStreaming()),
+                observedFlag(observed.getSupportsFunctionCalling(), baseline.supportsFunctionCalling()),
+                observedFlag(observed.getSupportsStructuredOutput(), baseline.supportsStructuredOutput()),
+                baseline.supportsWebSearch(), baseline.supportsParallelToolCalls());
+    }
+
+    private AiModelCapability findObservation(AiModelConfig config) {
+        if (config.getProviderId() == null || isBlank(config.getModel())) return null;
+        return capabilityMapper.findObservation(config.getProviderId(), DynamicModelProvider.resolveProtocol(config),
+                config.getModel(), ModelConfigurationKey.connection(config));
+    }
+
+    private static boolean observedFlag(Integer value, boolean baseline) {
+        return value == null ? baseline : flag(value);
     }
 
     public String capabilityModelName(AiModelConfig config) {
@@ -109,6 +129,7 @@ public class AiModelConfigService {
         return id == null ? null : decryptProvider(providerMapper.findById(id));
     }
 
+    @Transactional
     public AiProvider createProvider(AiProvider row) {
         validateProvider(row, true);
         normalizeProvider(row, null);
@@ -156,6 +177,7 @@ public class AiModelConfigService {
         return findProviderById(saved.getId());
     }
 
+    @Transactional
     public AiProvider updateProvider(Integer id, AiProvider patch) {
         AiProvider existing = findProviderById(id);
         if (existing == null) return null;
@@ -190,10 +212,12 @@ public class AiModelConfigService {
         return decryptModel(mapper.findActive());
     }
 
+    @Transactional
     public AiModelConfig create(AiModelConfig row) {
         return createModel(row, true, true);
     }
 
+    @Transactional
     public AiModelCapability createCapability(AiModelCapability row) {
         validateCapability(row);
         normalizeCapability(row);
@@ -208,6 +232,7 @@ public class AiModelConfigService {
         return capabilityMapper.findByModelName(row.getModelName());
     }
 
+    @Transactional
     public AiModelCapability updateCapability(String modelName, AiModelCapability patch) {
         String normalizedName = normalizeCapabilityKey(modelName);
         AiModelCapability existing = capabilityMapper.findByModelName(normalizedName);
@@ -215,7 +240,7 @@ public class AiModelConfigService {
         if (patch == null) {
             throw new IllegalArgumentException("模型能力配置不能为空");
         }
-        existing.setSource(blankToNull(patch.getSource()) == null ? existing.getSource() : patch.getSource());
+        existing.setSource("manual");
         existing.setContextWindowTokens(patch.getContextWindowTokens());
         existing.setMaxOutputTokens(patch.getMaxOutputTokens());
         existing.setSupportsTextGeneration(patch.getSupportsTextGeneration());
@@ -235,7 +260,7 @@ public class AiModelConfigService {
     }
 
     /**
-     * 将真实探测中有明确证据的结果写入能力库。null 表示探测不确定，保留原值；
+     * 将真实探测中有明确证据的结果写入当前连接的能力覆盖。null 表示探测不确定，保留原值；
      * 这样网络、鉴权或服务端偶发异常不会误伤模型能力配置。
      */
     @Transactional
@@ -244,25 +269,15 @@ public class AiModelConfigService {
         String modelName = capabilityModelName(config);
         if (modelName.isBlank()) throw new IllegalArgumentException("模型名称不能为空");
 
-        AiModelCapability row = capabilityMapper.findByModelName(modelName);
-        boolean creating = row == null;
-        if (creating) {
-            row = new AiModelCapability();
-            row.setModelName(modelName);
-            row.setSource("probe");
-            row.setContextWindowTokens(config.getContextWindowTokens() != null && config.getContextWindowTokens() > 0
-                    ? config.getContextWindowTokens() : 32_768);
-            row.setMaxOutputTokens(config.getMaxOutputTokens() != null && config.getMaxOutputTokens() > 0
-                    ? config.getMaxOutputTokens() : 4_096);
-            // 未探测项沿用当前保守默认，避免一次探针失败让模型不可用。
-            row.setSupportsTextGeneration(1);
-            row.setSupportsReasoning(0);
-            row.setSupportsStreaming(1);
-            row.setSupportsFunctionCalling(0);
-            row.setSupportsStructuredOutput(0);
-            row.setSupportsWebSearch(0);
-            row.setSupportsParallelToolCalls(0);
-            row.setCreateTime(nowSqlite());
+        if (config.getProviderId() == null) throw new IllegalArgumentException("providerId 不能为空");
+        AiModelCapability previous = findObservation(config);
+        AiModelCapability row = new AiModelCapability();
+        if (previous != null) {
+            row.setSupportsTextGeneration(previous.getSupportsTextGeneration());
+            row.setSupportsReasoning(previous.getSupportsReasoning());
+            row.setSupportsStreaming(previous.getSupportsStreaming());
+            row.setSupportsFunctionCalling(previous.getSupportsFunctionCalling());
+            row.setSupportsStructuredOutput(previous.getSupportsStructuredOutput());
         }
         applyProbeFlag(verifiedFeatures, "textGeneration", row::setSupportsTextGeneration);
         applyProbeFlag(verifiedFeatures, "reasoning", row::setSupportsReasoning);
@@ -271,15 +286,30 @@ public class AiModelConfigService {
         applyProbeFlag(verifiedFeatures, "structuredOutput", row::setSupportsStructuredOutput);
         row.setSource("probe");
         row.setUpdateTime(nowSqlite());
-        if (creating) {
-            capabilityMapper.insert(row);
-        } else {
-            capabilityMapper.update(row);
-        }
+        capabilityMapper.saveObservation(config.getProviderId(), DynamicModelProvider.resolveProtocol(config),
+                config.getModel(), ModelConfigurationKey.connection(config), row);
         notifyModelRefresh();
-        return capabilityMapper.findByModelName(modelName);
+        return capabilityReport(modelName,
+                mergeCapabilities(capabilitiesForModel(config.getProviderKey(), config.getModel()), row));
     }
 
+    private static AiModelCapability capabilityReport(String modelName, ProviderCapabilities caps) {
+        AiModelCapability report = new AiModelCapability();
+        report.setModelName(modelName);
+        report.setSource(caps.source());
+        report.setContextWindowTokens(caps.contextWindowTokens());
+        report.setMaxOutputTokens(caps.maxOutputTokens());
+        report.setSupportsTextGeneration(caps.supportsTextGeneration() ? 1 : 0);
+        report.setSupportsReasoning(caps.supportsReasoning() ? 1 : 0);
+        report.setSupportsStreaming(caps.supportsStreaming() ? 1 : 0);
+        report.setSupportsFunctionCalling(caps.supportsFunctionCalling() ? 1 : 0);
+        report.setSupportsStructuredOutput(caps.supportsStructuredOutput() ? 1 : 0);
+        report.setSupportsWebSearch(caps.supportsWebSearch() ? 1 : 0);
+        report.setSupportsParallelToolCalls(caps.supportsParallelToolCalls() ? 1 : 0);
+        return report;
+    }
+
+    @Transactional
     public boolean deleteCapability(String modelName) {
         String normalizedName = normalizeCapabilityKey(modelName);
         if (normalizedName == null || normalizedName.isBlank()) return false;
@@ -317,6 +347,7 @@ public class AiModelConfigService {
         return findById(row.getId());
     }
 
+    @Transactional
     public AiModelConfig update(Integer id, AiModelConfig patch) {
         AiModelConfig existing = findById(id);
         if (existing == null) return null;
@@ -385,14 +416,17 @@ public class AiModelConfigService {
         return findById(id);
     }
 
+    @Transactional
     public boolean deleteById(Integer id) {
         AiModelConfig row = findById(id);
         if (row == null) return false;
         mapper.clearFallbackByModelId(id);
         mapper.deleteById(id);
+        notifyModelRefresh();
         return true;
     }
 
+    @Transactional
     public AiModelConfig activate(Integer id) {
         AiModelConfig row = findById(id);
         if (row == null) return null;
@@ -485,8 +519,7 @@ public class AiModelConfigService {
         row.setModel(row.getModel().trim());
         if (row.getEnabled() == null) row.setEnabled(1);
         row.setEnabled(Integer.valueOf(1).equals(row.getEnabled()) ? 1 : 0);
-        row.setProtocol(resolveProtocol(row.getProtocol(), row.getCompletionsPath(),
-                row.getProviderKey(), row.getBaseUrl()));
+        row.setProtocol(DynamicModelProvider.normalizeProtocol(row.getProtocol()));
         if (isBlank(row.getCompletionsPath())) {
             row.setCompletionsPath(DynamicModelProvider.defaultPathForProtocol(row.getProtocol()));
         } else {
@@ -625,7 +658,7 @@ public class AiModelConfigService {
 
     /**
      * MyBatis 的事务级一级缓存可能让相同查询重复返回同一个实体实例。读取密文时必须先复制，
-     * 否则第一次读取会把缓存实体改成明文，事务内第二次读取就会把该明文误判为旧格式数据。
+     * 否则第一次读取会把缓存实体改成明文，事务内第二次读取就会因数据不再是密文而失败。
      */
     private static AiProvider copyProvider(AiProvider source) {
         AiProvider copy = new AiProvider();
@@ -724,23 +757,16 @@ public class AiModelConfigService {
             target.setHeadersJson(blankToNull(target.getHeadersJson()));
             target.setEnabled(target.getEnabled() == null || Integer.valueOf(1).equals(target.getEnabled()) ? 1 : 0);
         }
-        target.setProtocol(resolveProtocol(target.getProtocol(), target.getCompletionsPath(),
-                target.getProviderKey(), target.getBaseUrl()));
+        target.setProtocol(DynamicModelProvider.normalizeProtocol(target.getProtocol()));
         target.setCompletionsPath(isBlank(target.getCompletionsPath())
                 ? DynamicModelProvider.defaultPathForProtocol(target.getProtocol())
                 : target.getCompletionsPath().trim());
-    }
-
-    private static String resolveProtocol(String protocol, String completionsPath, String providerKey, String baseUrl) {
-        String normalized = DynamicModelProvider.normalizeProtocol(protocol);
-        if (normalized != null) {
-            return normalized;
-        }
-        AiModelConfig probe = new AiModelConfig();
-        probe.setCompletionsPath(completionsPath);
-        probe.setProviderKey(providerKey);
-        probe.setBaseUrl(baseUrl);
-        return DynamicModelProvider.resolveProtocol(probe);
+        AiModelConfig endpoint = new AiModelConfig();
+        endpoint.setBaseUrl(target.getBaseUrl());
+        endpoint.setProtocol(target.getProtocol());
+        endpoint.setCompletionsPath(target.getCompletionsPath());
+        ModelEndpoint.apiRoot(endpoint);
+        ModelEndpoint.headers(target.getHeadersJson());
     }
 
     private static Integer normalizeTriStateFlag(Integer v) {
@@ -752,8 +778,8 @@ public class AiModelConfigService {
         if (value == null || value.isBlank()) return "auto";
         String normalized = value.trim().toLowerCase();
         return switch (normalized) {
-            case "auto", "low", "medium", "high", "xhigh" -> normalized;
-            default -> throw new IllegalArgumentException("reasoningEffort 只支持 auto/low/medium/high/xhigh");
+            case "auto", "minimal", "low", "medium", "high", "xhigh", "max" -> normalized;
+            default -> throw new IllegalArgumentException("reasoningEffort 只支持 auto/minimal/low/medium/high/xhigh/max");
         };
     }
 
@@ -778,7 +804,7 @@ public class AiModelConfigService {
 
     private static void normalizeCapability(AiModelCapability row) {
         row.setModelName(normalizeCapabilityKey(row.getModelName()));
-        row.setSource(isBlank(row.getSource()) ? "manual" : row.getSource().trim());
+        row.setSource("manual");
         row.setSupportsTextGeneration(normalizeFlag(row.getSupportsTextGeneration(), 1));
         row.setSupportsReasoning(normalizeFlag(row.getSupportsReasoning(), 0));
         row.setSupportsStreaming(normalizeFlag(row.getSupportsStreaming(), 1));
@@ -807,8 +833,7 @@ public class AiModelConfigService {
     }
 
     private void notifyModelRefresh() {
-        DynamicModelProvider provider = this.dynamicModelProvider;
-        if (provider != null) provider.refresh();
+        events.publishEvent(new AiModelConfigurationChanged());
     }
 
     private static boolean isBlank(String s) {

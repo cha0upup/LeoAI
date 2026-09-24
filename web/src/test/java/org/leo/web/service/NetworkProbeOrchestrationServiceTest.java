@@ -158,6 +158,11 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class ImmediateNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final List<Integer> batchSizes = new ArrayList<>();
         private final List<Map<String, Object>> startedPlans = new ArrayList<>();
         private final List<String> released = new ArrayList<>();
@@ -218,6 +223,11 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class StoppableNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final boolean failQueryAfterStop;
         private final CountDownLatch started = new CountDownLatch(1);
         private final AtomicInteger releaseCount = new AtomicInteger();
@@ -278,6 +288,11 @@ class NetworkProbeOrchestrationServiceTest {
 
     private static final class FailedNode implements NetworkProbeCapable {
         @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
+        @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "failed-child");
         }
@@ -318,6 +333,11 @@ class NetworkProbeOrchestrationServiceTest {
 
     private static final class CancelledNode implements NetworkProbeCapable {
         @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
+        @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "cancelled-child");
         }
@@ -342,6 +362,11 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class IncrementalNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "incremental-child");

@@ -10,6 +10,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
+import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiConversationStoreService.ConversationCheckpoint;
 import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
@@ -237,9 +238,9 @@ class CompressingChatMemoryTest {
         when(estimator.estimateTokenCountInMessage(any(ChatMessage.class)))
                 .thenReturn(tokensPerMessage);
         when(estimator.estimateTokenCountInText(any())).thenReturn(100);
-        ContextCompressionService compressionService = store == null
-                ? new ContextCompressionService(model, estimator)
-                : new ContextCompressionService(model, estimator, store);
+        ContextCompressionService compressionService = new ContextCompressionService(
+                model, estimator, store != null ? store : mock(AiConversationStoreService.class),
+                mock(AiTurnTelemetryRegistry.class));
         var delegate = MessageWindowChatMemory.builder()
                 .id("platform:thread-1")
                 .maxMessages(maxMessages)

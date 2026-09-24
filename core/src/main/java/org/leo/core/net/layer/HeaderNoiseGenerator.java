@@ -15,24 +15,20 @@ import java.security.NoSuchAlgorithmException;
  */
 public class HeaderNoiseGenerator {
 
-    private static final Random RANDOM = new Random();
     private static final String ALPHA_NUM = "abcdefghijklmnopqrstuvwxyz0123456789";
     private static final String HEX_CHARS = "0123456789abcdef";
 
     private final HeaderNoiseStrategy strategy;
-    private final String sessionSeed;
-
-    public HeaderNoiseGenerator(HeaderNoiseStrategy strategy) {
-        this(strategy, null);
-    }
+    private final long sessionSeed;
 
     /**
-     * 创建会话级 Header 生成器。传入 seed 后，同一会话会持续返回同一组 Header，
+     * 创建会话级 Header 生成器。同一会话会持续返回同一组 Header，
      * 避免单个客户端在短时间内不断改变 Header 集合和值格式。
      */
     public HeaderNoiseGenerator(HeaderNoiseStrategy strategy, String seed) {
         this.strategy = strategy;
-        this.sessionSeed = seed == null || seed.isBlank() ? null : seed;
+        if (seed == null || seed.isBlank()) throw new IllegalArgumentException("seed不能为空");
+        this.sessionSeed = seedLong(seed);
     }
 
     /**
@@ -46,7 +42,7 @@ public class HeaderNoiseGenerator {
             return Collections.emptyMap();
         }
 
-        Random random = sessionSeed == null ? RANDOM : new Random(seedLong(sessionSeed));
+        Random random = new Random(sessionSeed);
         int count = randomBetween(strategy.getMinHeaders(), strategy.getMaxHeaders(), random);
         if (count <= 0) {
             return Collections.emptyMap();
@@ -109,10 +105,7 @@ public class HeaderNoiseGenerator {
     }
 
     private String generateNumeric(Random random) {
-        // seed 模式使用稳定的正数标识；旧模式继续生成近似时间戳值。
-        long base = sessionSeed == null
-                ? System.currentTimeMillis() + random.nextInt(100000)
-                : 1_700_000_000_000L + Math.floorMod(random.nextLong(), 100_000_000_000L);
+        long base = 1_700_000_000_000L + Math.floorMod(random.nextLong(), 100_000_000_000L);
         return String.valueOf(base);
     }
 

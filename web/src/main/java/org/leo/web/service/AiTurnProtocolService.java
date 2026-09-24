@@ -237,16 +237,8 @@ public class AiTurnProtocolService {
                                  List<TurnSnapshot> queuedTurns,
                                  AiUserInputRequest pendingUserInput) {
 
-        public ThreadSnapshot(String status,
-                              boolean executing,
-                              TurnSnapshot activeTurn,
-                              List<TurnSnapshot> queuedTurns) {
-            this(status, executing, activeTurn, queuedTurns, null);
-        }
-
         public Map<String, Object> toMap() {
             Map<String, Object> value = new LinkedHashMap<>();
-            value.put("status", status);
             value.put("runStatus", status);
             value.put("executing", executing);
             value.put("activeTurn",
@@ -276,25 +268,6 @@ public class AiTurnProtocolService {
                                String commandScope,
                                String commandJson,
                                String answerToQuestionId) {
-
-        public TurnSnapshot(String id,
-                            String threadId,
-                            String status,
-                            String clientUserMessageId,
-                            String userItemId,
-                            String assistantItemId,
-                            long createdAt,
-                            Long startedAt,
-                            Long completedAt,
-                            boolean interruptRequested,
-                            String errorMessage,
-                            String commandScope,
-                            String commandJson) {
-            this(id, threadId, status, clientUserMessageId,
-                    userItemId, assistantItemId, createdAt, startedAt,
-                    completedAt, interruptRequested, errorMessage,
-                    commandScope, commandJson, null);
-        }
 
         public Map<String, Object> toMap() {
             Map<String, Object> value = new LinkedHashMap<>();

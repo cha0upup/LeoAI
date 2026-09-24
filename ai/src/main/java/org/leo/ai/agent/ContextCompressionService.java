@@ -51,16 +51,6 @@ public class ContextCompressionService {
     private final AiConversationStoreService conversationStore;
     private final AiTurnTelemetryRegistry telemetryRegistry;
 
-    public ContextCompressionService(ChatModel chatModel, TokenCountEstimator tokenEstimator) {
-        this(chatModel, tokenEstimator, null, null);
-    }
-
-    public ContextCompressionService(ChatModel chatModel,
-                                     TokenCountEstimator tokenEstimator,
-                                     AiConversationStoreService conversationStore) {
-        this(chatModel, tokenEstimator, conversationStore, null);
-    }
-
     public ContextCompressionService(ChatModel chatModel,
                                      TokenCountEstimator tokenEstimator,
                                      AiConversationStoreService conversationStore,
@@ -112,7 +102,7 @@ public class ContextCompressionService {
     }
 
     RestoredCheckpoint restoreCheckpoint(String memoryId, List<ChatMessage> currentMessages) {
-        if (conversationStore == null || currentMessages == null || currentMessages.isEmpty()) {
+        if (currentMessages == null || currentMessages.isEmpty()) {
             return null;
         }
         String threadId = threadIdFromMemoryId(memoryId);
@@ -181,8 +171,7 @@ public class ContextCompressionService {
                            SystemMessage summaryMessage,
                            List<ChatMessage> currentMessages,
                            int summarizedSourceCount) {
-        if (conversationStore == null || summaryMessage == null
-                || currentMessages == null || summarizedSourceCount <= 0) {
+        if (summaryMessage == null || currentMessages == null || summarizedSourceCount <= 0) {
             return;
         }
         String threadId = threadIdFromMemoryId(memoryId);
@@ -219,7 +208,6 @@ public class ContextCompressionService {
 
     /** 清除与当前内存同步失效的持久化 checkpoint。 */
     void clearPersistedCheckpoint(String memoryId) {
-        if (conversationStore == null) return;
         try {
             conversationStore.clearContextCheckpoint(threadIdFromMemoryId(memoryId));
         } catch (RuntimeException e) {
@@ -373,7 +361,7 @@ public class ContextCompressionService {
     }
 
     private void recordTelemetry(String event) {
-        if (telemetryRegistry != null) telemetryRegistry.recordRuntimeEvent(event);
+        telemetryRegistry.recordRuntimeEvent(event);
     }
 
     private static List<CompressionCheckpoint.DurableMessage> durableMessages(

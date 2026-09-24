@@ -4,7 +4,6 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAgent;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
@@ -28,7 +27,6 @@ class PlatformAiAgentRegistryTest {
     @Test
     void reusesAgentUntilThePlannedRuntimeChangesAndSupportsEviction() {
         AiAgentFactory agentFactory = mock(AiAgentFactory.class);
-        AiModelConfigService configService = mock(AiModelConfigService.class);
         DynamicModelProvider modelProvider = mock(DynamicModelProvider.class);
         AiModelFailoverService failoverService = mock(AiModelFailoverService.class);
         PlatformPuppetAiBridgeTools bridgeTools = mock(PlatformPuppetAiBridgeTools.class);
@@ -40,16 +38,15 @@ class PlatformAiAgentRegistryTest {
         when(failoverService.selectForExecution(config)).thenReturn(
                 new AiModelFailoverService.ModelSelection(
                         config, config, false, "运行时提示", List.of(7)));
-        when(configService.getContextWindowTokens(config)).thenReturn(32_768);
         when(modelProvider.plannedRuntimeCacheKey(config, "medium")).thenReturn("runtime-a");
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(config, "medium")).thenReturn(modelRuntime);
         when(modelProvider.buildRuntime(config, "high")).thenReturn(modelRuntime);
         when(agentFactory.createPlatformAgent(
-                same(streamingModel), eq(true), anyInt(), same(bridgeTools)))
+                same(streamingModel), eq(true), eq(32_768), same(bridgeTools)))
                 .thenReturn(firstAgent, secondAgent, secondAgent);
         PlatformAiAgentRegistry registry = new PlatformAiAgentRegistry(
-                agentFactory, configService, modelProvider, failoverService, bridgeTools);
+                agentFactory, modelProvider, failoverService, bridgeTools);
         PlatformAiState state = new PlatformAiState("state-1");
 
         PlatformAiAgentRegistry.Runtime first = registry.resolve(state, config, "medium");
@@ -78,6 +75,6 @@ class PlatformAiAgentRegistryTest {
     private static DynamicModelProvider.ModelRuntime runtime(StreamingChatModel streamingModel) {
         return new DynamicModelProvider.ModelRuntime(
                 streamingModel, null, "responses", "openai", "https://example.test",
-                "test-model", 4096, false, null, true, false);
+                "test-model", 4096, false, null, true, false, 32_768);
     }
 }

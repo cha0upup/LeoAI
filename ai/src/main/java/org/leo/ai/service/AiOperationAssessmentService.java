@@ -7,12 +7,10 @@ import org.leo.ai.agent.AiToolException;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.thread.AiOperationAssessmentRepository;
 import org.leo.core.entity.AiOperationAssessment;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Stores the Agent's semantic risk assessment until the exact operation executes.
@@ -24,21 +22,11 @@ public class AiOperationAssessmentService {
 
     private final AiToolCatalog toolCatalog;
     private final AiOperationAssessmentRepository repository;
-    private final Map<String, Assessment> testAssessments;
 
-    @Autowired
     public AiOperationAssessmentService(AiToolCatalog toolCatalog,
                                         AiOperationAssessmentRepository repository) {
         this.toolCatalog = toolCatalog;
         this.repository = repository;
-        this.testAssessments = null;
-    }
-
-    /** Test-only convenience constructor; Spring production wiring uses the persistent repository. */
-    public AiOperationAssessmentService(AiToolCatalog toolCatalog) {
-        this.toolCatalog = toolCatalog;
-        this.repository = null;
-        this.testAssessments = new ConcurrentHashMap<>();
     }
 
     public Map<String, Object> assess(Object memoryId, String toolName,
@@ -71,18 +59,9 @@ public class AiOperationAssessmentService {
                 normalizedTool, canonicalArguments, hash, normalizedRisk, confirm,
                 limit(reason, 2_000), limit(impact, 2_000), limit(rollback, 2_000),
                 System.currentTimeMillis() + TTL_MS);
-        if (repository != null) {
-            AiOperationAssessment existing = repository.findPending(
-                    userId, threadKey, normalizedTool, hash);
-            if (existing != null) return fromEntity(existing).toMap();
-            AiOperationAssessment row = toEntity(assessment, userId, threadKey);
-            repository.create(row);
-        } else {
-            cleanup();
-            Assessment existing = testAssessments.get(key(threadKey, userId, normalizedTool, hash));
-            if (existing != null) return existing.toMap();
-            testAssessments.put(key(threadKey, userId, normalizedTool, hash), assessment);
-        }
+        AiOperationAssessment existing = repository.findPending(userId, threadKey, normalizedTool, hash);
+        if (existing != null) return fromEntity(existing).toMap();
+        repository.create(toEntity(assessment, userId, threadKey));
         return assessment.toMap();
     }
 
@@ -91,35 +70,18 @@ public class AiOperationAssessmentService {
         String userId = AiToolContext.getExecutionPolicy().getUserId();
         String hash = AiUserInputService.confirmationArgumentsHash(
                 argumentsJson == null ? "{}" : argumentsJson);
-        if (repository != null) {
-            AiOperationAssessment row = repository.findPending(userId, threadKey, toolName, hash);
-            return row == null ? null : fromEntity(row);
-        }
-        cleanup();
-        return testAssessments.get(key(threadKey, userId, toolName, hash));
+        AiOperationAssessment row = repository.findPending(userId, threadKey, toolName, hash);
+        return row == null ? null : fromEntity(row);
     }
 
     public boolean consume(Assessment assessment) {
-        if (assessment == null) return false;
-        if (repository != null) return repository.consume(assessment.key(), System.currentTimeMillis());
-        return testAssessments.remove(assessment.key(), assessment)
-                || testAssessments.entrySet().removeIf(entry -> entry.getValue() == assessment);
+        return assessment != null && repository.consume(assessment.key(), System.currentTimeMillis());
     }
 
     private String effectiveThreadKey(Object memoryId) {
         String threadId = AiToolContext.getThreadId();
         if (threadId != null && !threadId.isBlank()) return threadId.trim();
         return requireText(memoryId == null ? null : String.valueOf(memoryId), "AI 运行线程不存在");
-    }
-
-    private static String key(String threadKey, String userId, String toolName, String hash) {
-        return String.valueOf(threadKey) + "|" + String.valueOf(userId)
-                + "|" + String.valueOf(toolName) + "|" + String.valueOf(hash);
-    }
-
-    private void cleanup() {
-        long now = System.currentTimeMillis();
-        testAssessments.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= now);
     }
 
     private AiOperationAssessment toEntity(Assessment value, String userId, String threadId) {

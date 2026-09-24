@@ -105,8 +105,7 @@ public final class AiSseTransport {
 
     static String extractSubagentInvocationId(Object data) {
         if (data instanceof Map<?, ?> map) {
-            Object id = map.get("parentSubagentInvocationId");
-            if (id == null) id = map.get("subagentInvocationId");
+            Object id = map.get("subagentInvocationId");
             if (id != null) {
                 String text = String.valueOf(id);
                 return text.isBlank() ? null : text;

@@ -11,7 +11,6 @@ public enum ScanStage {
     REACHABILITY, PORT_SCAN, SERVICE_PROBE, FINGERPRINT;
 
     public static List<ScanStage> resolve(Object value) {
-        if (value == null) return List.of(REACHABILITY, PORT_SCAN, SERVICE_PROBE);
         if (!(value instanceof Collection<?> stages) || stages.isEmpty()) {
             throw new IllegalArgumentException("请至少选择一个扫描阶段");
         }

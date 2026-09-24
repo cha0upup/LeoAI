@@ -23,9 +23,7 @@ public interface NetworkProbeCapable {
                                           boolean includeEvidence) throws Exception;
 
     /** Acknowledge that the service has durably accepted observations through cursor. */
-    default Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception {
-        return Map.of("code", Integer.valueOf(200), "cursor", Long.valueOf(cursor));
-    }
+    Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception;
 
     Map<String, Object> pauseNetworkProbe(String taskId) throws Exception;
 

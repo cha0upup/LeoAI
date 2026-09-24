@@ -17,14 +17,14 @@ class FingerprintSeedInitializerTest {
     @TempDir Path directory;
 
     @Test
-    void cleansExistingMetadataWithoutReplacingCustomizedRules() throws Exception {
+    void seedsMissingRulesWithoutRewritingExistingFiles() throws Exception {
         AtomicFileStore store = new AtomicFileStore();
         Map<String, Object> rule = Map.of("requests", List.of(Map.of("uri", "/custom")),
                 "match", Map.of("field", "body", "value", "custom-marker"),
                 "version", Map.of("field", "headers", "prefix", "custom/"));
         Map<String, Object> info = Map.of("version", "any", "author", "custom-author",
                 "description", "Custom detection", "remark", "Keep this note",
-                "vulnerabilities", List.of(Map.of("title", "legacy issue")));
+                "customNote", "user metadata");
         Path fingerprints = directory.resolve("fingerprint");
         for (String id : List.of("nacos_any", "custom_any")) {
             store.writeJson(fingerprints.resolve(id + ".json").toFile(), Map.of(
@@ -43,9 +43,8 @@ class FingerprintSeedInitializerTest {
                 assertEquals(rule, stored.get("rule"));
                 assertEquals(id, stored.get("fingerprintId"));
                 assertEquals(List.of("custom"), stored.get("tags"));
-                assertEquals(Map.of("version", "any", "author", "custom-author",
-                        "description", "Custom detection", "remark", "Keep this note"), stored.get("info"));
-                assertFalse(stored.containsKey("externalNotes"));
+                assertEquals(info, stored.get("info"));
+                assertEquals("unrelated metadata", stored.get("externalNotes"));
             }
             String first = Files.readString(fingerprints.resolve("nacos_any.json"));
             initializer.run();

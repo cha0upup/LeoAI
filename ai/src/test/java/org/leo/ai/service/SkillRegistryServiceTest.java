@@ -27,7 +27,7 @@ class SkillRegistryServiceTest {
     void setUp() {
         previousVfsPath = LeoConfig.getVfsPath();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
-        registry = new SkillRegistryService();
+        registry = new SkillRegistryService(new SkillManifestService());
     }
 
     @AfterEach

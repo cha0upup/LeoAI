@@ -2,7 +2,6 @@ package org.leo.service.audit;
 
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import org.leo.dao.mapper.AuditLogMapper;
@@ -33,7 +32,6 @@ public class AuditLogService {
     private static final int DEFAULT_LIMIT = 50;
     private static final int MAX_LIMIT = 1000;
 
-    @Autowired
     public AuditLogService(AuditLogMapper auditLogMapper) {
         this.auditLogMapper = auditLogMapper;
     }

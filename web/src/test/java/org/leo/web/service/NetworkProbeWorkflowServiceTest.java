@@ -183,14 +183,14 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
-    void acceptsDerivedOpenPortResultsFromCompletedPortStage() throws Exception {
-        Method method = NetworkProbeWorkflowService.class.getDeclaredMethod("openEndpoints", Map.class);
-        method.setAccessible(true);
-        Map<String, Object> result = Map.of("openPortResults", List.of(Map.of(
-                "host", "host-a", "port", 8080, "state", "open")));
-
+    void retainsOpenPortResultsAfterIncrementalStageCompletion() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        node.openPorts = Set.of(8080);
+        String taskId = String.valueOf(service.start("session-1", node,
+                plan(List.of(8080), List.of("PORT_SCAN"))).get("taskId"));
+        Map<String, Object> snapshot = awaitTerminal(taskId);
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> endpoints = (List<Map<String, Object>>) method.invoke(service, result);
+        List<Map<String, Object>> endpoints = (List<Map<String, Object>>) snapshot.get("openPortResults");
         assertEquals(1, endpoints.size());
         assertEquals("host-a", endpoints.get(0).get("host"));
         assertEquals(8080, endpoints.get(0).get("port"));
@@ -274,10 +274,15 @@ class NetworkProbeWorkflowServiceTest {
         ScanPlanService planner = new ScanPlanService(resolver, new PortPolicyResolver(), analysis);
         return planner.plan(new ScanConfig("test workflow", new TargetInput(List.of("host-a"), List.of()),
                 new PortPolicy("custom", List.of(), ports, List.of()),
-                new ExecutionConfig(4, 1000), null, stages));
+                new ExecutionConfig(4, 1000), null, stages == null ? List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE") : stages));
     }
 
     private static final class FingerprintControlledNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final WorkflowNode discovery = new WorkflowNode();
         private final ControlledWorkflowNode control = new ControlledWorkflowNode();
         private NetworkProbeCapable node(String id) { return "controlled-child".equals(id) ? control : discovery; }
@@ -325,6 +330,11 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     private static final class WorkflowNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final Map<String, Map<String, Object>> tasks = new LinkedHashMap<>();
         private final List<String> startedStages = new ArrayList<>();
         private Set<Integer> openPorts = Set.of(80);
@@ -415,6 +425,11 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     private static final class ControlledWorkflowNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final CountDownLatch started = new CountDownLatch(1);
         private final AtomicInteger pauseCalls = new AtomicInteger();
         private final AtomicInteger resumeCalls = new AtomicInteger();
@@ -471,6 +486,11 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     private static final class CancelledWorkflowNode implements NetworkProbeCapable {
+        @Override
+        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            return Map.of("code", 200, "cursor", cursor);
+        }
+
         private final List<String> startedStages = new ArrayList<>();
 
         @Override

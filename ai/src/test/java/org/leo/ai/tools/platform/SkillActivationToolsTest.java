@@ -8,6 +8,7 @@ import org.leo.ai.agent.AgentRuntimeResolver;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.SkillManifestService;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
@@ -34,7 +35,8 @@ class SkillActivationToolsTest {
         previousVfsPath = LeoConfig.getVfsPath();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
         tools = new SkillActivationTools(
-                new SkillRegistryService(), SkillRegistryService.SCOPE_PUPPET_NODE);
+                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_PUPPET_NODE,
+                new AgentRuntimeResolver());
     }
 
     @AfterEach
@@ -72,7 +74,7 @@ class SkillActivationToolsTest {
         PuppetNodeSessionContainer.addSession("activation-session", session);
         AiToolContext.setFromMemoryId("activation-session:thread-1");
         SkillActivationTools statefulTools = new SkillActivationTools(
-                new SkillRegistryService(), SkillRegistryService.SCOPE_PUPPET_NODE,
+                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_PUPPET_NODE,
                 new AgentRuntimeResolver());
 
         statefulTools.activateSkill("enabled-skill");

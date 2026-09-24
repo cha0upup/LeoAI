@@ -36,19 +36,14 @@ public class UrlGenerator {
     private final UrlStrategy strategy;
     private final String fallbackUrl;
     private final Random random;
-    private final boolean sessionStable;
     private String stableUrl;
-
-    public UrlGenerator(UrlStrategy strategy, String fallbackUrl) {
-        this(strategy, fallbackUrl, null);
-    }
 
     /** 创建 seed 驱动的会话级 URL 生成器；同一 seed 始终选择同一路径。 */
     public UrlGenerator(UrlStrategy strategy, String fallbackUrl, String seed) {
         this.strategy = strategy;
         this.fallbackUrl = fallbackUrl;
-        this.sessionStable = seed != null && !seed.isBlank();
-        this.random = sessionStable ? new Random(seedLong(seed)) : new Random();
+        if (seed == null || seed.isBlank()) throw new IllegalArgumentException("seed不能为空");
+        this.random = new Random(seedLong(seed));
     }
 
     /**
@@ -67,7 +62,7 @@ public class UrlGenerator {
             return fallbackUrl;
         }
 
-        if (sessionStable && stableUrl != null) {
+        if (stableUrl != null) {
             return stableUrl;
         }
 
@@ -91,7 +86,7 @@ public class UrlGenerator {
                 generated = fallbackUrl;
         }
         generated = resolve(generated);
-        if (sessionStable) stableUrl = generated;
+        stableUrl = generated;
         return generated;
     }
 

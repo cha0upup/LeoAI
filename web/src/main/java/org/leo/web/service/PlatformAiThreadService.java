@@ -155,9 +155,7 @@ public class PlatformAiThreadService {
         PlatformAiState state = PlatformAiStateStore.get(threadId);
         String runStatus = state != null && state.isExecuting()
                 ? state.getRunStatus() : persisted.getRunStatus();
-        Map<String, Object> data = threadQueries.events(threadId, state, runStatus, requestedAfterSeq, requestedLimit);
-        data.put("elapsedMs", 0L);
-        return data;
+        return threadQueries.events(threadId, state, runStatus, requestedAfterSeq, requestedLimit);
     }
 
     public Map<String, Object> messages(User user, String threadId,

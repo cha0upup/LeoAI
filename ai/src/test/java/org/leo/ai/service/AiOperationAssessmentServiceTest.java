@@ -18,6 +18,13 @@ import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.tools.common.OperationAssessmentTools;
 import org.leo.core.entity.AiExecutionPolicy;
+import org.leo.core.entity.AiOperationAssessment;
+import org.leo.ai.thread.AiOperationAssessmentRepository;
+import org.mockito.ArgumentCaptor;
+
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -28,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class AiOperationAssessmentServiceTest {
 
+    private final AiOperationAssessmentRepository repository = mock(AiOperationAssessmentRepository.class);
+
     @AfterEach
     void cleanup() {
         AiToolContext.clear();
@@ -37,12 +46,23 @@ class AiOperationAssessmentServiceTest {
     void assessmentBindsExactArgumentsAndCanOnlyBeConsumedOnce() {
         AiToolCatalog catalog = catalog(new MutationTools());
         AiOperationAssessmentService service =
-                new AiOperationAssessmentService(catalog);
+                new AiOperationAssessmentService(catalog, repository);
         bindContext();
 
         service.assess("platform-thread", "exec",
                 "{\"cmd\":\"whoami\",\"timeout\":0}",
                 "LOW", false, "只读取当前用户", null, null);
+
+        ArgumentCaptor<AiOperationAssessment> created = ArgumentCaptor.forClass(AiOperationAssessment.class);
+        verify(repository).create(created.capture());
+        AiOperationAssessment row = created.getValue();
+        assertEquals("user-1", row.getUserId());
+        assertEquals("platform-thread", row.getThreadId());
+        assertEquals("PENDING", row.getStatus());
+        assertEquals("{\"cmd\":\"whoami\",\"timeout\":0}", row.getArgumentsJson());
+        when(repository.findPending("user-1", "platform-thread", "exec", row.getArgumentsHash()))
+                .thenReturn(row, null);
+        when(repository.consume(eq(row.getAssessmentId()), anyLong())).thenReturn(true, false);
 
         AiOperationAssessmentService.Assessment assessment =
                 service.find("platform-thread", "exec",
@@ -55,6 +75,7 @@ class AiOperationAssessmentServiceTest {
         assertFalse(service.consume(assessment));
         assertNull(service.find("platform-thread", "exec",
                 "{\"cmd\":\"whoami\",\"timeout\":0}"));
+        verify(repository, times(2)).consume(eq(row.getAssessmentId()), anyLong());
     }
 
     @Test
@@ -62,7 +83,7 @@ class AiOperationAssessmentServiceTest {
         AiToolCatalog catalog = catalog(new MutationTools(), new ReadTools(),
                 new InternalTools());
         AiOperationAssessmentService service =
-                new AiOperationAssessmentService(catalog);
+                new AiOperationAssessmentService(catalog, repository);
         bindContext();
 
         assertThrows(RuntimeException.class, () -> service.assess(
@@ -76,7 +97,7 @@ class AiOperationAssessmentServiceTest {
     @Test
     void refusesHighRiskAssessmentWithoutConfirmation() {
         AiToolCatalog catalog = catalog(new MutationTools());
-        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog);
+        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog, repository);
         bindContext();
 
         assertThrows(RuntimeException.class, () -> service.assess(
@@ -87,7 +108,7 @@ class AiOperationAssessmentServiceTest {
     @Test
     void reportsMalformedNestedArgumentsJsonAsModelCorrectable() {
         AiToolCatalog catalog = catalog(new MutationTools());
-        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog);
+        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog, repository);
         bindContext();
 
         AiToolException error = assertThrows(AiToolException.class, () -> service.assess(
@@ -101,7 +122,7 @@ class AiOperationAssessmentServiceTest {
     @Test
     void malformedNestedArgumentsJsonReturnsRetryableToolResult() {
         AiToolCatalog catalog = catalog(new MutationTools());
-        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog);
+        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog, repository);
         bindContext();
         AiServiceTool tool = ToolService.findTools(new OperationAssessmentTools(service)).get(0);
         String outerArguments = JSON.toJSONString(java.util.Map.of(

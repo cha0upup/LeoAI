@@ -134,12 +134,6 @@ class PuppetNodeSqlServiceJdbcContractTest {
 
         @Override
         public Map<String, Object> executeSql(DatabaseConnectionSpec connection,
-                                              String sqlScript) throws Exception {
-            return executeSql(connection, SqlCommand.raw(sqlScript));
-        }
-
-        @Override
-        public Map<String, Object> executeSql(DatabaseConnectionSpec connection,
                                               SqlCommand command) throws Exception {
             Map<String, Object> params = new LinkedHashMap<String, Object>(adapter.adapt(connection));
             params.put("sql", command.sql());

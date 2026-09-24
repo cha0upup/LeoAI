@@ -38,8 +38,8 @@ class PhpRpcClientTest {
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)), KEY);
+                List.of(new RequestLayer("/", Map.of(), portable, KEY)),
+                List.of(new ResponseLayer(portable, KEY)));
         Map<String, Object> result = client.ping();
 
         assertEquals(200, result.get("code"));
@@ -72,9 +72,9 @@ class PhpRpcClientTest {
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/inner", Map.of("X-Layer", "inner"), portable),
-                        new RequestLayer("/outer", Map.of(), portable)),
-                List.of(new ResponseLayer(portable), new ResponseLayer(portable)), KEY);
+                List.of(new RequestLayer("/inner", Map.of("X-Layer", "inner"), portable, KEY),
+                        new RequestLayer("/outer", Map.of(), portable, KEY)),
+                List.of(new ResponseLayer(portable, KEY), new ResponseLayer(portable, KEY)));
 
         Map<String, Object> result = client.ping();
         assertEquals(200, result.get("code"));
@@ -107,7 +107,7 @@ class PhpRpcClientTest {
                 List.of(new RequestLayer("/inner", Map.of(), portable, "inner-php-key"),
                         new RequestLayer("/outer", Map.of(), portable, "outer-php-key")),
                 List.of(new ResponseLayer(portable, "outer-php-key"),
-                        new ResponseLayer(portable, "inner-php-key")), KEY);
+                        new ResponseLayer(portable, "inner-php-key")));
 
         Map<String, Object> result = client.ping();
 
@@ -126,8 +126,8 @@ class PhpRpcClientTest {
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)), KEY);
+                List.of(new RequestLayer("/", Map.of(), portable, KEY)),
+                List.of(new ResponseLayer(portable, KEY)));
 
         assertThrows(IllegalStateException.class, client::ping);
         assertEquals(1, calls[0]);
@@ -150,8 +150,8 @@ class PhpRpcClientTest {
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)), KEY);
+                List.of(new RequestLayer("/", Map.of(), portable, KEY)),
+                List.of(new ResponseLayer(portable, KEY)));
         client.setMaxReqCount(3);
         client.setRetryBackoff(100, 1_000);
         client.setRetrySleeper(delays::add);
@@ -184,8 +184,8 @@ class PhpRpcClientTest {
                             "message", "wrong instance")));
         };
         PhpRpcClient client = new PhpRpcClient(communication,
-                List.of(new RequestLayer("/", Map.of(), portable)),
-                List.of(new ResponseLayer(portable)), KEY);
+                List.of(new RequestLayer("/", Map.of(), portable, KEY)),
+                List.of(new ResponseLayer(portable, KEY)));
         client.setHostId("php-host-1");
         client.setMaxReqCount(3);
         client.setRetryBackoff(0, 0);

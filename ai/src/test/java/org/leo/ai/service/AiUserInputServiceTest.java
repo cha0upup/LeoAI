@@ -49,7 +49,7 @@ class AiUserInputServiceTest {
         state.bindActiveItemId("item-1");
         AiToolContext.setFromMemoryId(STATE_ID);
 
-        AiUserInputService service = new AiUserInputService(store);
+        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
         Map<String, Object> result = service.request(
                 "CLARIFICATION", "请选择目标范围", options("当前节点", "current_node", "SCOPE_CURRENT", "全部节点", "all_nodes", "SCOPE_ALL"),
                 false, null, null, null, "LOW", 60L);
@@ -73,7 +73,7 @@ class AiUserInputServiceTest {
         when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
         PlatformAiStateStore.create(STATE_ID);
         AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(store);
+        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
 
         @SuppressWarnings("unchecked")
         Map<String, Object> request = (Map<String, Object>) service.request(
@@ -116,7 +116,7 @@ class AiUserInputServiceTest {
         PlatformAiStateStore.create(STATE_ID);
         AiToolContext.setFromMemoryId(STATE_ID);
         AiUserInputService service = new AiUserInputService(
-                mock(AiConversationStoreService.class));
+                mock(AiConversationStoreService.class), new AiToolCatalog());
 
         assertThrows(RuntimeException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
@@ -137,7 +137,7 @@ class AiUserInputServiceTest {
         PlatformAiStateStore.create(STATE_ID);
         AiToolContext.setFromMemoryId(STATE_ID);
         AiUserInputService service = new AiUserInputService(
-                mock(AiConversationStoreService.class));
+                mock(AiConversationStoreService.class), new AiToolCatalog());
 
         assertThrows(RuntimeException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("稍后再说", "later", "DEFER"),
@@ -149,7 +149,7 @@ class AiUserInputServiceTest {
     void confirmationRejectsFreeText() {
         PlatformAiStateStore.create(STATE_ID);
         AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(mock(AiConversationStoreService.class));
+        AiUserInputService service = new AiUserInputService(mock(AiConversationStoreService.class), new AiToolCatalog());
 
         assertThrows(RuntimeException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
@@ -198,7 +198,7 @@ class AiUserInputServiceTest {
         request.setAnswer("只处理当前节点");
         when(store.findUserInputRequest("question-1")).thenReturn(request);
 
-        String prompt = new AiUserInputService(store).resumePrompt(
+        String prompt = new AiUserInputService(store, new AiToolCatalog()).resumePrompt(
                 "thread-1", "question-1", "原始安全策略消息");
 
         assertTrue(prompt.contains("使用哪个范围？"));
