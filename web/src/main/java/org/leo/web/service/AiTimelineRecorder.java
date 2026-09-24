@@ -106,12 +106,7 @@ public final class AiTimelineRecorder {
         if (thinking.length() == 0) return;
         String content = thinking.toString();
         thinking.setLength(0);
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "thinking");
-        entry.put("content", content);
-        entry.put("timestamp", System.currentTimeMillis());
-        sink.emit("node", entry);
-        eventLog.add(new AiSseEvent("node", entry));
+        emitTextNode("thinking", content);
     }
 
     /**
@@ -124,8 +119,12 @@ public final class AiTimelineRecorder {
         String content = textSegment.toString();
         textSegment.setLength(0);
         if (content.isBlank()) return;
+        emitTextNode("text", content);
+    }
+
+    private void emitTextNode(String kind, String content) {
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("kind", "text");
+        entry.put("kind", kind);
         entry.put("content", content);
         entry.put("timestamp", System.currentTimeMillis());
         sink.emit("node", entry);
