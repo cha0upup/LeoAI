@@ -122,18 +122,10 @@ public class AiConversationStoreService {
         mapper.renameThread(threadId, title, System.currentTimeMillis());
     }
 
-    public void updateRuntime(String sessionId, AiThread thread) {
-        updateRuntime(sessionId, thread, null);
-    }
-
     public void updateRuntime(String sessionId, AiThread thread, String leaseToken) {
         if (thread == null) return;
         updateRuntime(sessionId, thread.getThreadId(), thread.getLastActiveAt(),
                 thread.getRunStatus(), leaseToken);
-    }
-
-    public void updateRuntime(String sessionId, String threadId, long lastActiveAt, String runStatus) {
-        updateRuntime(sessionId, threadId, lastActiveAt, runStatus, null);
     }
 
     public void updateRuntime(String sessionId, String threadId, long lastActiveAt,
@@ -214,13 +206,6 @@ public class AiConversationStoreService {
     @Transactional
     public boolean reserveProtocolTurn(AiTurnRecord turn,
                                        String userContent,
-                                       Object attachments) {
-        return reserveProtocolTurn(turn, userContent, attachments, null);
-    }
-
-    @Transactional
-    public boolean reserveProtocolTurn(AiTurnRecord turn,
-                                       String userContent,
                                        Object attachments,
                                        String answerToQuestionId) {
         if (turn == null || mapper.insertProtocolTurn(turn) != 1) return false;
@@ -288,7 +273,7 @@ public class AiConversationStoreService {
         AiTurnRecord current = findProtocolTurn(turnId);
         if (current != null && "queued".equals(current.getDispatchStatus())) {
             AiTurnRecord completed = completeProtocolTurn(
-                    turnId, "interrupted", null, System.currentTimeMillis());
+                    turnId, "interrupted", null, System.currentTimeMillis(), null);
             mapper.updateTurnMessageStatus(
                     threadId, turnId, MESSAGE_DISCARDED);
             Map<String, Object> turn = new LinkedHashMap<>();
@@ -304,7 +289,7 @@ public class AiConversationStoreService {
                     null,
                     turnId,
                     current.getAssistantItemId(),
-                    null));
+                    null), null);
             return completed;
         }
         return current;
@@ -313,12 +298,6 @@ public class AiConversationStoreService {
     public boolean hasInterruptRequestedTurn(String threadId) {
         return !isBlank(threadId)
                 && mapper.countInterruptRequestedTurns(threadId) > 0;
-    }
-
-    public AiTurnRecord completeProtocolTurn(
-            String turnId, String protocolStatus, String errorMessage, long completedAt) {
-        return completeProtocolTurn(
-                turnId, protocolStatus, errorMessage, completedAt, null);
     }
 
     public AiTurnRecord completeProtocolTurn(
@@ -340,10 +319,6 @@ public class AiConversationStoreService {
      */
     public void attachEventJournal(String threadId, AiEventStreamRuntime runtime) {
         eventJournal.attach(threadId, runtime, this::appendEvent);
-    }
-
-    public void appendEvent(String threadId, AiSseEvent event) {
-        appendEvent(threadId, event, null);
     }
 
     public void appendEvent(String threadId, AiSseEvent event, String leaseToken) {
@@ -528,16 +503,6 @@ public class AiConversationStoreService {
                              List<Object> nodes, Map<String, Object> review,
                              Object planSnapshot, int toolCallCount) {
         turnTerminal.complete(turn, output, nodes, review, planSnapshot, toolCallCount);
-    }
-
-    /**
-     * 丢弃未完成 Turn 的上下文消息，同时保留记录供历史界面和审计追溯。
-     */
-    @Transactional
-    public void discardTurn(PersistedTurn turn, String runStatus, String errorCategory,
-                            String errorMessage, String rawErrorMessage, int toolCallCount) {
-        discardTurn(turn, runStatus, errorCategory, errorMessage,
-                rawErrorMessage, toolCallCount, "", List.of(), null);
     }
 
     /**

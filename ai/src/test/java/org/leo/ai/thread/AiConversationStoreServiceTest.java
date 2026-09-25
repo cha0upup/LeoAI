@@ -121,7 +121,7 @@ class AiConversationStoreServiceTest {
         turn.setAssistantItemId("assistant-queued");
 
         boolean reserved = service.reserveProtocolTurn(
-                turn, "visible command", Map.of("name", "a.txt"));
+                turn, "visible command", Map.of("name", "a.txt"), null);
 
         assertTrue(reserved);
         ArgumentCaptor<AiMessageRecord> messages =
@@ -268,7 +268,7 @@ class AiConversationStoreServiceTest {
                 "assistant-1", 100L, "lease-1");
 
         service.discardTurn(turn, AiRunStatus.CANCELLED, "cancelled",
-                "用户取消", "用户取消", 0);
+                "用户取消", "用户取消", 0, "", List.of(), null);
 
         verify(mapper).updateTurnMessageStatusFenced(
                 eq("thread-1"), eq("turn-1"),

@@ -61,7 +61,7 @@ class AiTurnProtocolServiceTest {
         assertThrows(IllegalStateException.class, () -> service.begin(
                 "thread-1", "client-1", "platform",
                 "{\"message\":\"different\"}", "different", null, null));
-        verify(store, never()).reserveProtocolTurn(any(), any(), any());
+        verify(store, never()).reserveProtocolTurn(any(), any(), any(), any());
     }
 
     @Test

@@ -47,7 +47,8 @@ class AiTurnTransactionTest {
         verify(fixture.store, times(1)).completeTurn(
                 eq(fixture.persistedTurn), eq("done"), any(), any(), any(), eq(0));
         verify(fixture.failover).recordSuccess(7);
-        verify(fixture.store, never()).discardTurn(any(), any(), any(), any(), any(), anyInt());
+        verify(fixture.store, never()).discardTurn(
+                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -64,7 +65,7 @@ class AiTurnTransactionTest {
         assertEquals("network", first.classification().category());
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("network"),
-                any(), eq("network down"), eq(0));
+                any(), eq("network down"), eq(0), eq(""), eq(List.of()), eq(null));
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
         verify(fixture.failover).recordFailure(eq(7), any());
     }
@@ -73,7 +74,8 @@ class AiTurnTransactionTest {
     void rebuildsMemoryEvenWhenDiscardPersistenceFails() {
         Fixture fixture = fixture();
         doThrow(new IllegalStateException("db unavailable"))
-                .when(fixture.store).discardTurn(any(), any(), any(), any(), any(), anyInt());
+                .when(fixture.store).discardTurn(
+                        any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
 
         assertThrows(IllegalStateException.class,
                 () -> fixture.session().discard(new RuntimeException("boom"), false, null));
@@ -92,7 +94,8 @@ class AiTurnTransactionTest {
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream"));
 
         assertFalse(recovered);
-        verify(fixture.store, never()).discardTurn(any(), any(), any(), any(), any(), anyInt());
+        verify(fixture.store, never()).discardTurn(
+                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -120,7 +123,7 @@ class AiTurnTransactionTest {
         assertEquals("用户停止", failed.message());
         verify(fixture.store).discardTurn(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
-                eq("用户停止"), eq("用户停止"), eq(0));
+                eq("用户停止"), eq("用户停止"), eq(0), eq(""), eq(List.of()), eq(null));
         verify(fixture.failover, never()).recordFailure(any(), any());
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
     }
@@ -165,7 +168,8 @@ class AiTurnTransactionTest {
         assertEquals("persistence", fixture.session().failedTurn().classification().category());
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("persistence"),
-                eq("AI 回复提交失败"), eq("commit unavailable"), eq(0));
+                eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
+                eq(""), eq(List.of()), eq(null));
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
     }
 
@@ -183,7 +187,8 @@ class AiTurnTransactionTest {
         assertTrue(fixture.session().isTerminal());
         assertFalse(fixture.session().recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream")));
-        verify(fixture.store, never()).discardTurn(any(), any(), any(), any(), any(), anyInt());
+        verify(fixture.store, never()).discardTurn(
+                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     private Fixture fixture() {

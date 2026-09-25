@@ -274,7 +274,7 @@ public class PuppetNodeAiThreadService {
 
     public void updateThreadMeta(PuppetNodeSession session, AiThread thread) {
         try {
-            conversationStore.updateRuntime(session.getSessionId(), thread);
+            conversationStore.updateRuntime(session.getSessionId(), thread, null);
         } catch (Exception error) {
             logger.warn("更新线程运行状态失败, threadId={}: {}",
                     thread.getThreadId(), error.getMessage());

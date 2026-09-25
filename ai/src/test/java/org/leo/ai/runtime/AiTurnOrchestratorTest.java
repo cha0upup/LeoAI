@@ -49,7 +49,7 @@ class AiTurnOrchestratorTest {
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
         verify(fixture.store, never()).discardTurn(
-                any(), any(), any(), any(), any(), anyInt());
+                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -90,7 +90,7 @@ class AiTurnOrchestratorTest {
                 fixture.lifecycle.callbacks);
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("network"),
-                any(), any(), eq(0));
+                any(), any(), eq(0), eq(""), eq(List.of()), eq(null));
         verify(fixture.failover, never()).recordFailure(any(), any());
         verify(fixture.memory).rebuild(fixture.agent, "memory-1");
     }
@@ -115,7 +115,8 @@ class AiTurnOrchestratorTest {
                         .get("errorCategories")).get("persistence"));
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("persistence"),
-                eq("AI 回复提交失败"), eq("commit unavailable"), eq(0));
+                eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
+                eq(""), eq(List.of()), eq(null));
     }
 
     @Test
@@ -133,7 +134,7 @@ class AiTurnOrchestratorTest {
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
         verify(fixture.store, never()).discardTurn(
-                any(), any(), any(), any(), any(), anyInt());
+                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -170,7 +171,7 @@ class AiTurnOrchestratorTest {
         verify(fixture.failover, never()).recordFailure(any(), any());
         verify(fixture.store).discardTurn(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
-                eq("用户停止"), eq("用户停止"), eq(0));
+                eq("用户停止"), eq("用户停止"), eq(0), eq(""), eq(List.of()), eq(null));
     }
 
     private Fixture fixture(TestExecutionEngine.Mode mode) {

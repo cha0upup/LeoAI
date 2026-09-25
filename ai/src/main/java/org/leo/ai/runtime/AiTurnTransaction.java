@@ -184,17 +184,10 @@ public class AiTurnTransaction {
                         ? AiConversationStoreService.ERROR_CANCELLED
                         : classification.category();
                 String rawMessage = cancelled ? message : classification.rawMessage();
-                if (partialOutput.isBlank() && assistantNodes.isEmpty()
-                        && planSnapshot == null) {
-                    conversationStore.discardTurn(
-                            context.persistedTurn(), status, category,
-                            message, rawMessage, toolCallCount);
-                } else {
-                    conversationStore.discardTurn(
-                            context.persistedTurn(), status, category,
-                            message, rawMessage, toolCallCount,
-                            partialOutput, assistantNodes, planSnapshot);
-                }
+                conversationStore.discardTurn(
+                        context.persistedTurn(), status, category,
+                        message, rawMessage, toolCallCount,
+                        partialOutput, assistantNodes, planSnapshot);
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(
                         cancelled ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED,
@@ -234,7 +227,7 @@ public class AiTurnTransaction {
                         AiConversationStoreService.ERROR_PERSISTENCE,
                         message,
                         terminalError != null ? terminalError.getMessage() : message,
-                        0);
+                        0, "", List.of(), null);
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(
                         AiTurnOutcome.FAILED, AiRunStatus.FAILED,
