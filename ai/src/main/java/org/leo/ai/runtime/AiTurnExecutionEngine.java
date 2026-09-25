@@ -43,10 +43,6 @@ public class AiTurnExecutionEngine {
         this.toolEvents = Objects.requireNonNull(toolEvents, "toolEvents");
     }
 
-    AiTurnExecutionEngine(AiToolErrorHandler toolErrorHandler) {
-        this(toolErrorHandler, new AiToolEventNormalizer(new AiToolCatalog()));
-    }
-
     void execute(AiTurnCommand command, AiTurnExecutionListener listener) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(listener, "listener");

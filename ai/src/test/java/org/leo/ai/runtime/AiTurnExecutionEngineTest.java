@@ -38,7 +38,8 @@ class AiTurnExecutionEngineTest {
 
     private final AiTurnCoordinator coordinator = new AiTurnCoordinator();
     private final AiTurnExecutionEngine engine =
-            new AiTurnExecutionEngine(new AiToolErrorHandler());
+            new AiTurnExecutionEngine(new AiToolErrorHandler(),
+                    new AiToolEventNormalizer(new AiToolCatalog()));
 
     @Test
     void createsEngineThroughSpringConstructorInjection() {
