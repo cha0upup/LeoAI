@@ -755,30 +755,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return networkInfoService.collectAll();
     }
 
-    public Map<String, Object> collectNetworkInterfaces() throws Exception {
-        return networkInfoService.collectInterfaces();
-    }
-
-    public Map<String, Object> collectArp() throws Exception {
-        return networkInfoService.collectArp();
-    }
-
-    public Map<String, Object> collectRoutes() throws Exception {
-        return networkInfoService.collectRoutes();
-    }
-
-    public Map<String, Object> collectDnsConfig() throws Exception {
-        return networkInfoService.collectDnsConfig();
-    }
-
-    public Map<String, Object> collectHosts() throws Exception {
-        return networkInfoService.collectHosts();
-    }
-
-    public Map<String, Object> resolveDns(String hostname) throws Exception {
-        return networkInfoService.resolveDns(hostname);
-    }
-
     // ==================== HTTP 发包（Repeater + Fuzzer） ====================
 
     @Override

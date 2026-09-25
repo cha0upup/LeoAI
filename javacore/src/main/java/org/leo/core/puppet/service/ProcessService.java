@@ -38,21 +38,6 @@ public class ProcessService extends ComponentService {
         return doList();
     }
 
-    /** 按名称查找进程（模糊匹配） */
-    public Map<String, Object> findByName(String name) throws Exception {
-        return doFind(name, -1, -1);
-    }
-
-    /** 按 PID 查找进程 */
-    public Map<String, Object> findByPid(int pid) throws Exception {
-        return doFind(null, pid, -1);
-    }
-
-    /** 按监听端口查找进程 */
-    public Map<String, Object> findByPort(int port) throws Exception {
-        return doFind(null, -1, port);
-    }
-
     /** 组合条件查找（任意参数可为 null / -1 表示不过滤） */
     public Map<String, Object> find(String name, int pid, int port) throws Exception {
         return doFind(
