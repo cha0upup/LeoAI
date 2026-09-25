@@ -15,10 +15,6 @@ public class ResponseLayer {
         return disguise;
     }
 
-    public void setDisguise(Disguise disguise) {
-        this.disguise = disguise;
-    }
-
     /** Explicit PayloadCodec key for this hop. */
     public String getPayloadKey() {
         return payloadKey;
