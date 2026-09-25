@@ -2,11 +2,9 @@ package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
-import org.leo.ai.agent.AiToolCatalog;
 import org.leo.ai.agent.AiToolErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.NoSuchElementException;
@@ -35,7 +33,6 @@ public class AiTurnExecutionEngine {
     private final AiToolErrorHandler toolErrorHandler;
     private final AiToolEventNormalizer toolEvents;
 
-    @Autowired
     public AiTurnExecutionEngine(AiToolErrorHandler toolErrorHandler,
                                  AiToolEventNormalizer toolEvents) {
         this.toolErrorHandler =
