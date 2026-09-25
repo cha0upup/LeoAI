@@ -63,10 +63,6 @@ public class AiModelConfigService {
         return capabilityMapper.listAll();
     }
 
-    public ProviderCapabilities capabilitiesForModel(String modelName) {
-        return capabilitiesForModel(null, modelName);
-    }
-
     public ProviderCapabilities capabilitiesForModel(String providerKey, String modelName) {
         if (modelName == null || modelName.isBlank()) {
             return ProviderCapabilities.missing();

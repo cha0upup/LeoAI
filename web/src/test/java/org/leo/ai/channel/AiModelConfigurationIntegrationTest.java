@@ -152,7 +152,7 @@ class AiModelConfigurationIntegrationTest {
         configs.applyProbeResult(first, Map.of("functionCalling", false));
         assertFalse(configs.capabilitiesForModel(first).supportsFunctionCalling());
         assertTrue(configs.capabilitiesForModel(second).supportsFunctionCalling());
-        assertTrue(configs.capabilitiesForModel("test-model").supportsFunctionCalling());
+        assertTrue(configs.capabilitiesForModel(null, "test-model").supportsFunctionCalling());
         assertEquals(65536, configs.capabilitiesForModel(first).contextWindowTokens());
         assertNull(jdbc.queryForObject("SELECT supports_streaming FROM ai_model_capability_observations", Integer.class));
         configs.applyProbeResult(first, Map.of("streaming", true));
@@ -199,10 +199,10 @@ class AiModelConfigurationIntegrationTest {
         manual.setContextWindowTokens(65_536);
         configs.updateCapability(manual.getModelName(), manual);
         initializeSchema();
-        assertEquals(1_000_000, configs.capabilitiesForModel("deepseek-flash").contextWindowTokens());
-        assertEquals(65_536, configs.capabilitiesForModel("mimo-v2.5").contextWindowTokens());
-        assertEquals("manual", configs.capabilitiesForModel("mimo-v2.5").source());
-        assertFalse(configs.capabilitiesForModel("gpt5.5").recognized());
+        assertEquals(1_000_000, configs.capabilitiesForModel(null, "deepseek-flash").contextWindowTokens());
+        assertEquals(65_536, configs.capabilitiesForModel(null, "mimo-v2.5").contextWindowTokens());
+        assertEquals("manual", configs.capabilitiesForModel(null, "mimo-v2.5").source());
+        assertFalse(configs.capabilitiesForModel(null, "gpt5.5").recognized());
     }
 
     private void initializeSchema() {

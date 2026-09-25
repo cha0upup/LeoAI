@@ -191,9 +191,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         terminalControlRequested.set(true);
     }
 
-    public boolean isTerminalControlRequested() { return terminalControlRequested.get(); }
-    public String getTerminalControlName() { return terminalControlName; }
-
     @Override public LinkedBlockingQueue<AiSseEvent> getAiSseEventQueue() { return sseEventQueue; }
 
     public AiSseEvent offerSseEvent(String name, Object data) {
