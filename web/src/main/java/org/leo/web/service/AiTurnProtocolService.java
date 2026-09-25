@@ -40,16 +40,6 @@ public class AiTurnProtocolService {
                              String commandScope,
                              String commandJson,
                              String userContent,
-                             Object attachments) {
-        return begin(threadId, clientUserMessageId, commandScope, commandJson,
-                userContent, attachments, null);
-    }
-
-    public Reservation begin(String threadId,
-                             String clientUserMessageId,
-                             String commandScope,
-                             String commandJson,
-                             String userContent,
                              Object attachments,
                              String answerToQuestionId) {
         String clientId = isBlank(clientUserMessageId)
@@ -170,10 +160,6 @@ public class AiTurnProtocolService {
         return snapshot(store.completeProtocolTurn(
                 turnId, status, errorMessage, System.currentTimeMillis(),
                 leaseToken));
-    }
-
-    public TurnSnapshot failStart(String turnId, String message) {
-        return failStart(turnId, message, null);
     }
 
     public TurnSnapshot failStart(String turnId, String message, String leaseToken) {

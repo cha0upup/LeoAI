@@ -42,7 +42,7 @@ class AiTurnProtocolServiceTest {
 
         AiTurnProtocolService.Reservation reservation = service.begin(
                 "thread-1", "client-1", "platform",
-                "{\"message\":\"hello\"}", "hello", null);
+                "{\"message\":\"hello\"}", "hello", null, null);
 
         assertTrue(reservation.reused());
         Map<String, Object> turn = reservation.turn().toMap();
@@ -60,7 +60,7 @@ class AiTurnProtocolServiceTest {
 
         assertThrows(IllegalStateException.class, () -> service.begin(
                 "thread-1", "client-1", "platform",
-                "{\"message\":\"different\"}", "different", null));
+                "{\"message\":\"different\"}", "different", null, null));
         verify(store, never()).reserveProtocolTurn(any(), any(), any());
     }
 

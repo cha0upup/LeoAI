@@ -175,7 +175,7 @@ public class AiTurnTransaction {
                     ? normalizeCancellationReason(cancellationReason)
                     : classification.message();
             String status = cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED;
-            List<Object> assistantNodes = artifacts.assistantNodes(eventLog);
+            List<Object> assistantNodes = artifacts.assistantNodes(eventLog, true);
             String partialOutput = AiTurnRecoveryContext.build(
                     eventLog, planSnapshot);
             int toolCallCount = artifacts.toolCallCount(eventLog);

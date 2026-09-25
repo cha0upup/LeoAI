@@ -60,11 +60,11 @@ public class AiTurnApplicationService {
         try {
             command = AiTurnCommandPayload.fromJson(turn.commandJson());
         } catch (RuntimeException error) {
-            protocol.failStart(turn.id(), error.getMessage());
+            protocol.failStart(turn.id(), error.getMessage(), null);
             return CompletableFuture.completedFuture(true);
         }
         if (!Objects.equals(turn.commandScope(), command.getScope())) {
-            protocol.failStart(turn.id(), "Turn 命令作用域不一致");
+            protocol.failStart(turn.id(), "Turn 命令作用域不一致", null);
             return CompletableFuture.completedFuture(true);
         }
         if (AiTurnCommandPayload.SCOPE_PLATFORM.equals(turn.commandScope())) {
@@ -73,7 +73,7 @@ public class AiTurnApplicationService {
         if (AiTurnCommandPayload.SCOPE_PUPPET.equals(turn.commandScope())) {
             return executePuppet(turn, command);
         }
-        protocol.failStart(turn.id(), "未知 Turn 命令作用域");
+        protocol.failStart(turn.id(), "未知 Turn 命令作用域", null);
         return CompletableFuture.completedFuture(true);
     }
 
@@ -82,7 +82,7 @@ public class AiTurnApplicationService {
             AiTurnCommandPayload command) {
         AiThreadRecord persisted = store.findThread(turn.threadId());
         if (persisted == null) {
-            protocol.failStart(turn.id(), "平台 AI 线程不存在");
+            protocol.failStart(turn.id(), "平台 AI 线程不存在", null);
             return CompletableFuture.completedFuture(true);
         }
         PlatformAiState existingState = PlatformAiStateStore.get(turn.threadId());
@@ -152,7 +152,7 @@ public class AiTurnApplicationService {
         AiThread thread = resolution.thread();
         if (thread == null || resolution.errorMessage() != null) {
             protocol.failStart(turn.id(), resolution.errorMessage() != null
-                    ? resolution.errorMessage() : "Puppet AI 线程不存在");
+                    ? resolution.errorMessage() : "Puppet AI 线程不存在", null);
             return CompletableFuture.completedFuture(true);
         }
 

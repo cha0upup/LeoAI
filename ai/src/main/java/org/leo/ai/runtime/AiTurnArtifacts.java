@@ -64,10 +64,6 @@ public class AiTurnArtifacts {
         usage.put("cumulative", cumulative);
     }
 
-    public List<Object> assistantNodes(List<AiSseEvent> eventLog) {
-        return assistantNodes(eventLog, true);
-    }
-
     public List<Object> assistantNodes(List<AiSseEvent> eventLog,
                                        boolean includeTextNodes) {
         if (eventLog == null || eventLog.isEmpty()) return List.of();

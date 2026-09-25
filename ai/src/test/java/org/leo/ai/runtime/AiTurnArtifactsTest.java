@@ -28,7 +28,7 @@ class AiTurnArtifactsTest {
                 new AiSseEvent("thinking", Map.of("content", "obsolete event")));
 
         Map<String, Object> review = artifacts.review("完成", events, 25);
-        List<Object> nodes = artifacts.assistantNodes(events);
+        List<Object> nodes = artifacts.assistantNodes(events, true);
 
         assertEquals(1, review.get("toolCount"));
         assertEquals(1, review.get("successCount"));
