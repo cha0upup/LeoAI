@@ -333,10 +333,6 @@ public class AiConversationStoreService {
         return eventJournal.lastSequence(threadId);
     }
 
-    public boolean hasTurnCompletedEvent(String threadId, String turnId) {
-        return eventJournal.hasTurnCompleted(threadId, turnId);
-    }
-
     public long findLatestTurnStartSeq(String threadId) {
         return eventJournal.latestTurnStartSequence(threadId);
     }
@@ -531,13 +527,6 @@ public class AiConversationStoreService {
         return messages.list(threadId, safeOffset, safeLimit);
     }
 
-    public List<ConversationMessage> committedMessages(String threadId, int limit) {
-        return mapper.recentMessages(threadId, Math.max(1, Math.min(limit, 200))).stream()
-                .map(record -> new ConversationMessage(
-                        record.getMessageSeq(), record.getRole(), record.getContent()))
-                .toList();
-    }
-
     /**
      * 返回可用于模型记忆的持久化消息。除了成功消息，也包含有实际执行进度的
      * discarded Turn，使用户在异常中止后输入“继续”时可以从已有结果衔接。
@@ -548,12 +537,6 @@ public class AiConversationStoreService {
                 .map(record -> new ConversationMessage(
                         record.getMessageSeq(), record.getRole(), record.getContent()))
                 .toList();
-    }
-
-    public ConversationMessage committedMessage(String threadId, long messageSequence) {
-        AiMessageRecord record = mapper.findCommittedMessageBySequence(threadId, messageSequence);
-        return record == null ? null : new ConversationMessage(
-                record.getMessageSeq(), record.getRole(), record.getContent());
     }
 
     public ConversationMessage contextMessage(String threadId, long messageSequence) {

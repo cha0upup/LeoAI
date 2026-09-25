@@ -76,16 +76,16 @@ class AiConversationStoreServiceTest {
     }
 
     @Test
-    void committedConversationMessagesKeepTheirStableSequence() {
+    void contextMessagesKeepTheirStableSequence() {
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageSeq(7L);
         row.setRole("assistant");
         row.setContent("answer");
-        when(mapper.recentMessages("thread-1", 20)).thenReturn(List.of(row));
-        when(mapper.findCommittedMessageBySequence("thread-1", 7L)).thenReturn(row);
+        when(mapper.recentContextMessages("thread-1", 20)).thenReturn(List.of(row));
+        when(mapper.findContextMessageBySequence("thread-1", 7L)).thenReturn(row);
 
-        assertEquals(7L, service.committedMessages("thread-1", 20).get(0).sequence());
-        assertEquals("answer", service.committedMessage("thread-1", 7L).content());
+        assertEquals(7L, service.contextMessages("thread-1", 20).get(0).sequence());
+        assertEquals("answer", service.contextMessage("thread-1", 7L).content());
     }
 
     @Test

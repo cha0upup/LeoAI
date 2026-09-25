@@ -140,11 +140,6 @@ public final class AiTimelineRecorder {
     // ── 外部事件 ────────────────────────────────────────────────────────────
 
     /** 工具 start/patch、plan、subagent 等"由服务方组装并下发"的事件写入 eventLog。 */
-    public void recordExternal(AiSseEvent event) {
-        if (event != null) eventLog.add(event);
-    }
-
-    /** 便利方法：用 {@code name + data} 包装为 AiSseEvent 后写入 eventLog。 */
     public void recordExternal(String name, Object data) {
         eventLog.add(new AiSseEvent(name, data));
     }
