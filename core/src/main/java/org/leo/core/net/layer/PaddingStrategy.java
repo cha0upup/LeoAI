@@ -11,47 +11,6 @@ package org.leo.core.net.layer;
  */
 public class PaddingStrategy {
 
-    // ==================== 预设模板 ====================
-
-    /**
-     * 高隐蔽模式：大范围随机填充 + 高斯分布
-     * 适用于对抗 DPI 和高级流量分析
-     */
-    public static PaddingStrategy stealth() {
-        PaddingStrategy s = new PaddingStrategy();
-        s.enabled = true;
-        s.minBytes = 128;
-        s.maxBytes = 2048;
-        s.lengthDistribution = LengthDistribution.GAUSSIAN;
-        return s;
-    }
-
-    /**
-     * 常规模式：中等填充 + 均匀分布
-     * 平衡隐蔽性和带宽开销
-     */
-    public static PaddingStrategy normal() {
-        PaddingStrategy s = new PaddingStrategy();
-        s.enabled = true;
-        s.minBytes = 64;
-        s.maxBytes = 512;
-        s.lengthDistribution = LengthDistribution.UNIFORM;
-        return s;
-    }
-
-    /**
-     * 轻量模式：小填充
-     * 适用于带宽敏感或低安全要求场景
-     */
-    public static PaddingStrategy light() {
-        PaddingStrategy s = new PaddingStrategy();
-        s.enabled = true;
-        s.minBytes = 16;
-        s.maxBytes = 128;
-        s.lengthDistribution = LengthDistribution.UNIFORM;
-        return s;
-    }
-
     // ==================== 配置字段 ====================
 
     /** 是否启用 Padding */
