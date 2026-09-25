@@ -1,6 +1,5 @@
 package org.leo.ai.agent;
 
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.leo.ai.service.AutoReconAppendService;
@@ -69,14 +68,12 @@ public class AiAgentFactory {
     }
 
     public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
-                                                 ChatModel chatModel,
                                                  boolean enableTools,
                                                  int modelContextWindowTokens) {
         int toolSchemaTokens = enableTools
                 ? toolCatalog.estimateSchemaTokens(puppetNodeToolBundle.tools()) : 0;
         var builder = AiServices.builder(PuppetNodeAgent.class)
                 .streamingChatModel(streamingModel)
-                .chatModel(chatModel)
                 .chatMemoryProvider(memoryProviderFactory.createPuppetProvider(
                         modelContextWindowTokens, toolSchemaTokens))
                 .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)

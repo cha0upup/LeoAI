@@ -16,7 +16,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
@@ -44,7 +43,7 @@ class PuppetNodeAiAgentRegistryTest {
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(eq(config), any())).thenReturn(modelRuntime);
         when(agentFactory.createPuppetNodeAgent(
-                same(streamingModel), same(chatModel), eq(true), eq(16_384)))
+                same(streamingModel), eq(true), eq(16_384)))
                 .thenReturn(firstAgent, secondAgent);
         PuppetNodeAiAgentRegistry registry = new PuppetNodeAiAgentRegistry(
                 agentFactory, modelProvider, failoverService);

@@ -9,7 +9,6 @@ import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
-import org.leo.core.session.AiThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -106,10 +105,6 @@ public class AiTurnTransaction {
             return completedTurn;
         }
 
-        public synchronized FailedTurn discard(AiTurnFailure failure) {
-            return discard(failure, List.of(), null, true);
-        }
-
         public synchronized FailedTurn discard(AiTurnFailure failure,
                                                List<AiSseEvent> eventLog,
                                                Object planSnapshot) {
@@ -117,17 +112,10 @@ public class AiTurnTransaction {
         }
 
         /**
-         * 模型流创建前的场景准备失败，不应降低模型通道健康度。
-         */
-        public synchronized FailedTurn discardBeforeModel(AiTurnFailure failure) {
-            return discard(failure, List.of(), null, false);
-        }
-
-        /**
-         * 模型尚未启动但 Turn 已创建时，仍保留失败前的计划快照。
+         * 模型启动前失败时保留计划快照，不降低模型通道健康度。
          */
         public synchronized FailedTurn discardBeforeModel(AiTurnFailure failure,
-                                                            Object planSnapshot) {
+                                                          Object planSnapshot) {
             return discard(failure, List.of(), planSnapshot, false);
         }
 
@@ -135,44 +123,15 @@ public class AiTurnTransaction {
                                    List<AiSseEvent> eventLog,
                                    Object planSnapshot,
                                    boolean recordModelFailure) {
-            if (failure == null) {
-                return discard(
-                        new IllegalStateException("AI 调用失败"), false, null,
-                        eventLog, planSnapshot, recordModelFailure);
-            }
-            return discard(
-                    failure.cause(), failure.cancelled(),
-                    failure.cancellationReason(), eventLog,
-                    planSnapshot, recordModelFailure);
-        }
-
-        public synchronized FailedTurn discard(Throwable cause,
-                                               boolean cancelled,
-                                               String cancellationReason) {
-            return discard(cause, cancelled, cancellationReason, true);
-        }
-
-        private FailedTurn discard(Throwable cause,
-                                   boolean cancelled,
-                                   String cancellationReason,
-                                   boolean recordModelFailure) {
-            return discard(cause, cancelled, cancellationReason,
-                    List.of(), null, recordModelFailure);
-        }
-
-        private FailedTurn discard(Throwable cause,
-                                   boolean cancelled,
-                                   String cancellationReason,
-                                   List<AiSseEvent> eventLog,
-                                   Object planSnapshot,
-                                   boolean recordModelFailure) {
             if (state == PersistenceState.DISCARDED) return failedTurn;
             requirePending("丢弃");
+            Objects.requireNonNull(failure, "failure");
 
+            boolean cancelled = failure.cancelled();
             AiErrorClassifier.Classification classification =
-                    cancelled ? null : errorClassifier.classify(cause);
+                    cancelled ? null : errorClassifier.classify(failure.cause());
             String message = cancelled
-                    ? normalizeCancellationReason(cancellationReason)
+                    ? normalizeCancellationReason(failure.cancellationReason())
                     : classification.message();
             String status = cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED;
             List<Object> assistantNodes = artifacts.assistantNodes(eventLog, true);
@@ -189,9 +148,7 @@ public class AiTurnTransaction {
                         message, rawMessage, toolCallCount,
                         partialOutput, assistantNodes, planSnapshot);
                 state = PersistenceState.DISCARDED;
-                failedTurn = new FailedTurn(
-                        cancelled ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED,
-                        status, message, classification);
+                failedTurn = new FailedTurn(failure.outcome(), status, message, classification);
                 if (!cancelled && recordModelFailure) {
                     runAfterTerminal("记录模型失败", () ->
                             failoverService.recordFailure(

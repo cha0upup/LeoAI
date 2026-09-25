@@ -54,12 +54,13 @@ class AiTurnTransactionTest {
     @Test
     void discardsFailureExactlyOnceAndAlwaysRebuildsMemory() {
         Fixture fixture = fixture();
-        RuntimeException error = new RuntimeException("network down");
+        AiTurnFailure failure = new AiTurnFailure(
+                new RuntimeException("network down"), AiTurnOutcome.FAILED, null);
 
         AiTurnTransaction.FailedTurn first =
-                fixture.session().discard(error, false, null);
+                fixture.session().discard(failure, List.of(), null);
         AiTurnTransaction.FailedTurn repeated =
-                fixture.session().discard(error, false, null);
+                fixture.session().discard(failure, List.of(), null);
 
         assertSame(first, repeated);
         assertEquals("network", first.classification().category());
@@ -78,7 +79,8 @@ class AiTurnTransactionTest {
                         any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
 
         assertThrows(IllegalStateException.class,
-                () -> fixture.session().discard(new RuntimeException("boom"), false, null));
+                () -> fixture.session().discard(new AiTurnFailure(
+                        new RuntimeException("boom"), AiTurnOutcome.FAILED, null), List.of(), null));
 
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
         assertFalse(fixture.session().isTerminal());
@@ -115,7 +117,8 @@ class AiTurnTransactionTest {
         Fixture fixture = fixture();
 
         AiTurnTransaction.FailedTurn failed = fixture.session().discard(
-                new InterruptedException("stopped"), true, "用户停止");
+                new AiTurnFailure(new InterruptedException("stopped"),
+                        AiTurnOutcome.CANCELLED, "用户停止"), List.of(), null);
 
         assertTrue(failed.cancelled());
         assertEquals(AiTurnOutcome.CANCELLED, failed.outcome());

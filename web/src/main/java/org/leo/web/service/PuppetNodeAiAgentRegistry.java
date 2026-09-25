@@ -64,7 +64,6 @@ public class PuppetNodeAiAgentRegistry {
                     modelProvider.buildRuntime(effective, reasoningEffort);
             PuppetNodeAgent agent = agentFactory.createPuppetNodeAgent(
                     modelRuntime.streamingModel(),
-                    modelRuntime.chatModel(),
                     modelRuntime.supportsFunctionCalling(),
                     modelRuntime.contextWindowTokens());
             return new Runtime(

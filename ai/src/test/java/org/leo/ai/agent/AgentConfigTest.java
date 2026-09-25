@@ -3,7 +3,6 @@ package org.leo.ai.agent;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -68,7 +67,7 @@ class AgentConfigTest {
             };
             AiAgentFactory factory = context.getBean(AiAgentFactory.class);
             PuppetNodeAgent puppet = factory.createPuppetNodeAgent(
-                    model, mock(ChatModel.class), false, 32_768);
+                    model, false, 32_768);
             PlatformAgent platform = factory.createPlatformAgent(model, false, 65_536, null);
 
             assertEquals("answer", complete(puppet.chat("thread-1", "puppet message")));
