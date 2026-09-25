@@ -44,22 +44,6 @@ public final class AiBackgroundExecutor implements AutoCloseable {
         return probeExecutor.submit(task);
     }
 
-    int activeWarmups() {
-        return warmupExecutor.getActiveCount();
-    }
-
-    int queuedWarmups() {
-        return warmupExecutor.getQueue().size();
-    }
-
-    int activeProbes() {
-        return probeExecutor.getActiveCount();
-    }
-
-    int queuedProbes() {
-        return probeExecutor.getQueue().size();
-    }
-
     private static ThreadPoolExecutor newExecutor(int threads, int queueCapacity, String prefix) {
         if (threads < 1 || queueCapacity < 1) {
             throw new IllegalArgumentException("AI background executor sizing values must be positive");

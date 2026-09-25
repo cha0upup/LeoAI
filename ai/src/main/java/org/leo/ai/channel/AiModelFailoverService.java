@@ -52,7 +52,8 @@ public class AiModelFailoverService {
             throw new IllegalArgumentException("AI 模型不能为空");
         }
         if (tryAcquire(requested.getId())) {
-            return ModelSelection.direct(requested);
+            return new ModelSelection(requested, requested, false, null,
+                    List.of(requested.getId()));
         }
 
         List<Integer> attempted = new ArrayList<>();
@@ -201,14 +202,6 @@ public class AiModelFailoverService {
 
     public record ModelSelection(AiModelConfig requestedConfig, AiModelConfig effectiveConfig,
                                  boolean failover, String message, List<Integer> attemptedConfigIds) {
-        private static ModelSelection direct(AiModelConfig config) {
-            return direct(config, List.of(config.getId()), null);
-        }
-
-        private static ModelSelection direct(AiModelConfig config, List<Integer> attempted, String message) {
-            return new ModelSelection(config, config, false, message, List.copyOf(attempted));
-        }
-
         private static ModelSelection failover(AiModelConfig requested, AiModelConfig effective,
                                                List<Integer> attempted, String message) {
             return new ModelSelection(requested, effective, true, message, List.copyOf(attempted));

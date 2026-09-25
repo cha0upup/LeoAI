@@ -8,7 +8,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,8 +23,6 @@ class AiBackgroundExecutorTest {
 
             executor.submitWarmup(() -> { });
 
-            assertEquals(1, executor.activeWarmups());
-            assertEquals(1, executor.queuedWarmups());
             assertThrows(RejectedExecutionException.class,
                     () -> executor.submitWarmup(() -> { }));
             release.countDown();
@@ -49,8 +46,6 @@ class AiBackgroundExecutorTest {
             assertTrue(started.await(1, TimeUnit.SECONDS));
             executor.submitProbe(() -> true);
 
-            assertEquals(1, executor.activeProbes());
-            assertEquals(1, executor.queuedProbes());
             assertThrows(RejectedExecutionException.class,
                     () -> executor.submitProbe(() -> true));
             assertTrue(daemon.get());
