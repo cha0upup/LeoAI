@@ -101,20 +101,6 @@ public class PaddingUtil {
         params.put(key, deterministicString(paddingLength, material));
     }
 
-    /**
-     * 从解码后的 Map 中移除填充字段（可选调用，用于控制端解码响应时清理）。
-     * <p>
-     * 通常不需要调用 — puppet 端天然忽略未知 key。
-     * 仅在控制端需要严格干净的响应数据时使用。
-     *
-     * @param params 解码后的参数 Map
-     */
-    public static void removePadding(Map<String, Object> params) {
-        if (params == null) return;
-        params.keySet().removeIf(key -> key.startsWith(PADDING_KEY_PREFIX)
-                || key.matches("_[a-f0-9]{12}"));
-    }
-
     // ==================== 填充长度计算 ====================
 
     private static int computePaddingLength(PaddingStrategy strategy) {

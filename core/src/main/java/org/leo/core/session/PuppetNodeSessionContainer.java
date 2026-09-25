@@ -106,13 +106,6 @@ public class PuppetNodeSessionContainer {
     }
 
     /**
-     * 检查会话是否存在
-     */
-    public static boolean hasSession(String sessionId) {
-        return sessionMap.containsKey(sessionId);
-    }
-
-    /**
      * 获取所有会话
      */
     public static Map<String, PuppetNodeSession> getAllSession() {

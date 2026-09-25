@@ -51,10 +51,6 @@ public final class PuppetNodeCapabilityRegistry {
     private PuppetNodeCapabilityRegistry() {
     }
 
-    public static List<CapabilityDescriptor> descriptors() {
-        return DESCRIPTORS;
-    }
-
     public static List<String> listSupported(AbstractPuppetNode node) {
         if (node == null) {
             return Collections.emptyList();

@@ -65,8 +65,6 @@ class SessionTransportStrategyTest {
         assertTrue(padding.getKey().matches("_[a-f0-9]{12}"));
         assertEquals(592, String.valueOf(padding.getValue()).length());
 
-        PaddingUtil.removePadding(first);
-        assertEquals(Map.of("operation", "PING"), first);
     }
 
     @Test
