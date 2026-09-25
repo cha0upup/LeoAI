@@ -84,8 +84,7 @@ public class AiTurnTransaction {
                     context.persistedTurn(), output, assistantNodes,
                     review, planSnapshot, toolCallCount);
             state = PersistenceState.COMMITTED;
-            completedTurn = new CompletedTurn(
-                    output, toolCallCount, review, usage, assistantNodes);
+            completedTurn = new CompletedTurn(output, review, usage);
             if (result != null && result.streamRecovered()) {
                 // 自动续接会在 ChatMemory 中加入内部恢复提示。
                 // 提交后以数据库中的原始用户消息 + 合并结果重建，
@@ -280,10 +279,8 @@ public class AiTurnTransaction {
     }
 
     public record CompletedTurn(String output,
-                                int toolCallCount,
                                 Map<String, Object> review,
-                                Map<String, Object> usage,
-                                List<Object> assistantNodes) {
+                                Map<String, Object> usage) {
     }
 
     public record FailedTurn(AiTurnOutcome outcome,

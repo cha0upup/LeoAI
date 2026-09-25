@@ -34,7 +34,7 @@ class AiTurnTransactionTest {
     void commitsExactlyOnceAndReturnsTheSameResult() {
         Fixture fixture = fixture();
         AiTurnTransaction.Session session = fixture.session();
-        AiTurnResult result = new AiTurnResult("done", null, System.currentTimeMillis());
+        AiTurnResult result = new AiTurnResult("done", null, false, false);
 
         AiTurnTransaction.CompletedTurn first =
                 session.commit(result, List.of(), null, new AiRuntimeStats());
@@ -90,7 +90,7 @@ class AiTurnTransactionTest {
     void terminalRecoveryDoesNotDiscardAnAlreadyCommittedTurn() {
         Fixture fixture = fixture();
         fixture.session().commit(
-                new AiTurnResult("done", null, 1L), List.of(), null, null);
+                new AiTurnResult("done", null, false, false), List.of(), null, null);
 
         boolean recovered = fixture.session().recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream"));
@@ -105,7 +105,7 @@ class AiTurnTransactionTest {
         Fixture fixture = fixture();
 
         AiTurnTransaction.CompletedTurn completed = fixture.session().commit(
-                new AiTurnResult("done", null, 1L, false, true),
+                new AiTurnResult("done", null, false, true),
                 List.of(), null, null);
 
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
@@ -162,7 +162,7 @@ class AiTurnTransactionTest {
                 .when(fixture.store).completeTurn(any(), any(), any(), any(), any(), anyInt());
 
         assertThrows(IllegalStateException.class, () -> fixture.session().commit(
-                new AiTurnResult("done", null, 1L), List.of(), null, null));
+                new AiTurnResult("done", null, false, false), List.of(), null, null));
 
         assertTrue(fixture.session().recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("commit unavailable")));
@@ -183,7 +183,7 @@ class AiTurnTransactionTest {
                 .when(fixture.failover).recordSuccess(7);
 
         AiTurnTransaction.CompletedTurn completed = fixture.session().commit(
-                new AiTurnResult("done", null, 1L), List.of(), null, null);
+                new AiTurnResult("done", null, false, false), List.of(), null, null);
 
         assertEquals("done", completed.output());
         assertSame(completed, fixture.session().completedTurn());

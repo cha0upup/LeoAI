@@ -116,6 +116,8 @@ class AiTurnExecutionEngineTest {
                 "thread-1", "memory-1", turn, () -> {
                     streamCreated.set(true);
                     return new ScriptedTokenStream(tokenStream -> {}).stream;
+                }, () -> {
+                    throw new AssertionError("已取消的 Turn 不应创建恢复流");
                 }), listener);
 
         assertFalse(streamCreated.get());
@@ -340,7 +342,10 @@ class AiTurnExecutionEngineTest {
     }
 
     private AiTurnCommand command(AiTurnCoordinator.Execution turn, ScriptedTokenStream stream) {
-        return new AiTurnCommand("thread-1", "memory-1", turn, () -> stream.stream);
+        return new AiTurnCommand("thread-1", "memory-1", turn,
+                () -> stream.stream, () -> {
+                    throw new AssertionError("此场景不应创建恢复流");
+                });
     }
 
     private static final class RecordingListener implements AiTurnExecutionListener {

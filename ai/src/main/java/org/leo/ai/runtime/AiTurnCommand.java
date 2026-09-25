@@ -23,13 +23,6 @@ public record AiTurnCommand(
             "上一段模型流异常结束。请保留当前对话中已经完成的工具结果和计划进度，"
                     + "从中断点继续原任务；不要重复已经完成的步骤，完成后直接给出结论。";
 
-    public AiTurnCommand(String conversationId,
-                         Object memoryId,
-                         AiTurnCoordinator.Execution execution,
-                         Supplier<TokenStream> streamFactory) {
-        this(conversationId, memoryId, execution, streamFactory, streamFactory);
-    }
-
     public AiTurnCommand {
         if (conversationId == null || conversationId.isBlank()) {
             throw new IllegalArgumentException("conversationId 不能为空");

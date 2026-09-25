@@ -134,8 +134,7 @@ class PuppetNodeAiDelegationPresenterTest {
 
     private AiTurnTransaction.CompletedTurn completed(String output) {
         return new AiTurnTransaction.CompletedTurn(
-                output, 0, Map.of("toolCount", 0),
-                Map.of(), List.of());
+                output, Map.of("toolCount", 0), Map.of());
     }
 
     private record Fixture(AiConversationStoreService store,

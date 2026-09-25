@@ -137,7 +137,7 @@ public class AiTurnExecutionEngine {
                         // 模型围绕卡片生成的复述不进入持久化正文。
                         String finalOutput = userInputRequested.get() ? "" : modelOutput;
                         complete(turn, listener, new AiTurnResult(
-                                        finalOutput, response, System.currentTimeMillis(),
+                                        finalOutput, response,
                                         userInputRequested.get(),
                                         recoveryAttempts.get() > 0),
                                 toolErrorScope);

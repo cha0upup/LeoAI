@@ -21,7 +21,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -136,7 +135,7 @@ class PuppetNodeAiDelegationServiceTest {
             AiTurnOrchestrator.Lifecycle lifecycle = call.getArgument(1);
             request.command().execution().finish(AiTurnOutcome.COMPLETED, () ->
                     lifecycle.onCommitted(new AiTurnTransaction.CompletedTurn(
-                            "done", 0, Map.of(), Map.of(), List.of())));
+                            "done", Map.of(), Map.of())));
             presented.countDown();
             return completion;
         });

@@ -204,6 +204,7 @@ class AiTurnOrchestratorTest {
         AiTurnOrchestrator.Request request = new AiTurnOrchestrator.Request(
                 new AiTurnCommand(
                         "thread-1", "memory-1", execution,
+                        () -> mock(TokenStream.class),
                         () -> mock(TokenStream.class)),
                 new AiTurnTransaction.Context(
                         persistedTurn, 7, agent, "memory-1",
@@ -321,7 +322,7 @@ class AiTurnOrchestratorTest {
                     command.execution().finish(
                             AiTurnOutcome.COMPLETED,
                             () -> listener.onCompleted(
-                                    new AiTurnResult("answer", null, 1L)));
+                                    new AiTurnResult("answer", null, false, false)));
                 } catch (Exception error) {
                     listener.onTerminalFailure(AiTurnOutcome.COMPLETED, error);
                 }
@@ -345,7 +346,7 @@ class AiTurnOrchestratorTest {
                 deferredCommand.execution().finish(
                         AiTurnOutcome.COMPLETED,
                         () -> deferredListener.onCompleted(
-                                new AiTurnResult("answer", null, 1L)));
+                                new AiTurnResult("answer", null, false, false)));
             } catch (Exception error) {
                 deferredListener.onTerminalFailure(
                         AiTurnOutcome.COMPLETED, error);
