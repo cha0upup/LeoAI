@@ -42,8 +42,7 @@ public class PlatformAiThreadService {
     public void createAgent(HttpSession httpSession, User user,
                             Integer configId) {
         PlatformAiState state = recreateState(httpSession);
-        state.resetRuntimeState();
-        AiModelConfig config = resolveOptionalChannel(configId);
+        AiModelConfig config = channelResolver.optional(configId);
         if (config != null) state.setAiConfigId(config.getId());
 
         if (conversationStore.findThread(state.getStateId()) == null) {
@@ -58,7 +57,7 @@ public class PlatformAiThreadService {
         if (state.isExecuting()) {
             throw ApiException.badRequest("平台 AI 正在执行中，请等待完成或先停止后再切换通道");
         }
-        AiModelConfig config = resolveOptionalChannel(configId);
+        AiModelConfig config = channelResolver.optional(configId);
         state.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(state.getStateId());
         conversationStore.updateConfig(state.getStateId(), config);
@@ -95,7 +94,7 @@ public class PlatformAiThreadService {
         String threadId = "platform-ai-" + UUID.randomUUID();
         PlatformAiState state = PlatformAiStateStore.create(threadId);
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
-        AiModelConfig config = resolveOptionalChannel(configId);
+        AiModelConfig config = channelResolver.optional(configId);
         if (config != null) state.setAiConfigId(config.getId());
 
         String safeTitle = title != null && !title.isBlank() ? title : "新对话";
@@ -166,10 +165,6 @@ public class PlatformAiThreadService {
             User user, String threadId) {
         return conversationStore.listSubagentInvocations(
                 requireOwnedThread(user, threadId).getThreadId());
-    }
-
-    private AiModelConfig resolveOptionalChannel(Integer configId) {
-        return channelResolver.optional(configId);
     }
 
     private AiThreadRecord requireOwnedThread(User user, String threadId) {

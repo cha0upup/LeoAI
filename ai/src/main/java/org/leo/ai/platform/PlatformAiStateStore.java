@@ -39,10 +39,6 @@ public final class PlatformAiStateStore {
         return state;
     }
 
-    public static boolean has(String stateId) {
-        return get(stateId) != null;
-    }
-
     public static void remove(String stateId) {
         if (stateId != null && STATE_MAP.remove(stateId) != null) {
             notifyDestroyed(stateId);

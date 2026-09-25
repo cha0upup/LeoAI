@@ -78,9 +78,7 @@ public class PuppetNodeAiDelegationPresenter {
         }
 
         public void emitWarning(String warning) {
-            if (warning != null && !warning.isBlank()) {
-                context.thread().offerSystemWarn(warning);
-            }
+            context.thread().offerWarnMessage(warning);
         }
 
         public Map<String, Object> await() throws Exception {

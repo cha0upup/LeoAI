@@ -195,7 +195,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     public String getTerminalControlName() { return terminalControlName; }
 
     @Override public LinkedBlockingQueue<AiSseEvent> getAiSseEventQueue() { return sseEventQueue; }
-    public LinkedBlockingQueue<AiSseEvent> getSseEventQueue() { return sseEventQueue; }
 
     public AiSseEvent offerSseEvent(String name, Object data) {
         AiSseEvent event = recordSseEvent(name, data);
@@ -278,22 +277,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
 
     public Set<String> getActivatedSkills() {
         return Set.copyOf(activatedSkills);
-    }
-
-    public void resetRuntimeState() {
-        executingThread = null;
-        stopCallback = null;
-        stopListeners.forEach(StopRegistration::close);
-        executionClaimed.set(false);
-        stopRequested.set(false);
-        waitingForUserInput.set(false);
-        terminalControlRequested.set(false);
-        terminalControlName = null;
-        runStatus = AiRunStatus.IDLE;
-        stopReason = null;
-        activatedSkills.clear();
-        resetTurnCount();
-        clearSseEvents();
     }
 
     public static final class ToolLease implements AutoCloseable {

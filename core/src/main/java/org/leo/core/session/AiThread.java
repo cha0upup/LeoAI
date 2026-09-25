@@ -35,5 +35,4 @@ public class AiThread extends AiRuntimeState {
     public void setParentThreadId(String parentThreadId) { this.parentThreadId = parentThreadId; }
 
     public void stop() { stop("用户手动停止"); }
-    public void offerSystemWarn(String message) { offerWarnMessage(message); }
 }

@@ -74,7 +74,7 @@ public class PuppetNodeAiThreadService {
         Integer resolvedConfigId = resolveConfigId(configId, thread, persisted);
         AiModelConfig resolvedChannel;
         try {
-            resolvedChannel = resolveOptionalChannel(resolvedConfigId);
+            resolvedChannel = channelResolver.optional(resolvedConfigId);
         } catch (ApiException | IllegalArgumentException | IllegalStateException error) {
             boolean checkpoint = thread != null && hasThreadCheckpoint(session, threadId);
             return new ThreadResolution(thread, restored, checkpoint, error.getMessage());
@@ -177,7 +177,7 @@ public class PuppetNodeAiThreadService {
         String threadId = UUID.randomUUID().toString();
         String title = requestedTitle != null && !requestedTitle.isBlank()
                 ? requestedTitle : "对话 " + (session.listAiThreads().size() + 1);
-        AiModelConfig config = resolveOptionalChannel(configId);
+        AiModelConfig config = channelResolver.optional(configId);
         Integer resolvedConfigId = config != null ? config.getId() : null;
 
         AiThread thread = session.createAiThread(threadId, title);
@@ -240,7 +240,7 @@ public class PuppetNodeAiThreadService {
         if (thread == null) {
             throw ApiException.notFound("线程不存在，threadId: " + threadId);
         }
-        AiModelConfig config = resolveOptionalChannel(
+        AiModelConfig config = channelResolver.optional(
                 resolveConfigId(requestedConfigId, thread, persisted));
         thread.stop();
         thread.clearSseEvents();
@@ -265,7 +265,7 @@ public class PuppetNodeAiThreadService {
         if (thread == null) {
             throw ApiException.notFound("线程不存在，threadId: " + threadId);
         }
-        AiModelConfig config = resolveOptionalChannel(
+        AiModelConfig config = channelResolver.optional(
                 resolveConfigId(requestedConfigId, thread, persisted));
         thread.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(session, threadId);
@@ -360,10 +360,6 @@ public class PuppetNodeAiThreadService {
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
         return puppetId != null && checkpointRepository.exists(
                 session.getCreateByUser(), puppetId, threadId);
-    }
-
-    private AiModelConfig resolveOptionalChannel(Integer configId) {
-        return channelResolver.optional(configId);
     }
 
     private String validateConfigId(Integer configId) {
