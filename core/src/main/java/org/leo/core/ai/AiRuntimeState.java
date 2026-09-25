@@ -12,7 +12,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -25,8 +24,6 @@ import java.util.function.Consumer;
  * 进程内计划。所有作用域包装类都复用这一实现，避免两套状态机逐渐分叉。
  */
 public class AiRuntimeState implements AiEventStreamRuntime {
-
-    private static final int MAX_TURNS_WARN = 25;
 
     private volatile Thread executingThread;
     private final AtomicBoolean executionClaimed = new AtomicBoolean(false);
@@ -49,7 +46,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     private volatile long currentRunStartSeq;
     private volatile Consumer<AiSseEvent> eventJournalSink = event -> {};
 
-    private final AtomicInteger turnCount = new AtomicInteger(0);
     private volatile AiRuntimeStats runtimeStats = new AiRuntimeStats();
     private volatile AiExecutionPolicy executionPolicy = AiExecutionPolicy.defaultPolicy();
     private final List<AiPlan> planHistory = new CopyOnWriteArrayList<>();
@@ -234,15 +230,6 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         if (message != null && !message.isBlank()) offerSseEvent("warn", message);
     }
 
-    public String incrementAndCheckTurnCount() {
-        int count = turnCount.incrementAndGet();
-        return count >= MAX_TURNS_WARN
-                ? "对话已进行 " + count + " 轮，上下文接近上限，建议新建对话以保持最佳效果。"
-                : null;
-    }
-
-    public void resetTurnCount() { turnCount.set(0); }
-    public int getTurnCount() { return turnCount.get(); }
     public AiRuntimeStats getRuntimeStats() { return runtimeStats; }
     public void resetRuntimeStats() { runtimeStats = new AiRuntimeStats(); }
 

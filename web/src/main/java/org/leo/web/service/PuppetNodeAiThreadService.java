@@ -246,7 +246,6 @@ public class PuppetNodeAiThreadService {
         thread.clearSseEvents();
         thread.resetRuntimeStats();
         thread.setExecutionPolicy(AiExecutionPolicy.defaultPolicy());
-        thread.resetTurnCount();
         thread.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(session, threadId);
         updateThreadMeta(session, thread);
