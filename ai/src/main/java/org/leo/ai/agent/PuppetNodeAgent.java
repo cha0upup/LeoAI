@@ -8,7 +8,7 @@ import dev.langchain4j.service.memory.ChatMemoryAccess;
 /**
  * PuppetNode 侧 AI Agent 接口。
  *
- * <p>使用 LangChain4j AiService 机制，由 {@link AgentConfig} 构建实例。
+ * <p>使用 LangChain4j AiService 机制，由 {@link AiAgentFactory} 构建实例。
  * memoryId 使用 sessionId + threadId 组合作为会话隔离键。
  *
  * <p>提供流式和非流式两种调用方式：

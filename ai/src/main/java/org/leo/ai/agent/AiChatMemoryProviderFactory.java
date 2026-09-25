@@ -11,6 +11,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * 按实际模型上下文窗口创建对话记忆，避免线程选模后仍沿用全局默认模型预算。
+ *
+ * <p>从模型窗口中预留系统提示、工具定义和输出空间，并受系统配置上限约束。
+ * 小窗口使用 {@link TokenWindowChatMemory}；大窗口使用 {@link MessageWindowChatMemory}
+ * 配合 {@link CompressingChatMemory}，避免字符估算误差随上下文增大而累积。
  */
 @Component
 public class AiChatMemoryProviderFactory {
@@ -34,19 +38,11 @@ public class AiChatMemoryProviderFactory {
         this.managedMemory = managedMemory;
     }
 
-    public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens) {
-        return createPuppetProvider(modelContextWindowTokens, 0);
-    }
-
     public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens,
                                                    int toolSchemaTokens) {
         return create(modelContextWindowTokens,
                 toolSchemaTokens,
                 agentProperties.getPuppetNode().getMain().getMaxContextTokens());
-    }
-
-    public ChatMemoryProvider createPlatformProvider(int modelContextWindowTokens) {
-        return createPlatformProvider(modelContextWindowTokens, 0);
     }
 
     public ChatMemoryProvider createPlatformProvider(int modelContextWindowTokens,
@@ -86,10 +82,6 @@ public class AiChatMemoryProviderFactory {
     /**
      * 模型窗口是硬上限，系统配置也是上限；两者不能通过 Math.max 被意外放大。
      */
-    static int effectiveContextWindowTokens(int modelContextWindowTokens, int configuredMaxTokens) {
-        return effectiveContextWindowTokens(modelContextWindowTokens, configuredMaxTokens, 0);
-    }
-
     static int effectiveContextWindowTokens(int modelContextWindowTokens,
                                             int configuredMaxTokens,
                                             int toolSchemaTokens) {

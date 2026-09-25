@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * <p>将固定指令 + 侦察摘要组合为 system prompt，按 memoryId 动态注入。
  * memoryId 格式为 sessionId:threadId。
  *
- * <p>通过 {@code AgentConfig} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
+ * <p>通过 {@link AiAgentFactory} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
  * 以方法引用形式注册到 AiServices。
  *
  * <p>Skills 列表通过 {@link LeoSkillsProvider#getFormattedSkills(String)} 动态读取，

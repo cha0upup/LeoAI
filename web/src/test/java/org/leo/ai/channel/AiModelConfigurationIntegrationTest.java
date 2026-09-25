@@ -73,7 +73,7 @@ class AiModelConfigurationIntegrationTest {
         context.registerBean(AiModelCapabilityMapper.class, () -> template.getMapper(AiModelCapabilityMapper.class));
         context.registerBean(AiSecretCryptoService.class, () -> new AiSecretCryptoService("test-master", "unused"));
         context.register(AiModelConfigService.class, DynamicModelProvider.class,
-                DelegatingChatModel.class, DelegatingStreamingChatModel.class);
+                DelegatingChatModel.class);
         context.refresh();
         configs = context.getBean(AiModelConfigService.class);
         chat = context.getBean(DelegatingChatModel.class);
@@ -122,7 +122,6 @@ class AiModelConfigurationIntegrationTest {
         configs.deleteById(second.getId());
         assertNull(configs.getActive());
         assertNull(chat.getDelegate());
-        assertNull(context.getBean(DelegatingStreamingChatModel.class).getDelegate());
     }
 
     @Test

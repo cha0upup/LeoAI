@@ -40,14 +40,11 @@ public class DynamicModelProvider {
     private static final Duration BLOCKING_TIMEOUT = Duration.ofMinutes(2);
 
     private final AiModelConfigService configService;
-    private final DelegatingStreamingChatModel streamingModel;
     private final DelegatingChatModel chatModel;
 
     public DynamicModelProvider(AiModelConfigService configService,
-                                DelegatingStreamingChatModel streamingModel,
                                 DelegatingChatModel chatModel) {
         this.configService = configService;
-        this.streamingModel = streamingModel;
         this.chatModel = chatModel;
     }
 
@@ -96,14 +93,12 @@ public class DynamicModelProvider {
     /** 根据指定配置重建模型。 */
     public void refreshFromConfig(AiModelConfig config) {
         ModelRuntime runtime = buildRuntime(config);
-        streamingModel.setDelegate(runtime.streamingModel());
         chatModel.setDelegate(runtime.chatModel());
         log.info("模型已切换 — protocol={}, model={}, maxTokens={}, reasoning={}",
                 runtime.protocol(), runtime.modelName(), runtime.maxTokens(), runtime.doReasoning());
     }
 
     private void clearModels() {
-        streamingModel.clearDelegate();
         chatModel.clearDelegate();
     }
 

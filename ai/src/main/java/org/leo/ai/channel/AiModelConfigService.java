@@ -455,19 +455,6 @@ public class AiModelConfigService {
         return active;
     }
 
-    /**
-     * 获取当前激活模型的上下文窗口 token 数。
-     * 优先从数据库配置 {@code contextWindowTokens} 字段读取，
-     * 为空时根据模型名推断默认值。
-     */
-    public int getActiveContextWindowTokens() {
-        AiModelConfig active = getActive();
-        if (active == null) {
-            return 32_768;
-        }
-        return getContextWindowTokens(active);
-    }
-
     /** 返回指定模型的实际上下文硬上限，线程级选模必须使用该方法。 */
     public int getContextWindowTokens(AiModelConfig config) {
         if (config == null) return 32_768;

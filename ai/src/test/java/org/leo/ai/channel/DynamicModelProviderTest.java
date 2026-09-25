@@ -188,7 +188,7 @@ class DynamicModelProviderTest {
     }
 
     private static DynamicModelProvider provider(AiModelConfigService configs) {
-        return new DynamicModelProvider(configs, new DelegatingStreamingChatModel(), new DelegatingChatModel());
+        return new DynamicModelProvider(configs, new DelegatingChatModel());
     }
 
     private static AiModelConfig config(String base, String protocol) {

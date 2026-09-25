@@ -1,6 +1,5 @@
 package org.leo.ai.agent;
 
-import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
@@ -25,7 +24,6 @@ import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE;
 @Component
 public class AiAgentFactory {
 
-    private final ChatMemoryProvider memoryProvider;
     private final AiChatMemoryProviderFactory memoryProviderFactory;
     private final PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider;
     private final PlatformSystemPromptProvider platformSystemPromptProvider;
@@ -40,8 +38,7 @@ public class AiAgentFactory {
     private final ExecutorService puppetNodeToolExecutor;
     private final ExecutorService platformToolExecutor;
 
-    public AiAgentFactory(ChatMemoryProvider memoryProvider,
-                          AiChatMemoryProviderFactory memoryProviderFactory,
+    public AiAgentFactory(AiChatMemoryProviderFactory memoryProviderFactory,
                           PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider,
                           PlatformSystemPromptProvider platformSystemPromptProvider,
                           PuppetNodeToolBundle puppetNodeToolBundle,
@@ -56,7 +53,6 @@ public class AiAgentFactory {
                           ExecutorService puppetNodeToolExecutor,
                           @Qualifier("platformAiToolExecutor")
                           ExecutorService platformToolExecutor) {
-        this.memoryProvider = memoryProvider;
         this.memoryProviderFactory = memoryProviderFactory;
         this.puppetNodeSystemPromptProvider = puppetNodeSystemPromptProvider;
         this.platformSystemPromptProvider = platformSystemPromptProvider;
@@ -72,35 +68,17 @@ public class AiAgentFactory {
         this.platformToolExecutor = platformToolExecutor;
     }
 
-    public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel, ChatModel chatModel) {
-        return createPuppetNodeAgent(streamingModel, chatModel, true);
-    }
-
-    public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
-                                                 ChatModel chatModel,
-                                                 boolean enableTools) {
-        return createPuppetNodeAgent(streamingModel, chatModel, enableTools, memoryProvider);
-    }
-
     public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
                                                  ChatModel chatModel,
                                                  boolean enableTools,
                                                  int modelContextWindowTokens) {
         int toolSchemaTokens = enableTools
                 ? toolCatalog.estimateSchemaTokens(puppetNodeToolBundle.tools()) : 0;
-        return createPuppetNodeAgent(streamingModel, chatModel, enableTools,
-                memoryProviderFactory.createPuppetProvider(
-                        modelContextWindowTokens, toolSchemaTokens));
-    }
-
-    private PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
-                                                  ChatModel chatModel,
-                                                  boolean enableTools,
-                                                  ChatMemoryProvider selectedMemoryProvider) {
         var builder = AiServices.builder(PuppetNodeAgent.class)
                 .streamingChatModel(streamingModel)
                 .chatModel(chatModel)
-                .chatMemoryProvider(selectedMemoryProvider)
+                .chatMemoryProvider(memoryProviderFactory.createPuppetProvider(
+                        modelContextWindowTokens, toolSchemaTokens))
                 .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(puppetNodeToolExecutor)
                 .toolArgumentsErrorHandler(
@@ -133,25 +111,11 @@ public class AiAgentFactory {
         return builder.build();
     }
 
-    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel) {
-        return createPlatformAgent(streamingModel, true);
-    }
-
-    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel, boolean enableTools) {
-        return createPlatformAgent(streamingModel, enableTools, memoryProvider);
-    }
-
-    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
-                                             boolean enableTools,
-                                             int modelContextWindowTokens) {
-        return createPlatformAgent(streamingModel, enableTools, modelContextWindowTokens, null);
-    }
-
     /**
      * 创建平台 Agent，并按运行入口追加可选工具。
      *
      * <p>桥接 Puppet AI 的工具位于 web 模块，不能反向成为 ai 模块的固定依赖，
-     * 因此由 {@code PlatformAiService} 在构建线程运行时时注入。
+     * 因此由 web 模块的 Agent 注册表在构建线程运行时时注入。
      */
     public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
                                              boolean enableTools,
@@ -160,24 +124,10 @@ public class AiAgentFactory {
         List<Object> tools = platformToolBundle.toolsWith(additionalTools);
         int toolSchemaTokens = enableTools
                 ? toolCatalog.estimateSchemaTokens(tools) : 0;
-        return createPlatformAgent(streamingModel, enableTools,
-                memoryProviderFactory.createPlatformProvider(
-                        modelContextWindowTokens, toolSchemaTokens), additionalTools);
-    }
-
-    private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
-                                              boolean enableTools,
-                                              ChatMemoryProvider selectedMemoryProvider) {
-        return createPlatformAgent(streamingModel, enableTools, selectedMemoryProvider, null);
-    }
-
-    private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
-                                              boolean enableTools,
-                                              ChatMemoryProvider selectedMemoryProvider,
-                                              Object additionalTools) {
         var builder = AiServices.builder(PlatformAgent.class)
                 .streamingChatModel(streamingModel)
-                .chatMemoryProvider(selectedMemoryProvider)
+                .chatMemoryProvider(memoryProviderFactory.createPlatformProvider(
+                        modelContextWindowTokens, toolSchemaTokens))
                 .systemMessageProvider(platformSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(platformToolExecutor)
                 .toolArgumentsErrorHandler(
@@ -204,7 +154,7 @@ public class AiAgentFactory {
                 });
         if (enableTools) {
             builder.toolProvider(toolAuthorizationPolicy.toolProvider(
-                    PLATFORM, platformToolBundle.toolsWith(additionalTools).toArray()));
+                    PLATFORM, tools.toArray()));
         }
         return builder.build();
     }

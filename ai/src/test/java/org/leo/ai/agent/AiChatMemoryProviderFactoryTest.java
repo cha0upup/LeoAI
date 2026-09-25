@@ -9,13 +9,13 @@ class AiChatMemoryProviderFactoryTest {
     @Test
     void keepsSmallModelWithinItsRealWindow() {
         assertEquals(12_768,
-                AiChatMemoryProviderFactory.effectiveContextWindowTokens(32_768, 180_000));
+                AiChatMemoryProviderFactory.effectiveContextWindowTokens(32_768, 180_000, 0));
     }
 
     @Test
     void treatsConfiguredContextAsMaximum() {
         assertEquals(100_000,
-                AiChatMemoryProviderFactory.effectiveContextWindowTokens(200_000, 100_000));
+                AiChatMemoryProviderFactory.effectiveContextWindowTokens(200_000, 100_000, 0));
     }
 
     @Test
@@ -28,6 +28,6 @@ class AiChatMemoryProviderFactoryTest {
     @Test
     void preservesMinimumWorkingBudgetForTinyWindows() {
         assertEquals(1_024,
-                AiChatMemoryProviderFactory.effectiveContextWindowTokens(8_192, 180_000));
+                AiChatMemoryProviderFactory.effectiveContextWindowTokens(8_192, 180_000, 0));
     }
 }

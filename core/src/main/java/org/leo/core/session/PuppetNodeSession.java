@@ -69,7 +69,7 @@ public class PuppetNodeSession {
      */
     private final AtomicBoolean reconSummaryDigestDirty = new AtomicBoolean(true);
     /** AI 工具结果自动追加到侦察摘要的开关（默认开启）。
-     *  AgentConfig.puppetNodeAgent 的 afterToolExecution 钩子据此决定是否触发 AutoReconAppendService。 */
+     *  AiAgentFactory 的 afterToolExecution 钩子据此决定是否触发 AutoReconAppendService。 */
     private volatile boolean autoAppendRecon = true;
 
     // ── 缓存模式 ──────────────────────────────────────────────────────────────
