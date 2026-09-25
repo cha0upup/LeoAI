@@ -23,7 +23,6 @@ import java.util.Map;
  * - 路由表（Linux: /proc/net/route 或 route -n；Windows: route print）
  * - DNS 配置（Linux: /etc/resolv.conf；Windows: ipconfig /all）
  * - hosts 文件
- * - DNS 解析指定域名（InetAddress.getAllByName）
  */
 public class NetworkInfoService extends ComponentService {
 
@@ -172,10 +171,6 @@ public class NetworkInfoService extends ComponentService {
             }
         }
         return result;
-    }
-
-    private List<Map<String, Object>> normalizeResolved(Object raw) {
-        return normalizeAddresses(raw);
     }
 
     private Object first(Map<?, ?> source, String first, String second) {
@@ -490,31 +485,6 @@ public class NetworkInfoService extends ComponentService {
             }
         }
         return entries;
-    }
-
-    // ==================== 6. DNS 解析 ====================
-
-    private List<Map<String, Object>> doResolveDns(String hostname) {
-        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
-        try {
-            InetAddress[] addrs = InetAddress.getAllByName(hostname);
-            for (int i = 0; i < addrs.length; i++) {
-                Map<String, Object> entry = new HashMap<String, Object>();
-                entry.put("address",           addrs[i].getHostAddress());
-                entry.put("canonicalHostName", addrs[i].getCanonicalHostName());
-                if (addrs[i] instanceof Inet4Address) {
-                    entry.put("type", "IPv4");
-                } else if (addrs[i] instanceof Inet6Address) {
-                    entry.put("type", "IPv6");
-                }
-                result.add(entry);
-            }
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<String, Object>();
-            err.put("error", e.getClass().getName() + ": " + e.getMessage());
-            result.add(err);
-        }
-        return result;
     }
 
     // ==================== helpers ====================
