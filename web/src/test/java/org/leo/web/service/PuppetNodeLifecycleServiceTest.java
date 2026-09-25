@@ -68,8 +68,8 @@ class PuppetNodeLifecycleServiceTest {
         when(node.getPuppet()).thenReturn(puppet);
         when(node.testConnection()).thenReturn(Map.of("code", 200));
 
-        PuppetInitResponse first = lifecycleService.initLiveSession(puppet, user);
-        PuppetInitResponse second = lifecycleService.initLiveSession(puppet, user);
+        PuppetInitResponse first = lifecycleService.initLiveSession(puppet, user, null, null);
+        PuppetInitResponse second = lifecycleService.initLiveSession(puppet, user, null, null);
 
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSame(node, assertSessionWithoutAiThreads(first, false).getPuppetNode());
@@ -81,8 +81,8 @@ class PuppetNodeLifecycleServiceTest {
         when(cacheService.requireSelectedHostId("user-1", "puppet-1", null))
                 .thenReturn("host-1");
 
-        PuppetInitResponse first = lifecycleService.initCacheSession(puppet, user);
-        PuppetInitResponse second = lifecycleService.initCacheSession(puppet, user);
+        PuppetInitResponse first = lifecycleService.initCacheSession(puppet, user, null, null);
+        PuppetInitResponse second = lifecycleService.initCacheSession(puppet, user, null, null);
 
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSessionWithoutAiThreads(first, true);

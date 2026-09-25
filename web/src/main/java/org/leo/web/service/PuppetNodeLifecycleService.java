@@ -54,14 +54,6 @@ public class PuppetNodeLifecycleService {
         this.sessionLifecycleManager = sessionLifecycleManager;
     }
 
-    public PuppetInitResponse initLiveSession(Puppet puppet, User user) throws Exception {
-        return initLiveSession(puppet, user, null, null);
-    }
-
-    public PuppetInitResponse initLiveSession(Puppet puppet, User user, String projectId) throws Exception {
-        return initLiveSession(puppet, user, projectId, null);
-    }
-
     public PuppetInitResponse initLiveSession(Puppet puppet, User user,
                                               String projectId, String selectedHostId) throws Exception {
         String sessionId = UUID.randomUUID().toString();
@@ -91,14 +83,6 @@ public class PuppetNodeLifecycleService {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         return new PuppetInitResponse(sessionId, projectId, false,
                 session != null ? session.getCapabilities() : List.of());
-    }
-
-    public PuppetInitResponse initCacheSession(Puppet puppet, User user) {
-        return initCacheSession(puppet, user, null, null);
-    }
-
-    public PuppetInitResponse initCacheSession(Puppet puppet, User user, String projectId) {
-        return initCacheSession(puppet, user, projectId, null);
     }
 
     public PuppetInitResponse initCacheSession(Puppet puppet, User user, String projectId, String selectedHostId) {

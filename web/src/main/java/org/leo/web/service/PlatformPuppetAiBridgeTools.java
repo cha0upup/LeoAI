@@ -218,7 +218,7 @@ public class PlatformPuppetAiBridgeTools {
         if (existing != null) return existing;
 
         try {
-            PuppetInitResponse response = lifecycleService.initLiveSession(puppet, user);
+            PuppetInitResponse response = lifecycleService.initLiveSession(puppet, user, null, null);
             PuppetNodeSession created = PuppetNodeSessionContainer.getSession(response.sessionId());
             if (created == null) throw new IllegalStateException("Puppet 实时会话创建后未找到");
             return created;
