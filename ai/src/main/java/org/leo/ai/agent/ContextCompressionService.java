@@ -101,7 +101,7 @@ public class ContextCompressionService {
         }
     }
 
-    RestoredCheckpoint restoreCheckpoint(String memoryId, List<ChatMessage> currentMessages) {
+    CompressionCheckpoint restoreCheckpoint(String memoryId, List<ChatMessage> currentMessages) {
         if (currentMessages == null || currentMessages.isEmpty()) {
             return null;
         }
@@ -157,8 +157,8 @@ public class ContextCompressionService {
                     safeMemoryId(memoryId), persisted.boundarySequence(),
                     currentMessages.size() - summarizedCount);
             recordTelemetry("compression.checkpoint_restored");
-            return new RestoredCheckpoint(
-                    restoredSummaryMessage(persisted.summary()), summarizedCount);
+            return CompressionCheckpoint.create(
+                    currentMessages, summarizedCount, restoredSummaryMessage(persisted.summary()));
         } catch (RuntimeException e) {
             recordTelemetry("compression.checkpoint_restore_failed");
             log.warn("恢复上下文 checkpoint 失败，使用原始历史: memoryId={}, errorType={}",
@@ -268,8 +268,7 @@ public class ContextCompressionService {
                 messages.size(), result.size(), endIdx, savedTokens);
         recordTelemetry("compression.succeeded");
 
-        return CompressionResult.compressed(
-                result, summaryMessage, endIdx, currentTokens, afterTokens);
+        return CompressionResult.compressed(result, summaryMessage, endIdx);
     }
 
     /** 调用非流式 LLM 将消息段总结为精炼摘要。 */
@@ -442,29 +441,22 @@ public class ContextCompressionService {
             List<ChatMessage> messages,
             SystemMessage summaryMessage,
             int compressedMessageCount,
-            int beforeTokens,
-            int afterTokens,
             boolean attempted,
             boolean succeeded) {
 
         static CompressionResult unchanged(List<ChatMessage> messages) {
-            return new CompressionResult(messages, null, 0, 0, 0, false, false);
+            return new CompressionResult(messages, null, 0, false, false);
         }
 
         static CompressionResult failed(List<ChatMessage> messages) {
-            return new CompressionResult(messages, null, 0, 0, 0, true, false);
+            return new CompressionResult(messages, null, 0, true, false);
         }
 
         static CompressionResult compressed(List<ChatMessage> messages,
                                             SystemMessage summaryMessage,
-                                            int compressedMessageCount,
-                                            int beforeTokens,
-                                            int afterTokens) {
-            return new CompressionResult(messages, summaryMessage, compressedMessageCount,
-                    beforeTokens, afterTokens, true, true);
+                                            int compressedMessageCount) {
+            return new CompressionResult(
+                    messages, summaryMessage, compressedMessageCount, true, true);
         }
-    }
-
-    record RestoredCheckpoint(SystemMessage summaryMessage, int summarizedSourceCount) {
     }
 }

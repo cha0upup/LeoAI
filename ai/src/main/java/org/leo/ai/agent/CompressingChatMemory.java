@@ -14,7 +14,6 @@ import java.util.List;
  */
 class CompressingChatMemory implements ChatMemory {
 
-    private final Object memoryId;
     private final ChatMemory delegate;
     private final ContextCompressionService compressionService;
     private final int maxTokens;
@@ -22,27 +21,19 @@ class CompressingChatMemory implements ChatMemory {
     private CompressionCheckpoint checkpoint;
     private String failedSourceHash;
 
-    CompressingChatMemory(Object memoryId,
-                          ChatMemory delegate,
+    CompressingChatMemory(ChatMemory delegate,
                           ContextCompressionService compressionService,
                           int maxTokens) {
-        this.memoryId = memoryId;
         this.delegate = delegate;
         this.compressionService = compressionService;
         this.maxTokens = maxTokens;
-        List<ChatMessage> current = new ArrayList<>(delegate.messages());
-        ContextCompressionService.RestoredCheckpoint restored =
-                compressionService.restoreCheckpoint(String.valueOf(memoryId), current);
-        if (restored != null) {
-            this.checkpoint = CompressionCheckpoint.restore(
-                    String.valueOf(memoryId), current,
-                    restored.summarizedSourceCount(), restored.summaryMessage());
-        }
+        this.checkpoint = compressionService.restoreCheckpoint(
+                String.valueOf(id()), new ArrayList<>(delegate.messages()));
     }
 
     @Override
     public Object id() {
-        return memoryId;
+        return delegate.id();
     }
 
     @Override
@@ -70,7 +61,7 @@ class CompressingChatMemory implements ChatMemory {
         }
 
         ContextCompressionService.CompressionResult result = compressionService.compressIfNeeded(
-                String.valueOf(memoryId), candidate, maxTokens);
+                String.valueOf(id()), candidate, maxTokens);
         if (!result.attempted()) {
             return candidate;
         }
@@ -86,17 +77,12 @@ class CompressingChatMemory implements ChatMemory {
                 : compressedCandidateMessages;
         int newBoundary = Math.min(current.size(),
                 existingBoundary + additionallySummarized);
-        checkpoint = checkpoint != null
-                ? checkpoint.advance(current, existingBoundary, additionallySummarized,
-                        result.summaryMessage())
-                : CompressionCheckpoint.create(String.valueOf(memoryId), current,
-                        additionallySummarized, result.summaryMessage());
+        checkpoint = CompressionCheckpoint.create(current, newBoundary, result.summaryMessage());
         failedSourceHash = null;
         compressionService.persistCheckpoint(
-                String.valueOf(memoryId), result.summaryMessage(), current, newBoundary);
+                String.valueOf(id()), result.summaryMessage(), current, newBoundary);
 
-        CompressionCheckpoint.ProjectedView refreshed = checkpoint.project(current);
-        return refreshed != null ? refreshed.messages() : result.messages();
+        return result.messages();
     }
 
     @Override
@@ -114,6 +100,6 @@ class CompressingChatMemory implements ChatMemory {
     private void resetCheckpoint() {
         checkpoint = null;
         failedSourceHash = null;
-        compressionService.clearPersistedCheckpoint(String.valueOf(memoryId));
+        compressionService.clearPersistedCheckpoint(String.valueOf(id()));
     }
 }

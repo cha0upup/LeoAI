@@ -72,7 +72,6 @@ public class AiChatMemoryProviderFactory {
                     .build());
             return new ActiveUserPreservingChatMemory(
                     new CompressingChatMemory(
-                            memoryId,
                             delegate,
                             compressionService,
                             effectiveWindow));

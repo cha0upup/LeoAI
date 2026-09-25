@@ -22,35 +22,24 @@ import java.util.List;
  */
 final class CompressionCheckpoint {
 
-    private final String memoryId;
     private final List<String> sourceFingerprints;
     private final int summarizedMessageCount;
     private final SystemMessage summaryMessage;
 
-    private CompressionCheckpoint(String memoryId,
-                                  List<String> sourceFingerprints,
+    private CompressionCheckpoint(List<String> sourceFingerprints,
                                   int summarizedMessageCount,
                                   SystemMessage summaryMessage) {
-        this.memoryId = memoryId;
         this.sourceFingerprints = List.copyOf(sourceFingerprints);
         this.summarizedMessageCount = Math.max(0,
                 Math.min(summarizedMessageCount, sourceFingerprints.size()));
         this.summaryMessage = summaryMessage;
     }
 
-    static CompressionCheckpoint create(String memoryId,
-                                        List<ChatMessage> sourceMessages,
+    static CompressionCheckpoint create(List<ChatMessage> sourceMessages,
                                         int summarizedMessageCount,
                                         SystemMessage summaryMessage) {
-        return new CompressionCheckpoint(memoryId, fingerprints(sourceMessages),
+        return new CompressionCheckpoint(fingerprints(sourceMessages),
                 summarizedMessageCount, summaryMessage);
-    }
-
-    static CompressionCheckpoint restore(String memoryId,
-                                         List<ChatMessage> sourceMessages,
-                                         int summarizedMessageCount,
-                                         SystemMessage summaryMessage) {
-        return create(memoryId, sourceMessages, summarizedMessageCount, summaryMessage);
     }
 
     ProjectedView project(List<ChatMessage> currentMessages) {
@@ -78,16 +67,8 @@ final class CompressionCheckpoint {
         if (dropped < 0 || !expected.subList(dropped, expected.size()).equals(current)) {
             return null;
         }
-        return new CompressionCheckpoint(memoryId, current,
+        return new CompressionCheckpoint(current,
                 Math.max(0, summarizedMessageCount - dropped), summaryMessage);
-    }
-
-    CompressionCheckpoint advance(List<ChatMessage> currentMessages,
-                                  int currentBoundary,
-                                  int additionallySummarized,
-                                  SystemMessage newSummary) {
-        return create(memoryId, currentMessages,
-                currentBoundary + Math.max(0, additionallySummarized), newSummary);
     }
 
     private ProjectedView projected(List<ChatMessage> currentMessages, int boundary) {

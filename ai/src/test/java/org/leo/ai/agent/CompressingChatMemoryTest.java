@@ -45,6 +45,7 @@ class CompressingChatMemoryTest {
 
         assertEquals(3, first.size());
         assertEquals(first, second);
+        assertEquals("platform:thread-1", memory.id());
         verify(model).chat(any(ChatRequest.class));
     }
 
@@ -58,7 +59,12 @@ class CompressingChatMemoryTest {
         for (int i = 0; i < 6; i++) {
             memory.add(UserMessage.from("new-" + i));
         }
-        assertEquals(3, memory.messages().size());
+        List<ChatMessage> recompressed = memory.messages();
+        assertEquals(3, recompressed.size());
+        assertInstanceOf(SystemMessage.class, recompressed.get(0));
+        assertEquals(List.of(UserMessage.from("new-4"), UserMessage.from("new-5")),
+                recompressed.subList(1, recompressed.size()));
+        assertEquals(recompressed, memory.messages());
         verify(model, org.mockito.Mockito.times(2)).chat(any(ChatRequest.class));
     }
 
@@ -247,7 +253,6 @@ class CompressingChatMemoryTest {
                 .build();
         if (!history.isEmpty()) delegate.set(history);
         return new CompressingChatMemory(
-                "platform:thread-1",
                 delegate,
                 compressionService,
                 maxTokens);
