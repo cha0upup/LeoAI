@@ -1,8 +1,6 @@
 package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.output.TokenUsage;
-import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import org.leo.core.util.json.JsonUtil;
 
 import java.util.ArrayList;
@@ -94,28 +92,7 @@ public final class AiTurnTrace {
     public synchronized void recordModelResponse(ChatResponse response) {
         if (response == null) return;
         if (response.id() != null) modelUsage.put("responseId", response.id());
-        if (response.modelName() != null) modelUsage.put("model", response.modelName());
-        if (response.finishReason() != null) {
-            modelUsage.put("finishReason", response.finishReason().name().toLowerCase());
-        }
-        TokenUsage usage = response.tokenUsage();
-        if (usage != null) {
-            modelUsage.put("inputTokens", usage.inputTokenCount());
-            modelUsage.put("outputTokens", usage.outputTokenCount());
-            modelUsage.put("totalTokens", usage.totalTokenCount());
-            if (usage instanceof OpenAiTokenUsage openaiUsage) {
-                if (openaiUsage.inputTokensDetails() != null
-                        && openaiUsage.inputTokensDetails().cachedTokens() != null) {
-                    modelUsage.put("cachedInputTokens",
-                            openaiUsage.inputTokensDetails().cachedTokens());
-                }
-                if (openaiUsage.outputTokensDetails() != null
-                        && openaiUsage.outputTokensDetails().reasoningTokens() != null) {
-                    modelUsage.put("reasoningTokens",
-                            openaiUsage.outputTokensDetails().reasoningTokens());
-                }
-            }
-        }
+        AiTurnArtifacts.putModelUsage(modelUsage, response);
     }
 
     public synchronized Map<String, Object> eventPayload() {

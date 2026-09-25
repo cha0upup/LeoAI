@@ -1,5 +1,8 @@
 package org.leo.ai.runtime;
 
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -86,17 +89,30 @@ class AiTurnArtifactsTest {
     @Test
     void accumulatesUsageIntoConversationRuntimeStats() {
         AiRuntimeStats stats = new AiRuntimeStats();
-        Map<String, Object> usage = new LinkedHashMap<>();
-        usage.put("inputTokens", 10);
-        usage.put("outputTokens", 5);
-        usage.put("totalTokens", 15);
+        Map<String, Object> usage = artifacts.usage(ChatResponse.builder()
+                .id("response-1")
+                .aiMessage(AiMessage.from("done"))
+                .tokenUsage(OpenAiTokenUsage.builder()
+                        .inputTokenCount(10).outputTokenCount(5).totalTokenCount(15)
+                        .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder()
+                                .cachedTokens(4).build())
+                        .outputTokensDetails(OpenAiTokenUsage.OutputTokensDetails.builder()
+                                .reasoningTokens(2).build())
+                        .build())
+                .build());
 
         artifacts.accumulateUsage(stats, usage);
 
+        assertEquals("response-1", usage.get("id"));
+        assertFalse(usage.containsKey("responseId"));
         assertEquals(10, stats.getCumulativeInputTokens());
         assertEquals(5, stats.getCumulativeOutputTokens());
         assertEquals(15, stats.getCumulativeTotalTokens());
-        assertFalse(((Map<?, ?>) usage.get("cumulative")).isEmpty());
+        assertEquals(4, stats.getCumulativeCachedInputTokens());
+        assertEquals(2, stats.getCumulativeReasoningTokens());
+        assertEquals(Map.of("inputTokens", 10L, "outputTokens", 5L, "totalTokens", 15L,
+                        "cachedInputTokens", 4L, "reasoningTokens", 2L, "turnCount", 1),
+                usage.get("cumulative"));
     }
 
     private Map<String, Object> tool(String name, Boolean success) {

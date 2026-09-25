@@ -21,6 +21,12 @@ public class AiTurnArtifacts {
         Map<String, Object> usage = new LinkedHashMap<>();
         if (response == null) return usage;
         if (response.id() != null) usage.put("id", response.id());
+        putModelUsage(usage, response);
+        usage.put("timestamp", System.currentTimeMillis());
+        return usage;
+    }
+
+    static void putModelUsage(Map<String, Object> usage, ChatResponse response) {
         if (response.modelName() != null) usage.put("model", response.modelName());
         if (response.finishReason() != null) {
             usage.put("finishReason", response.finishReason().name().toLowerCase());
@@ -41,8 +47,6 @@ public class AiTurnArtifacts {
                 }
             }
         }
-        usage.put("timestamp", System.currentTimeMillis());
-        return usage;
     }
 
     public void accumulateUsage(AiRuntimeStats stats, Map<String, Object> usage) {

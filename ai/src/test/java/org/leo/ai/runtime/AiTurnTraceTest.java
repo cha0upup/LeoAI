@@ -2,6 +2,7 @@ package org.leo.ai.runtime;
 
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
@@ -67,9 +68,11 @@ class AiTurnTraceTest {
                 "trace-2", "platform", "thread-2",
                 System.currentTimeMillis());
         trace.recordModelResponse(ChatResponse.builder()
+                .id("response-2")
                 .aiMessage(AiMessage.from("done"))
                 .modelName("test-model")
                 .tokenUsage(new TokenUsage(120, 30, 150))
+                .finishReason(FinishReason.STOP)
                 .build());
         trace.recordEvent(AiTurnEvent.toolCompleted(Map.of(
                 "toolName", "getSlow",
@@ -94,8 +97,9 @@ class AiTurnTraceTest {
         Map<?, ?> usage = (Map<?, ?>) snapshot.get("modelUsage");
         Map<?, ?> metrics = (Map<?, ?>) snapshot.get("toolMetrics");
 
-        assertEquals("test-model", usage.get("model"));
-        assertEquals(150, usage.get("totalTokens"));
+        assertEquals(Map.of("responseId", "response-2", "model", "test-model",
+                "finishReason", "stop", "inputTokens", 120,
+                "outputTokens", 30, "totalTokens", 150), usage);
         assertEquals(2, metrics.get("count"));
         assertEquals(60L, metrics.get("totalDurationMs"));
         assertEquals(1, metrics.get("timeoutCount"));
