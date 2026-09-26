@@ -53,18 +53,15 @@ public final class PlatformAiStateStore {
         if (listener != null) DESTROY_LISTENERS.remove(listener);
     }
 
-    public static int evictExpired() {
+    private static void evictExpired() {
         long cutoff = System.currentTimeMillis() - MAX_IDLE_MS;
-        int removed = 0;
         for (Map.Entry<String, PlatformAiState> entry : STATE_MAP.entrySet()) {
             PlatformAiState state = entry.getValue();
             if (!state.isExecuting() && state.getLastActiveAt() < cutoff
                     && STATE_MAP.remove(entry.getKey(), state)) {
                 notifyDestroyed(entry.getKey());
-                removed++;
             }
         }
-        return removed;
     }
 
     private static void evictOldestIfFull() {

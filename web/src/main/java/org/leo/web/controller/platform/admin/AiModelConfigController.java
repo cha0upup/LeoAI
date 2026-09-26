@@ -8,6 +8,7 @@ import org.leo.ai.channel.AiModelDiscoveryService;
 import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
+import org.leo.ai.channel.ModelEndpoint;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
@@ -132,7 +133,7 @@ public class AiModelConfigController {
         }
         long start = System.currentTimeMillis();
         String protocol = DynamicModelProvider.resolveProtocol(config);
-        String effectiveBaseUrl = DynamicModelProvider.resolveEffectiveBaseUrl(config);
+        String effectiveBaseUrl = ModelEndpoint.apiRoot(config);
         try {
             ChatResponse response = testConnectionWithRuntime(config);
             failoverService.recordSuccess(config.getId());

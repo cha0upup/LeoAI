@@ -430,10 +430,6 @@ public class DynamicModelProvider {
                 || model.contains("qwen");
     }
 
-    public static String resolveEffectiveBaseUrl(AiModelConfig config) {
-        return ModelEndpoint.apiRoot(config);
-    }
-
     public static boolean useResponsesApi(AiModelConfig config) {
         return PROTOCOL_RESPONSES.equals(resolveProtocol(config));
     }
