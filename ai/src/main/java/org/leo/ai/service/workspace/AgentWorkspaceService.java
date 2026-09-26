@@ -72,22 +72,6 @@ public class AgentWorkspaceService {
                         ignored -> new ReentrantReadWriteLock()));
     }
 
-    public Map<String, Object> stat(Workspace workspace, String relativePath) {
-        ReentrantReadWriteLock.ReadLock lock = workspace.lock().readLock();
-        lock.lock();
-        try {
-            Path target = resolve(workspace, relativePath, true);
-            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IllegalArgumentException("路径不存在: " + displayPath(relativePath));
-            }
-            return describe(workspace, target);
-        } catch (IOException e) {
-            throw new IllegalStateException("读取文件状态失败", e);
-        } finally {
-            lock.unlock();
-        }
-    }
-
     public Map<String, Object> list(Workspace workspace, String relativePath,
                                     int depth, int maxEntries) {
         int safeDepth = Math.max(1, Math.min(depth <= 0 ? 1 : depth, 8));
@@ -231,7 +215,7 @@ public class AgentWorkspaceService {
     public Map<String, Object> applyPatch(Workspace workspace, String relativePath,
                                           String patch, String expectedSha256) {
         if (expectedSha256 == null || expectedSha256.isBlank()) {
-            throw new IllegalArgumentException("修改现有文件必须提供 read/stat 返回的 expectedSha256");
+            throw new IllegalArgumentException("修改现有文件必须提供 workspaceReadText 返回的 sha256");
         }
         ReentrantReadWriteLock.WriteLock lock = workspace.lock().writeLock();
         lock.lock();

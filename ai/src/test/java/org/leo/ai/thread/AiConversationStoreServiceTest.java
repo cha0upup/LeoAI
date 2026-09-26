@@ -1,6 +1,8 @@
 package org.leo.ai.thread;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiEventRecord;
@@ -133,9 +135,13 @@ class AiConversationStoreServiceTest {
         AiMessageRecord assistant = messages.getAllValues().get(1);
         assertEquals("user-queued", user.getMessageId());
         assertEquals("visible command", user.getContent());
+        assertEquals("{\"name\":\"a.txt\"}", user.getAttachmentsJson());
+        assertEquals(AiConversationStoreService.MESSAGE_PENDING, user.getStatus());
         assertNull(user.getRunId());
         assertEquals("assistant-queued", assistant.getMessageId());
         assertEquals("assistant", assistant.getRole());
+        assertEquals(AiConversationStoreService.MESSAGE_PENDING, assistant.getStatus());
+        assertNull(assistant.getAttachmentsJson());
         assertNull(assistant.getRunId());
     }
 
@@ -194,8 +200,10 @@ class AiConversationStoreServiceTest {
         assertEquals(turn.turnId(), message.getTurnId());
         assertEquals(AiConversationStoreService.MESSAGE_PENDING, message.getStatus());
         assertEquals("visible input", message.getContent());
+        assertEquals("{\"name\":\"a.txt\"}", message.getAttachmentsJson());
         assertNotNull(turn.userMessageId());
         assertEquals("assistant", assistant.getRole());
+        assertEquals(AiConversationStoreService.MESSAGE_PENDING, assistant.getStatus());
         assertEquals(turn.assistantMessageId(), assistant.getMessageId());
     }
 
@@ -284,6 +292,15 @@ class AiConversationStoreServiceTest {
         assertEquals("cancelled", runCaptor.getValue().getErrorCategory());
         assertEquals("用户取消", runCaptor.getValue().getErrorMessage());
         assertEquals("用户取消", runCaptor.getValue().getRawErrorMessage());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0,50,0,50", "-8,20,0,20", "7,20,7,20", "0,0,0,1",
+            "0,200,0,200", "0,201,0,200", "0,-1,0,200", "0,-2147483648,0,200"})
+    void preservesMessagePaginationBounds(int offset, int limit, int expectedOffset, int expectedLimit) {
+        service.listMessages("thread-1", offset, limit);
+
+        verify(mapper).listMessages("thread-1", expectedOffset, expectedLimit);
     }
 
     @Test
@@ -444,8 +461,8 @@ class AiConversationStoreServiceTest {
                 eq(1L), anyLong(), eq("delta"), anyString(),
                 eq("stale-token"), anyLong())).thenReturn(0);
         AiThread thread = new AiThread("thread-1", "test");
-        thread.bindActiveLeaseToken("stale-token");
         service.attachEventJournal("thread-1", thread);
+        thread.bindActiveLeaseToken("stale-token");
 
         assertThrows(IllegalStateException.class,
                 () -> thread.recordSseEvent("delta", "hello"));

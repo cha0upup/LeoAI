@@ -20,12 +20,11 @@ public class AiEventJournalRepository {
         this.mapper = mapper;
     }
 
-    public void attach(String threadId, AiEventStreamRuntime runtime,
-                       EventAppender appender) {
+    public void attach(String threadId, AiEventStreamRuntime runtime) {
         if (blank(threadId) || runtime == null) return;
         long lastSeq = mapper.findLastEventSeq(threadId);
         runtime.configureEventJournal(lastSeq,
-                event -> appender.append(threadId, event, runtime.getActiveLeaseToken()));
+                event -> append(threadId, event, runtime.getActiveLeaseToken()));
     }
 
     public void append(String threadId, AiSseEvent event, String leaseToken) {
@@ -77,18 +76,13 @@ public class AiEventJournalRepository {
         return blank(threadId) || mapper.hasLatestTurnCompletedEvent(threadId) > 0;
     }
 
-    public AiSseEvent toSseEvent(AiEventRecord row) {
+    private AiSseEvent toSseEvent(AiEventRecord row) {
         Object data = row.getDataJson() != null ? JSON.parse(row.getDataJson()) : null;
         return new AiSseEvent(
                 row.getEventSeq() != null ? row.getEventSeq() : 0L,
                 row.getTimestamp() != null ? row.getTimestamp() : 0L,
                 row.getName(), data, row.getSubagentInvocationId(),
                 row.getTurnId(), row.getItemId(), row.getRunId());
-    }
-
-    @FunctionalInterface
-    public interface EventAppender {
-        void append(String threadId, AiSseEvent event, String leaseToken);
     }
 
     private static boolean blank(String value) {

@@ -22,10 +22,8 @@ public class AiMessageRepository {
         this.mapper = mapper;
     }
 
-    public String append(String requestedMessageId, String threadId, String turnId,
-                         String runId, String status, String role, String content,
-                         List<Object> nodes, Map<String, Object> review,
-                         Object planSnapshot, Object attachments) {
+    public String appendPending(String requestedMessageId, String threadId, String turnId,
+                                String runId, String role, String content, Object attachments) {
         long now = System.currentTimeMillis();
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageId(requestedMessageId != null && !requestedMessageId.isBlank()
@@ -33,14 +31,11 @@ public class AiMessageRepository {
         row.setThreadId(threadId);
         row.setTurnId(turnId);
         row.setRunId(runId);
-        row.setStatus(status);
+        row.setStatus(AiConversationStoreService.MESSAGE_PENDING);
         row.setRole(role);
         row.setContent(content);
         row.setTimestamp(now);
         row.setAttachmentsJson(toJsonOrNull(attachments));
-        row.setNodesJson(toJsonOrNull(nodes));
-        row.setReviewJson(toJsonOrNull(review));
-        row.setPlanJson(toJsonOrNull(planSnapshot));
         mapper.insertMessage(row);
         mapper.refreshMessageCount(threadId, now);
         return row.getMessageId();
@@ -48,7 +43,7 @@ public class AiMessageRepository {
 
     public List<Map<String, Object>> list(String threadId, int offset, int limit) {
         int safeOffset = Math.max(0, offset);
-        int safeLimit = limit < 0 ? Integer.MAX_VALUE : Math.max(1, Math.min(limit, 200));
+        int safeLimit = limit < 0 ? 200 : Math.max(1, Math.min(limit, 200));
         return toMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
     }
 

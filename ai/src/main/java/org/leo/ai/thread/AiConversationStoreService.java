@@ -209,14 +209,12 @@ public class AiConversationStoreService {
                                        Object attachments,
                                        String answerToQuestionId) {
         if (turn == null || mapper.insertProtocolTurn(turn) != 1) return false;
-        messages.append(
+        messages.appendPending(
                 turn.getUserItemId(), turn.getThreadId(), turn.getTurnId(),
-                null, MESSAGE_PENDING, "user", userContent,
-                null, null, null, attachments);
-        messages.append(
+                null, "user", userContent, attachments);
+        messages.appendPending(
                 turn.getAssistantItemId(), turn.getThreadId(), turn.getTurnId(),
-                null, MESSAGE_PENDING, "assistant", "",
-                null, null, null, null);
+                null, "assistant", "", null);
         if (!isBlank(answerToQuestionId)) {
             AiUserInputRequest request = userInput.find(answerToQuestionId);
             String normalizedAnswer = userContent != null ? userContent.trim() : "";
@@ -281,7 +279,7 @@ public class AiConversationStoreService {
             turn.put("threadId", threadId);
             turn.put("status", "interrupted");
             turn.put("interruptRequested", true);
-            appendEvent(threadId, new AiSseEvent(
+            eventJournal.append(threadId, new AiSseEvent(
                     mapper.findLastEventSeq(threadId) + 1L,
                     System.currentTimeMillis(),
                     "turn/completed",
@@ -318,11 +316,7 @@ public class AiConversationStoreService {
      * 新事件仍沿用同一个单调游标。
      */
     public void attachEventJournal(String threadId, AiEventStreamRuntime runtime) {
-        eventJournal.attach(threadId, runtime, this::appendEvent);
-    }
-
-    public void appendEvent(String threadId, AiSseEvent event, String leaseToken) {
-        eventJournal.append(threadId, event, leaseToken);
+        eventJournal.attach(threadId, runtime);
     }
 
     public List<AiSseEvent> listEventsAfter(String threadId, long afterSeq, int limit) {
@@ -461,14 +455,12 @@ public class AiConversationStoreService {
             userMessageId = reservedTurn.getUserItemId();
             assistantMessageId = reservedTurn.getAssistantItemId();
         } else {
-            userMessageId = messages.append(
+            userMessageId = messages.appendPending(
                     requestedUserItemId,
-                    threadId, turnId, runId, MESSAGE_PENDING,
-                    "user", userContent, null, null, null, attachments);
-            assistantMessageId = messages.append(
+                    threadId, turnId, runId, "user", userContent, attachments);
+            assistantMessageId = messages.appendPending(
                     requestedAssistantItemId,
-                    threadId, turnId, runId, MESSAGE_PENDING,
-                    "assistant", "", null, null, null, null);
+                    threadId, turnId, runId, "assistant", "", null);
         }
         return new PersistedTurn(
                 turnId, runId, threadId, userMessageId, assistantMessageId,
@@ -522,9 +514,7 @@ public class AiConversationStoreService {
     }
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
-        int safeOffset = Math.max(0, offset);
-        int safeLimit = limit < 0 ? Integer.MAX_VALUE : Math.max(1, Math.min(limit, 200));
-        return messages.list(threadId, safeOffset, safeLimit);
+        return messages.list(threadId, offset, limit);
     }
 
     /**
