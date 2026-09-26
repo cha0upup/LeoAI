@@ -37,10 +37,6 @@ public class HttpChunkedCommunication implements Communication, Closeable {
         return channel.sendRequest(data);
     }
 
-    public void newConn() throws Exception {
-        channel.reconnectNow();
-    }
-
     public void heartbeat() throws Exception {
         channel.pingNow();
     }
@@ -50,19 +46,5 @@ public class HttpChunkedCommunication implements Communication, Closeable {
         channel.close();
     }
 
-    public void addHeader(String key, String value) {
-        if (key != null && value != null) headers.put(key, value);
-    }
-
-    public String getHeader(String key) {
-        return key == null ? null : headers.get(key);
-    }
-
-    public String getUrl() { return url; }
-    public String getMethod() { return method; }
-    public Map<String, String> getHeaders() { return headers; }
-    public Proxy getProxy() { return proxy; }
-    public long getSendTime() { return channel.getLastActivityTime(); }
-    public boolean isClose() { return channel.isClosed(); }
     public Http11DuplexChannel.State getState() { return channel.getState(); }
 }

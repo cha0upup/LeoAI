@@ -44,19 +44,6 @@ public final class BoundedTtlCache {
         store.put(key, new CacheEntry(value, ttlMillis));
     }
 
-    public synchronized Object remove(String key) {
-        CacheEntry entry = store.remove(key);
-        return entry != null ? entry.value : null;
-    }
-
-    /**
-     * 删除所有 key 以 {@code prefix} 开头的缓存条目（前缀失效）。
-     */
-    public synchronized void removeByPrefix(String prefix) {
-        if (prefix == null || prefix.isEmpty()) return;
-        store.entrySet().removeIf(e -> e.getKey().startsWith(prefix));
-    }
-
     public synchronized void clear() { store.clear(); }
 
     public synchronized int size() { return store.size(); }

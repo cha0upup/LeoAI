@@ -301,7 +301,7 @@ public class PuppetNodeSession {
 
     // ── AI 上下文缓存（会话级，跨线程共享）────────────────────────────────────
 
-    public BoundedTtlCache getAiContextCache() {
+    private BoundedTtlCache getAiContextCache() {
         BoundedTtlCache cache = aiContextCache;
         if (cache == null) {
             synchronized (this) {
@@ -323,17 +323,6 @@ public class PuppetNodeSession {
     public void putAiContextValue(String key, Object value) {
         if (key == null || value == null) return;
         getAiContextCache().put(key, value);
-    }
-
-    public Object removeAiContextValue(String key) {
-        if (key == null) return null;
-        return getAiContextCache().remove(key);
-    }
-
-    /** 删除所有 key 以 prefix 开头的缓存条目（前缀失效）。 */
-    public void removeAiContextByPrefix(String prefix) {
-        if (prefix == null) return;
-        getAiContextCache().removeByPrefix(prefix);
     }
 
     // ── 侦察摘要 ──────────────────────────────────────────────────────────────
