@@ -1,6 +1,8 @@
 package org.leo.core.component;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -11,7 +13,7 @@ import java.util.zip.ZipOutputStream;
 /**
  * 文件压缩组件
  * 提供跨平台的ZIP文件压缩功能，支持正则表达式排除文件
- * 设计为在被控主机上稳定执行，兼容Java 6+
+ * 设计为在被控主机上稳定执行
  * 
  * @author LeoSpring
  * @version 2.3
@@ -137,30 +139,13 @@ public class CompressComponent implements Runnable {
 
     private void preservePermissions(File source, File temporary) throws IOException {
         try {
-            Class filesClass = Class.forName("java.nio.file.Files");
-            Class pathClass = Class.forName("java.nio.file.Path");
-            Class optionClass = Class.forName("java.nio.file.LinkOption");
-            Object options = java.lang.reflect.Array.newInstance(optionClass, 0);
-            Object sourcePath = File.class.getMethod("toPath", new Class[0]).invoke(source, new Object[0]);
-            Object temporaryPath = File.class.getMethod("toPath", new Class[0]).invoke(temporary, new Object[0]);
-            Object permissions = filesClass.getMethod("getPosixFilePermissions", new Class[]{pathClass, options.getClass()})
-                    .invoke(null, new Object[]{sourcePath, options});
-            filesClass.getMethod("setPosixFilePermissions", new Class[]{pathClass, java.util.Set.class})
-                    .invoke(null, new Object[]{temporaryPath, permissions});
-            return;
-        } catch (java.lang.reflect.InvocationTargetException error) {
-            if (error.getCause() instanceof UnsupportedOperationException) return; // 非 POSIX 文件系统使用目录继承权限。
-            throw new IOException("无法保留归档权限: " + error.getCause());
-        } catch (ClassNotFoundException legacyJvm) {
-            // Java 6 无精确 POSIX 权限 API，限制为当前用户，避免扩大原归档访问范围。
-        } catch (Exception error) {
-            throw new IOException("无法保留归档权限: " + error);
-        }
-        if (!temporary.setReadable(false, false) || !temporary.setWritable(false, false)
-                || !temporary.setExecutable(false, false)
-                || !temporary.setReadable(source.canRead(), true) || !temporary.setWritable(source.canWrite(), true)
-                || !temporary.setExecutable(source.canExecute(), true)) {
-            throw new IOException("无法设置归档权限");
+            Path sourcePath = source.toPath();
+            Path temporaryPath = temporary.toPath();
+            Files.setPosixFilePermissions(temporaryPath, Files.getPosixFilePermissions(sourcePath));
+        } catch (UnsupportedOperationException ignored) {
+            // 非 POSIX 文件系统使用目录继承权限。
+        } catch (IOException error) {
+            throw new IOException("无法保留归档权限", error);
         }
     }
 
