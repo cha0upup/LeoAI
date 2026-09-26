@@ -13,7 +13,6 @@ import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
-import org.leo.core.repository.session.PuppetAiCheckpointRepository;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -44,51 +43,44 @@ public class PuppetNodeAiThreadService {
     private final SessionWarmupService sessionWarmupService;
     private final PuppetNodeAiAgentRegistry agentRegistry;
     private final AiThreadQueryService threadQueries;
-    private final PuppetAiCheckpointRepository checkpointRepository;
 
     public PuppetNodeAiThreadService(AiModelConfigService modelConfigService,
                                      AiModelChannelResolver channelResolver,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      PuppetNodeAiAgentRegistry agentRegistry,
-                                     AiThreadQueryService threadQueries,
-                                     PuppetAiCheckpointRepository checkpointRepository) {
+                                     AiThreadQueryService threadQueries) {
         this.modelConfigService = modelConfigService;
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
         this.threadQueries = threadQueries;
-        this.checkpointRepository = checkpointRepository;
     }
 
     public ThreadResolution ensureThreadReady(
             PuppetNodeSession session, String threadId, Integer configId) {
         AiThread thread = session.getAiThread(threadId);
-        boolean restored = false;
         AiThreadRecord persisted = findPersistedThread(session, threadId);
         if (thread == null) {
             thread = restorePersistedThread(session, threadId, persisted);
-            restored = thread != null;
         }
         Integer resolvedConfigId = resolveConfigId(configId, thread, persisted);
         AiModelConfig resolvedChannel;
         try {
             resolvedChannel = channelResolver.optional(resolvedConfigId);
         } catch (ApiException | IllegalArgumentException | IllegalStateException error) {
-            boolean checkpoint = thread != null && hasThreadCheckpoint(session, threadId);
-            return new ThreadResolution(thread, restored, checkpoint, error.getMessage());
+            return new ThreadResolution(thread, error.getMessage());
         }
         if (resolvedChannel != null) resolvedConfigId = resolvedChannel.getId();
-        boolean checkpoint = thread != null && hasThreadCheckpoint(session, threadId);
         String configError = validateConfigId(resolvedConfigId);
         if (configError != null) {
-            return new ThreadResolution(thread, restored, checkpoint, configError);
+            return new ThreadResolution(thread, configError);
         }
         String persistenceError =
                 ensureThreadPersisted(session, thread, persisted, resolvedChannel);
         if (persistenceError != null) {
-            return new ThreadResolution(thread, restored, checkpoint, persistenceError);
+            return new ThreadResolution(thread, persistenceError);
         }
         if (thread != null && (thread.getAiConfigId() == null || configId != null)) {
             thread.setAiConfigId(resolvedConfigId);
@@ -98,7 +90,7 @@ public class PuppetNodeAiThreadService {
             conversationStore.attachEventJournal(thread.getThreadId(), thread);
         }
         sessionWarmupService.warmupAsync(session.getSessionId());
-        return new ThreadResolution(thread, restored, checkpoint, null);
+        return new ThreadResolution(thread, null);
     }
 
     public AiThread requireThread(PuppetNodeSession session, String threadId) {
@@ -133,19 +125,12 @@ public class PuppetNodeAiThreadService {
                 item.put("configName", record.getConfigName());
                 item.put("configProtocol", record.getConfigProtocol());
                 item.put("configModel", record.getConfigModel());
-                item.put("hasCheckpoint",
-                        hasThreadCheckpoint(session, record.getThreadId()));
                 result.add(item);
             }
         }
         for (AiThread thread : memoryById.values()) {
-            Map<String, Object> item = threadToMap(
-                    thread, conversationStore.countMessages(thread.getThreadId()));
-            if (puppetId != null) {
-                item.put("hasCheckpoint",
-                        hasThreadCheckpoint(session, thread.getThreadId()));
-            }
-            result.add(item);
+            result.add(threadToMap(
+                    thread, conversationStore.countMessages(thread.getThreadId())));
         }
         result.sort((left, right) -> Long.compare(
                 ControllerUtil.toLong(right.get("lastActiveAt")),
@@ -207,8 +192,6 @@ public class PuppetNodeAiThreadService {
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
         if (puppetId != null) {
             conversationStore.deleteThread(threadId);
-            checkpointRepository.delete(
-                    session.getCreateByUser(), puppetId, threadId);
         }
     }
 
@@ -355,12 +338,6 @@ public class PuppetNodeAiThreadService {
         return record != null ? record.getConfigId() : null;
     }
 
-    private boolean hasThreadCheckpoint(PuppetNodeSession session, String threadId) {
-        String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
-        return puppetId != null && checkpointRepository.exists(
-                session.getCreateByUser(), puppetId, threadId);
-    }
-
     private String validateConfigId(Integer configId) {
         if (configId == null) return null;
         try {
@@ -417,9 +394,6 @@ public class PuppetNodeAiThreadService {
         return count != null ? count : 0;
     }
 
-    public record ThreadResolution(AiThread thread,
-                                   boolean restoredFromPersistence,
-                                   boolean hasPersistentCheckpoint,
-                                   String errorMessage) {
+    public record ThreadResolution(AiThread thread, String errorMessage) {
     }
 }

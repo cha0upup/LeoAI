@@ -7,7 +7,6 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.repository.session.PuppetAiCheckpointRepository;
 import org.leo.web.exception.ApiException;
 
 import java.util.List;
@@ -87,6 +86,49 @@ class PuppetNodeAiThreadServiceTest {
     }
 
     @Test
+    void restoresThreadFromDatabaseBeforeFirstUse() {
+        Fixture fixture = fixture();
+        PuppetNodeSession session = cacheSession();
+        AiThreadRecord record = new AiThreadRecord();
+        record.setThreadId("stored-thread");
+        record.setUserId("user-1");
+        record.setPuppetId("puppet-1");
+        record.setTitle("历史对话");
+        record.setCreatedAt(10L);
+        record.setLastActiveAt(20L);
+        record.setParentThreadId("parent-thread");
+        when(fixture.conversationStore.findThread("stored-thread")).thenReturn(record);
+
+        PuppetNodeAiThreadService.ThreadResolution resolution =
+                fixture.service.ensureThreadReady(session, "stored-thread", null);
+
+        AiThread thread = resolution.thread();
+        assertNotNull(thread);
+        assertNull(resolution.errorMessage());
+        assertSame(thread, session.getAiThread("stored-thread"));
+        assertEquals("历史对话", thread.getTitle());
+        assertEquals(10L, thread.getCreatedAt());
+        assertEquals(20L, thread.getLastActiveAt());
+        assertEquals("parent-thread", thread.getParentThreadId());
+        verify(fixture.conversationStore, never()).createPuppetThread(
+                eq("user-1"), eq("puppet-1"), eq("session-1"), same(thread), isNull());
+    }
+
+    @Test
+    void deletesThreadFromRuntimeAndDatabase() {
+        Fixture fixture = fixture();
+        PuppetNodeSession session = cacheSession();
+        session.createAiThread("thread-1", "test");
+
+        fixture.service.deleteThread(session, "thread-1");
+
+        assertNull(session.getAiThread("thread-1"));
+        assertNull(session.getActiveThread());
+        verify(fixture.agentRegistry).evict(session, "thread-1");
+        verify(fixture.conversationStore).deleteThread("thread-1");
+    }
+
+    @Test
     void eventsKeepDatabaseSequenceWhenRuntimeSequenceIsBehind() {
         Fixture fixture = fixture();
         PuppetNodeSession session = cacheSession();
@@ -152,7 +194,7 @@ class PuppetNodeAiThreadServiceTest {
     }
 
     @Test
-    void persistedAndRuntimeThreadsMergeWithoutLosingConfigurationOrCheckpointFlags() {
+    void persistedAndRuntimeThreadsMergeWithoutLosingConfiguration() {
         Fixture fixture = fixture();
         PuppetNodeSession session = cacheSession();
         session.restoreAiThread("shared", "runtime title", 1L, 100L);
@@ -169,7 +211,6 @@ class PuppetNodeAiThreadServiceTest {
         stored.setLastActiveAt(200L);
         when(fixture.conversationStore.listPuppetThreads("user-1", "puppet-1"))
                 .thenReturn(List.of(shared, stored));
-        when(fixture.checkpoints.exists("user-1", "puppet-1", "shared")).thenReturn(true);
 
         List<?> threads = (List<?>) fixture.service.listThreads(session).get("threads");
 
@@ -183,7 +224,9 @@ class PuppetNodeAiThreadServiceTest {
         assertEquals("shared", sharedItem.get("threadId"));
         assertEquals("runtime title", sharedItem.get("title"));
         assertEquals(true, sharedItem.get("inMemory"));
-        assertEquals(true, sharedItem.get("hasCheckpoint"));
+        assertFalse(sharedItem.containsKey("hasCheckpoint"));
+        assertFalse(storedItem.containsKey("hasCheckpoint"));
+        assertFalse(((Map<?, ?>) threads.get(2)).containsKey("hasCheckpoint"));
         assertEquals(8, sharedItem.get("messageCount"));
         assertEquals("channel", sharedItem.get("configName"));
         assertEquals("openai", sharedItem.get("configProtocol"));
@@ -205,20 +248,20 @@ class PuppetNodeAiThreadServiceTest {
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
                 new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
-        PuppetAiCheckpointRepository checkpoints = mock(PuppetAiCheckpointRepository.class);
+        PuppetNodeAiAgentRegistry agentRegistry = mock(PuppetNodeAiAgentRegistry.class);
         PuppetNodeAiThreadService service = new PuppetNodeAiThreadService(
                 mock(AiModelConfigService.class),
                 mock(AiModelChannelResolver.class),
                 conversationStore,
                 sessionWarmupService,
-                mock(PuppetNodeAiAgentRegistry.class),
-                new AiThreadQueryService(conversationStore, protocol), checkpoints);
-        return new Fixture(service, conversationStore, sessionWarmupService, checkpoints);
+                agentRegistry,
+                new AiThreadQueryService(conversationStore, protocol));
+        return new Fixture(service, conversationStore, sessionWarmupService, agentRegistry);
     }
 
     private record Fixture(PuppetNodeAiThreadService service,
                            AiConversationStoreService conversationStore,
                            SessionWarmupService sessionWarmupService,
-                           PuppetAiCheckpointRepository checkpoints) {
+                           PuppetNodeAiAgentRegistry agentRegistry) {
     }
 }

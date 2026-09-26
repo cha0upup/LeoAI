@@ -208,7 +208,7 @@ class AiTurnApplicationServiceTest {
             session.setSessionId("session-1");
             PuppetNodeSessionContainer.addSession("session-1", session);
             when(puppetThreads.ensureThreadReady(session, "thread-1", null))
-                    .thenReturn(new PuppetNodeAiThreadService.ThreadResolution(thread, false, false, null));
+                    .thenReturn(new PuppetNodeAiThreadService.ThreadResolution(thread, null));
             when(puppetTurns.tryClaimExecution(thread)).thenAnswer(invocation -> {
                 thread.bindActiveLeaseToken("lease-1");
                 return true;

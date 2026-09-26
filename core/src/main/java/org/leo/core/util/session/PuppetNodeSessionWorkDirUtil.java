@@ -26,8 +26,7 @@ import java.util.stream.Stream;
  * │   ├── basic-info/{hostId}.json ← 按 HostId 隔离的 OS/硬件/中间件快照
  * │   ├── web-runtime/{hostId}.snapshot.json ← 按 HostId 隔离的 Web Runtime 快照
  * │   ├── recon-summary.md         ← 侦察摘要（覆盖/追加写，跨 session 共享）
- * │   ├── recon-summary.json       ← 结构化侦察摘要（last-write-wins，跨 session 共享）
- * │   ├── ai-threads/              ← Spring AI Graph checkpoint
+ * │   └── recon-summary.json       ← 结构化侦察摘要（last-write-wins，跨 session 共享）
  * │
  * └── sessions/{sessionId}/        ← session 级，本次操作专属
  *     └── file/{server-path}/
@@ -41,7 +40,6 @@ public final class PuppetNodeSessionWorkDirUtil {
     private static final String USERS_SUBDIR       = "users";
     private static final String WORKSPACE_SUBDIR   = "workspace";
     private static final String FILE_SUBDIR        = "file";
-    private static final String AI_THREADS_SUBDIR  = "ai-threads";
     private static final Pattern PATH_SEPARATORS   = Pattern.compile("[\\\\/]+");
 
     private PuppetNodeSessionWorkDirUtil() {}
@@ -138,19 +136,6 @@ public final class PuppetNodeSessionWorkDirUtil {
             puppetDir.mkdirs();
         }
         return puppetDir;
-    }
-
-    // ── AI 线程目录 ───────────────────────────────────────────────────────────
-
-    /**
-     * 获取 puppet 的 AI 线程目录：root/users/{userId}/puppets/{puppetId}/ai-threads。
-     * 若不存在则创建。
-     */
-    public static File getAiThreadsDir(String userId, String puppetId) {
-        File puppetDir = getPuppetWorkDir(userId, puppetId);
-        File dir = new File(puppetDir, AI_THREADS_SUBDIR);
-        if (!dir.exists()) dir.mkdirs();
-        return dir;
     }
 
     // ── 删除方法 ──────────────────────────────────────────────────────────────
