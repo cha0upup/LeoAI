@@ -3,13 +3,17 @@ package org.leo.web.controller.platform.skill;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.ai.service.SkillExportService.ConflictPolicy;
+import org.leo.ai.service.SkillExportService.ImportResult;
 import org.leo.ai.service.SkillOperationLock;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -61,6 +65,30 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         assertFalse(provider.getFormattedSkills("puppet-node", null).contains("alpha"));
         verify(registry).invalidate();
         verify(provider).invalidate();
+    }
+
+    @Test
+    void importsNestedResourcesWhenAtomicMoveCannotCrossFileSystems() throws Exception {
+        byte[] archive = zip(Map.of(
+                "SKILL.md", skill("alpha", "imported"),
+                "manifest.yaml", manifest("alpha"),
+                "references/nested/notes.txt", "resource content"));
+        URI destination = URI.create("jar:" + tempDir.resolve("destination.zip").toUri());
+        try (var fileSystem = FileSystems.newFileSystem(destination, Map.of("create", "true"))) {
+            var scopeRoot = fileSystem.getPath("/puppet-node");
+
+            var results = archives.importSkills(upload(archive), scopeRoot, "alpha", ConflictPolicy.SKIP);
+
+            assertEquals(1, results.size());
+            assertEquals(ImportResult.Status.IMPORTED, results.get(0).status());
+            var imported = scopeRoot.resolve("alpha");
+            assertEquals(skill("alpha", "imported"), Files.readString(imported.resolve("SKILL.md")));
+            assertEquals("resource content", Files.readString(imported.resolve("references/nested/notes.txt")));
+            var descriptor = manifestService.inspect(imported, "puppet-node").descriptor();
+            assertEquals("draft", descriptor.status());
+            assertFalse(descriptor.enabled());
+        }
+        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
     }
 
     @Test

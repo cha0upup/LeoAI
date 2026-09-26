@@ -1,6 +1,8 @@
 package org.leo.web.controller.platform.skill;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.service.SkillInspection;
 
 import java.nio.file.Files;
@@ -241,6 +243,37 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertTrue(Files.exists(skillDir.resolve("manifest.yaml")));
         verify(registry, times(3)).invalidate();
         verify(provider, times(3)).invalidate();
+    }
+
+    @Test
+    void deletingMissingFileRemainsIdempotent() throws Exception {
+        writeSkill("editable", "published", true, false);
+        HashMap<String, Object> params = new HashMap<>(Map.of(
+                "scope", "puppet-node", "name", "editable", "path", "missing.txt"));
+
+        assertEquals(200, controller.deleteFile(params).get("code"));
+        assertTrue(Files.exists(skillDir("editable").resolve("SKILL.md")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void recursiveDeletionPreservesExternalSymbolicLinkTargets(boolean deleteWholeSkill) throws Exception {
+        writeSkill("editable", "published", true, false);
+        Path nested = Files.createDirectories(skillDir("editable").resolve("assets/nested"));
+        Files.writeString(nested.resolve("data.txt"), "remove");
+        Path external = Files.createDirectories(tempDir.resolve("external"));
+        Files.writeString(external.resolve("keep.txt"), "keep");
+        Files.createSymbolicLink(nested.resolve("linked"), external);
+        HashMap<String, Object> params = new HashMap<>(Map.of(
+                "scope", "puppet-node", "name", "editable", "path", "assets"));
+
+        var response = deleteWholeSkill ? controller.delete(params) : controller.deleteFile(params);
+
+        assertEquals(200, response.get("code"));
+        assertFalse(Files.exists(skillDir("editable").resolve("assets")));
+        assertEquals(!deleteWholeSkill, Files.exists(skillDir("editable").resolve("SKILL.md")));
+        assertEquals("keep", Files.readString(external.resolve("keep.txt")));
+        assertFalse(operationLock.lockFor("puppet-node", "editable").isLocked());
     }
 
     @Test

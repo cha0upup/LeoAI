@@ -3,6 +3,7 @@ package org.leo.ai.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedOutputStream;
@@ -127,7 +128,7 @@ public class SkillExportService {
             SkillRegistryService.validateScope(scope);
             return commitFromTemp(tempRoot, scopeRoot, scope, policy);
         } finally {
-            deleteRecursively(tempRoot);
+            FileSystemUtils.deleteRecursively(tempRoot);
         }
     }
 
@@ -318,15 +319,15 @@ public class SkillExportService {
                             results.add(ImportResult.of(name, name, ImportResult.Status.SKIPPED));
                             continue;
                         }
-                        deleteRecursively(target);
+                        FileSystemUtils.deleteRecursively(target);
                         status = ImportResult.Status.OVERWRITTEN;
                     }
                     try {
                         Files.move(skillTmpDir, target, StandardCopyOption.ATOMIC_MOVE);
                     } catch (IOException atomicFail) {
                         // 跨文件系统时退化为递归复制，整个过程仍持有目标锁。
-                        copyRecursively(skillTmpDir, target);
-                        deleteRecursively(skillTmpDir);
+                        FileSystemUtils.copyRecursively(skillTmpDir, target);
+                        FileSystemUtils.deleteRecursively(skillTmpDir);
                     }
                     results.add(ImportResult.of(name, name, status));
                 } finally {
@@ -346,42 +347,6 @@ public class SkillExportService {
 
     private static boolean isSafeSkillName(String name) {
         return SkillRegistryService.isValidSkillName(name);
-    }
-
-    private static void deleteRecursively(Path path) throws IOException {
-        if (!Files.exists(path)) return;
-        if (Files.isDirectory(path)) {
-            Files.walkFileTree(path, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
-                }
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } else {
-            Files.delete(path);
-        }
-    }
-
-    private static void copyRecursively(Path src, Path dst) throws IOException {
-        Files.walkFileTree(src, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                Files.createDirectories(dst.resolve(src.relativize(dir).toString()));
-                return FileVisitResult.CONTINUE;
-            }
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.copy(file, dst.resolve(src.relativize(file).toString()),
-                        StandardCopyOption.REPLACE_EXISTING);
-                return FileVisitResult.CONTINUE;
-            }
-        });
     }
 
     public record NamedSkill(String name, Path dir) {}

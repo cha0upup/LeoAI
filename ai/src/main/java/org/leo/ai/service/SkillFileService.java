@@ -1,8 +1,7 @@
 package org.leo.ai.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -33,8 +32,6 @@ import java.util.Set;
  */
 @Service
 public class SkillFileService {
-
-    private static final Logger log = LoggerFactory.getLogger(SkillFileService.class);
 
     public static final long MAX_FILE_BYTES   = 10L * 1024 * 1024;
     public static final long MAX_SKILL_BYTES  = 50L * 1024 * 1024;
@@ -169,19 +166,7 @@ public class SkillFileService {
         }
         Path target = resolveSafe(skillDir, relativePath);
         if (Files.isDirectory(target)) {
-            // 递归删除目录及其下所有文件
-            Files.walkFileTree(target, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
-                }
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
+            FileSystemUtils.deleteRecursively(target);
         } else {
             Files.deleteIfExists(target);
         }

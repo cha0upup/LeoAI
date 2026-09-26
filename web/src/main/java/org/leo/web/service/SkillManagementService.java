@@ -15,6 +15,7 @@ import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
@@ -149,7 +150,7 @@ public class SkillManagementService {
                 return OperationResult.failure(ApiResponse.CODE_NOT_FOUND,
                         "skill 不存在：" + scope + "/" + name);
             }
-            deleteRecursively(skillDir);
+            FileSystemUtils.deleteRecursively(skillDir);
             return OperationResult.success("skill 删除成功");
         } catch (IOException e) {
             return OperationResult.failure(ApiResponse.CODE_ERROR, "skill 删除失败：" + e.getMessage());
@@ -447,15 +448,6 @@ public class SkillManagementService {
     private void invalidateCatalog() {
         skillRegistry.invalidate();
         leoSkillsProvider.invalidate();
-    }
-
-    private static void deleteRecursively(Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            try (var children = Files.list(path)) {
-                for (Path child : children.toList()) deleteRecursively(child);
-            }
-        }
-        Files.delete(path);
     }
 
     private static boolean isBlank(String value) {
