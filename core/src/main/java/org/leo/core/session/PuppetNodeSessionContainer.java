@@ -113,13 +113,6 @@ public class PuppetNodeSessionContainer {
     }
 
     /**
-     * 获取会话数量
-     */
-    public static int getSessionCount() {
-        return sessionMap.size();
-    }
-
-    /**
      * 清空所有会话
      */
     public static void clearAllSessions() {
