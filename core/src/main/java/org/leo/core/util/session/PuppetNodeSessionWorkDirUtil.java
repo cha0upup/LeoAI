@@ -88,7 +88,7 @@ public final class PuppetNodeSessionWorkDirUtil {
      * 获取会话工作目录：root/users/{userId}/sessions/{sessionId}。
      * 若不存在则创建。
      */
-    public static File getSessionWorkDir(String sessionId) {
+    private static File getSessionWorkDir(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
