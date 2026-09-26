@@ -34,10 +34,6 @@ public class DownloadStore {
         return taskDir;
     }
 
-    public File getUserRootDir() {
-        return userRootDir;
-    }
-
     public File getTempFile() {
         validateTaskPath();
         return new File(taskDir, TEMP_FILE);

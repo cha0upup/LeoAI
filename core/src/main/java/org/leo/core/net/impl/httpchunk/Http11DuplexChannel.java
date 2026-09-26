@@ -177,34 +177,12 @@ public final class Http11DuplexChannel implements Closeable {
         }
     }
 
-    public void reconnectNow() throws Exception {
-        synchronized (connectionLock) {
-            if (userClosed) {
-                throw new TransportException(TransportException.Reason.CONNECTION_CLOSED,
-                        "HTTP duplex channel is closed");
-            }
-            epochs.incrementAndGet();
-            state = State.RECONNECTING;
-            closeSocketOnly();
-        }
-        failAllPending(new TransportException(TransportException.Reason.CONNECTION_CLOSED,
-                "HTTP duplex channel was reconnected"));
-        if (!reconnectWithBackoff()) {
-            throw new TransportException(TransportException.Reason.CONNECT_FAILED,
-                    "HTTP duplex reconnect attempts exhausted");
-        }
-    }
-
     public State getState() {
         return state;
     }
 
     public boolean isClosed() {
         return userClosed || state == State.CLOSED;
-    }
-
-    public long getLastActivityTime() {
-        return lastActivity.get();
     }
 
     private void establishInitialConnection() throws Exception {
