@@ -71,8 +71,4 @@ public class ThrottledExecutorService extends AbstractExecutorService {
         return delegate.awaitTermination(timeout, unit);
     }
 
-    /** 获取当前可用许可数（调试/监控用）。 */
-    public int availablePermits() {
-        return semaphore != null ? semaphore.availablePermits() : Integer.MAX_VALUE;
-    }
 }

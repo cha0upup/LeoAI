@@ -85,10 +85,6 @@ public final class AiToolContext {
         return ctx != null ? ctx.threadId() : null;
     }
 
-    public static boolean isPresent() {
-        return HOLDER.get() != null && HOLDER.get().sessionId() != null;
-    }
-
     public static String requireSessionId() {
         String id = getSessionId();
         if (id == null || id.isBlank()) {
