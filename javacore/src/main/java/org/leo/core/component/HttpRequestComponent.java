@@ -3,7 +3,6 @@ package org.leo.core.component;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -12,6 +11,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -365,11 +365,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (body instanceof byte[]) {
             return (byte[]) body;
         }
-        try {
-            return String.valueOf(body).getBytes(DEFAULT_CHARSET);
-        } catch (UnsupportedEncodingException e) {
-            return String.valueOf(body).getBytes();
-        }
+        return String.valueOf(body).getBytes(StandardCharsets.UTF_8);
     }
 
     private boolean isTextContent(String contentType) {
@@ -415,13 +411,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (value == null) {
             return null;
         }
-        if (value instanceof byte[]) {
-            try {
-                return new String((byte[]) value, DEFAULT_CHARSET);
-            } catch (UnsupportedEncodingException e) {
-                return new String((byte[]) value);
-            }
-        }
+        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
         return String.valueOf(value);
     }
 

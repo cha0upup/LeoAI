@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -200,11 +201,11 @@ public class ResourceComponent implements Runnable {
         return result;
     }
 
-    private String getStringParam(String key) throws java.io.UnsupportedEncodingException {
+    private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
         return String.valueOf(value);
     }
 

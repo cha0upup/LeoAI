@@ -1,6 +1,7 @@
 package org.leo.core.component;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
@@ -414,7 +415,7 @@ public class DecompressComponent implements Runnable {
         while (end < max && header[end] != 0) {
             end++;
         }
-        return new String(header, offset, end - offset, "UTF-8").trim();
+        return new String(header, offset, end - offset, StandardCharsets.UTF_8).trim();
     }
 
     private long parseOctal(byte[] header, int offset, int length) {
@@ -580,11 +581,11 @@ public class DecompressComponent implements Runnable {
         }
     }
 
-    private String getStringParam(String key) throws UnsupportedEncodingException {
+    private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
         return String.valueOf(value);
     }
 }

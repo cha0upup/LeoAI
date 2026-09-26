@@ -3,10 +3,10 @@ package org.leo.core.component;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.Reader;
-import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
@@ -748,8 +748,7 @@ public class DatabaseComponent implements Runnable {
 
     private int utf8Length(String value) {
         if (value == null) return 0;
-        try { return value.getBytes("UTF-8").length; }
-        catch (UnsupportedEncodingException ignored) { return value.getBytes().length; }
+        return value.getBytes(StandardCharsets.UTF_8).length;
     }
 
     private static HashMap<String, Object> copyStringObjectMap(Object value) {
@@ -772,7 +771,6 @@ public class DatabaseComponent implements Runnable {
     }
 
     private String decode(byte[] value) {
-        try { return new String(value, "UTF-8"); }
-        catch (UnsupportedEncodingException ignored) { return new String(value); }
+        return new String(value, StandardCharsets.UTF_8);
     }
 }

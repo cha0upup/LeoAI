@@ -4,7 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -525,13 +525,13 @@ public class FileComponent implements Runnable {
     /**
      * 获取字符串参数。传输层中的文本字段以 UTF-8 byte[] 到达远端组件。
      */
-    private String getStringParam(String key) throws UnsupportedEncodingException {
+    private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) {
             return null;
         }
         if (value instanceof byte[]) {
-            return new String((byte[]) value, "UTF-8");
+            return new String((byte[]) value, StandardCharsets.UTF_8);
         }
         return String.valueOf(value);
     }

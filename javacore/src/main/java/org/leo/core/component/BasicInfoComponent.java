@@ -10,6 +10,7 @@ import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystems;
 import java.util.ArrayList;
@@ -95,10 +96,7 @@ public class BasicInfoComponent implements Runnable {
     private String stringParam(String name, String fallback) {
         Object value = params == null ? null : params.get(name);
         if (value == null) return fallback;
-        if (value instanceof byte[]) {
-            try { return new String((byte[]) value, "UTF-8"); }
-            catch (java.io.UnsupportedEncodingException impossible) { return fallback; }
-        }
+        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
         return String.valueOf(value);
     }
 
@@ -676,7 +674,7 @@ public class BasicInfoComponent implements Runnable {
                 total += read;
                 if (total >= maxBytes) break;
             }
-            return new String(output.toByteArray(), "UTF-8");
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
         } catch (Throwable ignored) {
             return null;
         } finally {
