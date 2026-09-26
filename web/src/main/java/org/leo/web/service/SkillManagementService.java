@@ -1,6 +1,5 @@
 package org.leo.web.service;
 
-import org.leo.ai.service.LeoSkillsProvider;
 import org.leo.ai.service.SkillExportService;
 import org.leo.ai.service.SkillExportService.ConflictPolicy;
 import org.leo.ai.service.SkillExportService.ImportResult;
@@ -47,20 +46,17 @@ public class SkillManagementService {
     private static final int MAX_BATCH_ITEMS = 500;
 
     private final SkillRegistryService skillRegistry;
-    private final LeoSkillsProvider leoSkillsProvider;
     private final SkillManifestService manifestService;
     private final SkillFileService skillFileService;
     private final SkillExportService skillExportService;
     private final SkillOperationLock operationLock;
 
     public SkillManagementService(SkillRegistryService skillRegistry,
-                                  LeoSkillsProvider leoSkillsProvider,
                                   SkillManifestService manifestService,
                                   SkillFileService skillFileService,
                                   SkillExportService skillExportService,
                                   SkillOperationLock operationLock) {
         this.skillRegistry = skillRegistry;
-        this.leoSkillsProvider = leoSkillsProvider;
         this.manifestService = manifestService;
         this.skillFileService = skillFileService;
         this.skillExportService = skillExportService;
@@ -97,7 +93,7 @@ public class SkillManagementService {
             Files.createDirectories(skillDir);
             Files.writeString(skillDir.resolve(SKILL_FILE), content, StandardCharsets.UTF_8);
             Files.writeString(skillDir.resolve(MANIFEST_FILE), manifest, StandardCharsets.UTF_8);
-            invalidateCatalog();
+            skillRegistry.invalidate();
             return OperationResult.success("skill 保存成功");
         } catch (IOException e) {
             return OperationResult.failure(ApiResponse.CODE_ERROR, "skill 保存失败：" + e.getMessage());
@@ -108,7 +104,7 @@ public class SkillManagementService {
 
     public OperationResult delete(String scope, String name) {
         OperationResult result = deleteOne(scope, name);
-        if (result.succeeded()) invalidateCatalog();
+        if (result.succeeded()) skillRegistry.invalidate();
         return result;
     }
 
@@ -124,7 +120,7 @@ public class SkillManagementService {
                     "message", result.succeeded() ? "Skill 已删除" : result.message()));
             if (result.succeeded()) deleted++;
         }
-        if (deleted > 0) invalidateCatalog();
+        if (deleted > 0) skillRegistry.invalidate();
         return new BatchDeleteResult(normalizedScope, names.size(), deleted, List.copyOf(results));
     }
 
@@ -179,7 +175,7 @@ public class SkillManagementService {
         Map<String, SkillInspection> catalog = catalogByName(normalizedScope);
         ToggleResult result = toggleOne(
                 normalizedScope, normalizedName, enabled, catalog.get(normalizedName));
-        if (result.changed()) invalidateCatalog();
+        if (result.changed()) skillRegistry.invalidate();
         return result;
     }
 
@@ -198,7 +194,7 @@ public class SkillManagementService {
             else if (result.failed()) failed++;
             else unchanged++;
         }
-        if (changed > 0) invalidateCatalog();
+        if (changed > 0) skillRegistry.invalidate();
         return new BatchToggleResult(normalizedScope, enabled, names.size(), changed,
                 unchanged, failed, results);
     }
@@ -353,7 +349,7 @@ public class SkillManagementService {
             throw ApiException.serverError("导入失败：" + e.getMessage());
         } finally {
             // A later entry or cleanup may fail after earlier skills were already committed.
-            invalidateCatalog();
+            skillRegistry.invalidate();
         }
     }
 
@@ -403,7 +399,7 @@ public class SkillManagementService {
             if (!Files.exists(skillDir)) return OperationResult.failure(ApiResponse.CODE_NOT_FOUND, "skill 不存在");
             if (validationError != null) return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, validationError);
             mutation.apply(skillDir);
-            invalidateCatalog();
+            skillRegistry.invalidate();
             return OperationResult.success(successMessage);
         } catch (SkillFileException e) {
             return OperationResult.failure(ApiResponse.CODE_BAD_REQUEST, e.getMessage());
@@ -443,11 +439,6 @@ public class SkillManagementService {
         Path skillDir = skillsRoot.resolve(name).normalize();
         if (!skillDir.startsWith(skillsRoot)) throw new IllegalArgumentException("路径非法");
         return skillDir;
-    }
-
-    private void invalidateCatalog() {
-        skillRegistry.invalidate();
-        leoSkillsProvider.invalidate();
     }
 
     private static boolean isBlank(String value) {

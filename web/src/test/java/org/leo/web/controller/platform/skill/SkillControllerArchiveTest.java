@@ -52,7 +52,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
 
         assertTrue(management.delete("puppet-node", "alpha").succeeded());
         assertTrue(registry.listAllSkills("puppet-node").isEmpty());
-        clearInvocations(registry, provider);
+        clearInvocations(registry);
         var imported = controller.importSkills(upload(exported.getBody()), "puppet-node", "alpha", null);
         assertEquals(200, imported.get("code"));
         assertEquals("imported", result(imported, "alpha").get("status"));
@@ -62,9 +62,8 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         assertEquals("imported", descriptor.source());
         assertFalse(descriptor.enabled());
         assertEquals(1, registry.listAllSkills("puppet-node").size());
-        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("alpha"));
+        assertFalse(provider.getFormattedSkills("puppet-node").contains("alpha"));
         verify(registry).invalidate();
-        verify(provider).invalidate();
     }
 
     @Test
@@ -179,10 +178,10 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
     }
 
     @Test
-    void importFailureAfterCommitStillInvalidatesBothCaches() throws Exception {
+    void importFailureAfterCommitStillInvalidatesCatalog() throws Exception {
         writeSkill("alpha", "old");
-        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("alpha"));
-        clearInvocations(registry, provider);
+        assertTrue(provider.getFormattedSkills("puppet-node").contains("alpha"));
+        clearInvocations(registry);
         doAnswer(invocation -> {
             invocation.callRealMethod();
             throw new IOException("cleanup failed");
@@ -193,9 +192,8 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
                 "puppet-node", "alpha", "overwrite");
         assertEquals(500, response.get("code"));
         assertTrue(Files.readString(skillDir("alpha").resolve("SKILL.md")).contains("updated"));
-        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("alpha"));
+        assertFalse(provider.getFormattedSkills("puppet-node").contains("alpha"));
         verify(registry).invalidate();
-        verify(provider).invalidate();
         assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
     }
 

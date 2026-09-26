@@ -17,56 +17,20 @@ public class LeoSkillsProvider {
 
     private final SkillRegistryService skillRegistry;
 
-    private volatile String puppetNodeIndex;
-    private volatile String platformIndex;
-
     public LeoSkillsProvider(SkillRegistryService skillRegistry) {
         this.skillRegistry = skillRegistry;
     }
 
     /** 返回指定 scope 下已发布、已启用且校验通过的 Agent Skills XML 索引。 */
     public String getFormattedSkills(String scope) {
-        SkillRegistryService.validateScope(scope);
-        if (SkillRegistryService.SCOPE_PUPPET_NODE.equals(scope)) {
-            String index = puppetNodeIndex;
-            if (index == null) {
-                synchronized (this) {
-                    if (puppetNodeIndex == null) puppetNodeIndex = buildIndex(scope);
-                    index = puppetNodeIndex;
-                }
-            }
-            return index;
-        }
-
-        String index = platformIndex;
-        if (index == null) {
-            synchronized (this) {
-                if (platformIndex == null) platformIndex = buildIndex(scope);
-                index = platformIndex;
-            }
-        }
-        return index;
+        return getFormattedSkills(scope, skill -> true);
     }
 
-    /** 按当前运行时权限生成索引；带过滤器的结果不进入全局缓存。 */
+    /** 根据 Registry 缓存的元数据，按当前运行时权限生成索引。 */
     public String getFormattedSkills(String scope, Predicate<SkillMeta> filter) {
         SkillRegistryService.validateScope(scope);
-        return buildIndex(scope, filter != null ? filter : skill -> true);
-    }
-
-    /** 管理写操作后清空索引缓存；Registry 缓存由调用方同时失效。 */
-    public synchronized void invalidate() {
-        puppetNodeIndex = null;
-        platformIndex = null;
-    }
-
-    private String buildIndex(String scope) {
-        return buildIndex(scope, skill -> true);
-    }
-
-    private String buildIndex(String scope, Predicate<SkillMeta> filter) {
         List<SkillMeta> skills = skillRegistry.listSkills(scope).stream()
-                .filter(filter)
+                .filter(filter != null ? filter : skill -> true)
                 .toList();
         if (skills.isEmpty()) return "";
 

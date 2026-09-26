@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.config.LeoConfig;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -47,6 +49,39 @@ class SkillRegistryServiceTest {
         assertNull(registry.getEnabledSkillContent("puppet-node", "disabled-skill"));
         assertTrue(registry.getSkillContent("puppet-node", "disabled-skill")
                 .contains("disabled body"));
+    }
+
+    @Test
+    void formattedIndexKeepsPermissionFiltersLocalToEachCall() throws Exception {
+        writeSkill("platform", "visible-skill", true, "visible body");
+        writeSkill("platform", "restricted-skill", true, "restricted body");
+        LeoSkillsProvider provider = new LeoSkillsProvider(registry);
+        String allSkills = provider.getFormattedSkills("platform");
+
+        String filtered = provider.getFormattedSkills("platform",
+                skill -> "visible-skill".equals(skill.getName()));
+
+        assertTrue(filtered.contains("visible-skill"));
+        assertFalse(filtered.contains("restricted-skill"));
+        assertEquals("", provider.getFormattedSkills("platform", skill -> false));
+        assertEquals(allSkills, provider.getFormattedSkills("platform"));
+        assertTrue(allSkills.contains("restricted-skill"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"puppet-node", "platform"})
+    void formattedIndexReflectsRegistryRefreshWithoutSeparateInvalidation(String scope) throws Exception {
+        writeSkill(scope, "mutable-skill", true, "first body");
+        LeoSkillsProvider provider = new LeoSkillsProvider(registry);
+        assertTrue(provider.getFormattedSkills(scope).contains("mutable-skill"));
+
+        writeSkill(scope, "mutable-skill", false, "second body");
+        writeSkill(scope, "new-skill", true, "new body");
+        registry.invalidate();
+
+        String index = provider.getFormattedSkills(scope);
+        assertFalse(index.contains("mutable-skill"));
+        assertTrue(index.contains("new-skill"));
     }
 
     @Test

@@ -59,14 +59,14 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
     @Test
     void singleToggleInvalidatesProviderIndex() throws Exception {
         writeSkill("toggle-skill", "published", false, false);
-        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("toggle-skill"));
+        assertFalse(provider.getFormattedSkills("puppet-node").contains("toggle-skill"));
         HashMap<String, Object> response = controller.toggle(new HashMap<>(Map.of(
                 "scope", "puppet-node",
                 "name", "toggle-skill",
                 "enabled", true)));
 
         assertEquals(200, response.get("code"));
-        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("toggle-skill"));
+        assertTrue(provider.getFormattedSkills("puppet-node").contains("toggle-skill"));
     }
 
     @Test
@@ -88,11 +88,11 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
     }
 
     @Test
-    void batchDeleteDeduplicatesNamesAndInvalidatesBothCachesOnce() throws Exception {
+    void batchDeleteDeduplicatesNamesAndInvalidatesCatalogOnce() throws Exception {
         writeSkill("delete-one", "published", true, false);
         writeSkill("delete-two", "published", false, false);
-        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("delete-one"));
-        clearInvocations(registry, provider);
+        assertTrue(provider.getFormattedSkills("puppet-node").contains("delete-one"));
+        clearInvocations(registry);
 
         HashMap<String, Object> response = controller.deleteBatch(new HashMap<>(Map.of(
                 "scope", " puppet-node ",
@@ -110,8 +110,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertEquals(Map.of("name", "delete-one", "status", "deleted", "message", "Skill 已删除"), results.get(0));
         assertEquals("failed", ((Map<?, ?>) results.get(2)).get("status"));
         verify(registry, times(1)).invalidate();
-        verify(provider, times(1)).invalidate();
-        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("delete-one"));
+        assertFalse(provider.getFormattedSkills("puppet-node").contains("delete-one"));
         assertTrue(registry.listAllSkills("puppet-node").isEmpty());
         assertFalse(Files.exists(skillDir("delete-one")));
         assertFalse(Files.exists(skillDir("delete-two")));
@@ -134,17 +133,16 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
     }
 
     @Test
-    void singleDeleteInvalidatesBothCachesAndKeepsMissingSkillResponse() throws Exception {
+    void singleDeleteInvalidatesCatalogAndKeepsMissingSkillResponse() throws Exception {
         writeSkill("delete-me", "published", true, false);
-        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("delete-me"));
-        clearInvocations(registry, provider);
+        assertTrue(provider.getFormattedSkills("puppet-node").contains("delete-me"));
+        clearInvocations(registry);
         HashMap<String, Object> params = new HashMap<>(Map.of("scope", "puppet-node", "name", "delete-me"));
 
         assertEquals(200, controller.delete(params).get("code"));
         assertEquals(404, controller.delete(params).get("code"));
         verify(registry, times(1)).invalidate();
-        verify(provider, times(1)).invalidate();
-        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("delete-me"));
+        assertFalse(provider.getFormattedSkills("puppet-node").contains("delete-me"));
     }
 
     @Test
@@ -178,7 +176,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertEquals(400, controller.toggleBatch(new HashMap<>(Map.of(
                 "scope", "unknown", "names", List.of("keep-disabled"), "enabled", true))).get("code"));
         assertFalse(registry.isSkillEnabled("puppet-node", "keep-disabled"));
-        verify(provider, never()).invalidate();
+        verify(registry, never()).invalidate();
     }
 
     @Test
@@ -187,7 +185,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         var result = management.toggleBatch(" puppet-node ", List.of(" toggle-me ", "toggle-me"), true);
         assertEquals(1, result.requested());
         assertEquals(1, result.changed());
-        verify(provider).invalidate();
+        verify(registry).invalidate();
 
         List<String> oversized = java.util.stream.IntStream.rangeClosed(0, 500)
                 .mapToObj(i -> "skill-" + i).toList();
@@ -200,20 +198,19 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         writeSkill("editable", "published", true, false);
         Path metadata = tempDir.resolve("skills/puppet-node/editable/SKILL.md");
         String original = Files.readString(metadata);
-        provider.getFormattedSkills("puppet-node", null);
-        clearInvocations(registry, provider);
+        provider.getFormattedSkills("puppet-node");
+        clearInvocations(registry);
         HashMap<String, Object> params = new HashMap<>(Map.of(
                 "scope", " puppet-node ", "name", " editable ", "path", "./SKILL.md", "content", "invalid"));
 
         assertEquals(400, controller.saveFile(params).get("code"));
         assertEquals(original, Files.readString(metadata));
-        verify(provider, never()).invalidate();
+        verify(registry, never()).invalidate();
         params.put("content", original.replace("test skill", "updated description"));
         assertEquals(200, controller.saveFile(params).get("code"));
         assertTrue(Files.readString(metadata).contains("updated description"));
-        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("updated description"));
+        assertTrue(provider.getFormattedSkills("puppet-node").contains("updated description"));
         verify(registry).invalidate();
-        verify(provider).invalidate();
     }
 
     @Test
@@ -242,7 +239,6 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertTrue(Files.exists(skillDir.resolve("SKILL.md")));
         assertTrue(Files.exists(skillDir.resolve("manifest.yaml")));
         verify(registry, times(3)).invalidate();
-        verify(provider, times(3)).invalidate();
     }
 
     @Test
@@ -291,7 +287,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         params.put("path", "new.txt");
         assertEquals(404, controller.saveFile(params).get("code"));
         assertFalse(Files.exists(tempDir.resolve("skills/puppet-node/missing")));
-        verify(provider, never()).invalidate();
+        verify(registry, never()).invalidate();
     }
 
     @Test
@@ -307,9 +303,9 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
 
         assertEquals(500, controller.saveFile(params).get("code"));
         assertFalse(lock.isLocked());
-        verify(provider, never()).invalidate();
+        verify(registry, never()).invalidate();
         assertEquals(200, controller.saveFile(params).get("code"));
         assertFalse(lock.isLocked());
-        verify(provider).invalidate();
+        verify(registry).invalidate();
     }
 }

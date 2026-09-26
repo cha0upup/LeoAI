@@ -37,7 +37,7 @@ abstract class SkillControllerTestSupport {
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
         manifestService = new SkillManifestService();
         registry = spy(new SkillRegistryService(manifestService));
-        provider = spy(new LeoSkillsProvider(registry));
+        provider = new LeoSkillsProvider(registry);
         fileService = spy(new SkillFileService());
         configure(spy(new SkillOperationLock()));
     }
@@ -45,7 +45,7 @@ abstract class SkillControllerTestSupport {
     void configure(SkillOperationLock locks) {
         operationLock = locks;
         archives = spy(new SkillExportService(manifestService, operationLock));
-        management = new SkillManagementService(registry, provider, manifestService, fileService,
+        management = new SkillManagementService(registry, manifestService, fileService,
                 archives, operationLock);
         controller = new SkillController(registry, fileService, management);
     }
