@@ -15,7 +15,4 @@ public record AiToolDescriptor(
                 AiToolOperation.WRITE, false, false, false, true);
     }
 
-    public boolean control() {
-        return kind == AiToolKind.CONTROL;
-    }
 }
