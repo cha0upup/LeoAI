@@ -8,7 +8,9 @@ import org.leo.core.runtime.CapabilityStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 
-public class PuppetNodeSessionUtils {
+public final class PuppetNodeSessionUtils {
+
+    private PuppetNodeSessionUtils() {}
 
     public static PuppetNodeSession getSession(String sessionId) {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
@@ -89,11 +91,4 @@ public class PuppetNodeSessionUtils {
         getSession(sessionId).putAiContextValue(key, value);
     }
 
-    public static void removeAiContextValue(String sessionId, String key) {
-        getSession(sessionId).removeAiContextValue(key);
-    }
-
-    public static void removeAiContextByPrefix(String sessionId, String prefix) {
-        getSession(sessionId).removeAiContextByPrefix(prefix);
-    }
 }

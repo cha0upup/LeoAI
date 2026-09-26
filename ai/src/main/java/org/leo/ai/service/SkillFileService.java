@@ -193,7 +193,7 @@ public class SkillFileService {
     /**
      * 解析相对路径为绝对路径，保证落在 skillDir 内。
      */
-    public static Path resolveSafe(Path skillDir, String relativePath) {
+    private static Path resolveSafe(Path skillDir, String relativePath) {
         if (relativePath == null || relativePath.isBlank()) {
             throw new SkillFileException("path 不能为空");
         }
@@ -226,7 +226,7 @@ public class SkillFileService {
     /**
      * 按扩展名判定是否为文本文件（无扩展名时按文件名匹配 .gitignore 等）。
      */
-    public static boolean isTextPath(String relativePath) {
+    private static boolean isTextPath(String relativePath) {
         String name = relativePath;
         int slash = name.lastIndexOf('/');
         if (slash >= 0) name = name.substring(slash + 1);
