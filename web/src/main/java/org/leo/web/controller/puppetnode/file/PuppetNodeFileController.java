@@ -285,18 +285,9 @@ public class PuppetNodeFileController {
             normalized.put("data", "");
         }
 
-        copyIfPresent(raw, normalized, "bytesRead");
-        copyIfPresent(raw, normalized, "offset");
-        copyIfPresent(raw, normalized, "nextOffset");
-        copyIfPresent(raw, normalized, "isComplete");
+        normalized.put("nextOffset", raw.get("nextOffset"));
 
         return normalized;
-    }
-
-    private void copyIfPresent(Map<String, Object> source, HashMap<String, Object> target, String key) {
-        if (source.containsKey(key)) {
-            target.put(key, source.get(key));
-        }
     }
 
     /**
