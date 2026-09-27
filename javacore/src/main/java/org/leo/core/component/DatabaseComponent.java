@@ -6,7 +6,7 @@ import java.io.Reader;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
@@ -748,7 +748,7 @@ public class DatabaseComponent implements Runnable {
 
     private int utf8Length(String value) {
         if (value == null) return 0;
-        return value.getBytes(StandardCharsets.UTF_8).length;
+        return value.getBytes(Charset.forName("UTF-8")).length;
     }
 
     private static HashMap<String, Object> copyStringObjectMap(Object value) {
@@ -771,6 +771,6 @@ public class DatabaseComponent implements Runnable {
     }
 
     private String decode(byte[] value) {
-        return new String(value, StandardCharsets.UTF_8);
+        return new String(value, Charset.forName("UTF-8"));
     }
 }

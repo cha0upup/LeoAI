@@ -2,7 +2,7 @@ package org.leo.core.component;
 
 import java.io.File;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.HashMap;
 
 /**
@@ -142,7 +142,7 @@ public class FileUploadComponent implements Runnable {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
+        if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
 
@@ -151,7 +151,7 @@ public class FileUploadComponent implements Runnable {
         if (value == null) return Long.valueOf(defaultValue);
         if (value instanceof Number) return Long.valueOf(((Number) value).longValue());
         String text = value instanceof byte[]
-                ? new String((byte[]) value, StandardCharsets.UTF_8)
+                ? new String((byte[]) value, Charset.forName("UTF-8"))
                 : String.valueOf(value);
         try { return Long.valueOf(Long.parseLong(text.trim())); }
         catch (NumberFormatException ignored) { return null; }

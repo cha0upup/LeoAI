@@ -1,7 +1,7 @@
 package org.leo.core.component;
 
 import java.lang.reflect.InvocationHandler;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import javax.script.ScriptException;
@@ -92,7 +92,7 @@ public class ExecScriptComponent implements Runnable {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
+        if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
 }

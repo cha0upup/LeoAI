@@ -11,7 +11,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -365,7 +365,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (body instanceof byte[]) {
             return (byte[]) body;
         }
-        return String.valueOf(body).getBytes(StandardCharsets.UTF_8);
+        return String.valueOf(body).getBytes(Charset.forName("UTF-8"));
     }
 
     private boolean isTextContent(String contentType) {
@@ -411,7 +411,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (value == null) {
             return null;
         }
-        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
+        if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
 

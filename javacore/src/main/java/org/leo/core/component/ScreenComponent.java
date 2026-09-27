@@ -8,7 +8,7 @@ import javax.imageio.stream.ImageOutputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Locale;
@@ -251,7 +251,7 @@ public class ScreenComponent implements Runnable {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) return new String((byte[]) value, StandardCharsets.UTF_8);
+        if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
 
