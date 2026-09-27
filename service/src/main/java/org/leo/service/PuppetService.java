@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -38,6 +39,12 @@ public class PuppetService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final PuppetMapper puppetMapper;
+    /**
+     * SQLite serializes writers.  Batch deletion is issued as multiple HTTP
+     * requests by older clients, so guard the transaction body against two
+     * delete requests trying to write the same database at once.
+     */
+    private final ReentrantLock puppetDeletionLock = new ReentrantLock();
 
     public PuppetService(PuppetMapper puppetMapper) {
         this.puppetMapper = puppetMapper;
@@ -159,22 +166,43 @@ public class PuppetService {
      */
     @Transactional
     public boolean deletePuppetById(String id) {
-        if (id == null || id.isBlank()) throw new IllegalArgumentException("id参数不能为空");
-        Puppet root = puppetMapper.findPuppetById(id.trim());
-        if (root == null) return false;
+        puppetDeletionLock.lock();
+        boolean unlockAfterTransaction = false;
+        try {
+            if (TransactionSynchronizationManager.isSynchronizationActive()
+                    && TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        puppetDeletionLock.unlock();
+                    }
+                });
+                unlockAfterTransaction = true;
+            }
+            if (id == null || id.isBlank()) throw new IllegalArgumentException("id参数不能为空");
+            Puppet root = puppetMapper.findPuppetById(id.trim());
+            if (root == null) return false;
 
-        List<Puppet> subtree = collectSubtree(root);
-        List<Puppet> deletionOrder = new ArrayList<>(subtree);
-        Collections.reverse(deletionOrder);
-        for (Puppet puppet : deletionOrder) {
-            puppetMapper.deleteProjectRelationsByPuppetId(puppet.getPuppetId());
-            if (!puppetMapper.deletePuppetById(puppet.getPuppetId())) {
-                throw new IllegalStateException("删除Puppet失败: " + puppet.getPuppetId());
+            List<Puppet> subtree = collectSubtree(root);
+            List<Puppet> deletionOrder = new ArrayList<>(subtree);
+            Collections.reverse(deletionOrder);
+            for (Puppet puppet : deletionOrder) {
+                puppetMapper.deleteProjectRelationsByPuppetId(puppet.getPuppetId());
+                if (!puppetMapper.deletePuppetById(puppet.getPuppetId())) {
+                    throw new IllegalStateException("删除Puppet失败: " + puppet.getPuppetId());
+                }
+            }
+
+            scheduleResourceCleanup(subtree);
+            return true;
+        } finally {
+            // Spring commits the transaction after this method returns. Keep
+            // the lock until afterCompletion so the next request cannot enter
+            // while the current SQLite write transaction is still committing.
+            if (!unlockAfterTransaction) {
+                puppetDeletionLock.unlock();
             }
         }
-
-        scheduleResourceCleanup(subtree);
-        return true;
     }
 
     private List<Puppet> collectSubtree(Puppet root) {
