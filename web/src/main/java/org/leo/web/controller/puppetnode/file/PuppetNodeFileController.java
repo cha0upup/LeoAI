@@ -185,7 +185,7 @@ public class PuppetNodeFileController {
 
     /**
      * 分片预览：支持 offset + size 按需加载文件内容。
-     * 统一响应结构：{ data(base64), size(文件总大小), truncated(是否截断) }
+     * 统一响应结构：{ data(base64), size(文件总大小), truncated(是否截断), nextOffset }
      */
     @RequestMapping(value = "/preview-chunk", method = RequestMethod.POST)
     public HashMap<String, Object> filePreviewChunk(@RequestBody HashMap<String, Object> params) {
@@ -213,7 +213,7 @@ public class PuppetNodeFileController {
 
     /**
      * 文件预览（同时将预览内容按服务器路径结构存入会话 root/sessions/{sessionId}/file 下）
-     * 统一响应结构：{ data(base64), size(文件总大小), truncated(是否截断) }
+     * 统一响应结构：{ data(base64), size(文件总大小), truncated(是否截断), nextOffset }
      */
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
     public HashMap<String, Object> filePreview(@RequestBody HashMap<String, Object> params) {
@@ -254,7 +254,7 @@ public class PuppetNodeFileController {
     }
 
     /**
-     * 将底层组件返回的 {code, data, size} 标准化为前端友好结构 {data(base64), size, truncated}
+     * 将底层组件返回的 {code, data, length, nextOffset} 标准化为 {data(base64), size, truncated, nextOffset}
      */
     private HashMap<String, Object> normalizeChunkResult(Map<String, Object> raw) {
         HashMap<String, Object> normalized = new HashMap<>();
