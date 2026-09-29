@@ -7,14 +7,15 @@ import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
+import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
+import org.leo.service.user.UserViews;
 import org.leo.web.dto.platform.user.ChangePasswordRequest;
 import org.leo.web.dto.platform.user.LoginRequest;
 import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
-import org.leo.web.security.PasswordPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -95,7 +96,7 @@ public class LoginController {
         request.changeSessionId();
         session.setAttribute(SESSION_ATTR_USER, user);
         logger.info("用户登录成功: {} ({})", username, user.getPrivilege());
-        return ApiResponse.success(authenticationView(user));
+        return ApiResponse.success(UserViews.authentication(user));
     }
 
     /**
@@ -123,11 +124,7 @@ public class LoginController {
         HashMap<String, Object> data = new HashMap<>();
         data.put("isLoggedIn", user != null);
         if (user != null) {
-            data.put("userId",    user.getUserId());
-            data.put("userName",  user.getUserName());
-            data.put("privilege", user.getPrivilege());
-            data.put("teamId",    user.getTeamId());
-            data.put("passwordChangeRequired", user.requiresPasswordChange());
+            data.putAll(UserViews.authentication(user));
         }
         return ApiResponse.success(data);
     }
@@ -218,31 +215,9 @@ public class LoginController {
     }
 
     private Map<String, Object> profileView(User user) {
-        HashMap<String, Object> data = new HashMap<>();
-        data.put("userId", user.getUserId());
-        data.put("userName", user.getUserName());
-        data.put("privilege", user.getPrivilege());
-        data.put("email", user.getEmail());
-        data.put("phone", user.getPhone());
-        data.put("status", user.getStatus());
-        data.put("teamId", user.getTeamId());
+        Map<String, Object> data = UserViews.profile(user);
         Team team = teamService.getTeamById(user.getTeamId());
         data.put("teamName", team != null ? team.getTeamName() : null);
-        data.put("remark", user.getRemark());
-        data.put("lastLoginTime", user.getLastLoginTime());
-        data.put("loginCount", user.getLoginCount());
-        data.put("createTime", user.getCreateTime());
-        data.put("updateTime", user.getUpdateTime());
-        return data;
-    }
-
-    private Map<String, Object> authenticationView(User user) {
-        HashMap<String, Object> data = new HashMap<>();
-        data.put("userId", user.getUserId());
-        data.put("userName", user.getUserName());
-        data.put("privilege", user.getPrivilege());
-        data.put("teamId", user.getTeamId());
-        data.put("passwordChangeRequired", user.requiresPasswordChange());
         return data;
     }
 

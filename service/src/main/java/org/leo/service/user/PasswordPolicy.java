@@ -1,4 +1,4 @@
-package org.leo.web.security;
+package org.leo.service.user;
 
 import org.leo.service.config.SystemConfigService;
 import org.springframework.stereotype.Service;

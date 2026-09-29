@@ -2,19 +2,24 @@ package org.leo.ai.tools.platform;
 
 import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
+import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
+import org.leo.service.user.UserViews;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 import static org.leo.ai.tools.platform.PlatformToolArguments.*;
+import static org.leo.service.user.UserAccountPolicy.isBuiltInAdmin;
+import static org.leo.service.user.UserAccountPolicy.normalizePrivilege;
+import static org.leo.service.user.UserAccountPolicy.normalizeStatus;
 
 /**
  * 平台用户管理 AI 工具。
@@ -29,12 +34,12 @@ import static org.leo.ai.tools.platform.PlatformToolArguments.*;
         operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class UserTools {
 
-    private static final String USERNAME_ADMIN = "admin";
-
     private final UserService userService;
+    private final PasswordPolicy passwordPolicy;
 
-    public UserTools(UserService userService) {
+    public UserTools(UserService userService, PasswordPolicy passwordPolicy) {
         this.userService = userService;
+        this.passwordPolicy = passwordPolicy;
     }
 
     @Tool("列出平台用户。withoutTeam=true 时只返回尚未加入团队的用户。结果不会返回密码。")
@@ -43,16 +48,8 @@ public class UserTools {
     public List<User> listUsers(
             @P(value = "是否只返回未加入团队的用户", required = false)
             Boolean withoutTeam) {
-        if (!Boolean.TRUE.equals(withoutTeam)) {
-            return sanitize(userService.getAllUser());
-        }
-        List<User> filtered = new ArrayList<>();
-        for (User u : userService.getAllUser()) {
-            if (u != null && (u.getTeamId() == null || u.getTeamId().isBlank())) {
-                filtered.add(u);
-            }
-        }
-        return sanitize(filtered);
+        return sanitize(Boolean.TRUE.equals(withoutTeam)
+                ? userService.getUsersWithoutTeam() : userService.getAllUser());
     }
 
     @Tool("按 userId 或 userName 获取用户详情；两者必须且只能提供一个。结果不会返回密码。")
@@ -68,8 +65,7 @@ public class UserTools {
         }
         User user = id != null ? userService.getUserById(id) : userService.getUserByName(name);
         if (user == null) throw new IllegalArgumentException("用户不存在");
-        user.setPassword("");
-        return user;
+        return UserViews.withoutPassword(user);
     }
 
     @Tool("创建平台用户。userName 和 password 必填；privilege 可选（admin/leader/normal，默认 normal）；"
@@ -86,6 +82,7 @@ public class UserTools {
             @P(value = "用户 ID；省略时自动生成", required = false) String userId) {
         String name = requireNonBlank(userName, "userName不能为空");
         String pwd  = requireNonBlank(password, "password不能为空");
+        passwordPolicy.validate(pwd);
 
         if (userService.getUserByName(name) != null) {
             throw new IllegalArgumentException("用户名已存在");
@@ -103,6 +100,7 @@ public class UserTools {
             throw new IllegalArgumentException("admin用户为系统内置账户，禁止禁用");
         }
         user.setLoginCount(0);
+        user.setPasswordChangeRequired(1);
         user.setTeamId(trimToNull(teamId));
         user.setRemark(trimToNull(remark));
 
@@ -124,6 +122,7 @@ public class UserTools {
         User existing = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (existing == null) throw new IllegalArgumentException("用户不存在");
         boolean builtInAdmin = isBuiltInAdmin(existing);
+        if (!isBlank(password)) passwordPolicy.validate(password);
 
         if (!isBlank(userName) && !userName.equals(existing.getUserName())) {
             if (userService.getUserByName(userName) != null) {
@@ -133,6 +132,7 @@ public class UserTools {
         }
         if (!isBlank(password)) {
             existing.setPassword(PasswordUtil.hash(password));
+            existing.setPasswordChangeRequired(1);
         }
         if (!isBlank(privilege)) {
             String normalizedPrivilege = normalizePrivilege(privilege);
@@ -154,7 +154,7 @@ public class UserTools {
         }
         if (teamId != null) {
             String normalizedTeamId = trimToNull(teamId);
-            if (builtInAdmin && !sameNullable(normalizedTeamId, trimToNull(existing.getTeamId()))) {
+            if (builtInAdmin && !Objects.equals(normalizedTeamId, trimToNull(existing.getTeamId()))) {
                 throw new IllegalArgumentException("admin用户为系统内置账户，禁止修改所属团队");
             }
             existing.setTeamId(normalizedTeamId);
@@ -179,17 +179,8 @@ public class UserTools {
     // ── 私有工具 ─────────────────────────────────────────────────────────────────
 
     private List<User> sanitize(List<User> users) {
-        if (users == null) return new ArrayList<>();
-        for (User u : users) {
-            if (u != null) u.setPassword("");
-        }
-        return users;
-    }
-
-    private String normalizePrivilege(String privilege) {
-        if (UserService.PRIVILEGE_ADMIN.equals(privilege))  return UserService.PRIVILEGE_ADMIN;
-        if (UserService.PRIVILEGE_LEADER.equals(privilege)) return UserService.PRIVILEGE_LEADER;
-        return UserService.PRIVILEGE_NORMAL;
+        if (users == null) return List.of();
+        return users.stream().map(UserViews::withoutPassword).toList();
     }
 
     private Map<String, Object> buildResult(String status, boolean success, String userId, String userName) {
@@ -199,19 +190,5 @@ public class UserTools {
         result.put("userId",   userId);
         result.put("userName", userName);
         return result;
-    }
-
-    private Integer normalizeStatus(Integer status, Integer fallback) {
-        if (status == null) return fallback != null ? fallback : 1;
-        return status == 0 ? 0 : 1;
-    }
-
-    private boolean isBuiltInAdmin(User user) {
-        if (user == null) return false;
-        return USERNAME_ADMIN.equals(user.getUserId()) || USERNAME_ADMIN.equals(user.getUserName());
-    }
-
-    private boolean sameNullable(String a, String b) {
-        return a == null ? b == null : a.equals(b);
     }
 }

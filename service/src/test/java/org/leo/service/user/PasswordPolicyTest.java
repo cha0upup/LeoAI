@@ -1,4 +1,4 @@
-package org.leo.web.security;
+package org.leo.service.user;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

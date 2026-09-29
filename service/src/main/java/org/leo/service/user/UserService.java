@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 用户管理服务。
@@ -59,6 +60,12 @@ public class UserService {
         if (list == null) return new ArrayList<>();
         for (User u : list) normalize(u);
         return list;
+    }
+
+    public List<User> getUsersWithoutTeam() {
+        return getAllUser().stream().filter(Objects::nonNull)
+                .filter(user -> user.getTeamId() == null || user.getTeamId().isBlank())
+                .toList();
     }
 
     // ── 写操作（不含权限校验，由调用方负责） ────────────────────────────────────
@@ -169,19 +176,11 @@ public class UserService {
 
     private User normalize(User user) {
         if (user == null) return null;
-        if (!isKnownPrivilege(user.getPrivilege())) {
-            user.setPrivilege(PRIVILEGE_NORMAL);
-        }
+        user.setPrivilege(UserAccountPolicy.normalizePrivilege(user.getPrivilege()));
         if (user.getPasswordChangeRequired() == null) {
             user.setPasswordChangeRequired(0);
         }
         return user;
-    }
-
-    private boolean isKnownPrivilege(String privilege) {
-        return PRIVILEGE_ADMIN.equals(privilege)
-                || PRIVILEGE_LEADER.equals(privilege)
-                || PRIVILEGE_NORMAL.equals(privilege);
     }
 
     private static String now() {

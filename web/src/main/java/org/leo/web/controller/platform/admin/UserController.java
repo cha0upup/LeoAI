@@ -4,10 +4,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
-import org.leo.service.team.TeamService;
+import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
+import org.leo.service.user.UserViews;
 import org.leo.web.security.RoleAwareAdminEndpoint;
-import org.leo.web.security.PasswordPolicy;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -15,10 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+
+import static org.leo.service.user.UserAccountPolicy.isBuiltInAdmin;
+import static org.leo.service.user.UserAccountPolicy.normalizePrivilege;
+import static org.leo.service.user.UserAccountPolicy.normalizeStatus;
 
 /**
  * 用户管理控制器。
@@ -36,19 +40,15 @@ import java.util.UUID;
 public class UserController {
 
     private static final String SESSION_USER = "user";
-    private static final String USERNAME_ADMIN = "admin";
     private static final int MAX_USERNAME_LENGTH = 100;
     private static final int MAX_EMAIL_LENGTH = 100;
     private static final int MAX_PHONE_LENGTH = 20;
 
     private final UserService userService;
-    private final TeamService teamService;
     private final PasswordPolicy passwordPolicy;
 
-    public UserController(UserService userService, TeamService teamService,
-                          PasswordPolicy passwordPolicy) {
+    public UserController(UserService userService, PasswordPolicy passwordPolicy) {
         this.userService = userService;
-        this.teamService = teamService;
         this.passwordPolicy = passwordPolicy;
     }
 
@@ -86,13 +86,7 @@ public class UserController {
         if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权访问");
         }
-        List<User> filtered = new ArrayList<>();
-        for (User u : userService.getAllUser()) {
-            if (u != null && (u.getTeamId() == null || u.getTeamId().isBlank())) {
-                filtered.add(u);
-            }
-        }
-        return ApiResponse.success(sanitize(filtered));
+        return ApiResponse.success(sanitize(userService.getUsersWithoutTeam()));
     }
 
     // ── 用户创建 ─────────────────────────────────────────────────────────────────
@@ -234,7 +228,7 @@ public class UserController {
         String newTeamId = getString(params, "teamId");
         if (params.containsKey("teamId")) {
             String normalizedTeamId = normalizeNullableId(newTeamId);
-            if (targetIsBuiltInAdmin && !sameNullable(normalizedTeamId, normalizeNullableId(target.getTeamId()))) {
+            if (targetIsBuiltInAdmin && !Objects.equals(normalizedTeamId, normalizeNullableId(target.getTeamId()))) {
                 return ApiResponse.forbidden("admin用户为系统内置账户，禁止修改所属团队");
             }
             target.setTeamId(normalizedTeamId);
@@ -326,23 +320,8 @@ public class UserController {
     }
 
     private List<Map<String, Object>> sanitize(List<User> users) {
-        if (users == null) return new ArrayList<>();
-        return users.stream().filter(java.util.Objects::nonNull).map(user -> {
-            Map<String, Object> view = new LinkedHashMap<>();
-            view.put("userId", user.getUserId());
-            view.put("userName", user.getUserName());
-            view.put("privilege", user.getPrivilege());
-            view.put("email", user.getEmail());
-            view.put("phone", user.getPhone());
-            view.put("status", user.getStatus());
-            view.put("lastLoginTime", user.getLastLoginTime());
-            view.put("loginCount", user.getLoginCount());
-            view.put("createTime", user.getCreateTime());
-            view.put("updateTime", user.getUpdateTime());
-            view.put("teamId", user.getTeamId());
-            view.put("remark", user.getRemark());
-            return view;
-        }).toList();
+        if (users == null) return List.of();
+        return users.stream().filter(Objects::nonNull).map(UserViews::profile).toList();
     }
 
     private String getString(HashMap<String, Object> params, String key) {
@@ -354,38 +333,9 @@ public class UserController {
         return value != null && value.length() > maxLength;
     }
 
-    private String normalizePrivilege(String privilege) {
-        if (UserService.PRIVILEGE_ADMIN.equals(privilege)) return UserService.PRIVILEGE_ADMIN;
-        if (UserService.PRIVILEGE_LEADER.equals(privilege)) return UserService.PRIVILEGE_LEADER;
-        return UserService.PRIVILEGE_NORMAL;
-    }
-
-    private Integer normalizeStatus(Object status, Integer fallback) {
-        if (status == null) return fallback != null ? fallback : 1;
-        if (status instanceof Number number) return number.intValue() == 0 ? 0 : 1;
-        if (status instanceof Boolean bool) return bool ? 1 : 0;
-
-        String value = status.toString().trim().toLowerCase();
-        if (value.isEmpty()) return fallback != null ? fallback : 1;
-        if ("0".equals(value) || "inactive".equals(value) || "disabled".equals(value)
-                || "disable".equals(value) || "false".equals(value)) {
-            return 0;
-        }
-        return 1;
-    }
-
-    private boolean isBuiltInAdmin(User user) {
-        if (user == null) return false;
-        return USERNAME_ADMIN.equals(user.getUserId()) || USERNAME_ADMIN.equals(user.getUserName());
-    }
-
     private String normalizeNullableId(String value) {
         if (value == null || value.isBlank()) return null;
         return value.trim();
-    }
-
-    private boolean sameNullable(String a, String b) {
-        return a == null ? b == null : a.equals(b);
     }
 
     private boolean sameTeam(User caller, User target) {

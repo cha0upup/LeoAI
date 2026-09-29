@@ -2,9 +2,8 @@ package org.leo.web.controller.platform.admin;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
-import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
-import org.leo.web.security.PasswordPolicy;
+import org.leo.service.user.PasswordPolicy;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.List;
@@ -16,8 +15,47 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class UserControllerTest {
+
+    @Test
+    void unassignedUserListingUsesTheSharedFilterAndRequiresAdmin() {
+        UserService service = mock(UserService.class);
+        UserController controller = new UserController(service, mock(PasswordPolicy.class));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User caller = new User();
+        caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
+        request.getSession(true).setAttribute("user", caller);
+
+        assertEquals(403, controller.getNoTeamUsers(request).get("code"));
+        verifyNoInteractions(service);
+        caller.setPrivilege(UserService.PRIVILEGE_ADMIN);
+        when(service.getUsersWithoutTeam()).thenReturn(List.of());
+        assertEquals(200, controller.getNoTeamUsers(request).get("code"));
+        verify(service).getUsersWithoutTeam();
+    }
+
+    @Test
+    void userListingKeepsLeaderAndNormalUserVisibilityBoundaries() {
+        UserService service = mock(UserService.class);
+        UserController controller = new UserController(service, mock(PasswordPolicy.class));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User caller = new User();
+        caller.setUserId("user-1");
+        caller.setPrivilege(UserService.PRIVILEGE_LEADER);
+        caller.setTeamId("team-1");
+        request.getSession(true).setAttribute("user", caller);
+        when(service.getUserByTeamId("team-1")).thenReturn(List.of(caller));
+        when(service.getUserById("user-1")).thenReturn(caller);
+
+        assertEquals(200, controller.getUsers(request).get("code"));
+        verify(service).getUserByTeamId("team-1");
+        caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
+        assertEquals(200, controller.getUsers(request).get("code"));
+        verify(service).getUserById("user-1");
+        verify(service, org.mockito.Mockito.never()).getAllUser();
+    }
 
     @Test
     @SuppressWarnings("unchecked")
@@ -31,7 +69,7 @@ class UserControllerTest {
         stored.setStatus(1);
         when(userService.getAllUser()).thenReturn(List.of(stored));
         UserController controller = new UserController(
-                userService, mock(TeamService.class), mock(PasswordPolicy.class));
+                userService, mock(PasswordPolicy.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         User admin = new User();
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
@@ -56,7 +94,7 @@ class UserControllerTest {
         when(userService.getUserById("user-1")).thenReturn(target);
         when(userService.updateUser(target)).thenReturn(true);
         UserController controller = new UserController(
-                userService, mock(TeamService.class), mock(PasswordPolicy.class));
+                userService, mock(PasswordPolicy.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         User admin = new User();
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);

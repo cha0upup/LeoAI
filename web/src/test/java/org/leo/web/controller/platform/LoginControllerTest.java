@@ -2,6 +2,7 @@ package org.leo.web.controller.platform;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
+import org.leo.core.entity.Team;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
@@ -11,8 +12,11 @@ import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
-import org.leo.web.security.PasswordPolicy;
+import org.leo.service.user.PasswordPolicy;
 import org.springframework.mock.web.MockHttpServletRequest;
+
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,6 +37,42 @@ class LoginControllerTest {
     private final PasswordPolicy passwordPolicy = mock(PasswordPolicy.class);
     private final LoginController controller = new LoginController(
             userService, teamService, permissionService, loginAttemptService, passwordPolicy);
+
+    @Test
+    void statusKeepsItsPublicFieldsAndBooleanPasswordChangeFlag() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        assertEquals(Map.of("isLoggedIn", false), controller.status(request).get("data"));
+        User user = new User("user-1", "alice", "stored-hash", "normal", "2026-09-01");
+        user.setPasswordChangeRequired(1);
+        when(permissionService.getCurrentUser(request)).thenReturn(user);
+
+        Map<?, ?> data = (Map<?, ?>) controller.status(request).get("data");
+
+        assertEquals(Set.of("isLoggedIn", "userId", "userName", "privilege", "teamId", "passwordChangeRequired"), data.keySet());
+        assertEquals(true, data.get("isLoggedIn"));
+        assertEquals(true, data.get("passwordChangeRequired"));
+        assertFalse(data.containsKey("password"));
+        assertEquals("stored-hash", user.getPassword());
+    }
+
+    @Test
+    void profileUsesTheSharedPublicViewAndIncludesTeamName() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User user = new User("user-1", "alice", "stored-hash", "normal", "2026-09-01");
+        user.setTeamId("team-1");
+        Team team = new Team();
+        team.setTeamName("Example team");
+        when(permissionService.requireLogin(request)).thenReturn(user);
+        when(userService.getUserById("user-1")).thenReturn(user);
+        when(teamService.getTeamById("team-1")).thenReturn(team);
+
+        Map<?, ?> data = (Map<?, ?>) controller.profile(request).get("data");
+
+        assertEquals(Set.of("userId", "userName", "privilege", "email", "phone", "status", "teamId",
+                "teamName", "remark", "lastLoginTime", "loginCount", "createTime", "updateTime"), data.keySet());
+        assertEquals("Example team", data.get("teamName"));
+        assertEquals("stored-hash", user.getPassword());
+    }
 
     @Test
     void recordsLoginAndRotatesSessionOnSuccessfulLogin() {
