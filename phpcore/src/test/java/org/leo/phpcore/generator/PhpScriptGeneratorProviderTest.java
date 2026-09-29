@@ -318,6 +318,10 @@ class PhpScriptGeneratorProviderTest {
         PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
         assertThrows(IllegalArgumentException.class, () -> generate(provider, unsupported, disguise("response"), Map.of()));
 
+        Disguise oldSchema = disguise("old-schema");
+        oldSchema.setSchemaVersion(2);
+        assertThrows(IllegalArgumentException.class, () -> generate(provider, oldSchema, disguise("response"), Map.of()));
+
         Disguise incomplete = disguise("incomplete");
         incomplete.setPhpTrafficEncodeBody(null);
         assertThrows(IllegalArgumentException.class,

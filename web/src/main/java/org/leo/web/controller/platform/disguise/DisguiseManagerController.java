@@ -2,6 +2,7 @@ package org.leo.web.controller.platform.disguise;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Disguise;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.User;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.disguise.DisguiseService.ConflictPolicy;
@@ -123,13 +124,14 @@ public class DisguiseManagerController {
                                                        HttpServletRequest request) {
         if (getCurrentUser(request) == null) return ApiResponse.unauthorized("用户未登录");
         try {
+            DisguiseProtocol.requireCurrentMetadata(params);
             Disguise disguise = new Disguise();
             disguise.setTrafficEncodeBody(ControllerUtil.getRequiredStringParam(params, "trafficEncodeBody"));
             disguise.setTrafficDecodeBody(ControllerUtil.getRequiredStringParam(params, "trafficDecodeBody"));
             disguise.setPhpTrafficEncodeBody(optionalText(params.get("phpTrafficEncodeBody")));
             disguise.setPhpTrafficDecodeBody(optionalText(params.get("phpTrafficDecodeBody")));
-            disguise.setSchemaVersion(integerValue(params.get("schemaVersion"), 3));
-            disguise.setProtocolVersion(integerValue(params.get("protocolVersion"), 3));
+            disguise.setSchemaVersion((Integer) params.get("schemaVersion"));
+            disguise.setProtocolVersion((Integer) params.get("protocolVersion"));
             disguise.setSupportedRuntimes(runtimeSet(params.get("supportedRuntimes")));
             if (params.get("requirements") instanceof Map<?, ?> raw) {
                 Map<String, Object> requirements = new LinkedHashMap<>();
@@ -148,18 +150,11 @@ public class DisguiseManagerController {
         return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
     }
 
-    private int integerValue(Object value, int fallback) {
-        if (value instanceof Number number) return number.intValue();
-        try { return value == null ? fallback : Integer.parseInt(String.valueOf(value)); }
-        catch (NumberFormatException ignored) { return fallback; }
-    }
-
     private Set<String> runtimeSet(Object raw) {
         Set<String> result = new LinkedHashSet<>();
         if (raw instanceof Iterable<?> iterable) {
-            for (Object item : iterable) if (item != null) result.add(String.valueOf(item).toLowerCase());
+            for (Object item : iterable) result.add((String) item);
         }
-        if (result.isEmpty()) result.add("java");
         return result;
     }
 

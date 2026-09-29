@@ -52,7 +52,6 @@ public class FingerprintManageService {
         if (content == null) {
             throw new FingerprintNotFoundException("指纹不存在: " + fingerprintId);
         }
-        normalizeFingerprintId(content, safeName);
         if (!isHttpFingerprint(content)) {
             throw new FingerprintNotFoundException("HTTP 指纹不存在: " + fingerprintId);
         }
@@ -71,27 +70,11 @@ public class FingerprintManageService {
         if (rule == null) {
             throw new IllegalArgumentException("缺少必需参数: rule");
         }
-        String version = getVersionFromParams(params);
+        String version = extractVersion(params);
         if (isBlank(version)) {
-            throw new IllegalArgumentException("缺少必需参数: info.version 或 version");
+            throw new IllegalArgumentException("缺少必需参数: info.version");
         }
         return saveFingerprintContent(name, rule, params.get("info"), params.get("tags"), version);
-    }
-
-    public Map<String, Object> saveFingerprint(String userId, String name, String ruleJson,
-                                               String infoJson, String tagsJson,
-                                               String version) throws Exception {
-        requireNonBlank(userId, "userId 不能为空");
-        String normalizedName = requireNonBlank(name, "name 不能为空");
-        Object rule = parseJsonObject(requireNonBlank(ruleJson, "ruleJson 不能为空"));
-        HashMap<String, Object> info = parseInfo(infoJson);
-        String resolvedVersion = resolveVersion(info, version);
-        Object tags = isBlank(tagsJson) ? null : parseJson(tagsJson);
-
-        HashMap<String, Object> data = saveFingerprintContent(normalizedName, rule, info, tags, resolvedVersion);
-        data.put("status", "saved");
-        data.put("name", normalizedName);
-        return data;
     }
 
     public void deleteFingerprint(User user, String fingerprintId) {
@@ -99,12 +82,7 @@ public class FingerprintManageService {
         deleteFingerprint(fingerprintId);
     }
 
-    public void deleteFingerprint(String userId, String fingerprintId) {
-        requireNonBlank(userId, "userId 不能为空");
-        deleteFingerprint(fingerprintId);
-    }
-
-    public void deleteFingerprint(String fingerprintId) {
+    private void deleteFingerprint(String fingerprintId) {
         String normalizedFingerprintId = requireNonBlank(fingerprintId, "fingerprintId 不能为空");
         File fingerprintFile = resolveFingerprintFile(normalizedFingerprintId);
         if (!fingerprintFile.exists() || !fingerprintFile.isFile()) {
@@ -266,7 +244,6 @@ public class FingerprintManageService {
         try {
             HashMap<String, Object> content = loadFingerprintFile(fileId);
             if (content != null) {
-                normalizeFingerprintId(content, fileId);
                 item.put("fingerprintId", content.get("fingerprintId"));
                 if (content.containsKey("protocol")) {
                     item.put("protocol", content.get("protocol"));
@@ -302,7 +279,12 @@ public class FingerprintManageService {
         if (!(parsed instanceof Map<?, ?> parsedMap)) {
             throw new IllegalArgumentException("指纹文件格式无效: " + safeFileName);
         }
-        return new HashMap<>(FingerprintMetadata.normalize(parsedMap));
+        HashMap<String, Object> content = new HashMap<>(FingerprintMetadata.normalize(parsedMap));
+        if (content.get("fingerprintId") == null || isBlank(String.valueOf(content.get("fingerprintId")))
+                || isBlank(extractVersion(content))) {
+            throw new IllegalArgumentException("指纹文件缺少 fingerprintId 或 info.version: " + safeFileName);
+        }
+        return content;
     }
 
     private File resolveFingerprintDir() {
@@ -313,60 +295,17 @@ public class FingerprintManageService {
         return new File(resolveFingerprintDir(), getSafeFileName(fingerprintId) + FINGERPRINT_FILE_SUFFIX);
     }
 
-    private void normalizeFingerprintId(HashMap<String, Object> content, String fallbackId) {
-        Object fingerprintId = content.get("fingerprintId");
-        content.put("fingerprintId", fingerprintId != null ? fingerprintId : fallbackId);
-    }
-
     private HashMap<String, Object> normalizeInfo(Object infoObj) {
         return new HashMap<>(FingerprintMetadata.normalizeInfo(infoObj));
     }
 
-    private HashMap<String, Object> parseInfo(String infoJson) {
-        if (isBlank(infoJson)) {
-            return new HashMap<>();
+    private String extractVersion(Map<String, Object> record) {
+        Object info = record.get("info");
+        if (info instanceof Map<?, ?> infoMap) {
+            Object version = infoMap.get("version");
+            if (version != null && !String.valueOf(version).isBlank()) return String.valueOf(version).trim();
         }
-        Object parsed = parseJson(infoJson);
-        return normalizeInfo(parsed);
-    }
-
-    private String resolveVersion(HashMap<String, Object> info, String version) {
-        if (!isBlank(version)) {
-            return version.trim();
-        }
-        Object value = info.get("version");
-        if (value != null && !String.valueOf(value).isBlank()) {
-            return String.valueOf(value).trim();
-        }
-        return DEFAULT_VERSION;
-    }
-
-    private String getVersionFromParams(HashMap<String, Object> params) {
-        Object infoObj = params.get("info");
-        if (infoObj instanceof Map<?, ?> map) {
-            Object value = map.get("version");
-            if (value != null) {
-                return String.valueOf(value).trim();
-            }
-        }
-        Object value = params.get("version");
-        return value != null ? String.valueOf(value).trim() : null;
-    }
-
-    private Object parseJsonObject(String json) {
-        Object parsed = parseJson(json);
-        if (parsed == null) {
-            throw new IllegalArgumentException("JSON 内容不能为空");
-        }
-        return parsed;
-    }
-
-    private Object parseJson(String json) {
-        Object parsed = JsonUtil.fromJsonString(json, Object.class);
-        if (parsed == null) {
-            throw new IllegalArgumentException("JSON 格式无效");
-        }
-        return parsed;
+        return null;
     }
 
     private String getSafeFileName(String fingerprintId) {
@@ -539,7 +478,6 @@ public class FingerprintManageService {
                     fingerprintId = generateFingerprintId(name, version);
                     // 更新 rec 中的版本
                     rec = new HashMap<>(rec);
-                    rec.put("version", version);
                     if (rec.get("info") instanceof Map<?, ?> info) {
                         HashMap<String, Object> newInfo = new HashMap<>();
                         info.forEach((k, v) -> newInfo.put(String.valueOf(k), v));
@@ -569,16 +507,6 @@ public class FingerprintManageService {
         } catch (Exception e) {
             return new ImportResult(name, fingerprintId, "failed", e.getMessage());
         }
-    }
-
-    private String extractVersion(Map<String, Object> rec) {
-        Object info = rec.get("info");
-        if (info instanceof Map<?, ?> infoMap) {
-            Object v = infoMap.get("version");
-            if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
-        }
-        Object v = rec.get("version");
-        return v != null ? String.valueOf(v).trim() : null;
     }
 
     private List<Map<String, Object>> parseJson(byte[] bytes) throws Exception {

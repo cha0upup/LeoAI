@@ -40,9 +40,8 @@ public class PuppetService {
 
     private final PuppetMapper puppetMapper;
     /**
-     * SQLite serializes writers.  Batch deletion is issued as multiple HTTP
-     * requests by older clients, so guard the transaction body against two
-     * delete requests trying to write the same database at once.
+     * SQLite serializes writers, so guard against concurrent delete transactions
+     * trying to write the same database at once.
      */
     private final ReentrantLock puppetDeletionLock = new ReentrantLock();
 

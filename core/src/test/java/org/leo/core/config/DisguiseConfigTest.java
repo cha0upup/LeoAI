@@ -2,13 +2,17 @@ package org.leo.core.config;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.disguise.JavaBuiltinDisguiseCatalog;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.Disguise;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DisguiseConfigTest {
 
@@ -27,6 +31,22 @@ class DisguiseConfigTest {
             }
             assertArrayEquals(input, disguise.decodeTraffic(disguise.encodeTraffic(input)));
         }
+    }
+
+    @Test
+    void missingRuntimeDeclarationDoesNotImplyJavaSupport() throws Exception {
+        Disguise disguise = customBase64Disguise();
+        disguise.setSupportedRuntimes(null);
+        assertFalse(disguise.supportsRuntime("java"));
+        disguise.setSupportedRuntimes(Set.of());
+        assertFalse(disguise.supportsRuntime("java"));
+    }
+
+    @Test
+    void declaredPhpRuntimeNeedsItsOwnImplementation() throws Exception {
+        Disguise disguise = customBase64Disguise();
+        disguise.setSupportedRuntimes(Set.of("php"));
+        assertThrows(IllegalArgumentException.class, () -> DisguiseProtocol.requireCurrent(disguise));
     }
 
     private Disguise customBase64Disguise() throws Exception {

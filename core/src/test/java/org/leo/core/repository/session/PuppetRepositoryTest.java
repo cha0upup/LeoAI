@@ -9,6 +9,7 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 
 import java.lang.reflect.Field;
+import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +88,21 @@ class PuppetRepositoryTest {
         assertEquals("jetty", repository.load(second.getSessionId()).get("runtime"));
         assertEquals("host-a", repository.load(first.getSessionId()).get("hostId"));
         assertEquals("host-b", repository.load(second.getSessionId()).get("hostId"));
+    }
+
+    @Test
+    void webRuntimeRepositoryRejectsOldSnapshotVersions() throws Exception {
+        PuppetNodeSession current = session("session-old", "puppet-old", "host-old");
+        AtomicFileStore files = new AtomicFileStore();
+        PuppetWebRuntimeRepository repository = new PuppetWebRuntimeRepository(files);
+
+        assertNull(repository.save(current.getSessionId(), Map.of("schemaVersion", 1, "runtime", "old")));
+        assertNull(repository.save(current.getSessionId(), Map.of("schemaVersion", 2.5, "runtime", "old")));
+        File file = repository.save(current.getSessionId(), Map.of("schemaVersion", 2, "runtime", "current"));
+        assertEquals("current", repository.load(current.getSessionId()).get("runtime"));
+
+        files.writeJson(file, Map.of("schemaVersion", 1, "runtime", "old"));
+        assertNull(repository.load(current.getSessionId()));
     }
 
     private PuppetNodeSession session(String sessionId, String puppetId, String hostId) {

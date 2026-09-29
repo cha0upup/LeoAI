@@ -136,7 +136,7 @@ public class Disguise {
         resetRuntimeHandler();
     }
 
-    public int getSchemaVersion() {
+    public Integer getSchemaVersion() {
         return schemaVersion;
     }
 
@@ -144,7 +144,7 @@ public class Disguise {
         this.schemaVersion = schemaVersion;
     }
 
-    public int getProtocolVersion() {
+    public Integer getProtocolVersion() {
         return protocolVersion;
     }
 
@@ -186,8 +186,8 @@ public class Disguise {
 
     public boolean supportsRuntime(String runtime) {
         if (runtime == null || runtime.isBlank()) return false;
-        if (supportedRuntimes != null && !supportedRuntimes.isEmpty()
-                && supportedRuntimes.stream().noneMatch(item -> runtime.equalsIgnoreCase(item))) {
+        if (supportedRuntimes == null
+                || supportedRuntimes.stream().noneMatch(item -> runtime.equalsIgnoreCase(item))) {
             return false;
         }
         if ("php".equalsIgnoreCase(runtime)) {

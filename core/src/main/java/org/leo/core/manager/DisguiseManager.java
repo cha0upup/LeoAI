@@ -1,6 +1,7 @@
 package org.leo.core.manager;
 
 import org.leo.core.entity.Disguise;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.slf4j.Logger;
@@ -56,7 +57,7 @@ public class DisguiseManager {
         int loadedCount = 0;
 
         for (File file : files) {
-            if (!file.isFile()) continue;
+            if (!file.isFile() || !file.getName().endsWith(".disguise")) continue;
 
             try {
                 // 读取整个文件字节并以 UTF-8 解码
@@ -65,7 +66,15 @@ public class DisguiseManager {
 
                 // 解密并反序列化
                 String json = AesUtil.decrypt(encryptedContent, pluginEncryptKey);
+                DisguiseProtocol.requireCurrentMetadata((Map<?, ?>) JsonUtil.fromJsonString(json, Map.class));
                 Disguise disguise = (Disguise) JsonUtil.fromJsonString(json, Disguise.class);
+                if (disguise.getDisguiseId() == null || disguise.getDisguiseId().isBlank()) {
+                    throw new IllegalArgumentException("disguiseId不能为空");
+                }
+                if (disguise.getVersion() == null || disguise.getVersion().isBlank()) {
+                    throw new IllegalArgumentException("version不能为空");
+                }
+                DisguiseProtocol.requireCurrent(disguise);
 
                 // 初始化插件并加入管理
                 disguise.init();
@@ -73,6 +82,8 @@ public class DisguiseManager {
 
                 logger.debug("disguise加载成功: {}", file.getName());
                 loadedCount++;
+            } catch (IllegalArgumentException e) {
+                logger.warn("跳过无效或旧版本的disguise: {}, {}", file.getName(), e.getMessage());
             } catch (Exception e) {
                 logger.error("disguise加载异常: {}", file.getName(), e);
             }
@@ -86,6 +97,7 @@ public class DisguiseManager {
      */
     public boolean installDisguise(Disguise disguise) {
         try {
+            DisguiseProtocol.requireCurrent(disguise);
             disguise.init();
             disguises.put(disguise.getDisguiseId(), disguise);
             return true;

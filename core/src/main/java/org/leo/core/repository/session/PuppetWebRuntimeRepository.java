@@ -18,6 +18,7 @@ public class PuppetWebRuntimeRepository {
 
     private static final String WEB_RUNTIME_SUBDIR = "web-runtime";
     private static final String SNAPSHOT_JSON = "snapshot.json";
+    private static final int SCHEMA_VERSION = 2;
     private final AtomicFileStore fileStore;
 
     public PuppetWebRuntimeRepository(AtomicFileStore fileStore) {
@@ -25,9 +26,7 @@ public class PuppetWebRuntimeRepository {
     }
 
     public File save(String sessionId, Map<String, Object> snapshot) {
-        if (sessionId == null || sessionId.isBlank() || snapshot == null) return null;
-        Object schemaVersion = snapshot.get("schemaVersion");
-        if (!(schemaVersion instanceof Number) || ((Number) schemaVersion).intValue() != 2) return null;
+        if (sessionId == null || sessionId.isBlank() || !isCurrentSnapshot(snapshot)) return null;
         try {
             PuppetNodeSession session = requireSession(sessionId);
             String hostId = session.getCurrentHostId();
@@ -48,7 +47,9 @@ public class PuppetWebRuntimeRepository {
         if (puppetId == null || puppetId.isBlank() || hostId == null || hostId.isBlank()) return null;
         try {
             File dir = new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(userId, puppetId), WEB_RUNTIME_SUBDIR);
-            return fileStore.readJsonMap(new File(dir, encodeHostId(hostId) + "." + SNAPSHOT_JSON));
+            Map<String, Object> snapshot = fileStore.readJsonMap(
+                    new File(dir, encodeHostId(hostId) + "." + SNAPSHOT_JSON));
+            return isCurrentSnapshot(snapshot) ? snapshot : null;
         } catch (Exception e) {
             return null;
         }
@@ -74,5 +75,9 @@ public class PuppetWebRuntimeRepository {
     private String encodeHostId(String hostId) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(
                 hostId.trim().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean isCurrentSnapshot(Map<String, Object> snapshot) {
+        return snapshot != null && Integer.valueOf(SCHEMA_VERSION).equals(snapshot.get("schemaVersion"));
     }
 }

@@ -1,6 +1,8 @@
 package org.leo.ai.tools.platform;
 
 import org.leo.service.fingerprint.FingerprintManageService;
+import org.leo.core.entity.User;
+import org.leo.core.util.json.JsonUtil;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
@@ -36,15 +38,22 @@ public class FingerprintTools {
         return fingerprintManageService.getFingerprintById(fingerprintId);
     }
 
-    @Tool("创建或覆盖保存指纹。userId、name、ruleJson 必填；version 可直接传，或从 infoJson.version 读取；最终 fingerprintId 按 name+version 自动生成。")
+    @Tool("创建或覆盖保存 HTTP 指纹。ruleJson 必须是声明式规则对象，infoJson 必须包含 version。")
     public Map<String, Object> saveFingerprint(
             @P("创建人用户 ID") String userId,
             @P("指纹名称") String name,
             @P("匹配规则 JSON") String ruleJson,
-            @P(value = "规则元信息 JSON；仅保留 version、author、description、remark", required = false) String infoJson,
-            @P(value = "标签数组 JSON", required = false) String tagsJson,
-            @P(value = "版本；省略时尝试从 infoJson.version 读取", required = false) String version) throws Exception {
-        return fingerprintManageService.saveFingerprint(userId, name, ruleJson, infoJson, tagsJson, version);
+            @P("规则元信息 JSON；必须包含 version，可含 author、description、remark") String infoJson,
+            @P(value = "标签数组 JSON", required = false) String tagsJson) throws Exception {
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("name", name);
+        params.put("protocol", "http");
+        params.put("rule", parseJson(ruleJson, "ruleJson"));
+        params.put("info", parseJson(infoJson, "infoJson"));
+        if (tagsJson != null && !tagsJson.isBlank()) {
+            params.put("tags", parseJson(tagsJson, "tagsJson"));
+        }
+        return fingerprintManageService.saveFingerprint(params, user(userId));
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
@@ -53,10 +62,27 @@ public class FingerprintTools {
     public Map<String, Object> deleteFingerprint(
             @P("操作人用户 ID") String userId,
             @P("待删除指纹 ID") String fingerprintId) {
-        fingerprintManageService.deleteFingerprint(userId, fingerprintId);
+        fingerprintManageService.deleteFingerprint(user(userId), fingerprintId);
         HashMap<String, Object> result = new HashMap<>();
         result.put("status", "deleted");
         result.put("fingerprintId", fingerprintId);
         return result;
+    }
+
+    private Object parseJson(String json, String field) {
+        if (json == null || json.isBlank()) {
+            throw new IllegalArgumentException(field + "不能为空");
+        }
+        try {
+            return JsonUtil.fromJsonString(json, Object.class);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(field + "不是合法JSON", e);
+        }
+    }
+
+    private User user(String userId) {
+        User user = new User();
+        user.setUserId(userId);
+        return user;
     }
 }

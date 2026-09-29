@@ -30,26 +30,22 @@ class FingerprintManageServiceTest {
             "description", "Detection method", "remark", "Rule note");
 
     @Test
-    void bothSaveEntrypointsOnlyPersistRuleMetadata() throws Exception {
+    void savePersistsCurrentRuleMetadata() throws Exception {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            HashMap<String, Object> legacy = legacyDefinition();
-            service.saveFingerprint(legacy, user());
+            HashMap<String, Object> definition = sourceDefinition();
+            service.saveFingerprint(definition, user());
             assertClean(stored());
-            assertTrue(((Map<?, ?>) legacy.get("info")).containsKey("vulnerabilities"));
-
-            service.saveFingerprint("tester", "demo", JsonUtil.toJsonString(rule),
-                    JsonUtil.toJsonString(legacy.get("info")), "[\"web\"]", null);
-            assertClean(stored());
+            assertTrue(((Map<?, ?>) definition.get("info")).containsKey("vulnerabilities"));
         }
     }
 
     @Test
-    void importingLegacyJsonDropsUnrelatedMetadata() throws Exception {
+    void importsCurrentJsonWithoutUnrelatedMetadata() throws Exception {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            byte[] content = JsonUtil.toJsonString(legacyDefinition()).getBytes(StandardCharsets.UTF_8);
-            var results = service.importFingerprints(new MockMultipartFile("file", "legacy.json",
+            byte[] content = JsonUtil.toJsonString(sourceDefinition()).getBytes(StandardCharsets.UTF_8);
+            var results = service.importFingerprints(new MockMultipartFile("file", "current.json",
                     "application/json", content), FingerprintManageService.ConflictPolicy.SKIP, user());
             assertEquals("imported", results.get(0).status());
             assertClean(stored());
@@ -57,10 +53,10 @@ class FingerprintManageServiceTest {
     }
 
     @Test
-    void legacyReadsAndBothExportsOnlyExposeRuleMetadata() throws Exception {
+    void currentReadsAndBothExportsOnlyExposeRuleMetadata() throws Exception {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), legacyDefinition());
+            store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), sourceDefinition());
             assertClean(service.getFingerprintById("demo_any"));
             assertEquals(cleanInfo, service.listFingerprints().get(0).get("info"));
             assertClean(parse(service.exportFingerprint("demo_any")));
@@ -72,9 +68,38 @@ class FingerprintManageServiceTest {
         }
     }
 
-    private HashMap<String, Object> legacyDefinition() {
+    @Test
+    void rejectsOldTopLevelVersionInsteadOfMigratingIt() throws Exception {
+        try (var config = mockStatic(LeoConfig.class)) {
+            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
+            HashMap<String, Object> old = sourceDefinition();
+            old.remove("info");
+            old.put("version", "any");
+            assertEquals("缺少必需参数: info.version",
+                    assertThrows(IllegalArgumentException.class, () -> service.saveFingerprint(old, user())).getMessage());
+
+            byte[] content = JsonUtil.toJsonString(old).getBytes(StandardCharsets.UTF_8);
+            var results = service.importFingerprints(new MockMultipartFile("file", "old.json",
+                    "application/json", content), FingerprintManageService.ConflictPolicy.SKIP, user());
+            assertEquals("failed", results.get(0).status());
+        }
+    }
+
+    @Test
+    void rejectsStoredRecordsWithoutCurrentIdentity() throws Exception {
+        try (var config = mockStatic(LeoConfig.class)) {
+            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
+            HashMap<String, Object> old = sourceDefinition();
+            old.remove("fingerprintId");
+            store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), old);
+            assertThrows(IllegalArgumentException.class, () -> service.getFingerprintById("demo_any"));
+            assertTrue(service.listFingerprints().isEmpty());
+        }
+    }
+
+    private HashMap<String, Object> sourceDefinition() {
         Map<String, Object> info = new HashMap<>(cleanInfo);
-        info.put("vulnerabilities", List.of(Map.of("title", "legacy issue")));
+        info.put("vulnerabilities", List.of(Map.of("title", "unrelated issue")));
         info.put("externalNotes", "unrelated metadata");
         return new HashMap<>(Map.of("fingerprintId", "demo_any", "name", "demo", "protocol", "http",
                 "tags", List.of("web"), "info", info, "rule", rule, "externalNotes", "unrelated metadata"));

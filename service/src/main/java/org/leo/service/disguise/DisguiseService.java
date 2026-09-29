@@ -56,6 +56,7 @@ public class DisguiseService {
         String trafficEncodeBody = requireString(params, "trafficEncodeBody");
         String trafficDecodeBody = requireString(params, "trafficDecodeBody");
         Map<String, String> headers = parseHeaders(requireString(params, "headers"));
+        DisguiseProtocol.requireCurrentMetadata(params);
         String version = defaultVersion(optionalString(params, "version"));
         String description = optionalString(params, "description");
         String remark = optionalString(params, "remark");
@@ -94,34 +95,36 @@ public class DisguiseService {
         if (existingDisguise == null) {
             throw new IllegalArgumentException("disguise不存在");
         }
+        Disguise disguise = (Disguise) JsonUtil.fromJsonString(existingDisguise.toString(), Disguise.class);
 
         if (params.containsKey("disguiseName")) {
-            existingDisguise.setDisguiseName(optionalString(params, "disguiseName"));
+            disguise.setDisguiseName(optionalString(params, "disguiseName"));
         }
         if (params.containsKey("trafficEncodeBody")) {
-            existingDisguise.setTrafficEncodeBody(optionalString(params, "trafficEncodeBody"));
+            disguise.setTrafficEncodeBody(optionalString(params, "trafficEncodeBody"));
         }
         if (params.containsKey("trafficDecodeBody")) {
-            existingDisguise.setTrafficDecodeBody(optionalString(params, "trafficDecodeBody"));
+            disguise.setTrafficDecodeBody(optionalString(params, "trafficDecodeBody"));
         }
-        applyRuntimeFields(params, existingDisguise);
+        applyRuntimeFields(params, disguise);
         if (params.containsKey("headers")) {
-            existingDisguise.setHeaders(parseHeaders(requireString(params, "headers")));
+            disguise.setHeaders(parseHeaders(requireString(params, "headers")));
         }
         if (params.containsKey("version")) {
-            existingDisguise.setVersion(defaultVersion(optionalString(params, "version")));
+            disguise.setVersion(defaultVersion(optionalString(params, "version")));
         }
         if (params.containsKey("description")) {
-            existingDisguise.setDescription(optionalString(params, "description"));
+            disguise.setDescription(optionalString(params, "description"));
         }
         if (params.containsKey("remark")) {
-            existingDisguise.setRemark(optionalString(params, "remark"));
+            disguise.setRemark(optionalString(params, "remark"));
         }
 
-        ensureTrafficLogic(existingDisguise.getTrafficEncodeBody(), existingDisguise.getTrafficDecodeBody());
-        validateRuntimeImplementations(existingDisguise);
-        existingDisguise.setUpdateTime(String.valueOf(System.currentTimeMillis()));
-        installAndPersist(existingDisguise);
+        ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
+        DisguiseProtocol.requireCurrent(disguise);
+        validateRuntimeImplementations(disguise);
+        disguise.setUpdateTime(String.valueOf(System.currentTimeMillis()));
+        installAndPersist(disguise);
     }
 
     public void deleteDisguise(String disguiseId, User user) {
@@ -164,9 +167,10 @@ public class DisguiseService {
     }
 
     public Map<String, Object> validateDisguise(Disguise disguise) throws Exception {
+        DisguiseProtocol.requireCurrent(disguise);
         ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("java", Map.of("valid", true));
+        if (disguise.supportsRuntime("java")) result.put("java", Map.of("valid", true));
         result.putAll(validateRuntimeImplementations(disguise));
         return result;
     }
@@ -274,12 +278,23 @@ public class DisguiseService {
         Disguise disguise;
         try {
             String decrypted = AesUtil.decrypt(new String(data, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
+            DisguiseProtocol.requireCurrentMetadata((Map<?, ?>) JsonUtil.fromJsonString(decrypted, Map.class));
             disguise = (Disguise) JsonUtil.fromJsonString(decrypted, Disguise.class);
         } catch (Exception e) {
             return new ImportResult(null, null, "failed", "文件解析失败: " + e.getMessage());
         }
         if (disguise == null || isBlank(disguise.getDisguiseId())) {
             return new ImportResult(null, null, "failed", "文件内容无效");
+        }
+        if (isBlank(disguise.getVersion())) {
+            return new ImportResult(disguise.getDisguiseId(), disguise.getDisguiseName(), "failed", "version不能为空");
+        }
+
+        try {
+            ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
+            validateRuntimeImplementations(disguise);
+        } catch (Exception e) {
+            return new ImportResult(disguise.getDisguiseId(), disguise.getDisguiseName(), "failed", "伪装校验失败: " + e.getMessage());
         }
 
         // 保留原始 disguiseId，按冲突策略处理
@@ -310,9 +325,6 @@ public class DisguiseService {
         try {
             disguise.setCreateUserId(user.getUserId());
             disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
-            disguise.setVersion(defaultVersion(disguise.getVersion()));
-            ensureTrafficLogic(disguise.getTrafficEncodeBody(), disguise.getTrafficDecodeBody());
-            validateRuntimeImplementations(disguise);
             installAndPersist(disguise);
             String statusStr = (policy == ConflictPolicy.OVERWRITE && exists) ? "overwritten" : "imported";
             String msg       = (policy == ConflictPolicy.OVERWRITE && exists) ? "已覆盖"     : "导入成功";
@@ -387,13 +399,12 @@ public class DisguiseService {
         return diagnostics;
     }
 
-    @SuppressWarnings("unchecked")
     private void applyRuntimeFields(Map<String, Object> params, Disguise disguise) {
         if (params.containsKey("schemaVersion")) {
-            disguise.setSchemaVersion(parseInteger(params.get("schemaVersion"), DisguiseProtocol.SCHEMA_VERSION));
+            disguise.setSchemaVersion(requireInteger(params.get("schemaVersion")));
         }
         if (params.containsKey("protocolVersion")) {
-            disguise.setProtocolVersion(parseInteger(params.get("protocolVersion"), DisguiseProtocol.PROTOCOL_VERSION));
+            disguise.setProtocolVersion(requireInteger(params.get("protocolVersion")));
         }
         if (params.containsKey("phpTrafficEncodeBody")) {
             disguise.setPhpTrafficEncodeBody(optionalString(params, "phpTrafficEncodeBody"));
@@ -403,17 +414,15 @@ public class DisguiseService {
         }
         if (params.containsKey("supportedRuntimes")) {
             Object raw = params.get("supportedRuntimes");
+            if (!(raw instanceof Iterable<?> iterable)) {
+                throw new IllegalArgumentException("supportedRuntimes必须是运行时列表");
+            }
             Set<String> values = new LinkedHashSet<>();
-            if (raw instanceof Iterable<?> iterable) {
-                for (Object item : iterable) {
-                    if (item != null && !String.valueOf(item).isBlank()) {
-                        values.add(String.valueOf(item).trim().toLowerCase());
-                    }
+            for (Object item : iterable) {
+                if (!(item instanceof String runtime)) {
+                    throw new IllegalArgumentException("supportedRuntimes包含无效运行时");
                 }
-            } else if (raw != null) {
-                for (String item : String.valueOf(raw).split(",")) {
-                    if (!item.isBlank()) values.add(item.trim().toLowerCase());
-                }
+                values.add(runtime);
             }
             disguise.setSupportedRuntimes(values);
         }
@@ -426,14 +435,9 @@ public class DisguiseService {
         }
     }
 
-    private int parseInteger(Object value, int defaultValue) {
-        if (value instanceof Number number) return number.intValue();
-        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
-        try {
-            return Integer.parseInt(String.valueOf(value));
-        } catch (NumberFormatException ignored) {
-            return defaultValue;
-        }
+    private int requireInteger(Object value) {
+        if (value instanceof Integer number) return number;
+        throw new IllegalArgumentException("disguise协议版本必须是整数");
     }
 
     @SuppressWarnings("unchecked")
