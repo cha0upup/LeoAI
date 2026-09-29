@@ -1,0 +1,3 @@
+import{t as e}from"./apiUtils-exP1O9ls.js";import{t}from"./downloadBlob-CR92ijM6.js";function n(n,r,i={}){return e(async()=>{let e=await n();return t(e.data,r),e},{errorMessage:`导出失败`,...i})}function r(e,n,r){if(!e||e.length===0)return;let a=r?.length?r:[...new Set(e.flatMap(e=>Object.keys(e)))].map(e=>({label:e,key:e})),o=a.map(e=>e.label).join(`	`),s=e.map(e=>a.map(({key:t})=>i(typeof t==`function`?t(e):e[t]??``)).join(`	`)),c=o+`
+`+s.join(`
+`);t(new Blob([c],{type:`text/tab-separated-values;charset=utf-8`}),n.endsWith(`.tsv`)?n:`${n}.tsv`)}function i(e){return String(e).replace(/[\t\n\r]/g,` `)}export{r as n,n as t};

@@ -1,0 +1,1 @@
+function e(e,t){if(!(e instanceof Blob))throw TypeError(`downloadBlob: 第一个参数必须是 Blob`);if(!t||typeof t!=`string`)throw TypeError(`downloadBlob: 必须提供文件名`);let n=URL.createObjectURL(e),r=document.createElement(`a`);r.href=n,r.download=t,r.style.display=`none`,document.body.appendChild(r);try{r.click()}finally{r.remove(),setTimeout(()=>URL.revokeObjectURL(n),1e3)}}export{e as t};

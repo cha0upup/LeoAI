@@ -1,3 +1,0 @@
-function e(e,r,i){if(!e||e.length===0)return;let a,o;if(i&&i.length>0)a=i.map(e=>e.label).join(`	`),o=e.map(e=>i.map(n=>t(typeof n.key==`function`?n.key(e):e[n.key]??``)).join(`	`));else{let n=new Set;e.forEach(e=>Object.keys(e).forEach(e=>n.add(e)));let r=[...n];a=r.join(`	`),o=e.map(e=>r.map(n=>t(e[n]??``)).join(`	`))}n(a+`
-`+o.join(`
-`),r)}function t(e){return String(e).replace(/[\t\n\r]/g,` `)}function n(e,t){let n=new Blob([e],{type:`text/tab-separated-values;charset=utf-8`}),r=URL.createObjectURL(n),i=document.createElement(`a`);i.href=r,i.download=t.endsWith(`.tsv`)?t:`${t}.tsv`,i.click(),URL.revokeObjectURL(r)}export{e as t};
