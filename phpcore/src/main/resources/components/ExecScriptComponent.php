@@ -8,7 +8,7 @@ return [
         $language = strtolower((string)$get($params, 'language', 'php'));
         if ($language !== 'php') throw new InvalidArgumentException('PHP runtime only accepts php scripts');
         $script = (string)$get($params, 'script', ''); ob_start();
-        try { $returnValue = eval($script); return ['output' => (string)ob_get_contents(), 'returnValue' => $returnValue]; }
+        try { $returnValue = eval($script); return ['code' => 200, 'output' => (string)ob_get_contents(), 'returnValue' => $returnValue]; }
         finally { ob_end_clean(); }
     }
 ];

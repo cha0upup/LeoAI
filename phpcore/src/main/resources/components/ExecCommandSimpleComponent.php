@@ -30,11 +30,11 @@ return [
             } while (true);
             $stdout .= stream_get_contents($pipes[1]); $stderr .= stream_get_contents($pipes[2]);
             fclose($pipes[1]); fclose($pipes[2]); $exitCode = proc_close($process);
-            return ['data' => $stdout . $stderr, 'exitCode' => $exitCode];
+            return ['code' => 200, 'data' => $stdout . $stderr, 'exitCode' => $exitCode];
         }
         if ($available('exec')) {
             $lines = []; $code = 0; exec($command . ' 2>&1', $lines, $code); $output = implode("\n", $lines);
-            return ['data' => $output, 'exitCode' => $code];
+            return ['code' => 200, 'data' => $output, 'exitCode' => $code];
         }
         throw new RuntimeException('command execution functions are disabled');
     }

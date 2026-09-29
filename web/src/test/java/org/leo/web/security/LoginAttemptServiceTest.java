@@ -1,10 +1,13 @@
 package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.leo.dao.mapper.SystemConfigMapper;
 import org.leo.service.config.SystemConfigService;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -26,9 +29,7 @@ class LoginAttemptServiceTest {
 
     @Test
     void locksAfterConfiguredFailuresAndClearsAfterSuccess() {
-        SystemConfigService config = mock(SystemConfigService.class);
-        when(config.getString("security.login.max.attempts", "5")).thenReturn("2");
-        when(config.getString("security.login.lock.seconds", "300")).thenReturn("60");
+        SystemConfigService config = config("2", "60");
         AtomicLong now = new AtomicLong(1_000L);
         LoginAttemptService service = new LoginAttemptService(config, now::get);
 
@@ -39,5 +40,61 @@ class LoginAttemptServiceTest {
 
         service.recordSuccess("admin", "127.0.0.1");
         assertEquals(0L, service.retryAfterSeconds("admin", "127.0.0.1"));
+    }
+
+    @Test
+    void expiresLocksAndStartsANewAttemptCount() {
+        AtomicLong now = new AtomicLong(1_000L);
+        LoginAttemptService service = new LoginAttemptService(config("2", "60"), now::get);
+        service.recordFailure("admin", "127.0.0.1");
+        service.recordFailure("admin", "127.0.0.1");
+        now.addAndGet(59_001L);
+        assertEquals(1L, service.retryAfterSeconds("admin", "127.0.0.1"));
+        now.addAndGet(999L);
+        assertEquals(0L, service.retryAfterSeconds("admin", "127.0.0.1"));
+        service.recordFailure("admin", "127.0.0.1");
+        assertEquals(0L, service.retryAfterSeconds("admin", "127.0.0.1"));
+    }
+
+    @Test
+    void malformedConfigurationStillThrottlesLoginFailures() {
+        LoginAttemptService service = new LoginAttemptService(config("bad", "bad"), () -> 1_000L);
+        for (int index = 0; index < 4; index++) service.recordFailure("admin", "127.0.0.1");
+        assertEquals(0L, service.retryAfterSeconds("admin", "127.0.0.1"));
+        service.recordFailure("admin", "127.0.0.1");
+        assertEquals(300L, service.retryAfterSeconds("admin", "127.0.0.1"));
+    }
+
+    @Test
+    void increasingTheThresholdDoesNotReleaseAnExistingLock() {
+        SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+        when(mapper.findValueByKey("security.login.max.attempts")).thenReturn("1");
+        when(mapper.findValueByKey("security.login.lock.seconds")).thenReturn("60");
+        LoginAttemptService service = new LoginAttemptService(new SystemConfigService(mapper), () -> 1_000L);
+        service.recordFailure("admin", "127.0.0.1");
+        when(mapper.findValueByKey("security.login.max.attempts")).thenReturn("5");
+        service.recordFailure("admin", "127.0.0.1");
+        assertEquals(60L, service.retryAfterSeconds("admin", "127.0.0.1"));
+    }
+
+    @Test
+    @ResourceLock("java.util.Locale.default")
+    void usernameNormalizationIsIndependentOfServerLocale() {
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            LoginAttemptService service = new LoginAttemptService(config("1", "60"), () -> 1_000L);
+            service.recordFailure(" ADMIN ", "127.0.0.1");
+            assertEquals(60L, service.retryAfterSeconds("admin", "127.0.0.1"));
+        } finally {
+            Locale.setDefault(previous);
+        }
+    }
+
+    private SystemConfigService config(String attempts, String lockSeconds) {
+        SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+        when(mapper.findValueByKey("security.login.max.attempts")).thenReturn(attempts);
+        when(mapper.findValueByKey("security.login.lock.seconds")).thenReturn(lockSeconds);
+        return new SystemConfigService(mapper);
     }
 }

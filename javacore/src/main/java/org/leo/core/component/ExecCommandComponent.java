@@ -564,7 +564,6 @@ public class ExecCommandComponent implements Runnable {
         response.put(KEY_PTY, Boolean.valueOf(Boolean.TRUE.equals(processMap.get(KEY_PTY))));
         response.put(KEY_RESIZABLE, Boolean.FALSE);
         response.put(KEY_LONG_POLLING, Boolean.TRUE);
-        response.put("batchRead", Boolean.TRUE);
         response.put("lineInput", Boolean.valueOf(!Boolean.TRUE.equals(processMap.get(KEY_PTY))));
         response.put(KEY_TERMINAL_MODE, valueOrDefault(processMap.get(KEY_TERMINAL_MODE), "pipe"));
         response.put("terminalModes", isWindows() ? new String[]{"pipe"} : new String[]{"pipe", "python-pty"});

@@ -3,6 +3,7 @@ package org.leo.web.util;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -71,6 +72,27 @@ class AiSseExecutorTest {
 
             assertTrue(subscriptionStarted.await(1, TimeUnit.SECONDS));
             release.countDown();
+        }
+    }
+
+    @Test
+    void closeCancelsQueuedChatAndRejectsNewStreams() throws Exception {
+        AiSseExecutor executor = new AiSseExecutor(1, 1, 1);
+        try {
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            executor.submitChat(() -> await(started, release));
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            Future<?> queued = executor.submitChat(() -> { });
+
+            executor.close();
+
+            assertTrue(queued.isCancelled());
+            assertThrows(RejectedExecutionException.class, () -> executor.submitChat(() -> { }));
+            assertThrows(RejectedExecutionException.class, () -> executor.submitDrain(() -> { }));
+            assertThrows(RejectedExecutionException.class, () -> executor.submitSubscription(() -> { }));
+        } finally {
+            executor.close();
         }
     }
 

@@ -45,11 +45,10 @@ import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.UserAccountCapable;
 import org.leo.core.puppet.service.*;
 import org.leo.core.rpc.PuppetRpcErrorCodes;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.core.util.request.ComponentClassNameStrategy;
 
-import java.lang.reflect.Array;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -217,9 +216,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         }
 
         Map<String, Object> ping = testConnService.testConn();
-        Object code = ping == null ? null : ping.get("code");
-        String newHostId = ping == null ? null : normalizedText(ping.get("hostId"));
-        if (!(code instanceof Number) || ((Number) code).intValue() != 200 || newHostId == null) {
+        if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(ping)) {
             Map<String, Object> unavailable = new LinkedHashMap<>();
             unavailable.put("code", Integer.valueOf(503));
             unavailable.put("errorCode", PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
@@ -228,11 +225,13 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
             return unavailable;
         }
 
+        String newHostId = ((String) ping.get("hostId")).trim();
+        List<?> components = (List<?>) ping.get("components");
         componentLoadRegistry.clear();
         allLoadedComponent.clear();
         loadedComponentHostLastSeen.clear();
         setHostId(newHostId);
-        addLoadedComponent(newHostId, componentNames(ping.get("components")));
+        addLoadedComponent(newHostId, componentNames(components));
         return reboundResult(expectedHostId, newHostId);
     }
 
@@ -246,27 +245,10 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return rebound;
     }
 
-    private Set<String> componentNames(Object value) {
+    private Set<String> componentNames(List<?> components) {
         Set<String> names = new HashSet<>();
-        if (value instanceof Collection<?> collection) {
-            for (Object item : collection) addComponentName(names, item);
-        } else if (value != null && value.getClass().isArray()) {
-            for (int index = 0; index < Array.getLength(value); index++) {
-                addComponentName(names, Array.get(value, index));
-            }
-        }
+        for (Object item : components) names.add(((String) item).trim());
         return names;
-    }
-
-    private void addComponentName(Set<String> names, Object value) {
-        String name = normalizedText(value);
-        if (name != null) names.add(name);
-    }
-
-    private String normalizedText(Object value) {
-        if (value == null) return null;
-        String text = String.valueOf(value).trim();
-        return text.isEmpty() ? null : text;
     }
 
     /**

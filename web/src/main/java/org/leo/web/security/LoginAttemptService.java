@@ -4,6 +4,7 @@ import org.leo.service.config.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
@@ -31,12 +32,13 @@ public class LoginAttemptService {
     }
 
     public long retryAfterSeconds(String username, String remoteAddress) {
-        AttemptState state = attempts.get(key(username, remoteAddress));
+        String key = key(username, remoteAddress);
+        AttemptState state = attempts.get(key);
         if (state == null) return 0L;
         if (state.lockedUntil <= 0L) return 0L;
         long remainingMs = state.lockedUntil - nowMillis.getAsLong();
         if (remainingMs <= 0L) {
-            attempts.remove(key(username, remoteAddress), state);
+            attempts.remove(key, state);
             return 0L;
         }
         return Math.max(1L, (remainingMs + 999L) / 1000L);
@@ -44,32 +46,22 @@ public class LoginAttemptService {
 
     public void recordFailure(String username, String remoteAddress) {
         if (attempts.size() >= MAX_TRACKED_KEYS) evictExpiredOrOne();
-        int maxAttempts = intConfig("security.login.max.attempts", DEFAULT_MAX_ATTEMPTS, 1, 100);
-        long lockSeconds = intConfig("security.login.lock.seconds",
+        int maxAttempts = configService.getInt("security.login.max.attempts", DEFAULT_MAX_ATTEMPTS, 1, 100);
+        long lockSeconds = configService.getInt("security.login.lock.seconds",
                 (int) DEFAULT_LOCK_SECONDS, 1, 86_400);
         long now = nowMillis.getAsLong();
         attempts.compute(key(username, remoteAddress), (ignored, current) -> {
-            AttemptState state = current == null || (current.lockedUntil > 0L && current.lockedUntil <= now)
-                    ? new AttemptState() : current;
-            state.failures++;
-            if (state.failures >= maxAttempts) {
-                state.lockedUntil = now + lockSeconds * 1000L;
+            if (current == null || (current.lockedUntil > 0L && current.lockedUntil <= now)) {
+                current = new AttemptState(0, 0L);
             }
-            return state;
+            int failures = current.failures + 1;
+            long lockedUntil = failures >= maxAttempts ? now + lockSeconds * 1000L : current.lockedUntil;
+            return new AttemptState(failures, lockedUntil);
         });
     }
 
     public void recordSuccess(String username, String remoteAddress) {
         attempts.remove(key(username, remoteAddress));
-    }
-
-    private int intConfig(String key, int fallback, int min, int max) {
-        try {
-            int value = Integer.parseInt(configService.getString(key, String.valueOf(fallback)));
-            return Math.max(min, Math.min(max, value));
-        } catch (RuntimeException ignored) {
-            return fallback;
-        }
     }
 
     private void evictExpiredOrOne() {
@@ -84,13 +76,11 @@ public class LoginAttemptService {
     }
 
     private static String key(String username, String remoteAddress) {
-        String user = username == null ? "" : username.trim().toLowerCase();
+        String user = username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
         String remote = remoteAddress == null || remoteAddress.isBlank() ? "unknown" : remoteAddress.trim();
         return user + '\n' + remote;
     }
 
-    private static final class AttemptState {
-        private int failures;
-        private long lockedUntil;
+    private record AttemptState(int failures, long lockedUntil) {
     }
 }

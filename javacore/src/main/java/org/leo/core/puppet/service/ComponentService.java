@@ -345,15 +345,13 @@ public class ComponentService {
             applyHeaders((HttpCommunication) communication);
         }
 
-        int attempt = 0;
         int requestAttempts = maxReqCount;
         int maxAttempts = envelope.hostId() == null
                 ? requestAttempts : Math.max(requestAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
-        Map<String, Object> result = new HashMap<>();
+        String lastError = null;
         PuppetRpcResponse hostMismatchResponse = null;
 
-        while (attempt < maxAttempts) {
-            attempt++;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 HttpCommunication http = communication instanceof HttpCommunication
                         ? (HttpCommunication) communication : null;
@@ -378,27 +376,21 @@ public class ComponentService {
                         requestId + "|0|" + transportSeed());
                 EncodedPayload encoded = encode(wirePayload, requestId);
                 byte[] resp = communication.sendRequest(encoded.data());
-                result = decode(resp, encoded.requestIds());
-
-                if ("success".equals(result.get("reqStatus"))) {
-                    result.remove("reqStatus");
-                    PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(result);
-                    if (isHostIdMismatch(response)) {
-                        hostMismatchResponse = response;
-                        if (attempt < maxAttempts) {
-                            resetTransportAffinity();
-                            continue;
-                        }
-                        return recoverHostAffinity(envelope.hostId(), response);
+                PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(
+                        decode(resp, encoded.requestIds()));
+                if (isHostIdMismatch(response)) {
+                    hostMismatchResponse = response;
+                    if (attempt < maxAttempts) {
+                        resetTransportAffinity();
+                        continue;
                     }
-                    return PuppetRpcEnvelopeMapper.toResultMap(response);
+                    return recoverHostAffinity(envelope.hostId(), response);
                 }
+                return PuppetRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
-                result = new HashMap<>();
-                result.put("reqStatus", "fail");
                 // e.getMessage() 对 NPE 等是 null，用类名兜底
                 String msg = e.getMessage();
-                result.put("reqMsg", msg != null ? msg : e.getClass().getName() + " (no message)");
+                lastError = msg != null ? msg : e.getClass().getName() + " (no message)";
                 log.warn("[ComponentService] 请求失败 operation={} component={} attempt={} type={} message={}",
                         operation,
                         component,
@@ -409,26 +401,16 @@ public class ComponentService {
                         operation, component, attempt, e);
             }
 
-            if (attempt >= requestAttempts) {
-                if (hostMismatchResponse != null) {
-                    return recoverHostAffinity(envelope.hostId(), hostMismatchResponse);
-                }
-                String errMsg = (String) result.get("reqMsg");
-                result.remove("reqStatus");
-                result.remove("reqMsg");
-                // 通信失败时 result 为空 map，补充明确的错误信息
-                if (!result.containsKey("code")) {
-                    result.put("code", Integer.valueOf(500));
-                    String finalMsg = errMsg != null ? errMsg : "通信失败，请检查 Puppet 连接";
-                    result.put("msg", finalMsg);
-                    log.warn("[ComponentService] 重试结束 component={} operation={} message={}",
-                            component, operation, finalMsg);
-                }
-                return result;
-            }
+            if (attempt >= requestAttempts) break;
             sleepBeforeRetry(requestId, attempt);
         }
-        return result;
+        if (hostMismatchResponse != null) {
+            return recoverHostAffinity(envelope.hostId(), hostMismatchResponse);
+        }
+        String finalMsg = lastError != null ? lastError : "通信失败，请检查 Puppet 连接";
+        log.warn("[ComponentService] 重试结束 component={} operation={} message={}",
+                component, operation, finalMsg);
+        return new HashMap<>(Map.of("code", Integer.valueOf(500), "msg", finalMsg));
     }
 
     private Map<String, Object> recoverHostAffinity(
@@ -488,74 +470,35 @@ public class ComponentService {
 
     // ================= decode =================
 
-    private Map<String, Object> decode(byte[] data, List<String> requestIds) {
-        Map<String, Object> result = new HashMap<>();
-
-        try {
-            if (responseLayers.size() != requestIds.size()) {
-                throw new IllegalStateException("请求层与响应层数量不一致");
-            }
-            byte[] temp = data;
-            Map<String, Object> map = null;
-
-            for (int i = 0; i < responseLayers.size(); i++) {
-                map = decodeLayer(responseLayers.get(i), temp);
-                String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
-                if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(map, expectedRequestId)) {
-                    Object actualRequestId = map == null ? null : map.get("requestId");
-                    throw new IllegalStateException("响应 requestId 不匹配"
-                            + "（layer=" + i
-                            + ", expected=" + expectedRequestId
-                            + ", actual=" + actualRequestId
-                            + ", code=" + (map == null ? null : map.get("code")) + "）");
-                }
-
-                if (i == responseLayers.size() - 1) {
-                    result = map;
-                } else {
-                    PuppetRpcResponse relayResponse = PuppetRpcEnvelopeMapper.responseFromMap(map);
-                    if (!relayResponse.isSuccess() || !(relayResponse.data() instanceof Map<?, ?> relayData)
-                            || !(relayData.get("body") instanceof byte[] body)) {
-                        throw new IllegalStateException("Relay 响应缺少 data.body");
-                    }
-                    temp = body;
-                }
-            }
-
-            // result 可能为 null（PayloadCodec 解码结果为空）
-            if (result == null) {
-                log.warn("[ComponentService] decode: Disguise 返回 null，data.length={}",
-                        data == null ? -1 : data.length);
-                result = new HashMap<>();
-                result.put("reqStatus", "fail");
-                result.put("reqMsg", "PayloadCodec 解码结果为空");
-                return result;
-            }
-
-            // result 为空 map 说明响应解析异常
-            if (result.isEmpty()) {
-                log.warn("[ComponentService] decode: 解码结果为空 map，data.length={}",
-                        data == null ? -1 : data.length);
-                result.put("reqStatus", "fail");
-                result.put("reqMsg", "响应解码结果为空（Puppet 可能未发送响应体）");
-            } else {
-                result.put("reqStatus", "success");
-            }
-
-        } catch (Exception e) {
-            // 注意：此处 result 可能已被赋值为 null（来自上面的 result = map），
-            // 直接 result.clear() 会再次 NPE 并逃出 catch，必须先重建。
-            result = new HashMap<>();
-            result.put("reqStatus", "fail");
-            String msg = e.getMessage();
-            String reqMsg = msg != null ? msg : e.getClass().getName() + " (no message)";
-            result.put("reqMsg", reqMsg);
-            log.warn("[ComponentService] 响应解析失败 message={} data.length={}",
-                    reqMsg, data == null ? -1 : data.length);
-            log.debug("[ComponentService] 响应解析失败详情", e);
+    private Map<String, Object> decode(byte[] data, List<String> requestIds) throws Exception {
+        if (responseLayers.size() != requestIds.size()) {
+            throw new IllegalStateException("请求层与响应层数量不一致");
         }
-
-        return result;
+        byte[] current = data;
+        Map<String, Object> decoded = null;
+        for (int i = 0; i < responseLayers.size(); i++) {
+            decoded = decodeLayer(responseLayers.get(i), current);
+            String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
+            if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(decoded, expectedRequestId)) {
+                Object actualRequestId = decoded == null ? null : decoded.get("requestId");
+                throw new IllegalStateException("响应 requestId 不匹配"
+                        + "（layer=" + i
+                        + ", expected=" + expectedRequestId
+                        + ", actual=" + actualRequestId
+                        + ", code=" + (decoded == null ? null : decoded.get("code")) + "）");
+            }
+            if (i < responseLayers.size() - 1) {
+                PuppetRpcResponse relayResponse = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
+                if (!relayResponse.isSuccess() || !(relayResponse.data().get("body") instanceof byte[] body)) {
+                    throw new IllegalStateException("Relay 响应缺少 data.body");
+                }
+                current = body;
+            }
+        }
+        if (decoded == null || decoded.isEmpty()) {
+            throw new IllegalStateException("响应解码结果为空（Puppet 可能未发送响应体）");
+        }
+        return decoded;
     }
 
     private byte[] encodeLayer(RequestLayer layer, Map<String, Object> payload) throws Exception {

@@ -5,6 +5,7 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.service.puppetnode.PuppetNodeFactory;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,7 +29,7 @@ class PuppetConnServiceTest {
         when(node.testConnection()).thenReturn(Map.of(
                 "code", 200,
                 "hostId", "host-1",
-                "components", Map.of()));
+                "components", List.of()));
 
         Map<String, Object> result = new PuppetConnService(puppetService, factory)
                 .testConnection(config);

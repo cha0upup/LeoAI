@@ -726,15 +726,10 @@ public class UploadEngineService {
                 throw new IllegalStateException("远端操作未返回结果");
             }
             Object codeObj = result.get("code");
-            int code;
-            try {
-                code = codeObj instanceof Number
-                        ? ((Number) codeObj).intValue()
-                        : Integer.parseInt(String.valueOf(codeObj));
-            } catch (Exception error) {
+            if (!(codeObj instanceof Number number)) {
                 throw new IllegalStateException("远端操作返回状态无效");
             }
-            if (code != 200) {
+            if (number.intValue() != 200) {
                 Object msg = result.get("msg");
                 throw new IllegalStateException(msg == null ? "远端上传失败" : String.valueOf(msg));
             }

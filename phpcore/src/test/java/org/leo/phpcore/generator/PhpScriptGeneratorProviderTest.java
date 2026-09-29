@@ -47,6 +47,8 @@ class PhpScriptGeneratorProviderTest {
         assertEquals("php", artifact.getFileExtension());
         assertEquals(3, ((Number) artifact.getMetadata().get("protocolVersion")).intValue());
         assertEquals("Envelope", artifact.getMetadata().get("coreProtocol"));
+        assertEquals(List.of("PING", "RELAY", "COMPONENT_LOAD", "COMPONENT_INVOKE"),
+                artifact.getMetadata().get("coreOperations"));
         assertEquals("compact", artifact.getMetadata().get("outputMode"));
         assertEquals("minified-php", artifact.getMetadata().get("bootstrapEncoding"));
         assertEquals("fixed-seed", artifact.getMetadata().get("generationSeed"));
@@ -270,6 +272,44 @@ class PhpScriptGeneratorProviderTest {
         assertTrue(fileName.matches("[a-f0-9]{40}\\.(cache|dat|bin|idx)"), fileName);
         assertFalse(fileName.contains("FixtureComponent"));
         assertFalse(fileName.endsWith(".php"));
+    }
+
+    @Test
+    void generatedPhpCoreRejectsComponentResultsWithoutNumericCode(@TempDir Path tempDir) throws Exception {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
+        PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
+        GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
+                Map.of("outputMode", "portable", "seed", "strict-component-result"));
+        Path script = tempDir.resolve("endpoint.php");
+        Files.writeString(script, artifact.getContent().replace(
+                "file_get_contents('php://input')", "base64_decode($argv[1], true)"), StandardCharsets.UTF_8);
+        String componentKey = "b".repeat(80);
+        String componentSource = "<?php return ['id'=>'FixtureComponent','version'=>'1.0.0',"
+                + "'handle'=>function($action,$params){return ['legacy'=>'result'];}];";
+        Map<String, Object> load = Map.of(
+                "requestId", "request-strict-load",
+                "operation", "COMPONENT_LOAD",
+                "component", "FixtureComponent",
+                "params", Map.of("componentKey", componentKey, "source", componentSource));
+        Map<String, Object> invoke = Map.of(
+                "requestId", "request-strict-invoke",
+                "operation", "COMPONENT_INVOKE",
+                "component", "FixtureComponent",
+                "action", "run",
+                "params", Map.of("componentKey", componentKey));
+        List<Integer> expectedCodes = List.of(200, 500);
+        int index = 0;
+        for (Map<String, Object> request : List.of(load, invoke)) {
+            String wire = Base64.getEncoder().encodeToString(Base64.getEncoder().encode(
+                    new PhpPayloadCodec(PAYLOAD_KEY).encode(request)));
+            Process process = new ProcessBuilder("php", "-d", "sys_temp_dir=" + tempDir,
+                    script.toString(), wire).redirectErrorStream(true).start();
+            byte[] output = process.getInputStream().readAllBytes();
+            assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
+            Map<String, Object> response = new PhpPayloadCodec(PAYLOAD_KEY).decode(
+                    Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
+            assertEquals(expectedCodes.get(index++), ((Number) response.get("code")).intValue());
+        }
     }
 
     @Test

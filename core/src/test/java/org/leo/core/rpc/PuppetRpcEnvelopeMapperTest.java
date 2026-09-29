@@ -2,6 +2,7 @@ package org.leo.core.rpc;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -60,5 +61,25 @@ class PuppetRpcEnvelopeMapperTest {
                 () -> PuppetRpcEnvelopeMapper.requestFromMap(Map.of("requestId", "r")));
         assertThrows(IllegalArgumentException.class,
                 () -> PuppetRpcEnvelopeMapper.responseFromMap(Map.of("requestId", "r", "code", "200")));
+        assertThrows(IllegalArgumentException.class,
+                () -> PuppetRpcEnvelopeMapper.responseFromMap(
+                        Map.of("requestId", "r", "code", 200, "data", "old-result")));
+        assertThrows(IllegalArgumentException.class,
+                () -> PuppetRpcEnvelopeMapper.responseFromMap(
+                        Map.of("requestId", "r", "code", 500, "error", "old-error")));
+        assertThrows(IllegalArgumentException.class,
+                () -> PuppetRpcEnvelopeMapper.responseFromResult("r", Map.of("legacy", "result")));
+    }
+
+    @Test
+    void acceptsOnlyCurrentPingShape() {
+        assertTrue(PuppetRpcEnvelopeMapper.isCurrentPingResult(
+                Map.of("code", 200, "hostId", "host-1", "components", List.of("FileComponent"))));
+        assertFalse(PuppetRpcEnvelopeMapper.isCurrentPingResult(
+                Map.of("code", "200", "hostId", "host-1", "components", List.of())));
+        assertFalse(PuppetRpcEnvelopeMapper.isCurrentPingResult(
+                Map.of("code", 200, "hostId", "host-1", "components", new String[0])));
+        assertFalse(PuppetRpcEnvelopeMapper.isCurrentPingResult(
+                Map.of("code", 200, "hostId", "host-1", "components", List.of(123))));
     }
 }

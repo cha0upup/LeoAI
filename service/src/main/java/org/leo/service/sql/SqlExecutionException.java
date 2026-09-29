@@ -59,20 +59,14 @@ public final class SqlExecutionException extends Exception {
     }
 
     private static int integer(Object value, int fallback) {
-        Integer parsed = nullableInteger(value);
-        return parsed == null ? fallback : parsed;
+        return value instanceof Number number ? number.intValue() : fallback;
     }
 
     private static Integer nullableInteger(Object value) {
-        if (value instanceof Number number) return number.intValue();
-        try {
-            return value == null ? null : Integer.valueOf(String.valueOf(value));
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
+        return value instanceof Number number ? number.intValue() : null;
     }
 
     private static boolean bool(Object value) {
-        return Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(String.valueOf(value));
+        return Boolean.TRUE.equals(value);
     }
 }

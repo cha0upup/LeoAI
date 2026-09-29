@@ -7,6 +7,7 @@ import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
+import org.leo.service.audit.AuditParameterSanitizer;
 import org.leo.core.util.json.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,8 +18,6 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -248,7 +247,7 @@ public class AuditLogUtil {
         auditLog.setOperationPath(operationPath);
 
         if (requestParams != null) {
-            Map<String, Object> sanitizedParams = sanitizeParams(new HashMap<String, Object>(requestParams));
+            Map<String, Object> sanitizedParams = AuditParameterSanitizer.sanitize(requestParams);
             try {
                 auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));
             } catch (Exception e) {
@@ -308,60 +307,4 @@ public class AuditLogUtil {
         return null;
     }
     
-    /**
-     * 脱敏处理：移除敏感信息
-     */
-    private static Map<String, Object> sanitizeParams(Map<String, Object> params) {
-        if (params == null) {
-            return new HashMap<>();
-        }
-        Map<String, Object> sanitized = new HashMap<String, Object>();
-        for (Map.Entry<String, Object> entry : params.entrySet()) {
-            String key = entry.getKey();
-            sanitized.put(key, sanitizeValue(key, entry.getValue()));
-        }
-        return sanitized;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Object sanitizeValue(String fieldName, Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (isSensitiveField(fieldName)) {
-            return "***";
-        }
-        if (value instanceof Map<?, ?>) {
-            Map<String, Object> nested = new HashMap<String, Object>();
-            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
-                String key = entry.getKey() == null ? "" : entry.getKey().toString();
-                nested.put(key, sanitizeValue(key, entry.getValue()));
-            }
-            return nested;
-        }
-        if (value instanceof List<?>) {
-            return ((List<?>) value).stream()
-                    .map(item -> sanitizeValue(fieldName, item))
-                    .toList();
-        }
-        return value;
-    }
-
-    private static boolean isSensitiveField(String fieldName) {
-        if (fieldName == null) {
-            return false;
-        }
-        String normalized = fieldName.trim().toLowerCase();
-        return "password".equals(normalized)
-                || "pwd".equals(normalized)
-                || "passwd".equals(normalized)
-                || "secret".equals(normalized)
-                || "token".equals(normalized)
-                || "key".equals(normalized)
-                || "credential".equals(normalized)
-                || "content".equals(normalized)
-                || "data".equals(normalized)
-                || "filedata".equals(normalized)
-                || "base64".equals(normalized);
-    }
 }

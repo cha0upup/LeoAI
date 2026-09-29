@@ -19,22 +19,12 @@ public class PasswordPolicy {
         if (password == null || password.isBlank()) {
             throw new IllegalArgumentException("密码不能为空");
         }
-        int minLength = configuredMinLength();
+        int minLength = configService.getInt("security.password.min.length", DEFAULT_MIN_LENGTH, 6, 64);
         if (password.length() < minLength) {
             throw new IllegalArgumentException("密码长度不能少于 " + minLength + " 位");
         }
         if (password.length() > ABSOLUTE_MAX_LENGTH) {
             throw new IllegalArgumentException("密码长度不能超过 " + ABSOLUTE_MAX_LENGTH + " 位");
-        }
-    }
-
-    private int configuredMinLength() {
-        try {
-            int configured = Integer.parseInt(configService.getString(
-                    "security.password.min.length", String.valueOf(DEFAULT_MIN_LENGTH)));
-            return Math.max(6, Math.min(64, configured));
-        } catch (RuntimeException ignored) {
-            return DEFAULT_MIN_LENGTH;
         }
     }
 }

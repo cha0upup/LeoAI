@@ -442,34 +442,21 @@ public class PuppetNodeFileController {
      * 包装 puppet 节点调用，将 checked Exception 转为 ApiException（RuntimeException），
      * 由 GlobalExceptionHandler 统一处理并返回正确 HTTP 状态码。
      */
-    @SuppressWarnings("unchecked")
-    private <T> T puppetCall(PuppetAction<T> action, String errorPrefix) {
+    private Map<String, Object> puppetCall(PuppetAction action, String errorPrefix) {
         return puppetCall(action, errorPrefix, SUCCESS_CODES);
     }
 
-    private <T> T puppetCall(PuppetAction<T> action, String errorPrefix, Set<Integer> acceptedCodes) {
+    private Map<String, Object> puppetCall(PuppetAction action, String errorPrefix, Set<Integer> acceptedCodes) {
         try {
-            T result = action.execute();
-            if (!(result instanceof Map<?, ?> resultMap)) {
-                if (result == null) {
-                    throw ApiException.serverError(errorPrefix + ": 节点返回为空");
-                }
-                return result;
+            Map<String, Object> result = action.execute();
+            if (result == null) {
+                throw ApiException.serverError(errorPrefix + ": 节点返回为空");
             }
 
-            Object codeValue = resultMap.get("code");
-            Integer code = null;
-            if (codeValue instanceof Number number) {
-                code = number.intValue();
-            } else if (codeValue != null) {
-                try {
-                    code = Integer.parseInt(codeValue.toString());
-                } catch (NumberFormatException ignored) {
-                    // 统一落入无效响应处理。
-                }
-            }
+            Object codeValue = result.get("code");
+            Integer code = codeValue instanceof Number number ? number.intValue() : null;
             if (code == null || !acceptedCodes.contains(code)) {
-                Object message = resultMap.get("msg");
+                Object message = result.get("msg");
                 throw ApiException.serverError(errorPrefix + ": "
                         + (message != null ? message : "节点返回状态异常(" + codeValue + ")"));
             }
@@ -482,8 +469,8 @@ public class PuppetNodeFileController {
     }
 
     @FunctionalInterface
-    private interface PuppetAction<T> {
-        T execute() throws Exception;
+    private interface PuppetAction {
+        Map<String, Object> execute() throws Exception;
     }
 
     private FileCapable getFileNode(Map<String, Object> params) {

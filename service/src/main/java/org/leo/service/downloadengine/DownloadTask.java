@@ -379,19 +379,23 @@ public class DownloadTask {
             try {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> res = fileNode.fileDownloadChunk(filePath, size, offset);
-                int code = (int) toLong(res.get("code"));
+                int code = res.get("code") instanceof Number number ? number.intValue() : -1;
                 if (code == 404 || code == 403 || code == 416) {
                     throw new IllegalStateException("不可恢复错误: code=" + code + ", msg=" + res.get("msg"));
+                }
+                if (code != 100 && code != 200) {
+                    throw new IllegalStateException("远端下载返回状态异常: code=" + code);
                 }
                 Object dataObj = res.get("data");
                 byte[] data = (dataObj instanceof byte[]) ? (byte[]) dataObj : null;
                 if (data == null) {
                     throw new IllegalStateException("响应缺少data");
                 }
-                int bytesRead = (int) toLong(res.get("bytesRead"));
-                if (bytesRead != data.length) {
-                    bytesRead = data.length;
+                if (!(res.get("bytesRead") instanceof Number readCount)
+                        || readCount.intValue() != data.length) {
+                    throw new IllegalStateException("远端下载返回字节数无效");
                 }
+                int bytesRead = readCount.intValue();
                 if (bytesRead <= 0) {
                     throw new IllegalStateException("读取到空数据: offset=" + offset);
                 }
@@ -477,11 +481,11 @@ public class DownloadTask {
                 touch();
                 @SuppressWarnings("unchecked")
                 Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
-                if (toLong(md5Res.get("code")) != 200L) {
+                if (!(md5Res.get("code") instanceof Number code) || code.intValue() != 200) {
                     throw new IllegalStateException(Objects.toString(
                             md5Res.get("msg"), "远端校验未返回成功状态"));
                 }
-                String remoteMd5 = Objects.toString(md5Res.get("md5"), Objects.toString(md5Res.get("data"), null));
+                String remoteMd5 = Objects.toString(md5Res.get("md5"), null);
                 if (remoteMd5 == null || !remoteMd5.equalsIgnoreCase(expectedMd5)) {
                     fail("远端文件MD5不一致，可能发生变更，expected=" + expectedMd5 + ", actual=" + remoteMd5);
                     return;
@@ -622,9 +626,7 @@ public class DownloadTask {
     }
 
     private static long toLong(Object obj) {
-        if (obj == null) return 0L;
-        if (obj instanceof Number) return ((Number) obj).longValue();
-        return Long.parseLong(String.valueOf(obj));
+        return obj instanceof Number number ? number.longValue() : 0L;
     }
 
     public TransferTaskState getState() {

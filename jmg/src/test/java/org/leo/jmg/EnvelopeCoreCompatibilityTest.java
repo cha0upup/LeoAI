@@ -8,6 +8,7 @@ import org.leo.jmg.core.LeoCore;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.InvocationHandler;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,6 +46,7 @@ class EnvelopeCoreCompatibilityTest {
         assertEquals(200, envelopeResponse.get("code"));
         assertTrue(envelopeResponse.get("data") instanceof Map<?, ?>);
         assertTrue(((Map<?, ?>) envelopeResponse.get("data")).containsKey("hostId"));
+        assertTrue(((Map<?, ?>) envelopeResponse.get("data")).get("components") instanceof List<?>);
 
         String actualHostId = String.valueOf(((Map<?, ?>) envelopeResponse.get("data")).get("hostId"));
         Map<String, Object> wrongHostRequest = new HashMap<>();

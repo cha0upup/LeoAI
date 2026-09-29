@@ -392,9 +392,8 @@ public abstract class HttpSenderEngine implements AutoCloseable {
                     }
                 }
                 Object resultCode = resp == null ? null : resp.get("code");
-                boolean successful = !(resultCode instanceof Number)
-                        || (((Number) resultCode).intValue() >= 200
-                        && ((Number) resultCode).intValue() < 300);
+                boolean successful = resultCode instanceof Number code
+                        && code.intValue() >= 200 && code.intValue() < 300;
                 entry.put("success", Boolean.valueOf(successful));
                 if (!successful && resp != null && resp.get("msg") != null) {
                     entry.put("error", String.valueOf(resp.get("msg")));

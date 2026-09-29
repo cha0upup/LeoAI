@@ -77,6 +77,30 @@ class ServiceTaskExecutorTest {
         }
     }
 
+    @Test
+    void closeCancelsQueuedWorkInEveryExecutionDomain() throws Exception {
+        ServiceTaskExecutor executor = executor();
+        try {
+            CountDownLatch started = new CountDownLatch(3);
+            CountDownLatch release = new CountDownLatch(1);
+            executor.submitSqlExport(() -> await(started, release));
+            executor.submitUpload(() -> await(started, release));
+            executor.submitDownloadWorkers(1, () -> await(started, release));
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            Future<?> sql = executor.submitSqlExport(() -> { });
+            Future<?> upload = executor.submitUpload(() -> { });
+            Future<?> download = executor.submitDownloadWorkers(1, () -> { }).get(0);
+
+            executor.close();
+
+            assertTrue(sql.isCancelled());
+            assertTrue(upload.isCancelled());
+            assertTrue(download.isCancelled());
+        } finally {
+            executor.close();
+        }
+    }
+
     private ServiceTaskExecutor executor() {
         return new ServiceTaskExecutor(1, 1, 1, 1, 1, 1);
     }

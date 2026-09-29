@@ -18,6 +18,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class PuppetNodeSqlServiceResultBoundaryTest {
 
     @Test
+    void rejectsOldStringStatusCodesFromNodeSqlResults() {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        SqlCapable puppet = sqlNode((connection, command) ->
+                Map.of("code", "200", "rows", List.of(Map.of("value", 1))));
+
+        assertThrows(SqlExecutionException.class,
+                () -> service.executeSql(puppet,
+                        Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"),
+                        "SELECT 1"));
+    }
+
+    @Test
     void tableMetadataReturnsStructuredRefsWithoutPerTableCountQueries() throws Exception {
         PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         AtomicInteger executions = new AtomicInteger();

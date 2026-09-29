@@ -42,6 +42,7 @@ class PhpExecCommandSimpleComponentTest {
                     .replace("if ($available('proc_open')) {", "if (false) {"));
         }
         Map<String, Object> result = invoke(source);
+        assertEquals(200, ((Number) result.get("code")).intValue());
         assertEquals("simple-ok-err", result.get("data"));
         assertEquals(7, ((Number) result.get("exitCode")).intValue());
     }

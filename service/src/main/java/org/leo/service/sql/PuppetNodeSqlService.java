@@ -329,7 +329,7 @@ public class PuppetNodeSqlService {
             throw new IllegalStateException("puppet 执行结果为空");
         }
         Object code = result.get("code");
-        if (code != null && !"200".equals(String.valueOf(code))) {
+        if (!(code instanceof Number number) || number.intValue() != 200) {
             throw SqlExecutionException.fromResult(result);
         }
         return result;
@@ -361,15 +361,7 @@ public class PuppetNodeSqlService {
     }
 
     private boolean isSuccessCode(Object code) {
-        if (code instanceof Number number) {
-            return number.intValue() >= 200 && number.intValue() < 300;
-        }
-        try {
-            int value = Integer.parseInt(String.valueOf(code));
-            return value >= 200 && value < 300;
-        } catch (Exception ignored) {
-            return false;
-        }
+        return code instanceof Number number && number.intValue() >= 200 && number.intValue() < 300;
     }
 
     private boolean requestedDriverAvailable(Map<String, Object> capabilities) {

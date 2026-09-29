@@ -109,8 +109,9 @@ function phpcore_invoke($params) {
     if ($component === null) return ['code' => 424];
     $action = isset($params['action']) ? (string)$params['action'] : '';
     $result = call_user_func($component['handle'], $action, $params);
-    if (!is_array($result)) $result = ['result' => $result];
-    if (!isset($result['code'])) $result['code'] = 200;
+    if (!is_array($result) || !array_key_exists('code', $result) || !is_int($result['code'])) {
+        throw new InvalidArgumentException('component result must contain an integer code');
+    }
     return $result;
 }
 
@@ -144,8 +145,10 @@ function phpcore_forward($params) {
 }
 
 function phpcore_envelope_response($requestId, $result) {
-    if (!is_array($result)) $result = ['code' => 500];
-    $code = isset($result['code']) ? (int)$result['code'] : 500;
+    if (!is_array($result) || !array_key_exists('code', $result) || !is_int($result['code'])) {
+        throw new InvalidArgumentException('operation result must contain an integer code');
+    }
+    $code = $result['code'];
     unset($result['code']);
     $response = ['requestId' => (string)$requestId, 'code' => $code];
     if ($code >= 200 && $code < 300) {

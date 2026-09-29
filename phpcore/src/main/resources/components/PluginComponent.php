@@ -10,6 +10,8 @@ return [
         if ($source === '') throw new InvalidArgumentException('plugin source is required');
         $callable = eval('return function(array $params) {' . $source . "\n};");
         $result = $callable(is_array($pluginParams) ? $pluginParams : []);
-        return is_array($result) ? $result : ['result' => $result];
+        if (!is_array($result)) return ['code' => 200, 'result' => $result];
+        if (!array_key_exists('code', $result)) $result['code'] = 200;
+        return $result;
     }
 ];

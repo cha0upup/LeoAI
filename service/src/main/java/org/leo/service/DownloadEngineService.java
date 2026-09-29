@@ -69,7 +69,10 @@ public class DownloadEngineService {
         @SuppressWarnings("unchecked")
         Map<String, Object> probe = fileNode.fileDownloadChunk(filePath, 1L, 0L);
         ensureRemoteSuccess(probe, Set.of(100, 200), "读取远端文件信息失败");
-        long expectedLength = toLong(probe.get("length"));
+        if (!(probe.get("length") instanceof Number length)) {
+            throw new IllegalStateException("远端文件长度无效");
+        }
+        long expectedLength = length.longValue();
         if (expectedLength < 0L) {
             throw new IllegalStateException("远端文件长度无效: " + expectedLength);
         }
@@ -425,16 +428,6 @@ public class DownloadEngineService {
         }
     }
 
-    private static long toLong(Object obj) {
-        if (obj == null) {
-            return 0L;
-        }
-        if (obj instanceof Number) {
-            return ((Number) obj).longValue();
-        }
-        return Long.parseLong(String.valueOf(obj));
-    }
-
     private static int clampInt(int v, int defaultVal, int min, int max) {
         int val = v <= 0 ? defaultVal : v;
         if (val < min) return min;
@@ -447,13 +440,10 @@ public class DownloadEngineService {
             return null;
         }
         Object codeObj = md5Res.get("code");
-        if (codeObj == null || toLong(codeObj) != 200L) {
+        if (!(codeObj instanceof Number code) || code.intValue() != 200) {
             return null;
         }
         Object md5 = md5Res.get("md5");
-        if (md5 == null) {
-            md5 = md5Res.get("data");
-        }
         return md5 == null ? null : String.valueOf(md5);
     }
 
@@ -463,7 +453,7 @@ public class DownloadEngineService {
         if (result == null) {
             throw new IllegalStateException(errorPrefix + ": 节点返回为空");
         }
-        int code = (int) toLong(result.get("code"));
+        int code = result.get("code") instanceof Number number ? number.intValue() : -1;
         if (!acceptedCodes.contains(code)) {
             Object message = result.get("msg");
             throw new IllegalStateException(errorPrefix + ": "

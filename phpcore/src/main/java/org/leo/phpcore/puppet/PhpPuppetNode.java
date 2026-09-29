@@ -32,6 +32,7 @@ import org.leo.core.runtime.PuppetRuntime;
 import org.leo.core.runtime.RuntimeProfile;
 import org.leo.core.puppet.http.HttpSenderEngine;
 import org.leo.core.rpc.PuppetRpcErrorCodes;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.phpcore.rpc.PhpRpcClient;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 import org.leo.phpcore.component.PhpComponentVariantBuilder;
@@ -164,10 +165,15 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     @Override
     public Map<String, Object> testConnection() throws Exception {
         Map<String, Object> result = rpcClient.ping();
-        Object reportedHostId = result.get("hostId");
-        if (reportedHostId != null) setHostId(String.valueOf(reportedHostId));
+        if (!success(result)) return result;
+        if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(result)) {
+            return error(502, "节点响应格式不符合当前协议");
+        }
+        String reportedHostId = ((String) result.get("hostId")).trim();
+        List<?> components = (List<?>) result.get("components");
+        setHostId(reportedHostId);
         loadedComponents.clear();
-        addReportedComponents(result.get("components"));
+        addReportedComponents(components);
         Map<String, Object> normalized = new LinkedHashMap<>(result);
         List<String> componentIds = new ArrayList<>(loadedComponents); componentIds.sort(String::compareTo);
         normalized.put("components", componentIds);
@@ -180,14 +186,14 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
         }
         try {
             Map<String, Object> ping = rpcClient.ping();
-            Object reported = ping == null ? null : ping.get("hostId");
-            String newHostId = reported == null ? null : String.valueOf(reported).trim();
-            if (!success(ping) || newHostId == null || newHostId.isBlank()) {
+            if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(ping)) {
                 return unavailableResult(expectedHostId);
             }
+            String newHostId = ((String) ping.get("hostId")).trim();
+            List<?> components = (List<?>) ping.get("components");
             loadedComponents.clear();
             setHostId(newHostId);
-            addReportedComponents(ping.get("components"));
+            addReportedComponents(components);
             return reboundResult(expectedHostId, newHostId);
         } catch (Exception e) {
             Map<String, Object> unavailable = unavailableResult(expectedHostId);
@@ -948,17 +954,9 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
         if (value != null && !value.isBlank()) target.put(key, value);
     }
 
-    private void addStringValues(Object raw, Set<String> target) {
-        if (raw instanceof Iterable<?> iterable) {
-            for (Object item : iterable) if (item != null) target.add(String.valueOf(item));
-        } else if (raw instanceof Object[] array) {
-            for (Object item : array) if (item != null) target.add(String.valueOf(item));
-        }
-    }
-
-    private void addReportedComponents(Object raw) {
+    private void addReportedComponents(List<?> components) {
         Set<String> reported = new java.util.LinkedHashSet<>();
-        addStringValues(raw, reported);
+        for (Object item : components) reported.add(((String) item).trim());
         for (String value : reported) {
             String componentId = componentVariantBuilder.originalId(value, hostId, componentRegistry.getComponentIds());
             if (componentId != null) loadedComponents.add(componentId);

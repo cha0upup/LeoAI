@@ -573,7 +573,7 @@ $cleanup = static function ($excludeKey) use (
 // Response construction is shared by all operations; process liveness is not EOF.
 $terminalResponse = static function ($state, $fields = []) use ($instanceId) {
     return array_merge([
-        'code' => 200, 'instanceId' => $instanceId, 'longPolling' => false, 'batchRead' => true,
+        'code' => 200, 'instanceId' => $instanceId, 'longPolling' => false,
         'alive' => is_array($state) && !empty($state['active']),
         'pty' => is_array($state) && !empty($state['pty']),
         'resizable' => is_array($state) && !empty($state['resizable']),

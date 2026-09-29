@@ -242,7 +242,7 @@ public final class PhpRpcClient implements AutoCloseable {
             }
             if (i < responseLayers.size() - 1) {
                 PuppetRpcResponse relayResponse = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
-                Object nested = relayResponse.data() instanceof Map<?, ?> data ? data.get("body") : null;
+                Object nested = relayResponse.isSuccess() ? relayResponse.data().get("body") : null;
                 if (!relayResponse.isSuccess() || !(nested instanceof byte[] bytes)) {
                     throw new IllegalStateException("PHP Puppet Relay 响应缺少 data.body");
                 }

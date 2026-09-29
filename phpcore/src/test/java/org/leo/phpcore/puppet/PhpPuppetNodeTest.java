@@ -49,6 +49,15 @@ class PhpPuppetNodeTest {
     private static final String KEY = "php-node-test-key";
 
     @Test
+    void rejectsPingWithoutCurrentComponentList() throws Exception {
+        Communication communication = bytes -> response(decodeRequest(bytes),
+                Map.of("code", 200, "hostId", "php-host"));
+        PhpPuppetNode node = node(communication, new PortableDisguise());
+
+        assertEquals(502, node.testConnection().get("code"));
+    }
+
+    @Test
     void restoresOpaquePingAliasesAndUsesEndpointVariantForInvocations() throws Exception {
         List<Map<String, Object>> invokes = new ArrayList<>();
         Disguise portable = new PortableDisguise();

@@ -1,17 +1,14 @@
 package org.leo.service.concurrent;
 
 import jakarta.annotation.PreDestroy;
+import org.leo.core.concurrent.TaskExecutors;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /** Isolated, bounded execution domains for SQL export and file transfer tasks. */
 @Component
@@ -36,9 +33,9 @@ public final class ServiceTaskExecutor implements AutoCloseable {
     ServiceTaskExecutor(int sqlThreads, int sqlQueueCapacity,
                         int uploadThreads, int uploadQueueCapacity,
                         int downloadThreads, int downloadQueueCapacity) {
-        this.sqlExecutor = newExecutor(sqlThreads, sqlQueueCapacity, "sql-export-");
-        this.uploadExecutor = newExecutor(uploadThreads, uploadQueueCapacity, "file-upload-");
-        this.downloadExecutor = newExecutor(downloadThreads, downloadQueueCapacity, "file-download-");
+        this.sqlExecutor = TaskExecutors.bounded(sqlThreads, sqlQueueCapacity, "sql-export-");
+        this.uploadExecutor = TaskExecutors.bounded(uploadThreads, uploadQueueCapacity, "file-upload-");
+        this.downloadExecutor = TaskExecutors.bounded(downloadThreads, downloadQueueCapacity, "file-download-");
     }
 
     public Future<?> submitSqlExport(Runnable task) {
@@ -112,36 +109,9 @@ public final class ServiceTaskExecutor implements AutoCloseable {
         return Math.max(4, Math.min(8, Runtime.getRuntime().availableProcessors()));
     }
 
-    private static ThreadPoolExecutor newExecutor(int threads, int queueCapacity, String prefix) {
-        if (threads < 1 || queueCapacity < 1) {
-            throw new IllegalArgumentException("service task executor sizing values must be positive");
-        }
-        ThreadPoolExecutor executor = new ThreadPoolExecutor(
-                threads,
-                threads,
-                60L,
-                TimeUnit.SECONDS,
-                new ArrayBlockingQueue<Runnable>(queueCapacity),
-                daemonThreadFactory(prefix),
-                new ThreadPoolExecutor.AbortPolicy());
-        executor.allowCoreThreadTimeOut(true);
-        return executor;
-    }
-
-    private static ThreadFactory daemonThreadFactory(String prefix) {
-        AtomicInteger sequence = new AtomicInteger();
-        return task -> {
-            Thread thread = new Thread(task, prefix + sequence.incrementAndGet());
-            thread.setDaemon(true);
-            return thread;
-        };
-    }
-
     @Override
     @PreDestroy
     public void close() {
-        sqlExecutor.shutdownNow();
-        uploadExecutor.shutdownNow();
-        downloadExecutor.shutdownNow();
+        TaskExecutors.shutdownNow(sqlExecutor, uploadExecutor, downloadExecutor);
     }
 }

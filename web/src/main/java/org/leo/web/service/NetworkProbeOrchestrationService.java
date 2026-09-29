@@ -360,7 +360,8 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             future = rpcExecutor.submit(() -> {
                 synchronized (task.nodeCallMonitor) {
                     Map<String, Object> response = call.invoke();
-                    int code = integer(response == null ? null : response.get("code"), 500);
+                    int code = response != null && response.get("code") instanceof Number number
+                            ? number.intValue() : 500;
                     if (response == null || code != 200) {
                         throw new IllegalStateException(response == null
                                 ? "节点网络探测调用返回为空"

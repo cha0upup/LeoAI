@@ -4,6 +4,7 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.repository.session.PuppetHostCacheRepository;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.service.puppetnode.PuppetNodeFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,14 +133,13 @@ public class PuppetHostDiscoveryService {
             return;
         }
         Map<String, Object> result = outcome.result();
-        if (!isSuccess(result)) {
+        if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(result)) {
             logger.debug("HostId 探测未成功, puppetId={}, probe={}, code={}",
                     puppet.getPuppetId(), outcome.probe() + 1,
                     result == null ? null : result.get("code"));
             return;
         }
-        String hostId = normalized(result.get("hostId"));
-        if (hostId != null) discovered.add(hostId);
+        discovered.add(((String) result.get("hostId")).trim());
     }
 
     private record ProbeOutcome(int probe, Map<String, Object> result, Throwable error) { }
@@ -171,13 +171,6 @@ public class PuppetHostDiscoveryService {
             for (byte value : digest) hex.append(String.format("%02x", value));
             return hex.toString();
         } catch (Exception e) { return source; }
-    }
-
-    private boolean isSuccess(Map<String, Object> result) {
-        if (result == null) return false;
-        Object code = result.get("code");
-        if (code instanceof Number number) return number.intValue() == 200;
-        return "200".equals(String.valueOf(code));
     }
 
     private String normalized(Object value) {

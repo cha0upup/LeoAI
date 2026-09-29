@@ -3,6 +3,7 @@ package org.leo.service;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.service.puppetnode.PuppetNodeFactory;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -61,11 +62,13 @@ public class PuppetConnService {
             Map<String, Object> result = node.testConnection();
             long latency = System.currentTimeMillis() - start;
 
-            if (!isConnectionSuccess(result)) {
+            if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(result)) {
                 Map<String, Object> data = new HashMap<>();
                 data.put("success",   false);
                 data.put("latencyMs", latency);
-                data.put("message",   result != null ? String.valueOf(result.get("msg")) : "无响应");
+                data.put("message", result == null ? "无响应" :
+                        result.get("msg") != null ? String.valueOf(result.get("msg"))
+                                : "节点响应格式不符合当前协议");
                 return data;
             }
 
@@ -93,17 +96,6 @@ public class PuppetConnService {
         data.put("message", message);
         if (latencyMs != null) data.put("latencyMs", latencyMs);
         return data;
-    }
-
-    private static boolean isConnectionSuccess(Map<String, Object> result) {
-        if (result == null) {
-            return false;
-        }
-        Object code = result.get("code");
-        if (code instanceof Number number) {
-            return number.intValue() == 200;
-        }
-        return "200".equals(String.valueOf(code));
     }
 
 }

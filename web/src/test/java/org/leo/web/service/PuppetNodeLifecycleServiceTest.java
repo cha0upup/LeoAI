@@ -17,6 +17,7 @@ import org.leo.web.dto.puppetnode.PuppetInitResponse;
 import org.mockito.MockedStatic;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
@@ -66,7 +68,7 @@ class PuppetNodeLifecycleServiceTest {
         AbstractPuppetNode node = mock(AbstractPuppetNode.class);
         when(nodeFactory.createLiveNode(puppet, user)).thenReturn(node);
         when(node.getPuppet()).thenReturn(puppet);
-        when(node.testConnection()).thenReturn(Map.of("code", 200));
+        when(node.testConnection()).thenReturn(Map.of("code", 200, "hostId", "host-1", "components", List.of()));
 
         PuppetInitResponse first = lifecycleService.initLiveSession(puppet, user, null, null);
         PuppetInitResponse second = lifecycleService.initLiveSession(puppet, user, null, null);
@@ -74,6 +76,21 @@ class PuppetNodeLifecycleServiceTest {
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSame(node, assertSessionWithoutAiThreads(first, false).getPuppetNode());
         assertSame(node, assertSessionWithoutAiThreads(second, false).getPuppetNode());
+    }
+
+    @Test
+    void rejectsOldNodeResponsesWithoutHostIdentityOrCurrentComponentList() throws Exception {
+        AbstractPuppetNode node = mock(AbstractPuppetNode.class);
+        when(nodeFactory.createLiveNode(puppet, user)).thenReturn(node);
+        for (Map<String, Object> response : List.of(
+                Map.<String, Object>of("code", "200", "hostId", "host-1", "components", List.of()),
+                Map.<String, Object>of("code", 200, "components", List.of()),
+                Map.<String, Object>of("code", 200, "hostId", "host-1", "components", "old-format"))) {
+            when(node.testConnection()).thenReturn(response);
+            assertThrows(RuntimeException.class,
+                    () -> lifecycleService.initLiveSession(puppet, user, null, null));
+        }
+        assertTrue(PuppetNodeSessionContainer.getAllSession().isEmpty());
     }
 
     @Test

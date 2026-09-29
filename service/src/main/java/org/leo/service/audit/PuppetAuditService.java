@@ -12,20 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 @Service
 public class PuppetAuditService {
 
     private static final Logger logger = LoggerFactory.getLogger(PuppetAuditService.class);
-    private static final Pattern INLINE_SECRET = Pattern.compile(
-            "(?i)(^|[?&;])((?:password|passwd|pwd|token|access_token|secret|api_key)=)([^&;\\s]*)");
-    private static final Pattern AUTHORITY_PASSWORD =
-            Pattern.compile("(://[^:/?#\\s]+:)[^@/?#\\s]+(@)");
-
     private final AuditLogService auditLogService;
     private final AuditPolicyService auditPolicyService;
     private final UserService userService;
@@ -87,7 +79,7 @@ public class PuppetAuditService {
             auditLog.setErrorMessage(errorMessage);
             auditLog.setRemark("AI_TOOL");
             if (requestParams != null) {
-                Map<String, Object> sanitizedParams = sanitizeParams(requestParams);
+                Map<String, Object> sanitizedParams = AuditParameterSanitizer.sanitize(requestParams);
                 try {
                     auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));
                 } catch (Exception e) {
@@ -123,56 +115,4 @@ public class PuppetAuditService {
         }
     }
 
-    private Map<String, Object> sanitizeParams(Map<String, Object> params) {
-        Map<String, Object> sanitized = new HashMap<>();
-        for (Map.Entry<String, Object> entry : params.entrySet()) {
-            sanitized.put(entry.getKey(), sanitizeValue(entry.getKey(), entry.getValue()));
-        }
-        return sanitized;
-    }
-
-    private Object sanitizeValue(String fieldName, Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (isSensitiveField(fieldName)) {
-            return "***";
-        }
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> nested = new HashMap<>();
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                String key = entry.getKey() == null ? "" : entry.getKey().toString();
-                nested.put(key, sanitizeValue(key, entry.getValue()));
-            }
-            return nested;
-        }
-        if (value instanceof List<?> list) {
-            return list.stream()
-                    .map(item -> sanitizeValue(fieldName, item))
-                    .toList();
-        }
-        if (value instanceof String text) {
-            String sanitized = INLINE_SECRET.matcher(text).replaceAll("$1$2***");
-            return AUTHORITY_PASSWORD.matcher(sanitized).replaceAll("$1***$2");
-        }
-        return value;
-    }
-
-    private boolean isSensitiveField(String fieldName) {
-        if (fieldName == null) {
-            return false;
-        }
-        String normalized = fieldName.trim().toLowerCase();
-        return "password".equals(normalized)
-                || "pwd".equals(normalized)
-                || "passwd".equals(normalized)
-                || "secret".equals(normalized)
-                || "token".equals(normalized)
-                || "key".equals(normalized)
-                || "credential".equals(normalized)
-                || "content".equals(normalized)
-                || "data".equals(normalized)
-                || "filedata".equals(normalized)
-                || "base64".equals(normalized);
-    }
 }

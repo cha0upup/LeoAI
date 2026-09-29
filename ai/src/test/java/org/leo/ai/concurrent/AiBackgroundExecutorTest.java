@@ -3,6 +3,7 @@ package org.leo.ai.concurrent;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +52,30 @@ class AiBackgroundExecutorTest {
             assertTrue(daemon.get());
             assertTrue(threadName.get().startsWith("ai-probe-"));
             release.countDown();
+        }
+    }
+
+    @Test
+    void closeCancelsQueuedWarmupAndProbeWork() throws Exception {
+        AiBackgroundExecutor executor = new AiBackgroundExecutor(1, 1, 1, 1);
+        try {
+            CountDownLatch started = new CountDownLatch(2);
+            CountDownLatch release = new CountDownLatch(1);
+            executor.submitWarmup(() -> await(started, release));
+            executor.submitProbe(() -> {
+                await(started, release);
+                return true;
+            });
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            Future<?> warmup = executor.submitWarmup(() -> { });
+            Future<Boolean> probe = executor.submitProbe(() -> true);
+
+            executor.close();
+
+            assertTrue(warmup.isCancelled());
+            assertTrue(probe.isCancelled());
+        } finally {
+            executor.close();
         }
     }
 

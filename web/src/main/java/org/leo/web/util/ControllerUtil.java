@@ -387,17 +387,7 @@ public class ControllerUtil {
 
     private static Integer extractResponseCode(Map<String, Object> result) {
         Object codeObj = result.get("code");
-        if (codeObj instanceof Number) {
-            return ((Number) codeObj).intValue();
-        }
-        if (codeObj != null) {
-            try {
-                return Integer.valueOf(Integer.parseInt(codeObj.toString()));
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
+        return codeObj instanceof Number number ? number.intValue() : null;
     }
 
     private static String extractResponseMessage(Map<String, Object> result) {

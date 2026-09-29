@@ -1,6 +1,7 @@
 package org.leo.core.rpc;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Converts execution envelopes to their runtime-neutral wire maps. */
@@ -49,20 +50,28 @@ public final class PuppetRpcEnvelopeMapper {
         if (envelope == null) throw new IllegalArgumentException("envelope不能为空");
         Object code = envelope.get("code");
         if (!(code instanceof Number)) throw new IllegalArgumentException("code必须为数字");
+        int status = ((Number) code).intValue();
+        boolean success = status >= 200 && status < 300;
+        Object payload = envelope.get(success ? "data" : "error");
+        if (!(payload instanceof Map<?, ?>)) {
+            throw new IllegalArgumentException(success ? "data必须为Map" : "error必须为Map");
+        }
+        Map<String, Object> content = map(payload);
         return new PuppetRpcResponse(
                 string(envelope.get("requestId")),
-                ((Number) code).intValue(),
-                envelope.get("data"),
-                map(envelope.get("error")));
+                status,
+                success ? content : null,
+                success ? Map.of() : content);
     }
 
     /** Wraps the result produced by a component or core operation. */
     public static PuppetRpcResponse responseFromResult(
             String requestId, Map<String, Object> operationResult) {
-        Map<String, Object> source = operationResult == null
-                ? Map.of() : new LinkedHashMap<>(operationResult);
+        if (operationResult == null) throw new IllegalArgumentException("operationResult不能为空");
+        Map<String, Object> source = new LinkedHashMap<>(operationResult);
         Object codeValue = source.remove("code");
-        int code = codeValue instanceof Number ? ((Number) codeValue).intValue() : 500;
+        if (!(codeValue instanceof Number)) throw new IllegalArgumentException("code必须为数字");
+        int code = ((Number) codeValue).intValue();
         if (code >= 200 && code < 300) {
             return new PuppetRpcResponse(requestId, code, source, Map.of());
         }
@@ -77,11 +86,7 @@ public final class PuppetRpcEnvelopeMapper {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("code", response.code());
         if (response.isSuccess()) {
-            if (response.data() instanceof Map<?, ?> data) {
-                copyEntries(data, result);
-            } else if (response.data() != null) {
-                result.put("data", response.data());
-            }
+            copyEntries(response.data(), result);
         } else {
             copyEntries(response.error(), result);
             Object message = result.remove("message");
@@ -92,6 +97,19 @@ public final class PuppetRpcEnvelopeMapper {
 
     public static boolean isEnvelopeResponse(Map<String, Object> response, String requestId) {
         return response != null && requestId != null && requestId.equals(response.get("requestId"));
+    }
+
+    public static boolean isCurrentPingResult(Map<String, Object> result) {
+        if (result == null || !(result.get("code") instanceof Number code)
+                || code.intValue() != 200
+                || !(result.get("hostId") instanceof String hostId) || hostId.isBlank()
+                || !(result.get("components") instanceof List<?> components)) {
+            return false;
+        }
+        for (Object component : components) {
+            if (!(component instanceof String name) || name.isBlank()) return false;
+        }
+        return true;
     }
 
     private static void copyEntries(Map<?, ?> source, Map<String, Object> target) {

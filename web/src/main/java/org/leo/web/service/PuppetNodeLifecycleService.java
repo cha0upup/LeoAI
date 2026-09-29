@@ -8,6 +8,7 @@ import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.repository.session.PuppetReconRepository;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.service.PuppetService;
 import org.leo.service.puppetnode.PuppetNodeFactory;
 import org.leo.web.dto.puppetnode.PuppetInitResponse;
@@ -16,8 +17,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.lang.reflect.Array;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -116,26 +115,21 @@ public class PuppetNodeLifecycleService {
     private boolean doInitConn(AbstractPuppetNode node, String sessionId,
                                String userId, String projectId, String selectedHostId) throws Exception {
         Map<String, Object> result = node.testConnection();
-        if (!isConnectionSuccess(result)) return false;
+        if (!PuppetRpcEnvelopeMapper.isCurrentPingResult(result)) return false;
 
-        String hostId = parseHostId(result.get("hostId"));
-        if (requiresHostId(node) && hostId == null) {
-            logger.debug("测试连接成功但缺少 hostId，sessionId={}", sessionId);
-            return false;
-        }
+        String hostId = ((String) result.get("hostId")).trim();
+        List<?> components = (List<?>) result.get("components");
         if (selectedHostId != null && !selectedHostId.isBlank()
                 && !selectedHostId.trim().equals(hostId)) {
             return false;
         }
 
-        String boundHostId = selectedHostId != null && !selectedHostId.isBlank()
-                ? selectedHostId.trim() : hostId;
-        seedNodeContext(node, boundHostId, result.get("components"));
+        seedNodeContext(node, hostId, components);
 
         PuppetNodeSession session = new PuppetNodeSession(sessionId, node,
                 System.currentTimeMillis(), userId);
         session.setProjectId(projectId);
-        if (boundHostId != null) session.bindHostId(boundHostId);
+        session.bindHostId(hostId);
         loadPersistedReconSummary(session, node, userId);
         sessionLifecycleManager.register(session);
 
@@ -143,25 +137,7 @@ public class PuppetNodeLifecycleService {
         return true;
     }
 
-    private boolean isConnectionSuccess(Map<String, Object> result) {
-        if (result == null) {
-            return false;
-        }
-        Object code = result.get("code");
-        if (code instanceof Number number) {
-            return number.intValue() == 200;
-        }
-        return "200".equals(String.valueOf(code));
-    }
-
-    private boolean requiresHostId(AbstractPuppetNode node) {
-        return node instanceof HostScopedCapable || node instanceof LoadedComponentCacheCapable;
-    }
-
-    private void seedNodeContext(AbstractPuppetNode node, String hostId, Object components) {
-        if (hostId == null) {
-            return;
-        }
+    private void seedNodeContext(AbstractPuppetNode node, String hostId, List<?> components) {
         if (node instanceof LoadedComponentCacheCapable componentCache) {
             componentCache.addLoadedComponent(hostId, parseLoadedComponents(components));
         }
@@ -170,45 +146,10 @@ public class PuppetNodeLifecycleService {
         }
     }
 
-    private String parseHostId(Object value) {
-        if (value == null) {
-            return null;
-        }
-        String hostId = String.valueOf(value).trim();
-        return hostId.isBlank() ? null : hostId;
-    }
-
-    private Set<String> parseLoadedComponents(Object components) {
+    private Set<String> parseLoadedComponents(List<?> components) {
         Set<String> result = new LinkedHashSet<>();
-        if (components == null) {
-            return result;
-        }
-        if (components instanceof Collection<?> collection) {
-            for (Object item : collection) {
-                addComponentName(result, item);
-            }
-            return result;
-        }
-        Class<?> type = components.getClass();
-        if (type.isArray()) {
-            int length = Array.getLength(components);
-            for (int i = 0; i < length; i++) {
-                addComponentName(result, Array.get(components, i));
-            }
-            return result;
-        }
-        addComponentName(result, components);
+        for (Object item : components) result.add(((String) item).trim());
         return result;
-    }
-
-    private void addComponentName(Set<String> target, Object value) {
-        if (value == null) {
-            return;
-        }
-        String name = String.valueOf(value).trim();
-        if (!name.isBlank()) {
-            target.add(name);
-        }
     }
 
     private void loadPersistedReconSummary(PuppetNodeSession session, AbstractPuppetNode node, String userId) {

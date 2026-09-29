@@ -57,11 +57,11 @@ class PuppetHostDiscoveryServiceTest {
         PuppetHostCacheRepository repository = mock(PuppetHostCacheRepository.class);
         when(repository.loadHostDiscovery(any(), eq("puppet-1"), any())).thenReturn(null);
 
-        AbstractPuppetNode first = probe(Map.of("code", 200, "hostId", "host-a"));
+        AbstractPuppetNode first = probe(Map.of("code", 200, "hostId", "host-a", "components", List.of()));
         AbstractPuppetNode failed = mock(AbstractPuppetNode.class);
         when(failed.testConnection()).thenThrow(new IllegalStateException("401"));
         doNothing().when(failed).close();
-        AbstractPuppetNode third = probe(Map.of("code", 200, "hostId", "host-b"));
+        AbstractPuppetNode third = probe(Map.of("code", 200, "hostId", "host-b", "components", List.of()));
         AbstractPuppetNode unavailable = probe(Map.of("code", 401));
         ArrayDeque<AbstractPuppetNode> nodes = new ArrayDeque<>(
                 List.of(first, failed, third, unavailable, unavailable, unavailable, unavailable, unavailable));
@@ -90,10 +90,10 @@ class PuppetHostDiscoveryServiceTest {
         AbstractPuppetNode slow = mock(AbstractPuppetNode.class);
         when(slow.testConnection()).thenAnswer(ignored -> {
             Thread.sleep(PuppetHostDiscoveryService.DEFAULT_PROBE_TIMEOUT_MILLIS * 3);
-            return Map.of("code", 200, "hostId", "too-late");
+            return Map.of("code", 200, "hostId", "too-late", "components", List.of());
         });
         doNothing().when(slow).close();
-        AbstractPuppetNode available = probe(Map.of("code", 200, "hostId", "host-fast"));
+        AbstractPuppetNode available = probe(Map.of("code", 200, "hostId", "host-fast", "components", List.of()));
         AbstractPuppetNode unavailable = probe(Map.of("code", 401));
         ArrayDeque<AbstractPuppetNode> nodes = new ArrayDeque<>(List.of(
                 slow, available, unavailable, unavailable, unavailable, unavailable, unavailable, unavailable));

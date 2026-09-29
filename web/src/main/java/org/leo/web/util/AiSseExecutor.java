@@ -1,16 +1,12 @@
 package org.leo.web.util;
 
 import jakarta.annotation.PreDestroy;
+import org.leo.core.concurrent.TaskExecutors;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Shared, bounded execution domains for AI chat work and SSE event delivery.
@@ -39,37 +35,12 @@ public final class AiSseExecutor implements AutoCloseable {
         if (chatThreads < 1 || chatQueueCapacity < 1 || drainThreads < 1) {
             throw new IllegalArgumentException("AI SSE executor sizing values must be positive");
         }
-        this.chatExecutor = new ThreadPoolExecutor(
-                chatThreads,
-                chatThreads,
-                60L,
-                TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(chatQueueCapacity),
-                daemonThreadFactory("ai-chat-"),
-                new ThreadPoolExecutor.AbortPolicy());
-        this.chatExecutor.allowCoreThreadTimeOut(true);
-
-        this.drainExecutor = new ThreadPoolExecutor(
-                drainThreads,
-                drainThreads,
-                60L,
-                TimeUnit.SECONDS,
-                new SynchronousQueue<>(),
-                daemonThreadFactory("ai-sse-drain-"),
-                new ThreadPoolExecutor.AbortPolicy());
-        this.drainExecutor.allowCoreThreadTimeOut(true);
+        this.chatExecutor = TaskExecutors.bounded(chatThreads, chatQueueCapacity, "ai-chat-");
+        this.drainExecutor = TaskExecutors.directHandoff(drainThreads, "ai-sse-drain-");
 
         // 重连订阅与 Turn 执行事件泵隔离，避免大量刷新连接占满 drain 域，
         // 进而阻塞新的 AI Turn 建立首条实时流。
-        this.subscriptionExecutor = new ThreadPoolExecutor(
-                drainThreads,
-                drainThreads,
-                60L,
-                TimeUnit.SECONDS,
-                new SynchronousQueue<>(),
-                daemonThreadFactory("ai-sse-subscription-"),
-                new ThreadPoolExecutor.AbortPolicy());
-        this.subscriptionExecutor.allowCoreThreadTimeOut(true);
+        this.subscriptionExecutor = TaskExecutors.directHandoff(drainThreads, "ai-sse-subscription-");
     }
 
     public Future<?> submitChat(Runnable task) throws RejectedExecutionException {
@@ -111,20 +82,9 @@ public final class AiSseExecutor implements AutoCloseable {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static ThreadFactory daemonThreadFactory(String prefix) {
-        AtomicInteger sequence = new AtomicInteger();
-        return task -> {
-            Thread thread = new Thread(task, prefix + sequence.incrementAndGet());
-            thread.setDaemon(true);
-            return thread;
-        };
-    }
-
     @Override
     @PreDestroy
     public void close() {
-        chatExecutor.shutdownNow();
-        drainExecutor.shutdownNow();
-        subscriptionExecutor.shutdownNow();
+        TaskExecutors.shutdownNow(chatExecutor, drainExecutor, subscriptionExecutor);
     }
 }
