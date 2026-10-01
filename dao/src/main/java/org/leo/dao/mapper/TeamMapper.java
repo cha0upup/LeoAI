@@ -23,13 +23,13 @@ public interface TeamMapper {
     Team findTeamById(@Param("teamId") String teamId);
 
     @Select("SELECT * FROM teams WHERE leader_id = #{leaderId}")
-    List<Team> findTeamByLeader(@Param("leaderId") String leaderId);
+    List<Team> findTeamsByLeaderId(@Param("leaderId") String leaderId);
 
     @Select("SELECT * FROM teams WHERE team_name = #{teamName} COLLATE NOCASE")
     Team findTeamByName(@Param("teamName") String teamName);
 
     @Select("SELECT * FROM teams")
-    List<Team> getAllTeam();
+    List<Team> getAllTeams();
 
     @Insert("INSERT INTO teams (team_id, team_name, leader_id, description, status, create_time, update_time, remark) VALUES (#{teamId}, #{teamName}, #{leaderId}, #{description}, #{status}, #{createTime}, #{updateTime}, #{remark})")
     boolean insertTeam(@Param("teamId") String teamId, 

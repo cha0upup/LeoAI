@@ -2,7 +2,7 @@ package org.leo.ai.tools.platform;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-import org.leo.ai.agent.AgentRuntimeResolver;
+import org.leo.ai.agent.AiRuntimeResolver;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.agent.PlatformSkillAccessPolicy;
 import org.leo.ai.service.SkillDescriptor;
@@ -14,8 +14,8 @@ import org.leo.core.ai.AiRuntimeState;
  *
  * <p>遵循 langchain4j-skills / Agent Skills 规范，工具名统一为 {@code activate_skill}。
  *
- * <p>scope 在构造时由 {@link org.leo.ai.agent.AgentConfig} 硬编码注入，AI 无需也无法传入错误的 scope。
- * 通过 {@code @Bean} 分别创建两个实例注册到 PuppetNodeAgent 和 PlatformAgent。
+ * <p>scope 在构造时由 {@link org.leo.ai.agent.AiAgentConfig} 硬编码注入，AI 无需也无法传入错误的 scope。
+ * 通过 {@code @Bean} 分别创建两个实例注册到 NodeAiAgent 和 PlatformAiAgent。
  */
 @org.leo.ai.agent.AiToolPolicy(
         kind = org.leo.ai.agent.AiToolKind.CONTEXT,
@@ -25,10 +25,10 @@ public class SkillActivationTools {
 
     private final SkillRegistryService skillRegistry;
     private final String scope;
-    private final AgentRuntimeResolver runtimeResolver;
+    private final AiRuntimeResolver runtimeResolver;
 
     public SkillActivationTools(SkillRegistryService skillRegistry, String scope,
-                                AgentRuntimeResolver runtimeResolver) {
+                                AiRuntimeResolver runtimeResolver) {
         this.skillRegistry = skillRegistry;
         this.scope         = scope;
         this.runtimeResolver = runtimeResolver;

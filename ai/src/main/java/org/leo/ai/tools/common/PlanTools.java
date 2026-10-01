@@ -2,7 +2,7 @@ package org.leo.ai.tools.common;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-import org.leo.ai.agent.AgentRuntimeResolver;
+import org.leo.ai.agent.AiRuntimeResolver;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
@@ -16,7 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Platform 与 Puppet Agent 共用的计划控制工具。 */
+/** Platform AI 与 Node AI 共用的计划控制工具。 */
 @Component
 @AiToolPolicy(
         kind = AiToolKind.CONTROL,
@@ -24,10 +24,10 @@ import java.util.Map;
         exclusive = true, business = false)
 public class PlanTools {
 
-    private final AgentRuntimeResolver runtimeResolver;
+    private final AiRuntimeResolver runtimeResolver;
     private final AiPlanCoordinator coordinator;
 
-    public PlanTools(AgentRuntimeResolver runtimeResolver,
+    public PlanTools(AiRuntimeResolver runtimeResolver,
                      AiPlanCoordinator coordinator) {
         this.runtimeResolver = runtimeResolver;
         this.coordinator = coordinator;

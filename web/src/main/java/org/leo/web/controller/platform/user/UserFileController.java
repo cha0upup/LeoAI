@@ -5,7 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -368,7 +368,7 @@ public class UserFileController {
     }
 
     private Path getUserWorkspacePath(String userId) {
-        return PuppetNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
+        return AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
                 .toPath()
                 .toAbsolutePath()
                 .normalize();

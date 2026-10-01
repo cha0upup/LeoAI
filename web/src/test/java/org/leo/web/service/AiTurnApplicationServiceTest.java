@@ -7,8 +7,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.session.AiThread;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.runtime.AiTurnOrchestrator;
@@ -43,13 +43,13 @@ class AiTurnApplicationServiceTest {
     @AfterEach
     void cleanState() {
         PlatformAiStateStore.remove("thread-1");
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void completesProtocolAndReleasesLeaseOnlyAfterRuntimeFutureCompletes(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void completesProtocolAndReleasesLeaseOnlyAfterRuntimeFutureCompletes(boolean agent) {
+        Fixture fixture = fixture(agent);
 
         CompletableFuture<Boolean> terminal = fixture.application.execute(fixture.turn);
 
@@ -69,8 +69,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void propagatesRuntimeFailureStatusAndMessageToProtocolTerminal(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void propagatesRuntimeFailureStatusAndMessageToProtocolTerminal(boolean agent) {
+        Fixture fixture = fixture(agent);
 
         CompletableFuture<Boolean> terminal = fixture.application.execute(fixture.turn);
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(
@@ -84,8 +84,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void mapsRuntimeCancellationToInterruptedProtocolStatus(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void mapsRuntimeCancellationToInterruptedProtocolStatus(boolean agent) {
+        Fixture fixture = fixture(agent);
 
         CompletableFuture<Boolean> terminal = fixture.application.execute(fixture.turn);
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(
@@ -99,8 +99,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void preservesWaitingForUserStatus(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void preservesWaitingForUserStatus(boolean agent) {
+        Fixture fixture = fixture(agent);
         var terminal = fixture.application.execute(fixture.turn);
         fixture.state.markWaitingForUserInput();
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.COMPLETED, null));
@@ -112,8 +112,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void exceptionalRuntimeCompletionFailsTurnAndReleasesLease(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void exceptionalRuntimeCompletionFailsTurnAndReleasesLease(boolean agent) {
+        Fixture fixture = fixture(agent);
         var terminal = fixture.application.execute(fixture.turn);
         fixture.runtime.completeExceptionally(new IllegalStateException("runtime failed"));
 
@@ -125,8 +125,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void lateFailureDoesNotReleaseOrFailTheNextTurn(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void lateFailureDoesNotReleaseOrFailTheNextTurn(boolean agent) {
+        Fixture fixture = fixture(agent);
         var terminal = fixture.application.execute(fixture.turn);
         fixture.state.bindActiveTurnId("turn-2");
         fixture.state.bindActiveLeaseToken("lease-2");
@@ -141,8 +141,8 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void protocolFailureStillReleasesLease(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void protocolFailureStillReleasesLease(boolean agent) {
+        Fixture fixture = fixture(agent);
         when(fixture.protocol.completeFromRuntime("turn-1", "completed", null, "lease-1"))
                 .thenThrow(new IllegalStateException("database unavailable"));
         var terminal = fixture.application.execute(fixture.turn);
@@ -154,15 +154,15 @@ class AiTurnApplicationServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void preservesPreparedMessageAttachmentsAndProtocolIdentity(boolean puppet) {
-        Fixture fixture = fixture(puppet);
+    void preservesPreparedMessageAttachmentsAndProtocolIdentity(boolean agent) {
+        Fixture fixture = fixture(agent);
         long beforeStart = System.currentTimeMillis();
         fixture.application.execute(fixture.turn);
 
         ArgumentCaptor<AiTurnExecutionRequest> captured = ArgumentCaptor.forClass(AiTurnExecutionRequest.class);
-        if (puppet) {
-            verify(fixture.puppetTurns).executeChat(
-                    eq(PuppetNodeSessionContainer.getSession("session-1")), eq((AiThread) fixture.state), captured.capture());
+        if (agent) {
+            verify(fixture.agentTurns).executeChat(
+                    eq(AgentNodeSessionContainer.getSession("session-1")), eq((AiThread) fixture.state), captured.capture());
         } else {
             verify(fixture.platformTurns).executeChat(eq((PlatformAiState) fixture.state), captured.capture());
         }
@@ -180,20 +180,20 @@ class AiTurnApplicationServiceTest {
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.COMPLETED, null));
     }
 
-    private static Fixture fixture(boolean puppet) {
+    private static Fixture fixture(boolean agent) {
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         AiConversationStoreService store = mock(AiConversationStoreService.class);
         PlatformAiThreadService platformThreads = mock(PlatformAiThreadService.class);
         PlatformAiTurnService platformTurns = mock(PlatformAiTurnService.class);
-        PuppetNodeAiThreadService puppetThreads = mock(PuppetNodeAiThreadService.class);
-        PuppetNodeAiTurnService puppetTurns = mock(PuppetNodeAiTurnService.class);
+        NodeAiThreadService agentThreads = mock(NodeAiThreadService.class);
+        NodeAiTurnService agentTurns = mock(NodeAiTurnService.class);
         AiAuditLogStore auditLogStore = mock(AiAuditLogStore.class);
         AiUserInputService userInputService = mock(AiUserInputService.class);
         when(userInputService.resumePrompt(anyString(), nullable(String.class), anyString()))
                 .thenAnswer(invocation -> "resumed: " + invocation.getArgument(2));
         AiTurnApplicationService application = new AiTurnApplicationService(
                 protocol, store, platformThreads, platformTurns,
-                puppetThreads, puppetTurns, auditLogStore, userInputService);
+                agentThreads, agentTurns, auditLogStore, userInputService);
 
         AiThreadRecord persisted = new AiThreadRecord();
         persisted.setThreadId("thread-1");
@@ -201,19 +201,19 @@ class AiTurnApplicationServiceTest {
 
         AiRuntimeState state;
         CompletableFuture<AiTurnOrchestrator.TerminalResult> runtime = new CompletableFuture<>();
-        if (puppet) {
+        if (agent) {
             AiThread thread = new AiThread("thread-1", "test");
             state = thread;
-            PuppetNodeSession session = new PuppetNodeSession();
+            AgentNodeSession session = new AgentNodeSession();
             session.setSessionId("session-1");
-            PuppetNodeSessionContainer.addSession("session-1", session);
-            when(puppetThreads.ensureThreadReady(session, "thread-1", null))
-                    .thenReturn(new PuppetNodeAiThreadService.ThreadResolution(thread, null));
-            when(puppetTurns.tryClaimExecution(thread)).thenAnswer(invocation -> {
+            AgentNodeSessionContainer.addSession("session-1", session);
+            when(agentThreads.ensureThreadReady(session, "thread-1", null))
+                    .thenReturn(new NodeAiThreadService.ThreadResolution(thread, null));
+            when(agentTurns.tryClaimExecution(thread)).thenAnswer(invocation -> {
                 thread.bindActiveLeaseToken("lease-1");
                 return true;
             });
-            when(puppetTurns.executeChat(eq(session), eq(thread), any(AiTurnExecutionRequest.class)))
+            when(agentTurns.executeChat(eq(session), eq(thread), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);
         } else {
             PlatformAiState platformState = PlatformAiStateStore.create("thread-1");
@@ -227,7 +227,7 @@ class AiTurnApplicationServiceTest {
             when(platformTurns.executeChat(eq(platformState), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);
         }
-        String scope = puppet ? AiTurnCommandPayload.SCOPE_PUPPET : AiTurnCommandPayload.SCOPE_PLATFORM;
+        String scope = agent ? AiTurnCommandPayload.SCOPE_AGENT : AiTurnCommandPayload.SCOPE_PLATFORM;
 
         AiTurnCommandPayload command = AiTurnCommandPayload.create(
                 scope,
@@ -246,7 +246,7 @@ class AiTurnApplicationServiceTest {
 
         when(protocol.failStart(eq("turn-1"), anyString(), nullable(String.class)))
                 .thenAnswer(invocation -> completedTurn("failed", invocation.getArgument(1)));
-        return new Fixture(application, protocol, platformTurns, puppetTurns, state, runtime, turn);
+        return new Fixture(application, protocol, platformTurns, agentTurns, state, runtime, turn);
     }
 
     private static AiTurnProtocolService.TurnSnapshot completedTurn(
@@ -266,17 +266,17 @@ class AiTurnApplicationServiceTest {
             AiTurnApplicationService application,
             AiTurnProtocolService protocol,
             PlatformAiTurnService platformTurns,
-            PuppetNodeAiTurnService puppetTurns,
+            NodeAiTurnService agentTurns,
             AiRuntimeState state,
             CompletableFuture<AiTurnOrchestrator.TerminalResult> runtime,
             AiTurnProtocolService.TurnSnapshot turn) {
         private void verifyReleased(boolean released) {
-            if (state instanceof AiThread thread) verify(puppetTurns, times(released ? 1 : 0)).releaseExecutionLease(thread);
+            if (state instanceof AiThread thread) verify(agentTurns, times(released ? 1 : 0)).releaseExecutionLease(thread);
             else verify(platformTurns, times(released ? 1 : 0)).releaseExecutionLease((PlatformAiState) state);
         }
 
         private void verifyFailed(boolean failed) {
-            if (state instanceof AiThread thread) verify(puppetTurns, times(failed ? 1 : 0)).failDetachedExecution(thread);
+            if (state instanceof AiThread thread) verify(agentTurns, times(failed ? 1 : 0)).failDetachedExecution(thread);
             else verify(platformTurns, times(failed ? 1 : 0)).failDetachedExecution((PlatformAiState) state);
         }
     }

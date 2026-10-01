@@ -12,7 +12,7 @@ import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 import org.leo.service.user.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,8 +32,8 @@ import java.util.List;
 @Component
 public class AiToolAuthorizationPolicy {
 
-    public enum AgentScope {
-        PUPPET_NODE,
+    public enum AiAgentScope {
+        AGENT_NODE,
         PLATFORM
     }
 
@@ -44,19 +44,19 @@ public class AiToolAuthorizationPolicy {
     private final AiToolExecutionBoundary executionBoundary;
     private final AiToolResultArchiveTools archiveTools;
     private final AiToolCatalog toolCatalog;
-    private final AgentRuntimeResolver runtimeResolver;
+    private final AiRuntimeResolver runtimeResolver;
     private final AiToolExposurePolicy exposurePolicy;
 
     public AiToolAuthorizationPolicy(UserService userService) {
         this(userService, new AiToolExecutionBoundary(), null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AiRuntimeResolver(), null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
         this(userService, executionBoundary, archiveTools,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AiRuntimeResolver(), null);
     }
 
     @Autowired
@@ -64,7 +64,7 @@ public class AiToolAuthorizationPolicy {
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
                                      AiToolCatalog toolCatalog,
-                                     AgentRuntimeResolver runtimeResolver,
+                                     AiRuntimeResolver runtimeResolver,
                                      AiToolExposurePolicy exposurePolicy) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
@@ -76,7 +76,7 @@ public class AiToolAuthorizationPolicy {
                 : new AiToolResultArchiveTools(executionBoundary.archive());
     }
 
-    public ToolProvider toolProvider(AgentScope scope, Object... toolObjects) {
+    public ToolProvider toolProvider(AiAgentScope scope, Object... toolObjects) {
         List<SecuredTool> securedTools = secureTools(scope, toolObjects);
         return new ToolProvider() {
             @Override
@@ -105,12 +105,12 @@ public class AiToolAuthorizationPolicy {
         };
     }
 
-    public void bindContext(AgentScope scope, Object memoryId) {
+    public void bindContext(AiAgentScope scope, Object memoryId) {
         AiToolContext.setFromMemoryId(memoryId);
         AiToolContext.setExecutionPolicy(resolvePolicy(scope, memoryId));
     }
 
-    private List<SecuredTool> secureTools(AgentScope scope, Object... toolObjects) {
+    private List<SecuredTool> secureTools(AiAgentScope scope, Object... toolObjects) {
         List<SecuredTool> secured = new ArrayList<>();
         if (toolObjects == null) return secured;
         for (Object source : Arrays.asList(toolObjects)) {
@@ -133,7 +133,7 @@ public class AiToolAuthorizationPolicy {
         return List.copyOf(secured);
     }
 
-    private AiServiceTool wrap(AgentScope scope,
+    private AiServiceTool wrap(AiAgentScope scope,
                                AiServiceTool tool,
                                AiToolAccess.Level access,
                                AiToolDescriptor descriptor) {
@@ -226,7 +226,7 @@ public class AiToolAuthorizationPolicy {
         return tool.toBuilder().toolSpecification(specification).build();
     }
 
-    AiExecutionPolicy resolvePolicy(AgentScope scope, Object memoryId) {
+    AiExecutionPolicy resolvePolicy(AiAgentScope scope, Object memoryId) {
         AiExecutionPolicy runtimePolicy = runtimePolicy(scope, memoryId);
         if (runtimePolicy == null || runtimePolicy.getUserId() == null
                 || runtimePolicy.getUserId().isBlank()) {
@@ -236,8 +236,8 @@ public class AiToolAuthorizationPolicy {
         if (user == null || !Integer.valueOf(1).equals(user.getStatus())) {
             return AiExecutionPolicy.defaultPolicy();
         }
-        if (scope == AgentScope.PUPPET_NODE) {
-            PuppetNodeSession session = runtimeResolver.resolvePuppetSession(memoryId);
+        if (scope == AiAgentScope.AGENT_NODE) {
+            AgentNodeSession session = runtimeResolver.resolveAgentSession(memoryId);
             if (!AccessPolicy.canAccessSession(session, user)) {
                 return AiExecutionPolicy.defaultPolicy();
             }
@@ -245,7 +245,7 @@ public class AiToolAuthorizationPolicy {
         return AiExecutionPolicy.from(user);
     }
 
-    private AiExecutionPolicy runtimePolicy(AgentScope scope, Object memoryId) {
+    private AiExecutionPolicy runtimePolicy(AiAgentScope scope, Object memoryId) {
         AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
         return runtime != null ? runtime.getExecutionPolicy()
                 : AiExecutionPolicy.defaultPolicy();

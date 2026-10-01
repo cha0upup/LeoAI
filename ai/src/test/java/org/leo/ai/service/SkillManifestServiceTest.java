@@ -12,7 +12,7 @@ class SkillManifestServiceTest {
     @Test
     void rejectsManagementFieldsInSkillFrontmatter() {
         SkillInspection inspection = service.inspect(
-                "puppet-node", "sample-skill", """
+                "agent-node", "sample-skill", """
                         ---
                         name: sample-skill
                         description: sample
@@ -29,7 +29,7 @@ class SkillManifestServiceTest {
     @Test
     void rejectsDirectoryNamesOutsideSkillNamingConvention() {
         SkillInspection inspection = service.inspect(
-                "puppet-node", "Bad_Skill",
+                "agent-node", "Bad_Skill",
                 """
                         ---
                         name: Bad_Skill
@@ -49,7 +49,7 @@ class SkillManifestServiceTest {
     @Test
     void draftCannotBeEnabled() {
         SkillInspection inspection = service.inspect(
-                "puppet-node", "sample-skill", skillContent(),
+                "agent-node", "sample-skill", skillContent(),
                 validManifest(true).replace("status: published", "status: draft"));
 
         assertFalse(inspection.valid());
@@ -61,7 +61,7 @@ class SkillManifestServiceTest {
     void importedSkillIsForcedToDraftAndDisabled() {
         String imported = service.markImportedDraft(validManifest(true));
         SkillInspection inspection = service.inspect(
-                "puppet-node", "sample-skill", skillContent(), imported);
+                "agent-node", "sample-skill", skillContent(), imported);
 
         assertTrue(inspection.valid());
         assertFalse(inspection.descriptor().enabled());
@@ -93,7 +93,7 @@ class SkillManifestServiceTest {
                 id: leo.test.sample-skill
                 name: sample-skill
                 version: 1.0.0
-                scope: puppet-node
+                scope: agent-node
                 domain: operation
                 category: discovery
                 mode: assess

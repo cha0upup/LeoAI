@@ -2,7 +2,7 @@ package org.leo.ai.tools.platform;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.service.user.UserService;
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 平台 Agent 工具对用户身份和 Puppet 资源范围的二次校验。 */
+/** 平台 Agent 工具对用户身份和 Agent 资源范围的二次校验。 */
 @Component
 public class PlatformToolAccessService {
 
@@ -30,38 +30,38 @@ public class PlatformToolAccessService {
         return user;
     }
 
-    public List<Puppet> filterVisible(List<Puppet> puppets) {
+    public List<Agent> filterVisible(List<Agent> agents) {
         User user = requireCurrentUser();
-        List<Puppet> visible = new ArrayList<>();
-        if (puppets == null) return visible;
-        for (Puppet puppet : puppets) {
-            if (canView(puppet, user)) visible.add(puppet);
+        List<Agent> visible = new ArrayList<>();
+        if (agents == null) return visible;
+        for (Agent agent : agents) {
+            if (canView(agent, user)) visible.add(agent);
         }
         return visible;
     }
 
-    public Puppet requireVisible(Puppet puppet) {
-        if (puppet == null) throw new IllegalArgumentException("Puppet不存在");
-        if (!canView(puppet, requireCurrentUser())) {
-            throw new SecurityException("无权限访问此 Puppet");
+    public Agent requireVisible(Agent agent) {
+        if (agent == null) throw new IllegalArgumentException("Agent不存在");
+        if (!canView(agent, requireCurrentUser())) {
+            throw new SecurityException("无权限访问此 Agent");
         }
-        return puppet;
+        return agent;
     }
 
-    public Puppet requireModifiable(Puppet puppet) {
-        if (puppet == null) throw new IllegalArgumentException("Puppet不存在");
-        if (!canModify(puppet, requireCurrentUser())) {
-            throw new SecurityException("无权限修改此 Puppet");
+    public Agent requireModifiable(Agent agent) {
+        if (agent == null) throw new IllegalArgumentException("Agent不存在");
+        if (!canModify(agent, requireCurrentUser())) {
+            throw new SecurityException("无权限修改此 Agent");
         }
-        return puppet;
+        return agent;
     }
 
-    public boolean canView(Puppet puppet, User user) {
-        return AccessPolicy.canAccessPuppet(puppet, user);
+    public boolean canView(Agent agent, User user) {
+        return AccessPolicy.canAccessAgent(agent, user);
     }
 
-    public boolean canModify(Puppet puppet, User user) {
-        return AccessPolicy.canModifyPuppet(puppet, user);
+    public boolean canModify(Agent agent, User user) {
+        return AccessPolicy.canModifyAgent(agent, user);
     }
 
     public String normalizePermission(String permission) {

@@ -6,7 +6,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.agent.AiAsyncExecutionConfig;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -18,8 +18,8 @@ import java.util.List;
  * 侦察摘要精简版（Digest）生成服务。
  *
  * <p>当完整摘要超过 {@value #DIGEST_THRESHOLD} 字符时，调用 LLM 将其压缩为
- * 最多 500 字符的要点列表，写入 {@link PuppetNodeSession#setReconSummaryDigest(String)}。
- * PuppetNodeSystemPromptProvider 优先注入 digest 版本，节省 token 预算。
+ * 最多 500 字符的要点列表，写入 {@link AgentNodeSession#setReconSummaryDigest(String)}。
+ * NodeAiSystemPromptProvider 优先注入 digest 版本，节省 token 预算。
  */
 @Service
 public class ReconSummaryDigestService {
@@ -53,7 +53,7 @@ public class ReconSummaryDigestService {
     /**
      * 同步生成 digest 并写入 session。
      */
-    public String generateAndSave(PuppetNodeSession session) {
+    public String generateAndSave(AgentNodeSession session) {
         String summary = session == null ? null : session.getReconSummary();
         if (summary == null || summary.isBlank()) {
             throw new IllegalStateException("摘要为空，无法生成精简版");
@@ -67,7 +67,7 @@ public class ReconSummaryDigestService {
      * 异步生成 digest（不阻塞调用线程）。
      */
     @Async(AiAsyncExecutionConfig.BACKGROUND_EXECUTOR)
-    public void generateAndSaveAsync(PuppetNodeSession session) {
+    public void generateAndSaveAsync(AgentNodeSession session) {
         if (session == null) return;
         String summary = session.getReconSummary();
         if (summary == null || summary.length() < DIGEST_THRESHOLD) return;
@@ -89,8 +89,8 @@ public class ReconSummaryDigestService {
      * 避免超长摘要撑爆 system prompt token 预算。
      */
     public String getDigest(String sessionId) {
-        org.leo.core.session.PuppetNodeSession session =
-                org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
+        org.leo.core.session.AgentNodeSession session =
+                org.leo.core.session.AgentNodeSessionContainer.getSession(sessionId);
         if (session == null) return null;
         String summary = session.getReconSummary();
         if (session.hasFreshReconSummaryDigest()) {

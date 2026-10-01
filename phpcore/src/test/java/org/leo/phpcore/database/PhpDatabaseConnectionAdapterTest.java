@@ -1,7 +1,7 @@
 package org.leo.phpcore.database;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
 
 import java.util.Map;
 

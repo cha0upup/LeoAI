@@ -1,6 +1,6 @@
 package org.leo.phpcore.database;
 
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -14,7 +14,7 @@ public final class PhpDatabaseConnectionAdapter {
         String dsn = text(override.get("dsn"));
         if (DatabaseConnectionSpec.MODE_CUSTOM.equals(connection.getConnectionMode())) {
             if (pdoDriver.isBlank() || dsn.isBlank()) {
-                throw new IllegalArgumentException("当前 PHP Puppet 未配置自定义 PDO 连接");
+                throw new IllegalArgumentException("当前 PHP Agent 未配置自定义 PDO 连接");
             }
         } else {
             if (pdoDriver.isBlank()) pdoDriver = defaultDriver(connection.getDialect());

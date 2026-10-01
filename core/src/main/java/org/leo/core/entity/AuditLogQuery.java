@@ -4,8 +4,8 @@ public class AuditLogQuery {
 
     private String userId;
     private String userName;
-    private String puppetId;
-    private String puppetName;
+    private String agentId;
+    private String agentName;
     private String sessionId;
     private String operationType;
     private String status;
@@ -33,20 +33,20 @@ public class AuditLogQuery {
         this.userName = userName;
     }
 
-    public String getPuppetId() {
-        return puppetId;
+    public String getAgentId() {
+        return agentId;
     }
 
-    public void setPuppetId(String puppetId) {
-        this.puppetId = puppetId;
+    public void setAgentId(String agentId) {
+        this.agentId = agentId;
     }
 
-    public String getPuppetName() {
-        return puppetName;
+    public String getAgentName() {
+        return agentName;
     }
 
-    public void setPuppetName(String puppetName) {
-        this.puppetName = puppetName;
+    public void setAgentName(String agentName) {
+        this.agentName = agentName;
     }
 
     public String getSessionId() {

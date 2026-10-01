@@ -24,6 +24,29 @@ class DatabaseInitializerFreshStartTest {
     Path tempDir;
 
     @Test
+    void rejectsLegacyNamingEvenWhenNewTablesWereCreated() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-naming.db"));
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE puppets (puppet_id TEXT PRIMARY KEY)");
+            statement.executeUpdate("INSERT INTO puppets VALUES ('existing-node')");
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new DatabaseInitializer(dataSource).run());
+        assertTrue(error.getMessage().contains("不兼容历史数据"));
+        assertTrue(error.getMessage().contains("重新部署"));
+        assertTrue(error.getMessage().contains("重建数据库"));
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM puppets WHERE puppet_id='existing-node'"));
+            assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM users"));
+        }
+    }
+
+    @Test
     void createsCurrentSchemaAndCanRunTwice() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("fresh.db"));
@@ -43,11 +66,11 @@ class DatabaseInitializerFreshStartTest {
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'team-a')
                     """);
             statement.executeUpdate("""
-                    INSERT INTO puppets
-                      (puppet_id, puppet_name, parent_puppet_id, create_by_user_id,
+                    INSERT INTO agents
+                      (agent_id, agent_name, parent_agent_id, create_by_user_id,
                        conn_link, req_disguise_id, resp_disguise_id, permission,
                        create_time, update_time, team_id)
-                    VALUES ('team-puppet', 'team-puppet', 'root', 'owner-1', '/',
+                    VALUES ('team-agent', 'team-agent', 'root', 'owner-1', '/',
                             'request', 'response', 'team',
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'team-a')
                     """);
@@ -96,11 +119,11 @@ class DatabaseInitializerFreshStartTest {
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM system_configs WHERE config_key='system.version' AND config_value='1.0.0'"));
             assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM puppets WHERE puppet_id='team-puppet' AND team_id='team-a'"));
+                    "SELECT COUNT(*) FROM agents WHERE agent_id='team-agent' AND team_id='team-a'"));
 
             SQLException rejected = assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                    INSERT INTO puppets
-                      (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, conn_link,
+                    INSERT INTO agents
+                      (agent_id, agent_name, parent_agent_id, create_by_user_id, conn_link,
                        req_disguise_id, resp_disguise_id, permission, create_time, update_time)
                     VALUES ('p-1', 'test', 'root', 'admin', '/', 'request', 'response', 'protected',
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -114,7 +137,7 @@ class DatabaseInitializerFreshStartTest {
             "ai_threads, context_checkpoint_json",
             "ai_turns, answer_to_question_id",
             "ai_user_input_requests, confirmation_consumed_at",
-            "puppets, payload_key",
+            "agents, payload_key",
             "ai_operation_assessments, arguments_json",
             "scan_tasks, error_message",
             "scan_tasks, stage_json",

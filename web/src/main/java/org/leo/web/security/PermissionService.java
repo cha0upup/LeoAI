@@ -2,10 +2,10 @@ package org.leo.web.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.service.PuppetService;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.service.AgentService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
@@ -24,11 +24,11 @@ public class PermissionService {
 
     private record VerifiedUser(HttpSession session, User user, String userId) {}
 
-    private final PuppetService puppetService;
+    private final AgentService agentService;
     private final UserService userService;
 
-    public PermissionService(PuppetService puppetService, UserService userService) {
-        this.puppetService = puppetService;
+    public PermissionService(AgentService agentService, UserService userService) {
+        this.agentService = agentService;
         this.userService = userService;
     }
 
@@ -73,55 +73,55 @@ public class PermissionService {
         }
     }
 
-    public void requireSessionAccess(PuppetNodeSession session, User user, String sessionId) {
+    public void requireSessionAccess(AgentNodeSession session, User user, String sessionId) {
         if (!PermissionPolicy.canAccessSession(session, user)) {
             throw ApiException.forbidden("无权限访问此会话: " + sessionId);
         }
     }
 
-    public Puppet requireAccessiblePuppetChain(String puppetId, User user) {
-        String normalizedPuppetId = requireText(puppetId, "缺少 puppetId");
-        Puppet puppet = puppetService.findPuppetById(normalizedPuppetId);
-        if (puppet == null) {
-            throw ApiException.notFound("Puppet不存在，puppetId: " + normalizedPuppetId);
+    public Agent requireAccessibleAgentChain(String agentId, User user) {
+        String normalizedAgentId = requireText(agentId, "缺少 agentId");
+        Agent agent = agentService.findAgentById(normalizedAgentId);
+        if (agent == null) {
+            throw ApiException.notFound("Agent不存在，agentId: " + normalizedAgentId);
         }
-        if (!canAccessPuppetChain(puppet, user)) {
-            throw ApiException.forbidden("无权限访问此Puppet");
+        if (!canAccessAgentChain(agent, user)) {
+            throw ApiException.forbidden("无权限访问此Agent");
         }
-        return puppet;
+        return agent;
     }
 
-    public boolean canAccessPuppetChain(Puppet puppet, User user) {
-        Puppet current = puppet;
+    public boolean canAccessAgentChain(Agent agent, User user) {
+        Agent current = agent;
         int depth = 0;
         while (current != null && depth < MAX_PARENT_DEPTH) {
-            if (!canAccessPuppet(current, user)) {
+            if (!canAccessAgent(current, user)) {
                 return false;
             }
-            String parentId = current.getParentPuppetId();
+            String parentId = current.getParentAgentId();
             if (parentId == null || parentId.isBlank() || "root".equals(parentId)) {
                 return true;
             }
-            current = puppetService.findPuppetById(parentId);
+            current = agentService.findAgentById(parentId);
             depth++;
         }
         return false;
     }
 
-    private boolean canAccessPuppet(Puppet puppet, User user) {
-        if (PermissionPolicy.canAccessPuppet(puppet, user)) {
+    private boolean canAccessAgent(Agent agent, User user) {
+        if (PermissionPolicy.canAccessAgent(agent, user)) {
             return true;
         }
-        if (puppet == null || user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
+        if (agent == null || user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
             return false;
         }
-        if (!PermissionPolicy.isTeamVisiblePermission(puppet.getPermission())) {
+        if (!PermissionPolicy.isTeamVisiblePermission(agent.getPermission())) {
             return false;
         }
-        if (puppet.getTeamId() != null && !puppet.getTeamId().isBlank()) {
+        if (agent.getTeamId() != null && !agent.getTeamId().isBlank()) {
             return false;
         }
-        User owner = userService.getUserById(puppet.getCreateByUserId());
+        User owner = userService.getUserById(agent.getCreateByUserId());
         return owner != null && user.getTeamId().equals(owner.getTeamId());
     }
 

@@ -1,6 +1,6 @@
 package org.leo.web.controller.platform.session;
 
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.CurrentHostIdResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
@@ -28,7 +28,7 @@ public class HostIdController {
     @PostMapping("/current-host-id")
     public HashMap<String, Object> getCurrentHostId(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(new CurrentHostIdResponse(sessionId, session.getCurrentHostId()));
     }
 

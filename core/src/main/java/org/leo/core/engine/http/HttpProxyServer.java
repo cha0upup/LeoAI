@@ -2,7 +2,7 @@ package org.leo.core.engine.http;
 
 import org.leo.core.engine.proxy.LocalProxyServer;
 import org.leo.core.engine.proxy.ProxyConnection;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 
 /** Local HTTP/CONNECT listener; target sockets are opened through the node component. */
 public class HttpProxyServer extends LocalProxyServer {

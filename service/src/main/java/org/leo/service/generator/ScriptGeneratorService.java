@@ -3,7 +3,7 @@ package org.leo.service.generator;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -16,10 +16,10 @@ import java.util.Map;
 @Service
 public final class ScriptGeneratorService {
 
-    private final Map<PuppetRuntime, ScriptGeneratorProvider> providers;
+    private final Map<AgentRuntime, ScriptGeneratorProvider> providers;
 
     public ScriptGeneratorService(List<ScriptGeneratorProvider> providers) {
-        EnumMap<PuppetRuntime, ScriptGeneratorProvider> indexed = new EnumMap<>(PuppetRuntime.class);
+        EnumMap<AgentRuntime, ScriptGeneratorProvider> indexed = new EnumMap<>(AgentRuntime.class);
         if (providers != null) {
             for (ScriptGeneratorProvider provider : providers) {
                 if (provider == null || provider.getRuntime() == null) continue;

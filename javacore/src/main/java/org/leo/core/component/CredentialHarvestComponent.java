@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * JVM 运行时凭据采集组件
  * <p>
- * 在 puppet 侧通过反射从 JVM 运行时提取敏感凭据信息，包括：
+ * 在 agent 侧通过反射从 JVM 运行时提取敏感凭据信息，包括：
  * - Spring ApplicationContext 中的 DataSource Bean（JDBC URL / username / password）
  * - System Properties 中含敏感关键字的条目
  * - 环境变量中含敏感关键字的条目
@@ -437,7 +437,7 @@ public class CredentialHarvestComponent implements Runnable {
     /**
      * 获取 Spring ApplicationContext。
      *
-     * <p>四条路径降级，确保 idle Spring Boot 部署 / puppet 注入全局 CL 等场景都能拿到 context：
+     * <p>四条路径降级，确保 idle Spring Boot 部署 / agent 注入全局 CL 等场景都能拿到 context：
      * <ol>
      *   <li>RequestContextHolder（请求线程才有效）</li>
      *   <li>LiveBeansView.applicationContexts（Spring 5.x 静态字段，6+ 移除）</li>
@@ -497,7 +497,7 @@ public class CredentialHarvestComponent implements Runnable {
         }
 
         // 方式4（兜底）：通过 Tomcat JMX MBean 反推
-        // 解决 idle Tomcat 部署 + puppet 注入全局 CL 时前三条路径全失效
+        // 解决 idle Tomcat 部署 + agent 注入全局 CL 时前三条路径全失效
         try {
             Object ctx = getSpringContextFromTomcat(cl);
             if (ctx != null) return ctx;

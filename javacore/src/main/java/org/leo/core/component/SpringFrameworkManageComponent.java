@@ -75,15 +75,15 @@ public class SpringFrameworkManageComponent implements Runnable {
         if (context != null) {
             frameworkInfo.put("contextClassName", context.getClass().getName());
         }
-        try {frameworkInfo.put("allController",getAllController());}catch (Exception ignored){}
-        try {frameworkInfo.put("allMappedInterceptor",getAllMappedInterceptor());}catch (Exception ignored){}
+        try {frameworkInfo.put("allController",getAllControllers());}catch (Exception ignored){}
+        try {frameworkInfo.put("allMappedInterceptor",getAllMappedInterceptors());}catch (Exception ignored){}
         return frameworkInfo;
     }
-    public ArrayList getAllController() throws Exception {
+    public ArrayList getAllControllers() throws Exception {
         Object abstractHandlerMapping = getHandlerMapping();
         Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
         Map registry = getRegistrations(mappingRegistry);
-        ArrayList allController=new ArrayList();
+        ArrayList controllers=new ArrayList();
         Iterator s=registry.keySet().iterator();
         while (s.hasNext()){
             HashMap mapinfo=new HashMap();
@@ -101,9 +101,9 @@ public class SpringFrameworkManageComponent implements Runnable {
 
             Object handlerMethod=invokeMethod(mappingRegistration,"getHandlerMethod");
             mapinfo.put("description",handlerMethod.toString());
-            allController.add(mapinfo);
+            controllers.add(mapinfo);
         }
-        return allController;
+        return controllers;
     }
 
 
@@ -154,7 +154,7 @@ public class SpringFrameworkManageComponent implements Runnable {
                 new Object[]{"requestMappingHandlerMapping"});
     }
 
-    public ArrayList getAllMappedInterceptor() throws Exception {
+    public ArrayList getAllMappedInterceptors() throws Exception {
         Object[] interceptors = (Object[]) invokeMethod(getHandlerMapping(), "getAdaptedInterceptors");
         ArrayList answer = new ArrayList();
         if (interceptors == null) return answer;
@@ -307,14 +307,14 @@ public class SpringFrameworkManageComponent implements Runnable {
      * 复用 TomcatContainerManageComponent 的扫描逻辑拿到所有 StandardContext，
      * 再从每个 context 的 servletContext 走 WebApplicationContextUtils.getWebApplicationContext()。
      *
-     * 故意走反射而不是直接 import，避免 puppet 端没有 TomcatContainerManageComponent 时编译失败。
+     * 故意走反射而不是直接 import，避免 agent 端没有 TomcatContainerManageComponent 时编译失败。
      */
     private static Object getContextFromTomcat(ClassLoader cl) throws Throwable {
         Class tomcatComp;
         try {
             tomcatComp = cl.loadClass("org.leo.core.component.TomcatContainerManageComponent");
         } catch (Throwable t) {
-            // TomcatContainerManageComponent 还没被 puppet 端加载，自己扫一遍 MBean
+            // TomcatContainerManageComponent 还没被 agent 端加载，自己扫一遍 MBean
             return getContextFromTomcatMbean(cl);
         }
         Method getCtx = tomcatComp.getDeclaredMethod("getContext");

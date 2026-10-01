@@ -3,15 +3,15 @@ package org.leo.ai.agent;
 import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
 import org.leo.ai.tools.platform.PluginTools;
-import org.leo.ai.tools.platform.PuppetTools;
+import org.leo.ai.tools.platform.AgentTools;
 import org.leo.ai.tools.platform.ShellGeneratorTools;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.ai.tools.common.UserInputTools;
 import org.leo.ai.tools.common.PlanTools;
-import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
-import org.leo.ai.tools.common.AgentWorkspaceTools;
+import org.leo.ai.tools.common.AiWorkspaceCommandTools;
+import org.leo.ai.tools.common.AiWorkspaceTools;
 import org.leo.ai.tools.common.WebResearchTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -26,23 +26,23 @@ public class PlatformToolBundle {
     private final List<Object> tools;
 
     public PlatformToolBundle(
-            PuppetTools puppetTools,
+            AgentTools agentTools,
             UserTools userTools,
             TeamTools teamTools,
             PluginTools pluginTools,
             FingerprintTools fingerprintTools,
             DisguiseTools disguiseTools,
             ShellGeneratorTools shellGeneratorTools,
-            AgentWorkspaceTools agentWorkspaceTools,
-            AgentWorkspaceCommandTools agentWorkspaceCommandTools,
+            AiWorkspaceTools aiWorkspaceTools,
+            AiWorkspaceCommandTools aiWorkspaceCommandTools,
             WebResearchTools webResearchTools,
             PlanTools planTools,
             UserInputTools userInputTools,
             @Qualifier("platformSkillActivationTools") SkillActivationTools skillActivationTools) {
         this.tools = List.of(
-                puppetTools, userTools, teamTools,
+                agentTools, userTools, teamTools,
                 pluginTools, fingerprintTools, disguiseTools,
-                shellGeneratorTools, agentWorkspaceTools, agentWorkspaceCommandTools,
+                shellGeneratorTools, aiWorkspaceTools, aiWorkspaceCommandTools,
                 webResearchTools, planTools, userInputTools,
                 skillActivationTools);
     }

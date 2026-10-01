@@ -1,7 +1,7 @@
 package org.leo.core.net.layer;
 
 /**
- * HTTP Header 噪声注入策略配置（per puppet session）。
+ * HTTP Header 噪声注入策略配置（per agent session）。
  * <p>
  * 每次请求前随机附加若干无意义 HTTP 头，改变请求指纹，
  * 对抗基于 Header 数量/名称/顺序的流量特征分析。

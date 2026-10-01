@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 
-import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PLATFORM;
-import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE;
+import static org.leo.ai.agent.AiToolAuthorizationPolicy.AiAgentScope.PLATFORM;
+import static org.leo.ai.agent.AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE;
 
 /**
  * Agent 构建工厂。
@@ -24,38 +24,38 @@ import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE;
 public class AiAgentFactory {
 
     private final AiChatMemoryProviderFactory memoryProviderFactory;
-    private final PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider;
+    private final NodeAiSystemPromptProvider nodeAiSystemPromptProvider;
     private final PlatformSystemPromptProvider platformSystemPromptProvider;
-    private final PuppetNodeToolBundle puppetNodeToolBundle;
+    private final NodeAiToolBundle nodeAiToolBundle;
     private final PlatformToolBundle platformToolBundle;
     private final AutoReconAppendService autoReconAppendService;
     private final AiToolErrorHandler toolErrorHandler;
     private final AiToolAuthorizationPolicy toolAuthorizationPolicy;
     private final AiToolCatalog toolCatalog;
-    private final AgentRuntimeResolver runtimeResolver;
+    private final AiRuntimeResolver runtimeResolver;
     private final AiPlanCoordinator planCoordinator;
-    private final ExecutorService puppetNodeToolExecutor;
+    private final ExecutorService nodeAiToolExecutor;
     private final ExecutorService platformToolExecutor;
 
     public AiAgentFactory(AiChatMemoryProviderFactory memoryProviderFactory,
-                          PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider,
+                          NodeAiSystemPromptProvider nodeAiSystemPromptProvider,
                           PlatformSystemPromptProvider platformSystemPromptProvider,
-                          PuppetNodeToolBundle puppetNodeToolBundle,
+                          NodeAiToolBundle nodeAiToolBundle,
                           PlatformToolBundle platformToolBundle,
                           AutoReconAppendService autoReconAppendService,
                           AiToolErrorHandler toolErrorHandler,
                           AiToolAuthorizationPolicy toolAuthorizationPolicy,
                           AiToolCatalog toolCatalog,
-                          AgentRuntimeResolver runtimeResolver,
+                          AiRuntimeResolver runtimeResolver,
                           AiPlanCoordinator planCoordinator,
-                          @Qualifier("puppetNodeAiToolExecutor")
-                          ExecutorService puppetNodeToolExecutor,
+                          @Qualifier("nodeAiToolExecutor")
+                          ExecutorService nodeAiToolExecutor,
                           @Qualifier("platformAiToolExecutor")
                           ExecutorService platformToolExecutor) {
         this.memoryProviderFactory = memoryProviderFactory;
-        this.puppetNodeSystemPromptProvider = puppetNodeSystemPromptProvider;
+        this.nodeAiSystemPromptProvider = nodeAiSystemPromptProvider;
         this.platformSystemPromptProvider = platformSystemPromptProvider;
-        this.puppetNodeToolBundle = puppetNodeToolBundle;
+        this.nodeAiToolBundle = nodeAiToolBundle;
         this.platformToolBundle = platformToolBundle;
         this.autoReconAppendService = autoReconAppendService;
         this.toolErrorHandler = toolErrorHandler;
@@ -63,21 +63,21 @@ public class AiAgentFactory {
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
         this.planCoordinator = planCoordinator;
-        this.puppetNodeToolExecutor = puppetNodeToolExecutor;
+        this.nodeAiToolExecutor = nodeAiToolExecutor;
         this.platformToolExecutor = platformToolExecutor;
     }
 
-    public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
+    public NodeAiAgent createNodeAiAgent(StreamingChatModel streamingModel,
                                                  boolean enableTools,
                                                  int modelContextWindowTokens) {
         int toolSchemaTokens = enableTools
-                ? toolCatalog.estimateSchemaTokens(puppetNodeToolBundle.tools()) : 0;
-        var builder = AiServices.builder(PuppetNodeAgent.class)
+                ? toolCatalog.estimateSchemaTokens(nodeAiToolBundle.tools()) : 0;
+        var builder = AiServices.builder(NodeAiAgent.class)
                 .streamingChatModel(streamingModel)
-                .chatMemoryProvider(memoryProviderFactory.createPuppetProvider(
+                .chatMemoryProvider(memoryProviderFactory.createNodeAiProvider(
                         modelContextWindowTokens, toolSchemaTokens))
-                .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(puppetNodeToolExecutor)
+                .systemMessageProvider(nodeAiSystemPromptProvider::getSystemMessage)
+                .executeToolsConcurrently(nodeAiToolExecutor)
                 .toolArgumentsErrorHandler(
                         toolErrorHandler::handleArguments)
                 .toolExecutionErrorHandler(
@@ -85,7 +85,7 @@ public class AiAgentFactory {
                 .hallucinatedToolNameStrategy(
                         toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
-                    prepareToolExecution(PUPPET_NODE, execution);
+                    prepareToolExecution(AGENT_NODE, execution);
                 })
                 .afterToolExecution(execution -> {
                     try {
@@ -103,7 +103,7 @@ public class AiAgentFactory {
                 });
         if (enableTools) {
             builder.toolProvider(toolAuthorizationPolicy.toolProvider(
-                    PUPPET_NODE, puppetNodeToolBundle.tools().toArray()));
+                    AGENT_NODE, nodeAiToolBundle.tools().toArray()));
         }
         return builder.build();
     }
@@ -111,17 +111,17 @@ public class AiAgentFactory {
     /**
      * 创建平台 Agent，并按运行入口追加可选工具。
      *
-     * <p>桥接 Puppet AI 的工具位于 web 模块，不能反向成为 ai 模块的固定依赖，
+     * <p>桥接 Node AI 的工具位于 web 模块，不能反向成为 ai 模块的固定依赖，
      * 因此由 web 模块的 Agent 注册表在构建线程运行时时注入。
      */
-    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
+    public PlatformAiAgent createPlatformAiAgent(StreamingChatModel streamingModel,
                                              boolean enableTools,
                                              int modelContextWindowTokens,
                                              Object additionalTools) {
         List<Object> tools = platformToolBundle.toolsWith(additionalTools);
         int toolSchemaTokens = enableTools
                 ? toolCatalog.estimateSchemaTokens(tools) : 0;
-        var builder = AiServices.builder(PlatformAgent.class)
+        var builder = AiServices.builder(PlatformAiAgent.class)
                 .streamingChatModel(streamingModel)
                 .chatMemoryProvider(memoryProviderFactory.createPlatformProvider(
                         modelContextWindowTokens, toolSchemaTokens))
@@ -179,7 +179,7 @@ public class AiAgentFactory {
     }
 
     private void prepareToolExecution(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             dev.langchain4j.service.tool.BeforeToolExecution execution) {
         if (execution == null || execution.invocationContext() == null) return;
         toolAuthorizationPolicy.bindContext(

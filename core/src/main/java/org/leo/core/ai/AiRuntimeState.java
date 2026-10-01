@@ -18,7 +18,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 /**
- * Platform 与 Puppet Agent 共用的瞬时运行时状态。
+ * Platform AI 与 Node AI 共用的瞬时运行时状态。
  *
  * <p>数据库 Turn 是持久化权威；本类只保存执行句柄、取消信号、事件队列和当前
  * 进程内计划。所有作用域包装类都复用这一实现，避免两套状态机逐渐分叉。

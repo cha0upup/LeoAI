@@ -11,7 +11,7 @@ import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.TargetJavaVersion;
@@ -310,7 +310,7 @@ public class ShellGeneratorTools {
     // ── PHP WebShell 生成 ─────────────────────────────────────────────────────
 
     @Tool("生成 PHP WebShell，并将完整代码存入缓存后返回 resultId。" +
-          "这是独立制品生成，不得读取或沿用任何已有 Puppet 配置；调用前应根据用户本次需求确定请求/响应伪装器。" +
+          "这是独立制品生成，不得读取或沿用任何已有 Agent 配置；调用前应根据用户本次需求确定请求/响应伪装器。" +
           "outputMode 从 getShellGeneratorMeta 的 runtimeGenerators.php.outputModes 中选择：" +
           "compact 为默认精简源码，packed 需要 zlib/base64_decode/gzinflate，portable 为便于兼容排障的展开源码。" +
           "headerName 与 headerValue 必须同时设置或同时留空；respCode 默认 200；seed 留空时自动随机。" +
@@ -361,7 +361,7 @@ public class ShellGeneratorTools {
         if (!isBlank(seed)) options.put("seed", seed.trim());
 
         GeneratedArtifact artifact = scriptGeneratorService.generate(new GenerationRequest(
-                PuppetRuntime.PHP, "webshell", reqDisguise, respDisguise, options));
+                AgentRuntime.PHP, "webshell", reqDisguise, respDisguise, options));
 
         Map<String, Object> meta = new LinkedHashMap<>(artifact.getMetadata());
         meta.put("fileExtension", artifact.getFileExtension());
@@ -442,7 +442,7 @@ public class ShellGeneratorTools {
     // ── 内存马生成 ──────────────────────────────────────────────────────────────
 
     @Tool("生成内存马并将完整代码存入缓存，返回 resultId 供前端取回。" +
-          "这是独立制品生成，与已有 Puppet 无关；除非用户明确要求匹配某个 Puppet，否则禁止查询或沿用 Puppet 配置。" +
+          "这是独立制品生成，与已有 Agent 无关；除非用户明确要求匹配某个 Agent，否则禁止查询或沿用 Agent 配置。" +
           "如果用户尚未选择传输协议、请求/响应伪装器、目标容器、注入器、Packer 或是否混淆，" +
           "先调用 getShellGeneratorMeta 和 getDisguises 获取候选项，再调用 request_user_input 询问用户，收到回答前不要调用本工具。" +
           "前端通过 GET /platform/shell-generator/result/{resultId} 取回完整代码，勿让 LLM 转述完整代码。" +

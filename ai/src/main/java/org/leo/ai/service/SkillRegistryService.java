@@ -33,9 +33,9 @@ public class SkillRegistryService {
 
     private static final Logger log = LoggerFactory.getLogger(SkillRegistryService.class);
 
-    public static final String SCOPE_PUPPET_NODE = "puppet-node";
+    public static final String SCOPE_AGENT_NODE = "agent-node";
     public static final String SCOPE_PLATFORM = "platform";
-    public static final Set<String> ALLOWED_SCOPES = Set.of(SCOPE_PUPPET_NODE, SCOPE_PLATFORM);
+    public static final Set<String> ALLOWED_SCOPES = Set.of(SCOPE_AGENT_NODE, SCOPE_PLATFORM);
 
     private static final String SKILLS_DIR = "skills";
     private static final long TTL_MS = 30_000L;

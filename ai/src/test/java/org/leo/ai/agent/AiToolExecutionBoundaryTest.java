@@ -40,7 +40,7 @@ class AiToolExecutionBoundaryTest {
         AiToolExecutionBoundary boundary = boundary(5_000, 4_000);
 
         ToolExecutionResult result = boundary.execute(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 descriptor("getStatus", AiToolOperation.READ_ONLY),
                 (request, memoryId) -> "ready",
                 request("call-1", "getStatus"),
@@ -63,10 +63,10 @@ class AiToolExecutionBoundaryTest {
         ToolExecutionRequest request = request("same-call", "createItem");
 
         ToolExecutionResult first = boundary.execute(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 "createItem", executor, request, context("memory-1"));
         ToolExecutionResult second = boundary.execute(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 "createItem", executor, request, context("memory-1"));
 
         assertEquals(1, calls.get());
@@ -81,10 +81,10 @@ class AiToolExecutionBoundaryTest {
         ToolExecutor executor = (request, memoryId) -> "read-" + calls.incrementAndGet();
         ToolExecutionRequest request = request("same-call", "getItem");
 
-        boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 descriptor("getItem", AiToolOperation.READ_ONLY),
                 executor, request, context("memory-1"));
-        boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 descriptor("getItem", AiToolOperation.READ_ONLY),
                 executor, request, context("memory-1"));
 
@@ -97,12 +97,12 @@ class AiToolExecutionBoundaryTest {
         AtomicInteger calls = new AtomicInteger();
         ToolExecutor executor = (request, memoryId) -> "write-" + calls.incrementAndGet();
 
-        boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 "createItem", executor,
                 request("same-call", "createItem", "{\"name\":\"first\"}"),
                 context("memory-1"));
         AiToolException conflict = assertThrows(AiToolException.class,
-                () -> boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                () -> boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                         "createItem", executor,
                         request("same-call", "createItem", "{\"name\":\"second\"}"),
                         context("memory-1")));
@@ -118,10 +118,10 @@ class AiToolExecutionBoundaryTest {
         ToolExecutor executor = (request, memoryId) -> "write-" + calls.incrementAndGet();
         ToolExecutionRequest request = request("provider-call-1", "createItem");
 
-        boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 "createItem", executor, request,
                 context("memory-1", java.util.UUID.randomUUID()));
-        boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 "createItem", executor, request,
                 context("memory-1", java.util.UUID.randomUUID()));
 
@@ -142,12 +142,12 @@ class AiToolExecutionBoundaryTest {
         };
 
         AiToolException readTimeout = assertThrows(AiToolException.class,
-                () -> boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                () -> boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                         descriptor("getSlow", AiToolOperation.READ_ONLY),
                         slow, request("read-timeout", "getSlow"),
                         context("memory-1")));
         AiToolException writeTimeout = assertThrows(AiToolException.class,
-                () -> boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                () -> boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                         "createSlow", slow, request("write-timeout", "createSlow"),
                         context("memory-1")));
 
@@ -178,7 +178,7 @@ class AiToolExecutionBoundaryTest {
         };
         Thread owner = new Thread(() -> {
             try {
-                boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                         "createItem", tool, request("cancel-call", "createItem"), context("memory-1"));
                 failure.completeExceptionally(new AssertionError("expected cancellation"));
             } catch (AiToolException error) {
@@ -192,7 +192,7 @@ class AiToolExecutionBoundaryTest {
             assertEquals("TOOL_INTERRUPTED", failure.get(5, TimeUnit.SECONDS).code());
             assertTrue(cancelled.await(5, TimeUnit.SECONDS));
             AiToolException duplicate = assertThrows(AiToolException.class, () ->
-                    boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                    boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                             "createItem", tool, request("cancel-call", "createItem"), context("memory-1")));
             assertEquals("TOOL_INTERRUPTED", duplicate.code());
             assertEquals(1, calls.get());
@@ -209,7 +209,7 @@ class AiToolExecutionBoundaryTest {
         String full = "x".repeat(5_000);
 
         ToolExecutionResult result = boundary.execute(
-                AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE,
+                AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
                 descriptor("getLargeReport", AiToolOperation.READ_ONLY),
                 (request, memoryId) -> full,
                 request("large-call", "getLargeReport"),
@@ -237,9 +237,9 @@ class AiToolExecutionBoundaryTest {
                                                AiToolResultArchive archive) {
         AiAgentProperties properties = new AiAgentProperties();
         properties.getPlatform().getMain().setToolTimeoutMs(timeoutMs);
-        properties.getPuppetNode().getMain().setToolTimeoutMs(timeoutMs);
+        properties.getAgentNode().getMain().setToolTimeoutMs(timeoutMs);
         properties.getPlatform().getMain().setMaxToolResultChars(maxChars);
-        properties.getPuppetNode().getMain().setMaxToolResultChars(maxChars);
+        properties.getAgentNode().getMain().setMaxToolResultChars(maxChars);
         ExecutorService executor = Executors.newFixedThreadPool(4);
         executors.add(executor);
         return new AiToolExecutionBoundary(properties, executor, archive);

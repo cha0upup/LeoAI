@@ -107,9 +107,9 @@ public class WeblogicContainerManageComponent implements Runnable {
                 contextInfo.put("name",String.valueOf(getFV(context,"contextName")));
                 contextInfo.put("basePath",String.valueOf(getFV(context,"contextPath")));
                 contextInfo.put("workDir",String.valueOf(getFV(context,"docroot")));
-                contextInfo.put("allFilter",getAllFilter(context));
-                contextInfo.put("allServlet",getAllServlet(context));
-                contextInfo.put("allListener",getAllListener(context));
+                contextInfo.put("allFilter",getAllFilters(context));
+                contextInfo.put("allServlet",getAllServlets(context));
+                contextInfo.put("allListener",getAllListeners(context));
                 runtimeContexts.add(contextInfo);
             } catch (Exception ignored) {
                 // 单个 Context 解析失败不影响其余上下文，也不向目标日志泄漏堆栈。
@@ -118,13 +118,13 @@ public class WeblogicContainerManageComponent implements Runnable {
         return runtimeContexts;
     }
 
-    public ArrayList getAllFilter(Object standardContext) {
+    public ArrayList getAllFilters(Object standardContext) {
         try {
             Object filterManager = invokeMethod(standardContext, "getFilterManager");
             HashMap filters= (HashMap) getFV(filterManager,"filters");
 
             ArrayList filterPatternList= (ArrayList) getFV(filterManager,"filterPatternList");
-            ArrayList allFilterInfo=new ArrayList();
+            ArrayList filterInfos=new ArrayList();
 
 
             for (Object filterPattern:filterPatternList) {
@@ -138,15 +138,15 @@ public class WeblogicContainerManageComponent implements Runnable {
                 filterInfo.put("urlPatterns",toList(urlPatterns));
                 Object filter=filters.get(filterName);
                 filterInfo.put("filterClassName",String.valueOf(getFV(filter, "filterClassName")));
-                allFilterInfo.add(filterInfo);
+                filterInfos.add(filterInfo);
             }
-            return allFilterInfo;
+            return filterInfos;
         } catch (Exception var6) {
             return null;
         }
     }
 
-    public ArrayList getAllServlet(Object standardContext) {
+    public ArrayList getAllServlets(Object standardContext) {
         try {
             Object servletMapping=getFV(standardContext,"servletMapping");
             Map matchMap = (Map)getFV(servletMapping, "matchMap");
@@ -188,7 +188,7 @@ public class WeblogicContainerManageComponent implements Runnable {
      * 这些字段挂在 {@code WebAppServletContext} 自身或其内部的 {@code eventsManager}/{@code _eventsManager} 上，
      * WebLogic 10.3 / 12.x / 14.x 的字段位置与命名前缀不同，通过画像字段读取。
      */
-    public ArrayList getAllListener(Object standardContext) {
+    public ArrayList getAllListeners(Object standardContext) {
         ArrayList listeners = new ArrayList();
         // Listener 可能位于 context 或 eventsManager。
         Object[] holders = new Object[]{standardContext, tryGetField(standardContext, "eventsManager"), tryGetField(standardContext, "_eventsManager")};
@@ -490,7 +490,7 @@ public class WeblogicContainerManageComponent implements Runnable {
     public static Object[] getContextsByPlatformMbean() throws Throwable {
         HashSet webappContexts = new HashSet();
 
-        // 选 ClassLoader：先用 puppet 注入时记录的 CL，失败就走 system CL
+        // 选 ClassLoader：先用 agent 注入时记录的 CL，失败就走 system CL
         ClassLoader[] candidates = new ClassLoader[]{
                 Thread.currentThread().getContextClassLoader(), ClassLoader.getSystemClassLoader()};
         Class webAppServletContextClass = null;

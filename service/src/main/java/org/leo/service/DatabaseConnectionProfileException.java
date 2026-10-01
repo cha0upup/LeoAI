@@ -1,6 +1,6 @@
 package org.leo.service;
 
-/** Typed failure raised while managing a Puppet-owned database profile. */
+/** Typed failure raised while managing a Agent-owned database profile. */
 public final class DatabaseConnectionProfileException extends RuntimeException {
 
     public enum Kind {

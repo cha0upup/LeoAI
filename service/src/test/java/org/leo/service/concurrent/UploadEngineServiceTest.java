@@ -4,7 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.puppet.capability.FileCapable;
+import org.leo.core.agent.capability.FileCapable;
 import org.leo.service.UploadEngineService;
 
 import java.nio.file.Files;

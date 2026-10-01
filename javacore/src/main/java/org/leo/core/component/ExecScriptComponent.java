@@ -8,11 +8,11 @@ import javax.script.ScriptException;
 import java.util.HashMap;
 
 /**
- * 脚本执行组件（在 puppet 上跑）。
+ * 脚本执行组件（在 agent 上跑）。
  *
  * <p>调用约定与 {@link PluginComponent} 一致：
  * <ul>
- *   <li>puppet 把当前线程 contextClassLoader cast 成 InvocationHandler 作为参数/结果通道</li>
+ *   <li>agent 把当前线程 contextClassLoader cast 成 InvocationHandler 作为参数/结果通道</li>
  *   <li>{@code h.invoke(null, null, null)} 取入参</li>
  *   <li>{@code h.invoke(null, null, new Object[]{results})} 回写结果</li>
  * </ul>
@@ -71,7 +71,7 @@ public class ExecScriptComponent implements Runnable {
             results.put("code", Integer.valueOf(500));
             results.put("msg",
                     "找不到 ScriptEngine: " + language
-                    + "（puppet JDK 可能不带该引擎；JDK 15+ 默认无 Nashorn JS，"
+                    + "（agent JDK 可能不带该引擎；JDK 15+ 默认无 Nashorn JS，"
                     + "需手动添加 nashorn-core / groovy-jsr223 / jython 等 jar 到 classpath）");
             return;
         }

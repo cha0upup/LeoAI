@@ -29,7 +29,7 @@ import static org.leo.service.user.UserAccountPolicy.normalizeStatus;
  *
  * <p>权限规则：
  * <ul>
- *   <li>admin  — 可查询所有用户与 Puppet，可创建任意角色用户，可删除非 admin 用户</li>
+ *   <li>admin  — 可查询所有用户与 Agent，可创建任意角色用户，可删除非 admin 用户</li>
  *   <li>leader — 可查询自己团队内的用户；可创建 normal 用户到自己团队；可删除自己团队内的 normal 用户</li>
  *   <li>normal — 无管理权限，只能查询自己的信息</li>
  * </ul>
@@ -65,9 +65,9 @@ public class UserController {
 
         List<User> users;
         if (UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
-            users = userService.getAllUser();
+            users = userService.getAllUsers();
         } else if (UserService.PRIVILEGE_LEADER.equals(caller.getPrivilege())) {
-            users = userService.getUserByTeamId(caller.getTeamId());
+            users = userService.getUsersByTeamId(caller.getTeamId());
         } else {
             users = new ArrayList<>();
             User self = userService.getUserById(caller.getUserId());

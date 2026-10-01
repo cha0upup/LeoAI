@@ -2,10 +2,10 @@ package org.leo.service.plugin;
 
 import org.leo.core.entity.Plugin;
 import org.leo.core.manager.PluginManager;
-import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.capability.JavaPluginCapable;
-import org.leo.core.puppet.capability.PluginCapable;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.JavaPluginCapable;
+import org.leo.core.agent.capability.PluginCapable;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 
@@ -22,9 +22,9 @@ public class PluginExecutionService {
     private static final String JAVA_PLUGIN_TYPE = "java";
     private static final String JAVA_PLUGIN_COMPONENT = "PluginComponent";
 
-    public Map<String, Object> invokePlugin(AbstractPuppetNode node, String pluginId,
+    public Map<String, Object> invokePlugin(AbstractAgentNode node, String pluginId,
                                             Object rawParams) throws Exception {
-        if (node == null) throw new IllegalArgumentException("puppetNode不能为空");
+        if (node == null) throw new IllegalArgumentException("agentNode不能为空");
         Plugin plugin = getRequiredPlugin(pluginId);
         String runtime = plugin.resolveRuntime();
         if (!node.getRuntime().getValue().equalsIgnoreCase(runtime)) {
@@ -32,7 +32,7 @@ public class PluginExecutionService {
         }
 
         Map<String, Object> params = parsePluginParams(rawParams);
-        if (node.getRuntime() == PuppetRuntime.PHP) {
+        if (node.getRuntime() == AgentRuntime.PHP) {
             if (!(node instanceof PluginCapable capable)) {
                 throw new IllegalArgumentException("当前 PHP 节点缺少 plugin capability");
             }
@@ -48,7 +48,7 @@ public class PluginExecutionService {
 
     public Map<String, Object> invokeJavaPlugin(JavaPluginCapable node, String pluginId,
                                                 Object rawParams) throws Exception {
-        if (node == null) throw new IllegalArgumentException("puppetNode不能为空");
+        if (node == null) throw new IllegalArgumentException("agentNode不能为空");
         Plugin plugin = getRequiredPlugin(pluginId);
         if (!"java".equalsIgnoreCase(plugin.resolveRuntime())) {
             throw new IllegalArgumentException("插件运行时与当前节点不匹配: "
@@ -83,11 +83,11 @@ public class PluginExecutionService {
     }
 
     public List<Plugin> getAllPlugins() {
-        return PluginManager.getInstance().getPluginAsList();
+        return PluginManager.getInstance().getPlugins();
     }
 
     public List<Plugin> getPluginsByType(String pluginType) {
-        return PluginManager.getInstance().getPluginAsListByType(
+        return PluginManager.getInstance().getPluginsByType(
                 requireNonBlank(pluginType, "pluginType不能为空"));
     }
 

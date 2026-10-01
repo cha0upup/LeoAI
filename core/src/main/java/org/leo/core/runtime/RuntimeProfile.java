@@ -6,10 +6,10 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
-/** Immutable runtime facts learned during the Puppet handshake. */
+/** Immutable runtime facts learned during the Agent handshake. */
 public final class RuntimeProfile {
 
-    private final PuppetRuntime runtime;
+    private final AgentRuntime runtime;
     private final String version;
     private final String sapi;
     private final String osFamily;
@@ -20,7 +20,7 @@ public final class RuntimeProfile {
     private final Map<String, Object> attributes;
 
     private RuntimeProfile(Builder builder) {
-        this.runtime = builder.runtime == null ? PuppetRuntime.UNKNOWN : builder.runtime;
+        this.runtime = builder.runtime == null ? AgentRuntime.UNKNOWN : builder.runtime;
         this.version = builder.version;
         this.sapi = builder.sapi;
         this.osFamily = builder.osFamily;
@@ -31,15 +31,15 @@ public final class RuntimeProfile {
         this.attributes = Collections.unmodifiableMap(new LinkedHashMap<>(builder.attributes));
     }
 
-    public static RuntimeProfile minimal(PuppetRuntime runtime) {
+    public static RuntimeProfile minimal(AgentRuntime runtime) {
         return builder(runtime).build();
     }
 
-    public static Builder builder(PuppetRuntime runtime) {
+    public static Builder builder(AgentRuntime runtime) {
         return new Builder(runtime);
     }
 
-    public PuppetRuntime getRuntime() {
+    public AgentRuntime getRuntime() {
         return runtime;
     }
 
@@ -76,7 +76,7 @@ public final class RuntimeProfile {
     }
 
     public static final class Builder {
-        private final PuppetRuntime runtime;
+        private final AgentRuntime runtime;
         private String version;
         private String sapi;
         private String osFamily;
@@ -86,7 +86,7 @@ public final class RuntimeProfile {
         private CapabilitySet capabilities = CapabilitySet.empty();
         private Map<String, Object> attributes = new LinkedHashMap<>();
 
-        private Builder(PuppetRuntime runtime) {
+        private Builder(AgentRuntime runtime) {
             this.runtime = runtime;
         }
 

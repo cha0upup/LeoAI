@@ -6,11 +6,11 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.service.SkillMeta;
 import org.leo.ai.service.SkillRegistryService;
-import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.capability.BasicInfoCapable;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.BasicInfoCapable;
 import org.leo.core.runtime.CapabilitySet;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 
 import java.util.List;
 
@@ -27,7 +27,7 @@ class AiToolExposurePolicyTest {
     @AfterEach
     void cleanUp() {
         PlatformAiStateStore.remove(PLATFORM_STATE_ID);
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @Test
@@ -42,19 +42,19 @@ class AiToolExposurePolicyTest {
         when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
                 .thenReturn(List.of(parent, dependency));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
-                new AgentRuntimeResolver(), registry);
+                new AiRuntimeResolver(), registry);
         PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
 
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "parentAction"));
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "dependencyAction"));
 
         state.activateSkill("parent-skill");
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "parentAction"));
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "dependencyAction"));
     }
 
@@ -68,32 +68,32 @@ class AiToolExposurePolicyTest {
         when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
                 .thenReturn(List.of(workspaceSkill));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
-                new AgentRuntimeResolver(), registry);
+                new AiRuntimeResolver(), registry);
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "workspaceReadText"));
     }
 
     @Test
-    void filtersPuppetToolsByRuntimeCapability() {
+    void filtersAgentToolsByRuntimeCapability() {
         SkillRegistryService registry = mock(SkillRegistryService.class);
-        when(registry.listSkills(SkillRegistryService.SCOPE_PUPPET_NODE))
+        when(registry.listSkills(SkillRegistryService.SCOPE_AGENT_NODE))
                 .thenReturn(List.of());
-        when(registry.listAllSkills(SkillRegistryService.SCOPE_PUPPET_NODE))
+        when(registry.listAllSkills(SkillRegistryService.SCOPE_AGENT_NODE))
                 .thenReturn(List.of());
-        AbstractPuppetNode node = mock(AbstractPuppetNode.class,
+        AbstractAgentNode node = mock(AbstractAgentNode.class,
                 withSettings().extraInterfaces(BasicInfoCapable.class));
         when(node.getCapabilitySet()).thenReturn(CapabilitySet.empty());
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setSessionId("capability-session");
-        session.setPuppetNode(node);
-        PuppetNodeSessionContainer.addSession("capability-session", session);
+        session.setAgentNode(node);
+        AgentNodeSessionContainer.addSession("capability-session", session);
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
-                new AgentRuntimeResolver(), registry);
+                new AiRuntimeResolver(), registry);
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE,
+        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
                 "capability-session", "getBasicInfo"));
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE,
+        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
                 "capability-session", "getClassBytecode"));
     }
 
@@ -105,9 +105,9 @@ class AiToolExposurePolicyTest {
         when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
                 .thenReturn(List.of(disabled));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
-                new AgentRuntimeResolver(), registry);
+                new AiRuntimeResolver(), registry);
 
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 PLATFORM_STATE_ID, "disabledAction"));
     }
 

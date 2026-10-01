@@ -47,11 +47,11 @@ public interface AiConversationMapper {
     int consumeOperationAssessment(@Param("assessmentId") String assessmentId,
                                    @Param("consumedAt") long consumedAt);
 
-    @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND puppet_id = #{puppetId} "
+    @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
             + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listThreads(@Param("scope") String scope,
                                      @Param("userId") String userId,
-                                     @Param("puppetId") String puppetId);
+                                     @Param("agentId") String agentId);
 
     @Select("SELECT * FROM ai_threads WHERE scope = 'platform' AND user_id = #{userId} "
             + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
@@ -63,11 +63,11 @@ public interface AiConversationMapper {
     @Select("SELECT * FROM ai_threads WHERE thread_id = #{threadId}")
     AiThreadRecord findThread(@Param("threadId") String threadId);
 
-    @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, puppet_id, session_id, title, config_id, "
+    @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, agent_id, session_id, title, config_id, "
             + "config_name, config_protocol, config_model, config_base_url, config_completions_path, "
             + "config_max_output_tokens, created_at, last_active_at, message_count, run_status, "
             + "parent_thread_id, profile, context_summary, context_checkpoint_json, root_plan_id) "
-            + "VALUES (#{threadId}, #{scope}, #{userId}, #{puppetId}, #{sessionId}, #{title}, #{configId}, "
+            + "VALUES (#{threadId}, #{scope}, #{userId}, #{agentId}, #{sessionId}, #{title}, #{configId}, "
             + "#{configName}, #{configProtocol}, #{configModel}, #{configBaseUrl}, #{configCompletionsPath}, "
             + "#{configMaxOutputTokens}, #{createdAt}, #{lastActiveAt}, #{messageCount}, #{runStatus}, "
             + "#{parentThreadId}, 'default', "

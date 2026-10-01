@@ -3,7 +3,7 @@ package org.leo.core.engine.proxy;
 import org.leo.core.engine.socks5.ReadDataThread;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.engine.socks5.WriteDataThread;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

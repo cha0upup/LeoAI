@@ -1,8 +1,8 @@
 package org.leo.service.sql;
 
-import org.leo.core.puppet.capability.SqlCapable;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
-import org.leo.core.puppet.database.SqlCommand;
+import org.leo.core.agent.capability.SqlCapable;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
+import org.leo.core.agent.database.SqlCommand;
 import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.phpcore.database.PhpDatabaseConnectionAdapter;
 

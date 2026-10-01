@@ -1,7 +1,7 @@
 package org.leo.phpcore.rpc;
 
 import org.leo.core.component.runtime.ComponentArtifact;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.HeaderNoiseGenerator;
@@ -13,10 +13,10 @@ import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.net.layer.UrlGenerator;
 import org.leo.core.net.layer.UrlStrategy;
-import org.leo.core.rpc.PuppetOperation;
-import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
-import org.leo.core.rpc.PuppetRpcRequest;
-import org.leo.core.rpc.PuppetRpcResponse;
+import org.leo.core.rpc.AgentOperation;
+import org.leo.core.rpc.AgentRpcEnvelopeMapper;
+import org.leo.core.rpc.AgentRpcRequest;
+import org.leo.core.rpc.AgentRpcResponse;
 import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.nio.charset.StandardCharsets;
@@ -30,7 +30,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
+import static org.leo.core.rpc.AgentRpcErrorCodes.isHostIdMismatch;
 
 /** Platform-side client for the PHP core execution Envelope. */
 public final class PhpRpcClient implements AutoCloseable {
@@ -42,7 +42,7 @@ public final class PhpRpcClient implements AutoCloseable {
     private final Map<String, PhpPayloadCodec> layerPayloadCodecs = new ConcurrentHashMap<>();
     private volatile String hostId;
     /** 最大请求总数，包含首次请求。 */
-    private int maxAttempts = Puppet.DEFAULT_MAX_REQUEST_COUNT;
+    private int maxAttempts = Agent.DEFAULT_MAX_REQUEST_COUNT;
     private UrlGenerator urlGenerator;
     private UrlStrategy urlStrategy;
     private PaddingStrategy paddingStrategy;
@@ -67,7 +67,7 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     public void setMaxReqCount(Integer count) {
-        this.maxAttempts = Puppet.requireValidMaxRequestCount(count);
+        this.maxAttempts = Agent.requireValidMaxRequestCount(count);
     }
 
     public void setUrlStrategy(UrlStrategy strategy) {
@@ -97,7 +97,7 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     public Map<String, Object> ping() throws Exception {
-        return call(request(PuppetOperation.PING, null, null, Map.of()));
+        return call(request(AgentOperation.PING, null, null, Map.of()));
     }
 
     public Map<String, Object> invokeComponent(String componentId, String digest,
@@ -106,7 +106,7 @@ public final class PhpRpcClient implements AutoCloseable {
                 ? new LinkedHashMap<>() : new LinkedHashMap<>(params);
         request.put("componentKey", componentKey(componentId, digest));
         Object action = request.remove("action");
-        return call(request(PuppetOperation.COMPONENT_INVOKE, componentId,
+        return call(request(AgentOperation.COMPONENT_INVOKE, componentId,
                 action == null ? null : String.valueOf(action), request));
     }
 
@@ -115,13 +115,13 @@ public final class PhpRpcClient implements AutoCloseable {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("componentKey", componentKey(artifact.getComponentId(), artifact.getDigest()));
         request.put("source", new String(artifact.getContent(), StandardCharsets.UTF_8));
-        return call(request(PuppetOperation.COMPONENT_LOAD,
+        return call(request(AgentOperation.COMPONENT_LOAD,
                 artifact.getComponentId(), null, request));
     }
 
-    private PuppetRpcRequest request(PuppetOperation operation, String component,
+    private AgentRpcRequest request(AgentOperation operation, String component,
                                      String action, Map<String, Object> params) {
-        return new PuppetRpcRequest(UUID.randomUUID().toString(), operation,
+        return new AgentRpcRequest(UUID.randomUUID().toString(), operation,
                 hostId, component, action, params);
     }
 
@@ -143,9 +143,9 @@ public final class PhpRpcClient implements AutoCloseable {
         }
     }
 
-    private Map<String, Object> call(PuppetRpcRequest request) throws Exception {
+    private Map<String, Object> call(AgentRpcRequest request) throws Exception {
         Exception lastFailure = null;
-        PuppetRpcResponse hostMismatchResponse = null;
+        AgentRpcResponse hostMismatchResponse = null;
         int affinityAttempts = request.hostId() == null
                 ? maxAttempts : Math.max(maxAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
         for (int attempt = 1; attempt <= affinityAttempts; attempt++) {
@@ -154,7 +154,7 @@ public final class PhpRpcClient implements AutoCloseable {
                 EncodedPayload encoded = encode(request);
                 Map<String, Object> decoded = decode(
                         communication.sendRequest(encoded.data()), encoded.requestIds());
-                PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
+                AgentRpcResponse response = AgentRpcEnvelopeMapper.responseFromMap(decoded);
                 if (isHostIdMismatch(response)) {
                     hostMismatchResponse = response;
                     if (attempt < affinityAttempts) {
@@ -163,7 +163,7 @@ public final class PhpRpcClient implements AutoCloseable {
                     }
                     return recoverHostAffinity(request.hostId(), response);
                 }
-                return PuppetRpcEnvelopeMapper.toResultMap(response);
+                return AgentRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
                 lastFailure = e;
                 if (attempt >= maxAttempts) break;
@@ -173,7 +173,7 @@ public final class PhpRpcClient implements AutoCloseable {
         if (hostMismatchResponse != null) {
             return recoverHostAffinity(request.hostId(), hostMismatchResponse);
         }
-        throw new IllegalStateException("PHP Puppet 通信失败: "
+        throw new IllegalStateException("PHP Agent 通信失败: "
                 + (lastFailure != null ? lastFailure.getMessage() : "unknown"), lastFailure);
     }
 
@@ -182,29 +182,29 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     private Map<String, Object> recoverHostAffinity(
-            String expectedHostId, PuppetRpcResponse mismatchResponse) {
+            String expectedHostId, AgentRpcResponse mismatchResponse) {
         Function<String, Map<String, Object>> recovery = hostIdMismatchRecovery;
-        if (recovery == null) return PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+        if (recovery == null) return AgentRpcEnvelopeMapper.toResultMap(mismatchResponse);
         try {
             Map<String, Object> recovered = recovery.apply(expectedHostId);
-            return recovered != null ? recovered : PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+            return recovered != null ? recovered : AgentRpcEnvelopeMapper.toResultMap(mismatchResponse);
         } catch (RuntimeException e) {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("code", Integer.valueOf(503));
-            result.put("errorCode", org.leo.core.rpc.PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
+            result.put("errorCode", org.leo.core.rpc.AgentRpcErrorCodes.HOST_ID_UNAVAILABLE);
             result.put("msg", "目标实例重新握手失败: "
                     + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
             return result;
         }
     }
 
-    private EncodedPayload encode(PuppetRpcRequest request) throws Exception {
+    private EncodedPayload encode(AgentRpcRequest request) throws Exception {
         if (requestLayers.isEmpty()) {
-            throw new IllegalStateException("requestLayers为空，PHP Puppet 必须配置请求伪装");
+            throw new IllegalStateException("requestLayers为空，PHP Agent 必须配置请求伪装");
         }
         List<String> requestIds = new ArrayList<>();
         requestIds.add(request.requestId());
-        Map<String, Object> wireRequest = PuppetRpcEnvelopeMapper.toMap(request);
+        Map<String, Object> wireRequest = AgentRpcEnvelopeMapper.toMap(request);
         PaddingUtil.pad(wireRequest, paddingStrategy, estimateBytes(wireRequest),
                 request.requestId() + "|0|" + transportSeed());
         byte[] current = encodeLayer(wireRequest, requestLayers.get(0));
@@ -214,8 +214,8 @@ public final class PhpRpcClient implements AutoCloseable {
             relayParams.put("url", previous.getUrl());
             relayParams.put("headers", previous.getRelayHeaders());
             relayParams.put("body", current);
-            PuppetRpcRequest relay = request(PuppetOperation.RELAY, null, null, relayParams);
-            Map<String, Object> relayWire = PuppetRpcEnvelopeMapper.toMap(relay);
+            AgentRpcRequest relay = request(AgentOperation.RELAY, null, null, relayParams);
+            Map<String, Object> relayWire = AgentRpcEnvelopeMapper.toMap(relay);
             PaddingUtil.pad(relayWire, paddingStrategy, estimateBytes(relayWire),
                     relay.requestId() + "|" + i + "|" + transportSeed());
             current = encodeLayer(relayWire, requestLayers.get(i));
@@ -226,7 +226,7 @@ public final class PhpRpcClient implements AutoCloseable {
 
     private Map<String, Object> decode(byte[] response, List<String> requestIds) throws Exception {
         if (responseLayers.isEmpty()) {
-            throw new IllegalStateException("responseLayers为空，PHP Puppet 必须配置响应伪装");
+            throw new IllegalStateException("responseLayers为空，PHP Agent 必须配置响应伪装");
         }
         if (responseLayers.size() != requestIds.size()) {
             throw new IllegalStateException("请求层与响应层数量不一致");
@@ -237,20 +237,20 @@ public final class PhpRpcClient implements AutoCloseable {
             decoded = payloadCodec(responseLayers.get(i).getPayloadKey())
                     .decode(responseLayers.get(i).getDisguise().decodeTraffic(current));
             String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
-            if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(decoded, expectedRequestId)) {
-                throw new IllegalStateException("PHP Puppet 响应 requestId 不匹配");
+            if (!AgentRpcEnvelopeMapper.isEnvelopeResponse(decoded, expectedRequestId)) {
+                throw new IllegalStateException("PHP Agent 响应 requestId 不匹配");
             }
             if (i < responseLayers.size() - 1) {
-                PuppetRpcResponse relayResponse = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
+                AgentRpcResponse relayResponse = AgentRpcEnvelopeMapper.responseFromMap(decoded);
                 Object nested = relayResponse.isSuccess() ? relayResponse.data().get("body") : null;
                 if (!relayResponse.isSuccess() || !(nested instanceof byte[] bytes)) {
-                    throw new IllegalStateException("PHP Puppet Relay 响应缺少 data.body");
+                    throw new IllegalStateException("PHP Agent Relay 响应缺少 data.body");
                 }
                 current = bytes;
             }
         }
         if (decoded == null || decoded.isEmpty()) {
-            throw new IllegalStateException("PHP Puppet 响应为空");
+            throw new IllegalStateException("PHP Agent 响应为空");
         }
         return decoded;
     }
@@ -330,7 +330,7 @@ public final class PhpRpcClient implements AutoCloseable {
             retrySleeper.sleep(delay);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("PHP Puppet 重试等待被中断", interrupted);
+            throw new IllegalStateException("PHP Agent 重试等待被中断", interrupted);
         }
     }
 

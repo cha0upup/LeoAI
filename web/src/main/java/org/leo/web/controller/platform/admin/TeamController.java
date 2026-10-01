@@ -59,7 +59,7 @@ public class TeamController {
 
         List<Team> teams;
         if (UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
-            teams = teamService.getAllTeam();
+            teams = teamService.getAllTeams();
         } else if (UserService.PRIVILEGE_LEADER.equals(caller.getPrivilege())) {
             teams = teamService.getTeamsByLeader(caller.getUserId());
         } else {
@@ -148,7 +148,7 @@ public class TeamController {
             throw ApiException.forbidden("不能删除内置团队 " + TeamService.ADMIN_TEAM_NAME);
         }
 
-        for (User member : userService.getUserByTeamId(teamId)) {
+        for (User member : userService.getUsersByTeamId(teamId)) {
             if (member == null) continue;
             member.setTeamId(null);
             if (UserService.PRIVILEGE_LEADER.equals(member.getPrivilege())) {

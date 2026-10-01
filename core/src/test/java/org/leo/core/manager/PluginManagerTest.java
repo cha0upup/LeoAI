@@ -53,11 +53,11 @@ class PluginManagerTest {
                 LeoConfig.DEFAULT_PLUGIN_ENCRYPT_KEY);
 
         try {
-            assertEquals(4, manager.getPluginAsList().size());
-            assertTrue(manager.getPluginAsList().stream()
+            assertEquals(4, manager.getPlugins().size());
+            assertTrue(manager.getPlugins().stream()
                     .allMatch(plugin -> "java".equals(plugin.resolveRuntime())));
         } finally {
-            manager.getPluginAsList().forEach(plugin -> manager.unload(plugin.getPluginId()));
+            manager.getPlugins().forEach(plugin -> manager.unload(plugin.getPluginId()));
         }
     }
 

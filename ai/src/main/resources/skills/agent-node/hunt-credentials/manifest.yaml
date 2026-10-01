@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: leo.agent.hunt-credentials
+name: hunt-credentials
+version: 1.0.0
+scope: agent-node
+domain: operation
+category: credential-access
+mode: assess
+attack:
+  tactics: [credential-access]
+platforms: [linux, windows, java]
+targets: [host, jvm, application]
+pack: host-postex
+risk: medium
+accessMode: read-only-sensitive
+status: published
+source: builtin
+owner: leo
+enabled: true
+requires:
+  tools: [harvestAll, exec, readTextFile, searchFileContent, readResources]
+  skills: [recon-basic-info]
+  facts: [target.authorized]
+produces: [credential-leads, identity-target-map]
+next: [lateral-move-ssh]

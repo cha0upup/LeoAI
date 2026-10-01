@@ -1,7 +1,7 @@
 package org.leo.web.service;
 
 import org.leo.service.discovery.NetworkProbeAnalysisService;
-import org.leo.core.puppet.capability.NetworkProbeCapable;
+import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
 import org.leo.service.discovery.NetworkProbeLimits;
 import org.leo.service.discovery.ScanStage;

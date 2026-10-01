@@ -3,7 +3,7 @@ package org.leo.core.net.layer;
 import java.util.List;
 
 /**
- * URL 随机化策略配置（per puppet session）
+ * URL 随机化策略配置（per agent session）
  * <p>
  * 控制正向通道请求 URL 是否随机化，以及随机化方式。
  * 仅在 WebShell 以 Filter/* 或 Interceptor/** 方式部署时启用，

@@ -66,11 +66,11 @@ public class PluginManager {
         plugins.remove(pluginId);
     }
 
-    public List<Plugin> getPluginAsList() {
+    public List<Plugin> getPlugins() {
         return new ArrayList<>(plugins.values());
     }
 
-    public List<Plugin> getPluginAsListByType(String type) {
+    public List<Plugin> getPluginsByType(String type) {
         return plugins.values().stream()
                 .filter(plugin -> Objects.equals(plugin.getPluginType(), type))
                 .toList();

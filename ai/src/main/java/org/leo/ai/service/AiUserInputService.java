@@ -12,8 +12,8 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiUserInputOption;
 import org.leo.core.session.AiThread;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -84,7 +84,7 @@ public class AiUserInputService {
             if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) {
                 throw AiToolException.modelCorrectable(
                         "CONFIRMATION_ACTION_NOT_BUSINESS_MUTATION",
-                        "确认请求只能绑定会改变平台或 Puppet 状态的业务工具。",
+                        "确认请求只能绑定会改变平台或 Agent 状态的业务工具。",
                         "只读工具和内部控制工具无需确认；请直接调用对应工具。");
             }
             if (!hasAffirmativeOption(normalizedOptions)
@@ -180,7 +180,7 @@ public class AiUserInputService {
                     state::markWaitingForUserInput,
                     payload -> state.offerSseEvent("node", payload));
         }
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
+        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
         AiThread thread = session != null ? session.getAiThread(threadId) : null;
         if (thread == null) throw unavailable();
         return new RuntimeTarget(

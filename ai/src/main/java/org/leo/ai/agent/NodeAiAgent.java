@@ -1,0 +1,19 @@
+package org.leo.ai.agent;
+
+import dev.langchain4j.service.MemoryId;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.UserMessage;
+import dev.langchain4j.service.memory.ChatMemoryAccess;
+
+/**
+ * AgentNode 侧 AI Agent 接口。
+ *
+ * <p>使用 LangChain4j AiService 机制，由 {@link AiAgentFactory} 构建实例。
+ * memoryId 使用 sessionId + threadId 组合作为会话隔离键。
+ *
+ * <p>通过 chat 流式输出回复，用于 SSE 实时推送。
+ */
+public interface NodeAiAgent extends ChatMemoryAccess {
+
+    TokenStream chat(@MemoryId String memoryId, @UserMessage String message);
+}

@@ -16,7 +16,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * <ul>
  *   <li>零协议开销 — 不需要长度前缀、信封、格式检测</li>
  *   <li>完全隐蔽 — 填充在加密内部，外部无任何可识别特征</li>
- *   <li>Puppet 端零改动 — 只读已知 key，自动忽略填充字段</li>
+ *   <li>Agent 端零改动 — 只读已知 key，自动忽略填充字段</li>
  *   <li>实现极简 — 核心逻辑不到 30 行</li>
  * </ul>
  * <p>
@@ -26,7 +26,7 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public class PaddingUtil {
 
-    /** 填充 key 前缀（puppet 端不会读取以此开头的 key） */
+    /** 填充 key 前缀（agent 端不会读取以此开头的 key） */
     private static final String PADDING_KEY_PREFIX = "_p";
 
     private static final String ALPHA_NUM =

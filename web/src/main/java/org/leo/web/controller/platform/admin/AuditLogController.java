@@ -40,10 +40,10 @@ public class AuditLogController {
     // 参数名常量
     private static final String PARAM_LOG_ID = "logId";
     private static final String PARAM_USER_ID = "userId";
-    private static final String PARAM_PUPPET_ID = "puppetId";
+    private static final String PARAM_AGENT_ID = "agentId";
     private static final String PARAM_OPERATION_TYPE = "operationType";
     private static final String PARAM_USER_NAME = "userName";
-    private static final String PARAM_PUPPET_NAME = "puppetName";
+    private static final String PARAM_AGENT_NAME = "agentName";
     private static final String PARAM_SESSION_ID = "sessionId";
     private static final String PARAM_STATUS = "status";
     private static final String PARAM_CLIENT_IP = "clientIp";
@@ -226,13 +226,13 @@ public class AuditLogController {
         }
     }
 
-    @RequestMapping(value = "/statistics/puppet", method = RequestMethod.GET)
-    public HashMap<String, Object> getPuppetStatistics(@RequestParam(PARAM_PUPPET_ID) String puppetId) {
+    @RequestMapping(value = "/statistics/agent", method = RequestMethod.GET)
+    public HashMap<String, Object> getAgentStatistics(@RequestParam(PARAM_AGENT_ID) String agentId) {
         try {
-            if (puppetId == null || puppetId.isBlank()) {
-                return ApiResponse.badRequest("puppetId参数不能为空");
+            if (agentId == null || agentId.isBlank()) {
+                return ApiResponse.badRequest("agentId参数不能为空");
             }
-            return ApiResponse.success(auditLogService.getPuppetStatistics(puppetId));
+            return ApiResponse.success(auditLogService.getAgentStatistics(agentId));
         } catch (Exception e) {
             logger.error("获取主机审计统计失败: {}", e.getMessage(), e);
             return ApiResponse.error("获取主机审计统计失败: " + e.getMessage());
@@ -433,8 +433,8 @@ public class AuditLogController {
         AuditLogQuery query = new AuditLogQuery();
         query.setUserId(textParam(params, PARAM_USER_ID));
         query.setUserName(textParam(params, PARAM_USER_NAME));
-        query.setPuppetId(textParam(params, PARAM_PUPPET_ID));
-        query.setPuppetName(textParam(params, PARAM_PUPPET_NAME));
+        query.setAgentId(textParam(params, PARAM_AGENT_ID));
+        query.setAgentName(textParam(params, PARAM_AGENT_NAME));
         query.setSessionId(textParam(params, PARAM_SESSION_ID));
         query.setOperationType(textParam(params, PARAM_OPERATION_TYPE));
         query.setStatus(textParam(params, PARAM_STATUS));
@@ -452,8 +452,8 @@ public class AuditLogController {
         HashMap<String, Object> map = new HashMap<String, Object>();
         putIfPresent(map, PARAM_USER_ID, query.getUserId());
         putIfPresent(map, PARAM_USER_NAME, query.getUserName());
-        putIfPresent(map, PARAM_PUPPET_ID, query.getPuppetId());
-        putIfPresent(map, PARAM_PUPPET_NAME, query.getPuppetName());
+        putIfPresent(map, PARAM_AGENT_ID, query.getAgentId());
+        putIfPresent(map, PARAM_AGENT_NAME, query.getAgentName());
         putIfPresent(map, PARAM_SESSION_ID, query.getSessionId());
         putIfPresent(map, PARAM_OPERATION_TYPE, query.getOperationType());
         putIfPresent(map, PARAM_STATUS, query.getStatus());

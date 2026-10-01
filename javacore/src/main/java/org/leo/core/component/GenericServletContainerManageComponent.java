@@ -79,9 +79,9 @@ public class GenericServletContainerManageComponent implements Runnable {
                 info.put("basePath", contextPath);
                 info.put("workDir", resolveWorkDir(context));
                 info.put("containerClassName", context.getClass().getName());
-                info.put("allFilter", getAllFilter(context));
-                info.put("allServlet", getAllServlet(context));
-                info.put("allListener", getAllListener(context));
+                info.put("allFilter", getAllFilters(context));
+                info.put("allServlet", getAllServlets(context));
+                info.put("allListener", getAllListeners(context));
                 info.put("allValve", new ArrayList());
                 answer.add(info);
             } catch (Throwable ignored) {
@@ -90,7 +90,7 @@ public class GenericServletContainerManageComponent implements Runnable {
         return answer;
     }
 
-    public ArrayList getAllFilter(Object context) {
+    public ArrayList getAllFilters(Object context) {
         ArrayList filters = new ArrayList();
         Object registrations = tryInvoke(context, "getFilterRegistrations");
         if (!(registrations instanceof Map)) return filters;
@@ -110,7 +110,7 @@ public class GenericServletContainerManageComponent implements Runnable {
         return filters;
     }
 
-    public ArrayList getAllServlet(Object context) {
+    public ArrayList getAllServlets(Object context) {
         ArrayList servlets = new ArrayList();
         Object registrations = tryInvoke(context, "getServletRegistrations");
         if (!(registrations instanceof Map)) return servlets;
@@ -133,7 +133,7 @@ public class GenericServletContainerManageComponent implements Runnable {
         return servlets;
     }
 
-    public ArrayList getAllListener(Object context) {
+    public ArrayList getAllListeners(Object context) {
         ArrayList listeners = new ArrayList();
         IdentityHashMap seen = new IdentityHashMap();
         collectListenerFields(context, context, 0, seen, listeners);

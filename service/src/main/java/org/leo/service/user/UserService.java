@@ -47,23 +47,23 @@ public class UserService {
         return normalize(userMapper.findUserByUsername(userName.trim()));
     }
 
-    public List<User> getAllUser() {
-        List<User> list = userMapper.getAllUser();
-        if (list == null) return new ArrayList<>();
-        for (User u : list) normalize(u);
-        return list;
+    public List<User> getAllUsers() {
+        List<User> users = userMapper.getAllUsers();
+        if (users == null) return new ArrayList<>();
+        for (User user : users) normalize(user);
+        return users;
     }
 
-    public List<User> getUserByTeamId(String teamId) {
+    public List<User> getUsersByTeamId(String teamId) {
         if (teamId == null || teamId.isBlank()) return new ArrayList<>();
-        List<User> list = userMapper.findUserByTeamId(teamId.trim());
-        if (list == null) return new ArrayList<>();
-        for (User u : list) normalize(u);
-        return list;
+        List<User> users = userMapper.findUsersByTeamId(teamId.trim());
+        if (users == null) return new ArrayList<>();
+        for (User user : users) normalize(user);
+        return users;
     }
 
     public List<User> getUsersWithoutTeam() {
-        return getAllUser().stream().filter(Objects::nonNull)
+        return getAllUsers().stream().filter(Objects::nonNull)
                 .filter(user -> user.getTeamId() == null || user.getTeamId().isBlank())
                 .toList();
     }

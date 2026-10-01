@@ -1,14 +1,14 @@
 # Component 开发检查清单
 
-Component 类会被编译为 `.payload`，通过 `CloneWithJavassist` 重命名后发送到 puppet 端执行。
-puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 文件，因此有严格的编写约束。
+Component 类会被编译为 `.payload`，通过 `CloneWithJavassist` 重命名后发送到 agent 端执行。
+agent 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 文件，因此有严格的编写约束。
 
 ---
 
 ## 语法约束（-source 1.6 -target 1.6）
 
 - [ ] **不使用 lambda 表达式**（Java 8）：`() -> {}` 禁用
-- [ ] **不使用匿名内部类**：会生成独立 `$1.class`，CloneWithJavassist 不会发送到 puppet 端，运行时 `ClassNotFoundException`
+- [ ] **不使用匿名内部类**：会生成独立 `$1.class`，CloneWithJavassist 不会发送到 agent 端，运行时 `ClassNotFoundException`
 - [ ] **不使用 diamond operator**（Java 7）：写 `new ArrayList<String>()` 或 raw `new ArrayList()`，不写 `new ArrayList<>()`
 - [ ] **不使用 try-with-resources**（Java 7）：用 `try/finally` 手动关闭资源
 - [ ] **不使用 multi-catch**（Java 7）：`catch (A | B e)` 拆成多个 catch 块
@@ -20,7 +20,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 
 - [ ] **只用 JDK 标准库**：`java.lang`、`java.util`、`java.io`、`java.net`、`java.security`、`javax.crypto` 等
 - [ ] **不引用项目内其他包**：component 包被独立编译，无法引用 `org.leo.core.util` 等
-- [ ] **不引用第三方库**：puppet 端 classpath 无 fastjson / okhttp 等
+- [ ] **不引用第三方库**：agent 端 classpath 无 fastjson / okhttp 等
 - [ ] **谨慎使用高版本 JDK API**：`AutoCloseable`（Java 7）、`ConcurrentHashMap.newKeySet()`（Java 8）等在低版本 JVM 不存在
 
 ## 结构约束
@@ -50,7 +50,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 
 ## 静态字段
 
-- [ ] **明确生命周期**：静态字段在 puppet 端同一 ClassLoader 下跨调用持续存在，确认这是预期行为
+- [ ] **明确生命周期**：静态字段在 agent 端同一 ClassLoader 下跨调用持续存在，确认这是预期行为
 - [ ] **资源清理**：持有 Socket/ServerSocket/Thread 等资源的静态字段，提供 cleanup 操作或在重新初始化时关闭上一轮残留
 - [ ] **线程安全**：多线程访问的静态字段使用 `ConcurrentHashMap`/`ConcurrentLinkedQueue`/`volatile`
 - [ ] **线程画像**：工作池可由 Component 自身实现 `ThreadFactory`，线程名使用 `getClass().getSimpleName()` 加有界序号，避免默认 pool 名称和固定功能名；不要使用匿名 ThreadFactory
@@ -58,7 +58,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 ## 错误处理
 
 - [ ] **统一返回格式**：成功 `results.put("code", 200)`，失败 `results.put("code", 500)` + `results.put("msg", "...")`
-- [ ] **run() 中 catch 兜底**：确保任何异常都被捕获并写入 results，不要让异常逃逸导致 puppet 端崩溃
+- [ ] **run() 中 catch 兜底**：确保任何异常都被捕获并写入 results，不要让异常逃逸导致 agent 端崩溃
 - [ ] **敏感信息**：生产环境考虑不返回完整堆栈，只返回错误码 + 简短描述
 
 ## 稳定性与安全边界

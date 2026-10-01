@@ -2,7 +2,7 @@ package org.leo.phpcore.component;
 
 import org.leo.core.component.runtime.ComponentArtifact;
 import org.leo.core.component.runtime.ComponentDeliveryMode;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -66,7 +66,7 @@ public final class PhpComponentArtifactRegistry {
                 throw new IllegalStateException("PHP 组件 ID 与文件名不一致: " + componentId + " != " + declaredId);
             }
             String version = requiredMetadata(COMPONENT_VERSION, sourceText, "version", componentId);
-            return new ComponentArtifact(componentId, version, sha256(source), PuppetRuntime.PHP,
+            return new ComponentArtifact(componentId, version, sha256(source), AgentRuntime.PHP,
                     ComponentDeliveryMode.DISK_CACHE, source);
         } catch (IOException e) {
             throw new IllegalStateException("读取 PHP 组件失败: " + componentId, e);

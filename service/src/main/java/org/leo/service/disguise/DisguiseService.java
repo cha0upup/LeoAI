@@ -150,7 +150,7 @@ public class DisguiseService {
     }
 
     public ArrayList<Disguise> getDisguises() {
-        return disguiseManager.getDisguiseAsList();
+        return disguiseManager.getDisguises();
     }
 
     public Disguise getDisguiseById(String disguiseId) {

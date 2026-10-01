@@ -4,7 +4,7 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.manager.DisguiseManager;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.TargetJavaVersion;
@@ -118,11 +118,11 @@ public class ShellGeneratorController {
     @RequestMapping(value = "/generate/runtime", method = RequestMethod.POST)
     public HashMap<String, Object> generateRuntimeArtifact(@RequestBody HashMap<String, Object> params) {
         try {
-            PuppetRuntime runtime = PuppetRuntime.from(ControllerUtil.getRequiredStringParam(params, "runtime"));
-            if (runtime == PuppetRuntime.UNKNOWN) {
+            AgentRuntime runtime = AgentRuntime.from(ControllerUtil.getRequiredStringParam(params, "runtime"));
+            if (runtime == AgentRuntime.UNKNOWN) {
                 return ApiResponse.badRequest("runtime参数无效");
             }
-            if (runtime == PuppetRuntime.PHP) {
+            if (runtime == AgentRuntime.PHP) {
                 String payloadKey = ControllerUtil.getOptionalStringParam(params, "payloadKey");
                 if (payloadKey == null || payloadKey.trim().isEmpty()) {
                     return ApiResponse.badRequest("PHP PayloadCodec AES 密钥不能为空");

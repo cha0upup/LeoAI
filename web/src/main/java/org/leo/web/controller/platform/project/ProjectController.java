@@ -2,18 +2,18 @@ package org.leo.web.controller.platform.project;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Project;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectChildrenRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectMembershipSummary;
-import org.leo.web.dto.platform.project.ProjectDtos.ProjectPuppetsRequest;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
-import org.leo.web.dto.platform.project.ProjectDtos.PuppetMembershipsRequest;
+import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionPolicy;
@@ -47,7 +47,7 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         List<Project> visibleProjects = projectService.listVisible(user);
         if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
-        Map<String, Integer> hostCounts = projectService.countPuppetsByProject();
+        Map<String, Integer> hostCounts = projectService.countAgentsByProject();
         Map<String, Integer> sessionCounts = countActiveSessionsByProject(user);
         List<ProjectSummary> projects = visibleProjects.stream()
                 .map(project -> new ProjectSummary(
@@ -112,18 +112,18 @@ public class ProjectController {
                 "retainedSessionCount", retainedSessionCount));
     }
 
-    @GetMapping("/{projectId}/puppets")
-    public Map<String, Object> listRootPuppets(HttpServletRequest request,
+    @GetMapping("/{projectId}/agents")
+    public Map<String, Object> listRootAgents(HttpServletRequest request,
                                                @PathVariable String projectId) {
         User user = permissionService.requireLogin(request);
         requireVisible(projectId, user);
-        return ApiResponse.success(filterAccessible(projectService.listRootPuppets(projectId), user));
+        return ApiResponse.success(filterAccessible(projectService.listRootAgents(projectId), user));
     }
 
-    @GetMapping("/unassigned/puppets")
-    public Map<String, Object> listUnassignedPuppets(HttpServletRequest request) {
+    @GetMapping("/unassigned/agents")
+    public Map<String, Object> listUnassignedAgents(HttpServletRequest request) {
         User user = permissionService.requireLogin(request);
-        return ApiResponse.success(filterAccessible(projectService.listUnassignedRootPuppets(), user));
+        return ApiResponse.success(filterAccessible(projectService.listUnassignedRootAgents(), user));
     }
 
     @PostMapping("/{projectId}/children")
@@ -133,57 +133,57 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         requireVisible(projectId, user);
         String parentId = PermissionService.requireText(
-                body != null ? body.parentPuppetId() : null, "parentPuppetId不能为空");
+                body != null ? body.parentAgentId() : null, "parentAgentId不能为空");
         return ApiResponse.success(filterAccessible(
-                projectService.listPuppetsByParent(projectId, parentId), user));
+                projectService.listAgentsByParent(projectId, parentId), user));
     }
 
     @PostMapping("/hosts/attach")
-    public Map<String, Object> attachPuppets(HttpServletRequest request,
-                                              @RequestBody ProjectPuppetsRequest body) {
+    public Map<String, Object> attachAgents(HttpServletRequest request,
+                                              @RequestBody ProjectAgentsRequest body) {
         User user = permissionService.requireLogin(request);
         String projectId = body != null ? body.projectId() : null;
         Project project = requireContentEditable(projectId, user);
         if (Project.STATUS_ARCHIVED.equals(project.getStatus())) {
             throw ApiException.badRequest("已归档项目不能添加主机");
         }
-        List<String> puppetIds = body.puppetIds() != null ? body.puppetIds() : List.of();
-        if (puppetIds.isEmpty()) throw ApiException.badRequest("puppetIds不能为空");
-        for (String puppetId : puppetIds) {
-            permissionService.requireAccessiblePuppetChain(puppetId, user);
+        List<String> agentIds = body.agentIds() != null ? body.agentIds() : List.of();
+        if (agentIds.isEmpty()) throw ApiException.badRequest("agentIds不能为空");
+        for (String agentId : agentIds) {
+            permissionService.requireAccessibleAgentChain(agentId, user);
         }
-        int changed = projectService.attachPuppets(projectId, puppetIds,
+        int changed = projectService.attachAgents(projectId, agentIds,
                 body.alias(), body.environment(), body.tags(), user.getUserId());
         return ApiResponse.success(new RelationMutationResponse(projectId, changed));
     }
 
     @PostMapping("/hosts/detach")
-    public Map<String, Object> detachPuppets(HttpServletRequest request,
-                                              @RequestBody ProjectPuppetsRequest body) {
+    public Map<String, Object> detachAgents(HttpServletRequest request,
+                                              @RequestBody ProjectAgentsRequest body) {
         User user = permissionService.requireLogin(request);
         String projectId = body != null ? body.projectId() : null;
         requireContentEditable(projectId, user);
-        List<String> puppetIds = body.puppetIds() != null ? body.puppetIds() : List.of();
-        if (puppetIds.isEmpty()) throw ApiException.badRequest("puppetIds不能为空");
-        int changed = projectService.detachPuppets(projectId, puppetIds);
+        List<String> agentIds = body.agentIds() != null ? body.agentIds() : List.of();
+        if (agentIds.isEmpty()) throw ApiException.badRequest("agentIds不能为空");
+        int changed = projectService.detachAgents(projectId, agentIds);
         return ApiResponse.success(new RelationMutationResponse(projectId, changed));
     }
 
     @PostMapping("/hosts/memberships")
     public Map<String, Object> listMemberships(HttpServletRequest request,
-                                                @RequestBody PuppetMembershipsRequest body) {
+                                                @RequestBody AgentMembershipsRequest body) {
         User user = permissionService.requireLogin(request);
-        List<String> puppetIds = body != null && body.puppetIds() != null
-                ? body.puppetIds().stream().filter(id -> id != null && !id.isBlank())
+        List<String> agentIds = body != null && body.agentIds() != null
+                ? body.agentIds().stream().filter(id -> id != null && !id.isBlank())
                 .map(String::trim).distinct().limit(500).toList()
                 : List.of();
         Map<String, List<ProjectMembershipSummary>> result = new LinkedHashMap<>();
-        if (puppetIds.isEmpty()) return ApiResponse.success(result);
-        for (String puppetId : puppetIds) {
-            permissionService.requireAccessiblePuppetChain(puppetId, user);
+        if (agentIds.isEmpty()) return ApiResponse.success(result);
+        for (String agentId : agentIds) {
+            permissionService.requireAccessibleAgentChain(agentId, user);
         }
-        projectService.listVisibleMemberships(puppetIds, user).forEach((puppetId, projects) ->
-                result.put(puppetId, projects.stream().map(ProjectMembershipSummary::new).toList()));
+        projectService.listVisibleMemberships(agentIds, user).forEach((agentId, projects) ->
+                result.put(agentId, projects.stream().map(ProjectMembershipSummary::new).toList()));
         return ApiResponse.success(result);
     }
 
@@ -209,13 +209,13 @@ public class ProjectController {
         return project;
     }
 
-    private List<Puppet> filterAccessible(List<Puppet> puppets, User user) {
-        return puppets.stream().filter(puppet -> permissionService.canAccessPuppetChain(puppet, user)).toList();
+    private List<Agent> filterAccessible(List<Agent> agents, User user) {
+        return agents.stream().filter(agent -> permissionService.canAccessAgentChain(agent, user)).toList();
     }
 
     private Map<String, Integer> countActiveSessionsByProject(User user) {
         Map<String, Integer> counts = new HashMap<>();
-        for (PuppetNodeSession session : PuppetNodeSessionContainer.getAllSession().values()) {
+        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
             if (session == null) continue;
             String projectId = session.getProjectId();
             if (projectId != null && PermissionPolicy.canAccessSession(session, user)) {
@@ -227,7 +227,7 @@ public class ProjectController {
 
     private int clearProjectFromActiveSessions(String projectId) {
         int changed = 0;
-        for (PuppetNodeSession session : PuppetNodeSessionContainer.getAllSession().values()) {
+        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
             if (session != null && projectId.equals(session.getProjectId())) {
                 session.setProjectId(null);
                 changed++;

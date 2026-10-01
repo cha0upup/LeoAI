@@ -420,7 +420,7 @@ class ExecCommandComponentTest {
     @Test
     void internalCommandRunnerInitializesBeforeSendingInput() throws Exception {
         Assumptions.assumeFalse(System.getProperty("os.name", "").toLowerCase().contains("windows"));
-        var service = new org.leo.core.puppet.service.ComponentService(
+        var service = new org.leo.core.agent.service.ComponentService(
                 bytes -> new byte[0], java.util.List.of(), java.util.List.of()) {
             @Override
             public Map<String, Object> invokeComponent(String name, Map<String, Object> params) throws Exception {
@@ -439,7 +439,7 @@ class ExecCommandComponentTest {
     @Test
     void internalCommandRunnerSurfacesWriteFailureAndClosesTheSession() throws Exception {
         String[] processId = {null};
-        var service = new org.leo.core.puppet.service.ComponentService(
+        var service = new org.leo.core.agent.service.ComponentService(
                 bytes -> new byte[0], java.util.List.of(), java.util.List.of()) {
             @Override
             public Map<String, Object> invokeComponent(String name, Map<String, Object> params) throws Exception {

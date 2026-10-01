@@ -4,15 +4,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.ai.agent.AgentRuntimeResolver;
+import org.leo.ai.agent.AiRuntimeResolver;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.ai.service.SkillManifestService;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AiThread;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
@@ -35,14 +35,14 @@ class SkillActivationToolsTest {
         previousVfsPath = LeoConfig.getVfsPath();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
         tools = new SkillActivationTools(
-                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_PUPPET_NODE,
-                new AgentRuntimeResolver());
+                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_AGENT_NODE,
+                new AiRuntimeResolver());
     }
 
     @AfterEach
     void tearDown() {
         AiToolContext.clear();
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
     }
 
@@ -68,14 +68,14 @@ class SkillActivationToolsTest {
     @Test
     void recordsActivationOnCurrentAgentThread() throws Exception {
         writeSkill("enabled-skill", true, "# Enabled");
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setSessionId("activation-session");
         AiThread thread = session.createAiThread("thread-1", "activation");
-        PuppetNodeSessionContainer.addSession("activation-session", session);
+        AgentNodeSessionContainer.addSession("activation-session", session);
         AiToolContext.setFromMemoryId("activation-session:thread-1");
         SkillActivationTools statefulTools = new SkillActivationTools(
-                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_PUPPET_NODE,
-                new AgentRuntimeResolver());
+                new SkillRegistryService(new SkillManifestService()), SkillRegistryService.SCOPE_AGENT_NODE,
+                new AiRuntimeResolver());
 
         statefulTools.activateSkill("enabled-skill");
 
@@ -83,7 +83,7 @@ class SkillActivationToolsTest {
     }
 
     private void writeSkill(String name, boolean enabled, String body) throws Exception {
-        Path skillDir = tempDir.resolve("skills").resolve("puppet-node").resolve(name);
+        Path skillDir = tempDir.resolve("skills").resolve("agent-node").resolve(name);
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), """
                 ---
@@ -98,7 +98,7 @@ class SkillActivationToolsTest {
                 id: leo.test.%s
                 name: %s
                 version: 1.0.0
-                scope: puppet-node
+                scope: agent-node
                 domain: operation
                 category: discovery
                 mode: assess

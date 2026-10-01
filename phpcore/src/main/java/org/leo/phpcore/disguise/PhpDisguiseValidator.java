@@ -2,7 +2,7 @@ package org.leo.phpcore.disguise;
 
 import org.leo.core.disguise.DisguiseRuntimeValidator;
 import org.leo.core.entity.Disguise;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -19,8 +19,8 @@ public final class PhpDisguiseValidator implements DisguiseRuntimeValidator {
     private static final int VALIDATION_TIMEOUT_SECONDS = 5;
 
     @Override
-    public PuppetRuntime getRuntime() {
-        return PuppetRuntime.PHP;
+    public AgentRuntime getRuntime() {
+        return AgentRuntime.PHP;
     }
 
     @Override

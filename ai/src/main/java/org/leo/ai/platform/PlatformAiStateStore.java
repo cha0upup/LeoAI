@@ -7,7 +7,7 @@ import java.util.function.Consumer;
 
 /**
  * 平台侧 AI 状态存储。
- * 不复用 PuppetNodeSessionContainer，避免平台侧与 PuppetNode 会话模型耦合。
+ * 不复用 AgentNodeSessionContainer，避免平台侧与 AgentNode 会话模型耦合。
  */
 public final class PlatformAiStateStore {
 

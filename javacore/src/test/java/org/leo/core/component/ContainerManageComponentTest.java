@@ -62,7 +62,7 @@ class ContainerManageComponentTest {
         manager.filters.put("sample", new FakeFilter("example.Filter"));
         manager.filterPatternList.add(new FakeFilterPattern("sample", "targetServlet", "/sample"));
 
-        ArrayList filters = new WeblogicContainerManageComponent().getAllFilter(new FakeWeblogicContext(manager));
+        ArrayList filters = new WeblogicContainerManageComponent().getAllFilters(new FakeWeblogicContext(manager));
 
         assertEquals(1, filters.size());
         Map info = (Map) filters.get(0);
@@ -105,8 +105,8 @@ class ContainerManageComponentTest {
 
         GenericServletContainerManageComponent component =
                 new GenericServletContainerManageComponent();
-        ArrayList filters = component.getAllFilter(context);
-        ArrayList servlets = component.getAllServlet(context);
+        ArrayList filters = component.getAllFilters(context);
+        ArrayList servlets = component.getAllServlets(context);
 
         assertEquals(1, filters.size());
         assertEquals("auth", ((Map) filters.get(0)).get("filterName"));

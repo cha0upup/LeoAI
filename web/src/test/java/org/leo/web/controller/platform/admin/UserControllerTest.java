@@ -46,15 +46,15 @@ class UserControllerTest {
         caller.setPrivilege(UserService.PRIVILEGE_LEADER);
         caller.setTeamId("team-1");
         request.getSession(true).setAttribute("user", caller);
-        when(service.getUserByTeamId("team-1")).thenReturn(List.of(caller));
+        when(service.getUsersByTeamId("team-1")).thenReturn(List.of(caller));
         when(service.getUserById("user-1")).thenReturn(caller);
 
         assertEquals(200, controller.getUsers(request).get("code"));
-        verify(service).getUserByTeamId("team-1");
+        verify(service).getUsersByTeamId("team-1");
         caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
         assertEquals(200, controller.getUsers(request).get("code"));
         verify(service).getUserById("user-1");
-        verify(service, org.mockito.Mockito.never()).getAllUser();
+        verify(service, org.mockito.Mockito.never()).getAllUsers();
     }
 
     @Test
@@ -67,7 +67,7 @@ class UserControllerTest {
         stored.setPassword("pbkdf2-secret-hash");
         stored.setPrivilege(UserService.PRIVILEGE_NORMAL);
         stored.setStatus(1);
-        when(userService.getAllUser()).thenReturn(List.of(stored));
+        when(userService.getAllUsers()).thenReturn(List.of(stored));
         UserController controller = new UserController(
                 userService, mock(PasswordPolicy.class));
         MockHttpServletRequest request = new MockHttpServletRequest();

@@ -5,7 +5,7 @@ description: 理解 LeoAI Java/PHP WebShell 与 Java 内存马生成链路，根
 
 # Shell 生成与结构变体
 
-Shell 是独立生成的制品，不从平台已有 Puppet 自动继承配置。只有用户明确要求“匹配/复制某个 Puppet”时，才可以查询该指定节点；不得因为平台上只有一个节点、最近操作过某个节点或当前页面选中了节点就读取它。
+Shell 是独立生成的制品，不从平台已有 Agent 自动继承配置。只有用户明确要求“匹配/复制某个 Agent”时，才可以查询该指定节点；不得因为平台上只有一个节点、最近操作过某个节点或当前页面选中了节点就读取它。
 
 ## 生成模型
 
@@ -22,7 +22,7 @@ Shell 是独立生成的制品，不从平台已有 Puppet 自动继承配置。
 ## 参数确认原则
 
 1. 生成前调用 `getShellGeneratorMeta()` 获取协议、Java/Servlet、注入器、Packer 和混淆步骤等合法值。
-2. 调用 `getDisguises()` 获取当前可选请求/响应伪装器；不得用 Puppet 查询代替该步骤。
+2. 调用 `getDisguises()` 获取当前可选请求/响应伪装器；不得用 Agent 查询代替该步骤。
 3. 用户未给出的重要生成偏好必须通过 `request_user_input` 询问。Java WebShell 至少确认：
    - 传输协议：`http` 或 `httpchunk`；
    - 请求伪装器与响应伪装器；
@@ -48,7 +48,7 @@ Java WebShell 的五个阶段占位符必须各出现一次、独占一行并保
 ## Java 内存马工作流
 
 1. 调用 `getShellGeneratorMeta()` 和 `getDisguises()`。
-2. 询问尚未明确的协议、请求/响应伪装、目标容器、注入器、Packer 和是否混淆；不要从 Puppet 推断。
+2. 询问尚未明确的协议、请求/响应伪装、目标容器、注入器、Packer 和是否混淆；不要从 Agent 推断。
 3. 根据元数据检查 `packerCompatibility`、`packerAvailability` 和可用混淆步骤。
 4. 只有用户明确要求结构变体且 Packer 为 `ClassLoaderJSP` 或 `DefineClassJSP` 时，才调用 `mutateJspTemplate(...)`；其他 Packer 不接受 AI 自定义模板。
 5. 调用 `generateMemoryShell(...)`，检查兼容性警告并交付取回按钮。
@@ -56,14 +56,14 @@ Java WebShell 的五个阶段占位符必须各出现一次、独占一行并保
 ## PHP WebShell 工作流
 
 1. 调用 `getShellGeneratorMeta()` 和 `getDisguises()`，确认 PHP generator 的真实能力。
-2. 询问请求/响应伪装和输出模式；PHP 当前仅支持 `http`，应向用户说明而不是查询 Puppet。
+2. 询问请求/响应伪装和输出模式；PHP 当前仅支持 `http`，应向用户说明而不是查询 Agent。
 3. 要求用户提供 PHP PayloadCodec AES 密钥；不得使用默认值或环境变量。
 4. `headerName` 与 `headerValue` 必须同时设置或同时留空；不要在回复中显示 Header 密钥。
 5. 调用 `generatePhpWebShell(...)`，检查最低版本、运行要求、输出模式和警告后交付结果。
 
-## 明确匹配 Puppet 的例外
+## 明确匹配 Agent 的例外
 
-只有用户明确给出或选择了目标 Puppet，并明确要求生成结果匹配该节点时，才允许读取该节点配置。读取结果只能服务于这次显式匹配；不能把它变成后续独立生成的默认值。排查“某个已生成 Shell 为什么连不上”时，也只有在用户把该 Shell 与具体 Puppet 建立关联后才比较两者配置。
+只有用户明确给出或选择了目标 Agent，并明确要求生成结果匹配该节点时，才允许读取该节点配置。读取结果只能服务于这次显式匹配；不能把它变成后续独立生成的默认值。排查“某个已生成 Shell 为什么连不上”时，也只有在用户把该 Shell 与具体 Agent 建立关联后才比较两者配置。
 
 ## 失败处理
 
@@ -77,4 +77,4 @@ Java WebShell 的五个阶段占位符必须各出现一次、独占一行并保
 
 ## 回复要求
 
-简洁报告生成类型、用户选择的协议与伪装、关键兼容/混淆参数、警告，以及工具返回的取回按钮。除非用户明确要求匹配 Puppet，否则回复中不应出现目标 Puppet。
+简洁报告生成类型、用户选择的协议与伪装、关键兼容/混淆参数、警告，以及工具返回的取回按钮。除非用户明确要求匹配 Agent，否则回复中不应出现目标 Agent。

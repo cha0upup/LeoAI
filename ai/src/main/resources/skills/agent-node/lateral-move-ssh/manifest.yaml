@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: leo.agent.lateral-move-ssh
+name: lateral-move-ssh
+version: 1.0.0
+scope: agent-node
+domain: operation
+category: lateral-movement
+mode: execute
+attack:
+  tactics: [lateral-movement]
+  techniques: [T1021.004]
+platforms: [linux]
+targets: [host, ssh-service]
+pack: linux-postex
+risk: high
+accessMode: active-login
+status: published
+source: builtin
+owner: leo
+enabled: false
+requires:
+  tools: [exec, queryTask, stopTask]
+  facts: [target.authorized, ssh.target, ssh.username, ssh.private-key-path]
+produces: [validated-foothold]
+next: [recon-basic-info]

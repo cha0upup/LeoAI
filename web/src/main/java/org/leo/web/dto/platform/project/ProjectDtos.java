@@ -13,17 +13,17 @@ public final class ProjectDtos {
 
     public record ProjectIdRequest(String projectId) {}
 
-    public record ProjectPuppetsRequest(
+    public record ProjectAgentsRequest(
             String projectId,
-            List<String> puppetIds,
+            List<String> agentIds,
             String alias,
             String environment,
             String tags
     ) {}
 
-    public record ProjectChildrenRequest(String parentPuppetId) {}
+    public record ProjectChildrenRequest(String parentAgentId) {}
 
-    public record PuppetMembershipsRequest(List<String> puppetIds) {}
+    public record AgentMembershipsRequest(List<String> agentIds) {}
 
     public record ProjectMembershipSummary(String projectId, String projectName,
                                             String projectCode, String status) {

@@ -92,7 +92,7 @@ class LoginInterceptorTest {
         HttpServletResponse blockedResponse = responseWithWriter();
 
         assertFalse(interceptor.preHandle(
-                requestFor(user, "/platform/puppets"),
+                requestFor(user, "/platform/agents"),
                 blockedResponse,
                 handlerFor(DefaultAdminHandler.class)));
         verify(blockedResponse).setStatus(HttpServletResponse.SC_FORBIDDEN);

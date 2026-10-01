@@ -6,7 +6,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.component.NetworkProbeComponent;
-import org.leo.core.puppet.capability.NetworkProbeCapable;
+import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.service.discovery.NetworkDiscoveryDtos.*;
 import org.leo.service.discovery.*;

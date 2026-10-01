@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Explicit runtime capability overrides reported by a Puppet node.
+ * Explicit runtime capability overrides reported by a Agent node.
  *
  * <p>An absent entry means "use the structurally implemented capability
  * interface result". Runtime modules can override that result when target

@@ -2,7 +2,7 @@ package org.leo.core.entity;
 
 import java.util.Objects;
 
-/** 业务项目，用于组织可复用的 Puppet 资产和运行会话。 */
+/** 业务项目，用于组织可复用的 Agent 资产和运行会话。 */
 public class Project {
 
     public static final String STATUS_ACTIVE = "active";

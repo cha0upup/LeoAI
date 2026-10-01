@@ -21,10 +21,10 @@ public final class SessionDtos {
     public record SessionInfo(
             String sessionId,
             String projectId,
-            String puppetId,
-            String puppetName,
+            String agentId,
+            String agentName,
             String connLink,
-            String parentPuppetId,
+            String parentAgentId,
             Long   updateTime,
             Long   lastActiveTime,
             boolean cacheMode,
@@ -33,10 +33,10 @@ public final class SessionDtos {
     ) {}
 
     public record ConnLinkItem(
-            String puppetId,
-            String puppetName,
+            String agentId,
+            String agentName,
             String connLink,
-            String parentPuppetId,
+            String parentAgentId,
             String protocol
     ) {}
 

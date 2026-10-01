@@ -2,7 +2,7 @@ package org.leo.core.session;
 
 import org.leo.core.ai.AiRuntimeState;
 
-/** 单条 Puppet AI 对话线程；执行状态由统一的 {@link AiRuntimeState} 提供。 */
+/** 单条 Node AI 对话线程；执行状态由统一的 {@link AiRuntimeState} 提供。 */
 public class AiThread extends AiRuntimeState {
 
     private final String threadId;

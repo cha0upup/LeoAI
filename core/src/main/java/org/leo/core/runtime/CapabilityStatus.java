@@ -4,7 +4,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Runtime availability and constraints for one stable Puppet capability. */
+/** Runtime availability and constraints for one stable Agent capability. */
 public final class CapabilityStatus {
 
     private final String name;

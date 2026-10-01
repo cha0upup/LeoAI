@@ -16,8 +16,8 @@ import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
 import org.leo.core.session.AiThread;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.user.UserService;
 
 import java.util.Map;
@@ -41,7 +41,7 @@ class AiToolAuthorizationPolicyTest {
     @AfterEach
     void cleanUp() {
         PlatformAiStateStore.remove(PLATFORM_STATE_ID);
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
         AiToolContext.clear();
     }
 
@@ -55,7 +55,7 @@ class AiToolAuthorizationPolicyTest {
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
 
         Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 new SafeTools(), new AdminTools()), PLATFORM_STATE_ID);
 
         assertTrue(tools.containsKey("safeAction"));
@@ -76,7 +76,7 @@ class AiToolAuthorizationPolicyTest {
                 new AiToolExecutionBoundary(new org.leo.ai.config.AiAgentProperties(),
                         boundaryExecutor, new AiToolResultArchive()), null);
         AiServiceTool tool = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM, source), PLATFORM_STATE_ID)
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, source), PLATFORM_STATE_ID)
                 .get("blockingAction");
         Thread worker = new Thread(() -> {
             try {
@@ -128,7 +128,7 @@ class AiToolAuthorizationPolicyTest {
         state.setExecutionPolicy(AiExecutionPolicy.from(admin));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
         Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 new AdminTools()), PLATFORM_STATE_ID);
         AiServiceTool adminTool = tools.get("adminAction");
         AiToolErrorHandler errors = new AiToolErrorHandler();
@@ -143,20 +143,20 @@ class AiToolAuthorizationPolicyTest {
     }
 
     @Test
-    void rejectsPuppetToolsWhenCallerDoesNotOwnSession() {
+    void rejectsAgentToolsWhenCallerDoesNotOwnSession() {
         UserService users = mock(UserService.class);
         User caller = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(caller);
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setSessionId("session-1");
         session.setCreateByUser("other-user");
         AiThread thread = session.createAiThread("thread-1", "test");
         thread.setExecutionPolicy(AiExecutionPolicy.from(caller));
-        PuppetNodeSessionContainer.addSession("session-1", session);
+        AgentNodeSessionContainer.addSession("session-1", session);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
 
         Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE,
+                AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
                 new SafeTools()), "session-1:thread-1");
 
         assertTrue(tools.isEmpty());
@@ -175,9 +175,9 @@ class AiToolAuthorizationPolicyTest {
         AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, new AiToolExecutionBoundary(), null,
-                catalog, new AgentRuntimeResolver(), null);
+                catalog, new AiRuntimeResolver(), null);
         AiServiceTool tool = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
         AiToolErrorHandler errors = new AiToolErrorHandler();
 
@@ -200,9 +200,9 @@ class AiToolAuthorizationPolicyTest {
         AiToolCatalog catalog = new AiToolCatalog();
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, new AiToolExecutionBoundary(), null,
-                catalog, new AgentRuntimeResolver(), null);
+                catalog, new AiRuntimeResolver(), null);
         AiServiceTool tool = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 new MutationTools()), PLATFORM_STATE_ID).get("mutate");
         AiToolErrorHandler errors = new AiToolErrorHandler();
 
@@ -228,7 +228,7 @@ class AiToolAuthorizationPolicyTest {
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
 
         Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
                 new MutationTools()), PLATFORM_STATE_ID);
 
         String description = tools.get("mutate").toolSpecification().description();

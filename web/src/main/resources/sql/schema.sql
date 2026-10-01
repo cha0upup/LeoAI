@@ -39,11 +39,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_team_name_nocase
     ON teams(team_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_teams_leader_id ON teams(leader_id);
 
--- 3. 受控主机表 (Puppet)
-CREATE TABLE IF NOT EXISTS puppets (
-    puppet_id VARCHAR(50) PRIMARY KEY,
-    puppet_name VARCHAR(100) NOT NULL,
-    parent_puppet_id VARCHAR(50) NOT NULL,
+-- 3. 受控主机表 (Agent)
+CREATE TABLE IF NOT EXISTS agents (
+    agent_id VARCHAR(50) PRIMARY KEY,
+    agent_name VARCHAR(100) NOT NULL,
+    parent_agent_id VARCHAR(50) NOT NULL,
     create_by_user_id VARCHAR(50) NOT NULL,
     team_id VARCHAR(50),
     conn_link TEXT NOT NULL,
@@ -71,9 +71,9 @@ CREATE TABLE IF NOT EXISTS puppets (
     type VARCHAR(20) DEFAULT 'java' -- 节点运行时类型：java、php
 );
 
-CREATE INDEX IF NOT EXISTS idx_puppets_parent_id ON puppets(parent_puppet_id);
-CREATE INDEX IF NOT EXISTS idx_puppets_create_user_id ON puppets(create_by_user_id);
-CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id);
+CREATE INDEX IF NOT EXISTS idx_agents_parent_id ON agents(parent_agent_id);
+CREATE INDEX IF NOT EXISTS idx_agents_create_user_id ON agents(create_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_agents_team_id ON agents(team_id);
 
 
 
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS system_configs (
 CREATE TABLE IF NOT EXISTS sessions (
     session_id VARCHAR(100) PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL,
-    puppet_id VARCHAR(50) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
     session_data TEXT, -- JSON格式存储会话数据
     status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:活跃 0:过期
     create_time DATETIME NOT NULL,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
 
 
@@ -108,11 +108,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
 -- 数据库连接信息表
 -- =====================================================
 
--- 6. Puppet 数据库连接配置表（运行时中立）
-CREATE TABLE IF NOT EXISTS puppet_database_connections (
+-- 6. Agent 数据库连接配置表（运行时中立）
+CREATE TABLE IF NOT EXISTS agent_database_connections (
     connection_id VARCHAR(50) PRIMARY KEY,
     connection_name VARCHAR(100) NOT NULL,
-    puppet_id VARCHAR(50) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
     dialect VARCHAR(32) NOT NULL,
     connection_spec TEXT NOT NULL,
     username VARCHAR(100),
@@ -131,9 +131,9 @@ CREATE TABLE IF NOT EXISTS puppet_database_connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id
-    ON puppet_database_connections(create_user_id);
-CREATE INDEX IF NOT EXISTS idx_database_connections_puppet_id
-    ON puppet_database_connections(puppet_id);
+    ON agent_database_connections(create_user_id);
+CREATE INDEX IF NOT EXISTS idx_database_connections_agent_id
+    ON agent_database_connections(agent_id);
 
 -- =====================================================
 -- 项目工作区与主机关联
@@ -155,27 +155,27 @@ CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
-CREATE TABLE IF NOT EXISTS project_puppets (
+CREATE TABLE IF NOT EXISTS project_agents (
     project_id VARCHAR(50) NOT NULL,
-    puppet_id VARCHAR(50) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
     alias VARCHAR(100),
     environment VARCHAR(30),
     tags TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     added_by_user_id VARCHAR(50) NOT NULL,
     create_time DATETIME NOT NULL,
-    PRIMARY KEY (project_id, puppet_id),
+    PRIMARY KEY (project_id, agent_id),
     FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
-    FOREIGN KEY (puppet_id) REFERENCES puppets(puppet_id) ON DELETE CASCADE
+    FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_project_puppets_puppet ON project_puppets(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_project_agents_agent ON project_agents(agent_id);
 
--- 实时对象仍由 PuppetNodeSessionContainer 管理；此表预留项目化会话索引和历史。
-CREATE TABLE IF NOT EXISTS puppet_sessions (
+-- 实时对象仍由 AgentNodeSessionContainer 管理；此表预留项目化会话索引和历史。
+CREATE TABLE IF NOT EXISTS agent_sessions (
     session_id VARCHAR(100) PRIMARY KEY,
     project_id VARCHAR(50),
-    puppet_id VARCHAR(50) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
     user_id VARCHAR(50) NOT NULL,
     session_mode VARCHAR(20) NOT NULL DEFAULT 'live' CHECK (session_mode IN ('live', 'cache')),
     status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'expired')),
@@ -184,17 +184,17 @@ CREATE TABLE IF NOT EXISTS puppet_sessions (
     close_time DATETIME
 );
 
-CREATE INDEX IF NOT EXISTS idx_puppet_sessions_project_status
-    ON puppet_sessions(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_puppet_sessions_puppet
-    ON puppet_sessions(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_status
+    ON agent_sessions(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent
+    ON agent_sessions(agent_id);
 -- 7. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id VARCHAR(50) PRIMARY KEY,
     user_id VARCHAR(50), -- 操作用户ID
     user_name VARCHAR(100), -- 操作用户名
-    puppet_id VARCHAR(50), -- 目标主机ID
-    puppet_name VARCHAR(100), -- 目标主机名
+    agent_id VARCHAR(50), -- 目标主机ID
+    agent_name VARCHAR(100), -- 目标主机名
     session_id VARCHAR(100), -- 会话ID
     operation_type VARCHAR(50) NOT NULL, -- 操作类型：FILE_LIST, FILE_DELETE, FILE_EDIT, COMMAND_EXEC, SQL_EXEC, SCREENSHOT等
     operation_name VARCHAR(100) NOT NULL, -- 操作名称
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_create_time ON audit_logs(create_time);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_puppet_id ON audit_logs(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_agent_id ON audit_logs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id ON audit_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation_type);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON audit_logs(status);
@@ -411,7 +411,7 @@ CREATE TABLE IF NOT EXISTS ai_threads (
     thread_id VARCHAR(64) PRIMARY KEY,
     scope VARCHAR(32) NOT NULL,
     user_id VARCHAR(50),
-    puppet_id VARCHAR(50),
+    agent_id VARCHAR(50),
     session_id VARCHAR(100),
     title VARCHAR(200) NOT NULL,
     config_id INTEGER,
@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS ai_threads (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_threads_scope
-    ON ai_threads(scope, user_id, puppet_id, last_active_at);
+    ON ai_threads(scope, user_id, agent_id, last_active_at);
 
 CREATE INDEX IF NOT EXISTS idx_ai_threads_parent
     ON ai_threads(parent_thread_id);

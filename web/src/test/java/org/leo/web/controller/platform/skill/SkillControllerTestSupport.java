@@ -56,7 +56,7 @@ abstract class SkillControllerTestSupport {
     }
 
     Path skillDir(String name) {
-        return tempDir.resolve("skills/puppet-node").resolve(name);
+        return tempDir.resolve("skills/agent-node").resolve(name);
     }
 
     void writeSkill(String name, String body) throws IOException {
@@ -89,7 +89,7 @@ abstract class SkillControllerTestSupport {
                 id: leo.test.%s
                 name: %s
                 version: 1.0.0
-                scope: puppet-node
+                scope: agent-node
                 domain: operation
                 category: discovery
                 mode: assess

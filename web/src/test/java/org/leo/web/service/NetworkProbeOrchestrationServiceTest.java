@@ -2,7 +2,7 @@ package org.leo.web.service;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.leo.core.puppet.capability.NetworkProbeCapable;
+import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.web.exception.ApiException;
 
 import java.util.ArrayList;

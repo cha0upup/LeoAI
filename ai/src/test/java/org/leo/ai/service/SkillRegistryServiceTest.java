@@ -39,15 +39,15 @@ class SkillRegistryServiceTest {
 
     @Test
     void enabledContentIsReadableButDisabledContentCannotBeActivated() throws Exception {
-        writeSkill("puppet-node", "enabled-skill", true, "enabled body");
-        writeSkill("puppet-node", "disabled-skill", false, "disabled body");
+        writeSkill("agent-node", "enabled-skill", true, "enabled body");
+        writeSkill("agent-node", "disabled-skill", false, "disabled body");
 
-        assertTrue(registry.isSkillEnabled("puppet-node", "enabled-skill"));
-        assertFalse(registry.isSkillEnabled("puppet-node", "disabled-skill"));
+        assertTrue(registry.isSkillEnabled("agent-node", "enabled-skill"));
+        assertFalse(registry.isSkillEnabled("agent-node", "disabled-skill"));
         assertEquals("enabled body\n", SkillRegistryService.stripFrontmatter(
-                registry.getEnabledSkillContent("puppet-node", "enabled-skill")));
-        assertNull(registry.getEnabledSkillContent("puppet-node", "disabled-skill"));
-        assertTrue(registry.getSkillContent("puppet-node", "disabled-skill")
+                registry.getEnabledSkillContent("agent-node", "enabled-skill")));
+        assertNull(registry.getEnabledSkillContent("agent-node", "disabled-skill"));
+        assertTrue(registry.getSkillContent("agent-node", "disabled-skill")
                 .contains("disabled body"));
     }
 
@@ -69,7 +69,7 @@ class SkillRegistryServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"puppet-node", "platform"})
+    @ValueSource(strings = {"agent-node", "platform"})
     void formattedIndexReflectsRegistryRefreshWithoutSeparateInvalidation(String scope) throws Exception {
         writeSkill(scope, "mutable-skill", true, "first body");
         LeoSkillsProvider provider = new LeoSkillsProvider(registry);
@@ -91,24 +91,24 @@ class SkillRegistryServiceTest {
         assertFalse(SkillRegistryService.isValidSkillName("../platform/platform-only"));
         assertFalse(SkillRegistryService.isValidSkillName("nested/skill"));
         assertFalse(SkillRegistryService.isValidSkillName("."));
-        assertNull(registry.getSkillContent("puppet-node", "../platform/platform-only"));
-        assertNull(registry.getSkillContent("puppet-node", "nested/skill"));
+        assertNull(registry.getSkillContent("agent-node", "../platform/platform-only"));
+        assertNull(registry.getSkillContent("agent-node", "nested/skill"));
     }
 
     @Test
     void activationReadsCurrentEnabledFlagWithoutWaitingForMetadataCache() throws Exception {
-        writeSkill("puppet-node", "mutable-skill", true, "first body");
-        assertTrue(registry.isSkillEnabled("puppet-node", "mutable-skill"));
+        writeSkill("agent-node", "mutable-skill", true, "first body");
+        assertTrue(registry.isSkillEnabled("agent-node", "mutable-skill"));
 
-        writeSkill("puppet-node", "mutable-skill", false, "second body");
+        writeSkill("agent-node", "mutable-skill", false, "second body");
 
-        assertFalse(registry.isSkillEnabled("puppet-node", "mutable-skill"));
-        assertNull(registry.getEnabledSkillContent("puppet-node", "mutable-skill"));
+        assertFalse(registry.isSkillEnabled("agent-node", "mutable-skill"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "mutable-skill"));
     }
 
     @Test
     void activationFailsClosedForInvalidOrMismatchedFrontmatter() throws Exception {
-        Path skillDir = tempDir.resolve("skills/puppet-node/mismatched-skill");
+        Path skillDir = tempDir.resolve("skills/agent-node/mismatched-skill");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), """
                 ---
@@ -119,25 +119,25 @@ class SkillRegistryServiceTest {
                 body
                 """);
         Files.writeString(skillDir.resolve("manifest.yaml"), manifest(
-                "mismatched-skill", "puppet-node", true));
+                "mismatched-skill", "agent-node", true));
 
-        assertFalse(registry.isSkillEnabled("puppet-node", "mismatched-skill"));
-        assertNull(registry.getEnabledSkillContent("puppet-node", "mismatched-skill"));
+        assertFalse(registry.isSkillEnabled("agent-node", "mismatched-skill"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "mismatched-skill"));
     }
 
     @Test
     void activationFailsClosedForCatalogLevelErrors() throws Exception {
-        writeSkill("puppet-node", "first-skill", true, "first body");
-        writeSkill("puppet-node", "second-skill", true, "second body");
-        Path secondManifest = tempDir.resolve("skills/puppet-node/second-skill/manifest.yaml");
+        writeSkill("agent-node", "first-skill", true, "first body");
+        writeSkill("agent-node", "second-skill", true, "second body");
+        Path secondManifest = tempDir.resolve("skills/agent-node/second-skill/manifest.yaml");
         Files.writeString(secondManifest, Files.readString(secondManifest)
                 .replace("leo.test.second-skill", "leo.test.first-skill"));
 
         registry.invalidate();
 
-        assertNull(registry.getEnabledSkillContent("puppet-node", "first-skill"));
-        assertNull(registry.getEnabledSkillContent("puppet-node", "second-skill"));
-        assertNull(registry.getDescriptor("puppet-node", "first-skill"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "first-skill"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "second-skill"));
+        assertNull(registry.getDescriptor("agent-node", "first-skill"));
     }
 
     private void writeSkill(String scope, String name, boolean enabled, String body) throws Exception {

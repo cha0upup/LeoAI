@@ -1,13 +1,13 @@
 package org.leo.core.security;
 
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 
 /**
  * 跨入口复用的纯权限规则。
  *
- * <p>这里只处理不需要查库的判断；需要解析 Puppet 祖先链、补全团队归属等
+ * <p>这里只处理不需要查库的判断；需要解析 Agent 祖先链、补全团队归属等
  * 规则时，由上层权限服务组合这些基础判断。
  */
 public final class AccessPolicy {
@@ -33,7 +33,7 @@ public final class AccessPolicy {
         return PERMISSION_TEAM.equals(permission);
     }
 
-    public static boolean canAccessSession(PuppetNodeSession session, User user) {
+    public static boolean canAccessSession(AgentNodeSession session, User user) {
         if (session == null || user == null || user.getUserId() == null) {
             return false;
         }
@@ -44,40 +44,40 @@ public final class AccessPolicy {
         return owner != null && owner.equals(user.getUserId());
     }
 
-    public static boolean canAccessPuppet(Puppet puppet, User user) {
-        if (puppet == null || user == null || user.getUserId() == null) {
+    public static boolean canAccessAgent(Agent agent, User user) {
+        if (agent == null || user == null || user.getUserId() == null) {
             return false;
         }
         if (isAdmin(user)) {
             return true;
         }
-        if (user.getUserId().equals(puppet.getCreateByUserId())) {
+        if (user.getUserId().equals(agent.getCreateByUserId())) {
             return true;
         }
-        if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
+        if (PERMISSION_PUBLIC.equals(agent.getPermission())) {
             return true;
         }
-        return isTeamVisiblePermission(puppet.getPermission())
+        return isTeamVisiblePermission(agent.getPermission())
                 && user.getTeamId() != null
-                && user.getTeamId().equals(puppet.getTeamId());
+                && user.getTeamId().equals(agent.getTeamId());
     }
 
-    public static boolean canModifyPuppet(Puppet puppet, User user) {
-        if (puppet == null || user == null || user.getUserId() == null) {
+    public static boolean canModifyAgent(Agent agent, User user) {
+        if (agent == null || user == null || user.getUserId() == null) {
             return false;
         }
         if (isAdmin(user)) {
             return true;
         }
-        if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
+        if (PERMISSION_PUBLIC.equals(agent.getPermission())) {
             return false;
         }
-        if (user.getUserId().equals(puppet.getCreateByUserId())) {
+        if (user.getUserId().equals(agent.getCreateByUserId())) {
             return true;
         }
         return isLeader(user)
-                && isTeamVisiblePermission(puppet.getPermission())
+                && isTeamVisiblePermission(agent.getPermission())
                 && user.getTeamId() != null
-                && user.getTeamId().equals(puppet.getTeamId());
+                && user.getTeamId().equals(agent.getTeamId());
     }
 }

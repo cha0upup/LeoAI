@@ -23,11 +23,11 @@ public interface AuditLogMapper {
                 <if test="query.userName != null and query.userName != ''">
                     AND user_name LIKE '%' || #{query.userName} || '%'
                 </if>
-                <if test="query.puppetId != null and query.puppetId != ''">
-                    AND puppet_id = #{query.puppetId}
+                <if test="query.agentId != null and query.agentId != ''">
+                    AND agent_id = #{query.agentId}
                 </if>
-                <if test="query.puppetName != null and query.puppetName != ''">
-                    AND puppet_name LIKE '%' || #{query.puppetName} || '%'
+                <if test="query.agentName != null and query.agentName != ''">
+                    AND agent_name LIKE '%' || #{query.agentName} || '%'
                 </if>
                 <if test="query.sessionId != null and query.sessionId != ''">
                     AND session_id = #{query.sessionId}
@@ -59,19 +59,19 @@ public interface AuditLogMapper {
                         OR response_message LIKE '%' || #{query.keyword} || '%'
                         OR error_message LIKE '%' || #{query.keyword} || '%'
                         OR user_name LIKE '%' || #{query.keyword} || '%'
-                        OR puppet_name LIKE '%' || #{query.keyword} || '%'
+                        OR agent_name LIKE '%' || #{query.keyword} || '%'
                         OR client_ip LIKE '%' || #{query.keyword} || '%'
                     )
                 </if>
             </where>
             """;
 
-    @Insert("INSERT INTO audit_logs (log_id, user_id, user_name, puppet_id, puppet_name, session_id, operation_type, operation_name, operation_path, request_params, response_code, response_message, status, error_message, client_ip, create_time, remark) VALUES (#{logId}, #{userId}, #{userName}, #{puppetId}, #{puppetName}, #{sessionId}, #{operationType}, #{operationName}, #{operationPath}, #{requestParams}, #{responseCode}, #{responseMessage}, #{status}, #{errorMessage}, #{clientIp}, #{createTime}, #{remark})")
+    @Insert("INSERT INTO audit_logs (log_id, user_id, user_name, agent_id, agent_name, session_id, operation_type, operation_name, operation_path, request_params, response_code, response_message, status, error_message, client_ip, create_time, remark) VALUES (#{logId}, #{userId}, #{userName}, #{agentId}, #{agentName}, #{sessionId}, #{operationType}, #{operationName}, #{operationPath}, #{requestParams}, #{responseCode}, #{responseMessage}, #{status}, #{errorMessage}, #{clientIp}, #{createTime}, #{remark})")
     boolean insertAuditLog(@Param("logId") String logId,
                           @Param("userId") String userId,
                           @Param("userName") String userName,
-                          @Param("puppetId") String puppetId,
-                          @Param("puppetName") String puppetName,
+                          @Param("agentId") String agentId,
+                          @Param("agentName") String agentName,
                           @Param("sessionId") String sessionId,
                           @Param("operationType") String operationType,
                           @Param("operationName") String operationName,
@@ -124,14 +124,14 @@ public interface AuditLogMapper {
     @Select("SELECT COUNT(*) FROM audit_logs WHERE session_id = #{sessionId}")
     Integer countAuditLogsBySessionId(@Param("sessionId") String sessionId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE puppet_id = #{puppetId}")
-    Integer countAuditLogsByPuppetId(@Param("puppetId") String puppetId);
+    @Select("SELECT COUNT(*) FROM audit_logs WHERE agent_id = #{agentId}")
+    Integer countAuditLogsByAgentId(@Param("agentId") String agentId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE puppet_id = #{puppetId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
-    Integer countRecentAuditLogsByPuppetId(@Param("puppetId") String puppetId, @Param("days") Integer days);
+    @Select("SELECT COUNT(*) FROM audit_logs WHERE agent_id = #{agentId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
+    Integer countRecentAuditLogsByAgentId(@Param("agentId") String agentId, @Param("days") Integer days);
 
-    @Select("SELECT * FROM audit_logs WHERE puppet_id = #{puppetId} ORDER BY create_time DESC LIMIT 1")
-    AuditLog findLatestAuditLogByPuppetId(@Param("puppetId") String puppetId);
+    @Select("SELECT * FROM audit_logs WHERE agent_id = #{agentId} ORDER BY create_time DESC LIMIT 1")
+    AuditLog findLatestAuditLogByAgentId(@Param("agentId") String agentId);
 
     @Select("SELECT COUNT(*) FROM audit_logs a JOIN users u ON a.user_id = u.user_id WHERE u.team_id = #{teamId}")
     Integer countAuditLogsByTeamId(@Param("teamId") String teamId);

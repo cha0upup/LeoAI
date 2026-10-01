@@ -55,7 +55,7 @@ public class AiToolExecutionBoundary {
     }
 
     public ToolExecutionResult execute(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolDescriptor descriptor,
             ToolExecutor delegate,
             ToolExecutionRequest request,
@@ -94,7 +94,7 @@ public class AiToolExecutionBoundary {
     }
 
     ToolExecutionResult execute(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             String toolName,
             ToolExecutor delegate,
             ToolExecutionRequest request,
@@ -106,7 +106,7 @@ public class AiToolExecutionBoundary {
 
     private ToolExecutionResult awaitOwner(
             Invocation invocation,
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutor delegate,
@@ -129,7 +129,7 @@ public class AiToolExecutionBoundary {
 
     private ToolExecutionResult await(
             Invocation invocation,
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutionRequest request,
@@ -164,7 +164,7 @@ public class AiToolExecutionBoundary {
     }
 
     private ToolExecutionResult runOnce(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutor delegate,
@@ -179,7 +179,7 @@ public class AiToolExecutionBoundary {
     }
 
     private ToolExecutionResult runDelegate(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutor delegate,
@@ -203,7 +203,7 @@ public class AiToolExecutionBoundary {
     }
 
     private ToolExecutionResult normalize(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutionRequest request,
@@ -230,7 +230,7 @@ public class AiToolExecutionBoundary {
         Object rawData = raw.result();
         if (rawData == null) rawData = rawText;
         int originalChars = rawText != null ? rawText.length() : 0;
-        AiAgentProperties.MainAgentConfig config = settings(scope);
+        AiAgentProperties.AiExecutionSettings config = settings(scope);
         int maxChars = Math.max(512, config.getMaxToolResultChars());
         Map<String, Object> envelope = raw.isError()
                 ? errorEnvelope(scope, operation, toolName, request, rawData,
@@ -285,7 +285,7 @@ public class AiToolExecutionBoundary {
     }
 
     private Map<String, Object> envelope(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutionRequest request,
@@ -310,7 +310,7 @@ public class AiToolExecutionBoundary {
     }
 
     private Map<String, Object> errorEnvelope(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutionRequest request,
@@ -335,7 +335,7 @@ public class AiToolExecutionBoundary {
     }
 
     private Map<String, Object> metadata(
-            AiToolAuthorizationPolicy.AgentScope scope,
+            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
             ToolExecutionRequest request,
@@ -423,17 +423,17 @@ public class AiToolExecutionBoundary {
                 "请先查询目标状态；不要使用新的 tool-call ID 重复提交写入操作。");
     }
 
-    private AiAgentProperties.MainAgentConfig settings(
-            AiToolAuthorizationPolicy.AgentScope scope) {
-        return scope == AiToolAuthorizationPolicy.AgentScope.PLATFORM
+    private AiAgentProperties.AiExecutionSettings settings(
+            AiToolAuthorizationPolicy.AiAgentScope scope) {
+        return scope == AiToolAuthorizationPolicy.AiAgentScope.PLATFORM
                 ? properties.getPlatform().getMain()
-                : properties.getPuppetNode().getMain();
+                : properties.getAgentNode().getMain();
     }
 
     private void cleanupExpired() {
         long ttl = Math.max(1_000L,
                 Math.max(properties.getPlatform().getMain().getToolIdempotencyTtlMs(),
-                        properties.getPuppetNode().getMain().getToolIdempotencyTtlMs()));
+                        properties.getAgentNode().getMain().getToolIdempotencyTtlMs()));
         long cutoff = System.currentTimeMillis() - ttl;
         inFlight.entrySet().removeIf(entry -> entry.getValue().createdAt < cutoff
                 && entry.getValue().result.isDone());

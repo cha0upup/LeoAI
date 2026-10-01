@@ -2,7 +2,7 @@ package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
-import org.leo.service.PuppetService;
+import org.leo.service.AgentService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -24,7 +24,7 @@ class PermissionServiceTest {
     @Test
     void refreshesActiveUserFromDatabase() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User fresh = new User();
         fresh.setUserId("user-1");
@@ -38,7 +38,7 @@ class PermissionServiceTest {
     @Test
     void invalidatesSessionWhenAccountIsDisabled() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User disabled = new User();
         disabled.setUserId("user-1");
@@ -53,7 +53,7 @@ class PermissionServiceTest {
     @Test
     void sharesOneDatabaseVerificationWithinTheRequest() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User fresh = activeUser("user-1");
         fresh.setPrivilege("normal");
@@ -68,7 +68,7 @@ class PermissionServiceTest {
     @Test
     void reloadsRoleTeamAndPasswordChangeFlagOnEveryNewRequest() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest first = requestWithUser("user-1");
         User previous = activeUser("user-1");
         previous.setPrivilege("admin");
@@ -94,7 +94,7 @@ class PermissionServiceTest {
     @Test
     void noticesDisabledAccountOnTheNextRequestAndRejectsFurtherAccess() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest first = requestWithUser("user-1");
         User disabled = activeUser("user-1");
         disabled.setStatus(0);
@@ -113,7 +113,7 @@ class PermissionServiceTest {
     @Test
     void invalidatesDeletedAccountsAndDoesNotReuseVerifiedUserAfterLogout() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         when(users.getUserById("user-1")).thenReturn(activeUser("user-1"));
         service.requireLogin(request);
@@ -132,7 +132,7 @@ class PermissionServiceTest {
     @Test
     void revalidatesWhenTheSessionUserIsReplacedEvenWithTheSameId() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User fresh = activeUser("user-1");
         User replacement = activeUser("user-1");
@@ -147,7 +147,7 @@ class PermissionServiceTest {
     @Test
     void revalidatesWhenIdentityIsChangedOnTheSameObject() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User first = activeUser("user-1");
         User second = activeUser("user-2");
@@ -163,7 +163,7 @@ class PermissionServiceTest {
     @Test
     void revalidatesAfterSessionReplacement() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = requestWithUser("user-1");
         User fresh = activeUser("user-1");
         when(users.getUserById("user-1")).thenReturn(fresh);
@@ -179,7 +179,7 @@ class PermissionServiceTest {
     @Test
     void doesNotCreateAnonymousSessionsOrCacheAnonymousStateOverLogin() {
         UserService users = mock(UserService.class);
-        PermissionService service = new PermissionService(mock(PuppetService.class), users);
+        PermissionService service = new PermissionService(mock(AgentService.class), users);
         MockHttpServletRequest request = new MockHttpServletRequest();
 
         assertNull(service.getCurrentUser(null));

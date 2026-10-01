@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AdminOnlyEndpointCoverageTest {
 
     @Test
-    void dynamicCodeAndAgentConfigurationWritesRemainAdminOnly() {
+    void dynamicCodeAndAiAgentConfigurationWritesRemainAdminOnly() {
         assertAdminOnly(DisguiseManagerController.class,
                 Set.of("addDisguise", "delDisguise", "updateDisguise", "testDisguise",
                         "previewDisguise", "importDisguises"));

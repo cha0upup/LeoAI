@@ -1,9 +1,9 @@
 package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PermissionPolicyTest {
 
     @Test
-    void isolatesPuppetSessionsByOwnerUnlessCallerIsAdmin() {
-        PuppetNodeSession session = new PuppetNodeSession();
+    void isolatesAgentSessionsByOwnerUnlessCallerIsAdmin() {
+        AgentNodeSession session = new AgentNodeSession();
         session.setCreateByUser("owner");
 
         assertTrue(PermissionPolicy.canAccessSession(session, user("owner", "normal", "team-a")));
@@ -21,21 +21,21 @@ class PermissionPolicyTest {
     }
 
     @Test
-    void appliesPrivateTeamAndPublicPuppetVisibility() {
-        Puppet puppet = new Puppet();
-        puppet.setCreateByUserId("owner");
-        puppet.setTeamId("team-a");
-        puppet.setPermission("private");
+    void appliesPrivateTeamAndPublicAgentVisibility() {
+        Agent agent = new Agent();
+        agent.setCreateByUserId("owner");
+        agent.setTeamId("team-a");
+        agent.setPermission("private");
 
-        assertTrue(PermissionPolicy.canAccessPuppet(puppet, user("owner", "normal", "team-a")));
-        assertFalse(PermissionPolicy.canAccessPuppet(puppet, user("other", "normal", "team-a")));
+        assertTrue(PermissionPolicy.canAccessAgent(agent, user("owner", "normal", "team-a")));
+        assertFalse(PermissionPolicy.canAccessAgent(agent, user("other", "normal", "team-a")));
 
-        puppet.setPermission("team");
-        assertTrue(PermissionPolicy.canAccessPuppet(puppet, user("other", "normal", "team-a")));
-        assertFalse(PermissionPolicy.canAccessPuppet(puppet, user("outsider", "normal", "team-b")));
+        agent.setPermission("team");
+        assertTrue(PermissionPolicy.canAccessAgent(agent, user("other", "normal", "team-a")));
+        assertFalse(PermissionPolicy.canAccessAgent(agent, user("outsider", "normal", "team-b")));
 
-        puppet.setPermission("public");
-        assertTrue(PermissionPolicy.canAccessPuppet(puppet, user("outsider", "normal", "team-b")));
+        agent.setPermission("public");
+        assertTrue(PermissionPolicy.canAccessAgent(agent, user("outsider", "normal", "team-b")));
     }
 
     private static User user(String id, String privilege, String teamId) {

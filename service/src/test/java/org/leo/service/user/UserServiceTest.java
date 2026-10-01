@@ -21,18 +21,18 @@ class UserServiceTest {
         User emptyTeam = user("");
         User blankTeam = user("  ");
         User assigned = user("team-1");
-        when(mapper.getAllUser()).thenReturn(Arrays.asList(noTeam, assigned, null, emptyTeam, blankTeam));
+        when(mapper.getAllUsers()).thenReturn(Arrays.asList(noTeam, assigned, null, emptyTeam, blankTeam));
 
         assertEquals(List.of(noTeam, emptyTeam, blankTeam), service.getUsersWithoutTeam());
         assertEquals("stored-hash", noTeam.getPassword());
         assertEquals("normal", noTeam.getPrivilege());
         assertEquals(0, noTeam.getPasswordChangeRequired());
-        verify(mapper).getAllUser();
+        verify(mapper).getAllUsers();
     }
 
     @Test
     void missingUsersProduceAnEmptyResult() {
-        when(mapper.getAllUser()).thenReturn(null);
+        when(mapper.getAllUsers()).thenReturn(null);
         assertTrue(service.getUsersWithoutTeam().isEmpty());
     }
 

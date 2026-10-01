@@ -107,14 +107,14 @@ public class PlatformAiTurnService {
             }
             state.touchLastActiveAt();
             String messageForAgent = request.messageForAgent();
-            PlatformAiAgentRegistry.Runtime agentRuntime = threadAgent(state, request.reasoningEffort());
+            PlatformAiAgentRegistry.AiRuntime aiRuntime = threadAgent(state, request.reasoningEffort());
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
-            presentation.emitWarning(agentRuntime.failoverMessage());
+            presentation.emitWarning(aiRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
                     request.turnId(), request.userItemId(), request.assistantItemId(), state.getStateId(),
-                    agentRuntime.effectiveConfigId(), messageForAgent,
-                    request.userMessage(), request.attachments(), request.startMs(), agentRuntime.runtimeJson(),
+                    aiRuntime.effectiveConfigId(), messageForAgent,
+                    request.userMessage(), request.attachments(), request.startMs(), aiRuntime.runtimeJson(),
                     trace, state.getActiveLeaseToken());
             state.bindActiveItemId(persistedTurn.assistantMessageId());
             state.bindActiveRunId(persistedTurn.runId());
@@ -122,13 +122,13 @@ public class PlatformAiTurnService {
                     new AiTurnOrchestrator.Request(
                             new AiTurnCommand(
                                     state.getStateId(), memoryId, turn,
-                                    () -> agentRuntime.agent().chat(
+                                    () -> aiRuntime.aiAgent().chat(
                                             memoryId, messageForAgent),
-                                    () -> agentRuntime.agent().chat(
+                                    () -> aiRuntime.aiAgent().chat(
                                             memoryId, AiTurnCommand.RECOVERY_MESSAGE)),
                             new AiTurnTransaction.Context(
-                                    persistedTurn, agentRuntime.effectiveConfigId(),
-                                    agentRuntime.agent(), memoryId, request.audit(), request.startMs(),
+                                    persistedTurn, aiRuntime.effectiveConfigId(),
+                                    aiRuntime.aiAgent(), memoryId, request.audit(), request.startMs(),
                                     trace),
                             presentation.eventLog(),
                             state::getCurrentPlan,
@@ -146,7 +146,7 @@ public class PlatformAiTurnService {
         }
     }
 
-    private PlatformAiAgentRegistry.Runtime threadAgent(
+    private PlatformAiAgentRegistry.AiRuntime threadAgent(
             PlatformAiState state, String reasoningEffort) {
         AiModelConfig requested = channelResolver.require(
                 state != null ? state.getAiConfigId() : null);

@@ -7,7 +7,7 @@ import org.leo.core.entity.AiExecutionPolicy;
 public class AiTurnCommandPayload {
 
     public static final String SCOPE_PLATFORM = "platform";
-    public static final String SCOPE_PUPPET = "puppet";
+    public static final String SCOPE_AGENT = "agent";
 
     private String scope;
     private String sessionId;

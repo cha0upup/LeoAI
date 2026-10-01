@@ -1,10 +1,10 @@
 # phpcore
 
-`phpcore` is the PHP runtime implementation of the shared Puppet contracts and
+`phpcore` is the PHP runtime implementation of the shared Agent contracts and
 an equal-status sibling of `javacore`.
 
 The shared runtime, capability, plugin and generator contracts live in `core`.
-This module provides the platform-side `PhpPuppetNode`, the Java-compatible
+This module provides the platform-side `PhpAgentNode`, the Java-compatible
 runtime-neutral RPC client, PHP disguise validation, single-file endpoint generation
 and target-side PHP components. Neither runtime module depends on or adapts the
 other one.

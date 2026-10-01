@@ -40,7 +40,7 @@ import javax.net.ssl.X509TrustManager;
  * 统一节点侧网络探测原子运行时。
  *
  * <p>该类必须保持单文件、单 class、Java 6 API 兼容；它会被独立编译后
- * 作为 payload 下发到 Puppet JVM。上层只提交声明式 plan，组件返回统一
+ * 作为 payload 下发到 Agent JVM。上层只提交声明式 plan，组件返回统一
  * observation，不执行脚本或加载其他组件。</p>
  */
 public class NetworkProbeComponent implements Runnable, ThreadFactory,

@@ -1,9 +1,9 @@
 package org.leo.service;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.PuppetDatabaseConnection;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
-import org.leo.dao.mapper.PuppetDatabaseConnectionMapper;
+import org.leo.core.entity.AgentDatabaseConnection;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
+import org.leo.dao.mapper.AgentDatabaseConnectionMapper;
 import org.leo.service.security.DatabaseCredentialCryptoService;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 
@@ -22,17 +22,17 @@ import static org.mockito.Mockito.when;
 class DatabaseConnectionProfileServiceTest {
 
     @Test
-    void createsSanitizedPuppetOwnedProfile() {
+    void createsSanitizedAgentOwnedProfile() {
         Fixture fixture = fixture();
         doAnswer(invocation -> {
-            PuppetDatabaseConnection saved = invocation.getArgument(0);
-            assertEquals("puppet-1", saved.getPuppetId());
+            AgentDatabaseConnection saved = invocation.getArgument(0);
+            assertEquals("agent-1", saved.getAgentId());
             assertEquals("user-1", saved.getCreateUserId());
             return 1;
-        }).when(fixture.mapper()).insert(any(PuppetDatabaseConnection.class));
+        }).when(fixture.mapper()).insert(any(AgentDatabaseConnection.class));
 
         Map<String, Object> result = fixture.profile().create(
-                "user-1", "puppet-1", Map.of(
+                "user-1", "agent-1", Map.of(
                         "connectionName", "inventory",
                         "connection", mysqlConnection("db.internal", "secret")));
 
@@ -43,15 +43,15 @@ class DatabaseConnectionProfileServiceTest {
     @Test
     void patchUpdateRetainsUnspecifiedConnectionFieldsAndStoredPassword() {
         Fixture fixture = fixture();
-        PuppetDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
+        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
         doAnswer(invocation -> {
-            PuppetDatabaseConnection persisted = invocation.getArgument(0);
+            AgentDatabaseConnection persisted = invocation.getArgument(0);
             assertEquals("existing-secret", fixture.crypto().decrypt(persisted.getPassword()));
             return 1;
-        }).when(fixture.mapper()).update(any(PuppetDatabaseConnection.class));
+        }).when(fixture.mapper()).update(any(AgentDatabaseConnection.class));
 
-        fixture.profile().update("user-2", "puppet-1", "connection-1", Map.of(
+        fixture.profile().update("user-2", "agent-1", "connection-1", Map.of(
                 "description", "collected from application.yml",
                 "connection", Map.of("host", "db-new.internal")));
 
@@ -68,7 +68,7 @@ class DatabaseConnectionProfileServiceTest {
 
         DatabaseConnectionProfileException error = assertThrows(
                 DatabaseConnectionProfileException.class,
-                () -> fixture.profile().create("user-1", "puppet-1", Map.of(
+                () -> fixture.profile().create("user-1", "agent-1", Map.of(
                         "connection", Map.of(
                                 "dialect", "inventeddb",
                                 "connectionMode", "standard",
@@ -83,10 +83,10 @@ class DatabaseConnectionProfileServiceTest {
     @Test
     void acceptsDomesticStandardDialectAliasesAndPersistsCanonicalIds() {
         Fixture fixture = fixture();
-        when(fixture.mapper().insert(any(PuppetDatabaseConnection.class))).thenReturn(1);
+        when(fixture.mapper().insert(any(AgentDatabaseConnection.class))).thenReturn(1);
 
         Map<String, Object> dm = fixture.profile().create(
-                "user-1", "puppet-1", Map.of(
+                "user-1", "agent-1", Map.of(
                         "connection", Map.of(
                                 "dialect", "dameng",
                                 "connectionMode", "standard",
@@ -98,10 +98,10 @@ class DatabaseConnectionProfileServiceTest {
     @Test
     void acceptsGenericCustomJdbcProfile() {
         Fixture fixture = fixture();
-        when(fixture.mapper().insert(any(PuppetDatabaseConnection.class))).thenReturn(1);
+        when(fixture.mapper().insert(any(AgentDatabaseConnection.class))).thenReturn(1);
 
         Map<String, Object> result = fixture.profile().create(
-                "user-1", "puppet-1", Map.of(
+                "user-1", "agent-1", Map.of(
                         "connection", Map.of(
                                 "dialect", "generic",
                                 "connectionMode", "custom",
@@ -113,58 +113,58 @@ class DatabaseConnectionProfileServiceTest {
     }
 
     @Test
-    void resolvesOnlyEnabledProfilesBoundToTheCurrentPuppet() {
+    void resolvesOnlyEnabledProfilesBoundToTheCurrentAgent() {
         Fixture fixture = fixture();
-        PuppetDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
+        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
 
         DatabaseConnectionSpec resolved = fixture.profile().resolveActive(
-                "user-1", "puppet-1", "connection-1");
+                "user-1", "agent-1", "connection-1");
         assertEquals("existing-secret", resolved.getPassword());
 
         DatabaseConnectionProfileException mismatch = assertThrows(
                 DatabaseConnectionProfileException.class,
                 () -> fixture.profile().resolveActive(
-                        "user-1", "puppet-2", "connection-1"));
+                        "user-1", "agent-2", "connection-1"));
         assertEquals(DatabaseConnectionProfileException.Kind.FORBIDDEN, mismatch.getKind());
 
         existing.setStatus(0);
         DatabaseConnectionProfileException disabled = assertThrows(
                 DatabaseConnectionProfileException.class,
                 () -> fixture.profile().resolveActive(
-                        "user-1", "puppet-1", "connection-1"));
+                        "user-1", "agent-1", "connection-1"));
         assertEquals(DatabaseConnectionProfileException.Kind.VALIDATION, disabled.getKind());
     }
 
     @Test
-    void deletesWithPuppetScopeAtTheMapperBoundary() {
+    void deletesWithAgentScopeAtTheMapperBoundary() {
         Fixture fixture = fixture();
-        PuppetDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
+        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
-        when(fixture.mapper().deleteByIdAndPuppet("connection-1", "puppet-1"))
+        when(fixture.mapper().deleteByIdAndAgent("connection-1", "agent-1"))
                 .thenReturn(1);
 
-        fixture.profile().delete("user-1", "puppet-1", "connection-1");
+        fixture.profile().delete("user-1", "agent-1", "connection-1");
 
-        verify(fixture.mapper()).deleteByIdAndPuppet("connection-1", "puppet-1");
+        verify(fixture.mapper()).deleteByIdAndAgent("connection-1", "agent-1");
     }
 
     private Fixture fixture() {
-        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+        AgentDatabaseConnectionMapper mapper = mock(AgentDatabaseConnectionMapper.class);
         DatabaseCredentialCryptoService crypto =
                 new DatabaseCredentialCryptoService("profile-test-key", "unused");
-        PuppetDatabaseConnectionService persistence =
-                new PuppetDatabaseConnectionService(mapper, crypto);
+        AgentDatabaseConnectionService persistence =
+                new AgentDatabaseConnectionService(mapper, crypto);
         return new Fixture(mapper, crypto, persistence,
                 new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry()));
     }
 
-    private PuppetDatabaseConnection existing(PuppetDatabaseConnectionService persistence,
+    private AgentDatabaseConnection existing(AgentDatabaseConnectionService persistence,
                                                 DatabaseCredentialCryptoService crypto) {
-        PuppetDatabaseConnection connection = new PuppetDatabaseConnection();
+        AgentDatabaseConnection connection = new AgentDatabaseConnection();
         connection.setConnectionId("connection-1");
         connection.setConnectionName("inventory");
-        connection.setPuppetId("puppet-1");
+        connection.setAgentId("agent-1");
         connection.setCreateUserId("user-1");
         persistence.applyConnectionSpec(connection,
                 DatabaseConnectionSpec.fromMap(
@@ -184,8 +184,8 @@ class DatabaseConnectionProfileServiceTest {
                 "password", password);
     }
 
-    private record Fixture(PuppetDatabaseConnectionMapper mapper,
+    private record Fixture(AgentDatabaseConnectionMapper mapper,
                            DatabaseCredentialCryptoService crypto,
-                           PuppetDatabaseConnectionService persistence,
+                           AgentDatabaseConnectionService persistence,
                            DatabaseConnectionProfileService profile) {}
 }

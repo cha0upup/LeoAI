@@ -1,6 +1,6 @@
 package org.leo.web.controller.platform.session;
 
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
@@ -35,13 +35,13 @@ public class SessionReportController {
     /**
      * 生成离线侦察报告（Markdown 格式）。
      *
-     * <p>汇聚 puppet 级持久化目录中的 basic-info.json、recon-summary.md、
+     * <p>汇聚 agent 级持久化目录中的 basic-info.json、recon-summary.md、
      * recon-summary.json，拼装为结构化 Markdown 字符串返回给前端，前端负责触发下载。
      */
     @PostMapping("/report/generate")
     public HashMap<String, Object> generateReport(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         ReportResponse report = sessionReportService.generate(session);
         return ApiResponse.success(report);
     }

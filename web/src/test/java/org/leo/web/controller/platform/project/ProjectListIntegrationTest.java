@@ -16,10 +16,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.dao.mapper.ProjectMapper;
-import org.leo.service.PuppetService;
+import org.leo.service.AgentService;
 import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
@@ -67,17 +67,17 @@ class ProjectListIntegrationTest {
         configuration.addMapper(ProjectMapper.class);
         configuration.addInterceptor(queries);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
-        PuppetService puppets = mock(PuppetService.class);
+        AgentService agents = mock(AgentService.class);
         users = mock(UserService.class);
-        permissions = new PermissionService(puppets, users);
+        permissions = new PermissionService(agents, users);
         controller = new ProjectController(
-                new ProjectService(sqlSession.getMapper(ProjectMapper.class), puppets), permissions);
+                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents), permissions);
     }
 
     @AfterEach
     void tearDown() {
         if (sqlSession != null) sqlSession.close();
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @Test
@@ -184,21 +184,21 @@ class ProjectListIntegrationTest {
     }
 
     private void host(String id) {
-        jdbc.update("INSERT INTO puppets (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, conn_link, "
+        jdbc.update("INSERT INTO agents (agent_id, agent_name, parent_agent_id, create_by_user_id, conn_link, "
                 + "req_disguise_id, resp_disguise_id, create_time, update_time) "
                 + "VALUES (?, ?, 'root', 'user-1', 'local-fixture', 'request', 'response', '2026-10-01', '2026-10-01')", id, id);
     }
 
-    private void attach(String projectId, String puppetId) {
-        jdbc.update("INSERT INTO project_puppets (project_id, puppet_id, added_by_user_id, create_time) "
-                + "VALUES (?, ?, 'user-1', '2026-10-01')", projectId, puppetId);
+    private void attach(String projectId, String agentId) {
+        jdbc.update("INSERT INTO project_agents (project_id, agent_id, added_by_user_id, create_time) "
+                + "VALUES (?, ?, 'user-1', '2026-10-01')", projectId, agentId);
     }
 
     private void session(String id, String projectId, String owner) {
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setProjectId(projectId);
         session.setCreateByUser(owner);
-        PuppetNodeSessionContainer.addSession(id, session);
+        AgentNodeSessionContainer.addSession(id, session);
     }
 
     @Intercepts(@Signature(type = StatementHandler.class, method = "prepare", args = {Connection.class, Integer.class}))

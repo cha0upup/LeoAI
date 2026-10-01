@@ -115,7 +115,7 @@ public class DisguiseManager {
         disguises.remove(disguiseId);
     }
 
-    public ArrayList<Disguise> getDisguiseAsList() {
+    public ArrayList<Disguise> getDisguises() {
         return new ArrayList<>(disguises.values());
     }
 }

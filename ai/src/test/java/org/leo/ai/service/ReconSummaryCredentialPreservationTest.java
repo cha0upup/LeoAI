@@ -7,7 +7,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -29,7 +29,7 @@ class ReconSummaryCredentialPreservationTest {
             assertTrue(user.singleText().contains("app:source-secret@db.internal"));
             return response("· JDBC app/password=digest-secret@db.internal");
         });
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setReconSummary("jdbc:mysql://app:source-secret@db.internal/app");
 
         String digest = new ReconSummaryDigestService(model).generateAndSave(session);

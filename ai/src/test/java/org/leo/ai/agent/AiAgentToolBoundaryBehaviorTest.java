@@ -170,7 +170,7 @@ class AiAgentToolBoundaryBehaviorTest {
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, boundary, new AiToolResultArchiveTools(archive));
         ToolProvider provider = policy.toolProvider(
-                AiToolAuthorizationPolicy.AgentScope.PLATFORM, tools);
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, tools);
         AiToolErrorHandler errors = new AiToolErrorHandler();
 
         return AiServices.builder(BoundaryAgent.class)

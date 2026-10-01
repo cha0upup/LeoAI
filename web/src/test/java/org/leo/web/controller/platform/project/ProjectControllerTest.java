@@ -4,8 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.project.ProjectService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
@@ -40,12 +40,12 @@ class ProjectControllerTest {
         Project second = project("project-1");
         when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.listVisible(user)).thenReturn(List.of(first, second));
-        when(projectService.countPuppetsByProject()).thenReturn(Map.of("project-1", 3));
+        when(projectService.countAgentsByProject()).thenReturn(Map.of("project-1", 3));
         when(projectService.canManage(first, user)).thenReturn(true);
         when(projectService.canEditContent(first, user)).thenReturn(true);
 
-        try (var sessions = mockStatic(PuppetNodeSessionContainer.class)) {
-            sessions.when(PuppetNodeSessionContainer::getAllSession).thenReturn(Map.of(
+        try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
+            sessions.when(AgentNodeSessionContainer::getAllSessions).thenReturn(Map.of(
                     "own-1", session("project-1", "user-1"),
                     "own-2", session("project-1", "user-1"),
                     "other", session("project-1", "user-2"),
@@ -57,8 +57,8 @@ class ProjectControllerTest {
             assertEquals(List.of(
                     new ProjectSummary(first, 0, 0, true, true),
                     new ProjectSummary(second, 3, 2, false, false)), result);
-            verify(projectService).countPuppetsByProject();
-            sessions.verify(PuppetNodeSessionContainer::getAllSession);
+            verify(projectService).countAgentsByProject();
+            sessions.verify(AgentNodeSessionContainer::getAllSessions);
         }
     }
 
@@ -71,17 +71,17 @@ class ProjectControllerTest {
         when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.listVisible(user)).thenReturn(List.of());
 
-        try (var sessions = mockStatic(PuppetNodeSessionContainer.class)) {
+        try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
             assertEquals(List.of(), new ProjectController(projectService, permissionService)
                     .listProjects(request).get("data"));
-            verify(projectService, never()).countPuppetsByProject();
+            verify(projectService, never()).countAgentsByProject();
             sessions.verifyNoInteractions();
         }
     }
 
     @AfterEach
     void clearSessions() {
-        PuppetNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @Test
@@ -98,9 +98,9 @@ class ProjectControllerTest {
         when(projectService.canView(project, user)).thenReturn(true);
         when(projectService.canManage(project, user)).thenReturn(true);
         when(projectService.delete(project)).thenReturn(2);
-        PuppetNodeSession session = new PuppetNodeSession();
+        AgentNodeSession session = new AgentNodeSession();
         session.setProjectId("project-1");
-        PuppetNodeSessionContainer.addSession("session-1", session);
+        AgentNodeSessionContainer.addSession("session-1", session);
 
         Map<String, Object> response = controller.deleteProject(
                 request, new ProjectIdRequest("project-1"));
@@ -140,8 +140,8 @@ class ProjectControllerTest {
         return project;
     }
 
-    private static PuppetNodeSession session(String projectId, String ownerId) {
-        PuppetNodeSession session = new PuppetNodeSession();
+    private static AgentNodeSession session(String projectId, String ownerId) {
+        AgentNodeSession session = new AgentNodeSession();
         session.setProjectId(projectId);
         session.setCreateByUser(ownerId);
         return session;

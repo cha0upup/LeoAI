@@ -9,9 +9,9 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.Project;
-import org.leo.core.entity.ProjectPuppet;
-import org.leo.core.entity.Puppet;
-import org.leo.dao.entity.ProjectPuppetCount;
+import org.leo.core.entity.ProjectAgent;
+import org.leo.core.entity.Agent;
+import org.leo.dao.entity.ProjectAgentCount;
 
 import java.util.List;
 
@@ -32,48 +32,48 @@ public interface ProjectMapper {
             "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} WHERE project_id=#{projectId}")
     boolean updateProject(Project project);
 
-    @Delete("DELETE FROM project_puppets WHERE project_id=#{projectId}")
-    int deletePuppetRelations(@Param("projectId") String projectId);
+    @Delete("DELETE FROM project_agents WHERE project_id=#{projectId}")
+    int deleteAgentRelations(@Param("projectId") String projectId);
 
-    @Update("UPDATE puppet_sessions SET project_id=NULL WHERE project_id=#{projectId}")
+    @Update("UPDATE agent_sessions SET project_id=NULL WHERE project_id=#{projectId}")
     int clearSessionProject(@Param("projectId") String projectId);
 
     @Delete("DELETE FROM projects WHERE project_id=#{projectId}")
     int deleteProject(@Param("projectId") String projectId);
 
-    @Insert("INSERT INTO project_puppets (project_id, puppet_id, alias, environment, tags, sort_order, added_by_user_id, create_time) " +
-            "VALUES (#{projectId}, #{puppetId}, #{alias}, #{environment}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime}) " +
-            "ON CONFLICT(project_id, puppet_id) DO UPDATE SET alias=excluded.alias, environment=excluded.environment, " +
+    @Insert("INSERT INTO project_agents (project_id, agent_id, alias, environment, tags, sort_order, added_by_user_id, create_time) " +
+            "VALUES (#{projectId}, #{agentId}, #{alias}, #{environment}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime}) " +
+            "ON CONFLICT(project_id, agent_id) DO UPDATE SET alias=excluded.alias, environment=excluded.environment, " +
             "tags=excluded.tags, sort_order=excluded.sort_order")
-    boolean attachPuppet(ProjectPuppet projectPuppet);
+    boolean attachAgent(ProjectAgent projectAgent);
 
-    @Delete("DELETE FROM project_puppets WHERE project_id=#{projectId} AND puppet_id=#{puppetId}")
-    boolean detachPuppet(@Param("projectId") String projectId,
-                         @Param("puppetId") String puppetId);
+    @Delete("DELETE FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
+    boolean detachAgent(@Param("projectId") String projectId,
+                         @Param("agentId") String agentId);
 
-    @Select("SELECT project_id, COUNT(*) AS puppet_count FROM project_puppets GROUP BY project_id")
+    @Select("SELECT project_id, COUNT(*) AS agent_count FROM project_agents GROUP BY project_id")
     @ConstructorArgs({
             @Arg(column = "project_id", javaType = String.class),
-            @Arg(column = "puppet_count", javaType = int.class)
+            @Arg(column = "agent_count", javaType = int.class)
     })
-    List<ProjectPuppetCount> countPuppetsByProject();
+    List<ProjectAgentCount> countAgentsByProject();
 
-    @Select("SELECT COUNT(*) FROM project_puppets WHERE project_id=#{projectId} AND puppet_id=#{puppetId}")
-    int containsPuppet(@Param("projectId") String projectId,
-                       @Param("puppetId") String puppetId);
+    @Select("SELECT COUNT(*) FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
+    int containsAgent(@Param("projectId") String projectId,
+                       @Param("agentId") String agentId);
 
-    @Select("SELECT p.* FROM projects p INNER JOIN project_puppets pp ON pp.project_id=p.project_id " +
-            "WHERE pp.puppet_id=#{puppetId} ORDER BY p.status ASC, p.project_name COLLATE NOCASE ASC")
-    List<Project> findProjectsByPuppetId(@Param("puppetId") String puppetId);
+    @Select("SELECT p.* FROM projects p INNER JOIN project_agents pp ON pp.project_id=p.project_id " +
+            "WHERE pp.agent_id=#{agentId} ORDER BY p.status ASC, p.project_name COLLATE NOCASE ASC")
+    List<Project> findProjectsByAgentId(@Param("agentId") String agentId);
 
-    @Select("SELECT p.* FROM puppets p INNER JOIN project_puppets pp ON pp.puppet_id=p.puppet_id " +
-            "WHERE pp.project_id=#{projectId} AND p.parent_puppet_id=#{parentPuppetId} " +
-            "ORDER BY pp.sort_order ASC, p.update_time DESC, p.puppet_name COLLATE NOCASE ASC")
-    List<Puppet> findPuppetsByProjectAndParent(@Param("projectId") String projectId,
-                                               @Param("parentPuppetId") String parentPuppetId);
+    @Select("SELECT p.* FROM agents p INNER JOIN project_agents pp ON pp.agent_id=p.agent_id " +
+            "WHERE pp.project_id=#{projectId} AND p.parent_agent_id=#{parentAgentId} " +
+            "ORDER BY pp.sort_order ASC, p.update_time DESC, p.agent_name COLLATE NOCASE ASC")
+    List<Agent> findAgentsByProjectAndParent(@Param("projectId") String projectId,
+                                               @Param("parentAgentId") String parentAgentId);
 
-    @Select("SELECT p.* FROM puppets p WHERE p.parent_puppet_id='root' " +
-            "AND NOT EXISTS (SELECT 1 FROM project_puppets pp WHERE pp.puppet_id=p.puppet_id) " +
-            "ORDER BY p.update_time DESC, p.puppet_name COLLATE NOCASE ASC")
-    List<Puppet> findUnassignedRootPuppets();
+    @Select("SELECT p.* FROM agents p WHERE p.parent_agent_id='root' " +
+            "AND NOT EXISTS (SELECT 1 FROM project_agents pp WHERE pp.agent_id=p.agent_id) " +
+            "ORDER BY p.update_time DESC, p.agent_name COLLATE NOCASE ASC")
+    List<Agent> findUnassignedRootAgents();
 }

@@ -2,11 +2,11 @@ package org.leo.service.project;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Project;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.ProjectMapper;
-import org.leo.dao.entity.ProjectPuppetCount;
-import org.leo.service.PuppetService;
+import org.leo.dao.entity.ProjectAgentCount;
+import org.leo.service.AgentService;
 import org.mockito.InOrder;
 
 import java.util.List;
@@ -26,68 +26,68 @@ class ProjectServiceTest {
     @Test
     void groupsAllHostCountsWithOneMapperCall() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
-        when(mapper.countPuppetsByProject()).thenReturn(List.of(
-                new ProjectPuppetCount("project-1", 3),
-                new ProjectPuppetCount("project-2", 1)));
+        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
+        when(mapper.countAgentsByProject()).thenReturn(List.of(
+                new ProjectAgentCount("project-1", 3),
+                new ProjectAgentCount("project-2", 1)));
 
-        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countPuppetsByProject());
-        verify(mapper).countPuppetsByProject();
+        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countAgentsByProject());
+        verify(mapper).countAgentsByProject();
     }
 
     @Test
     void returnsEmptyCountsWhenNoHostRelationsExist() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
-        when(mapper.countPuppetsByProject()).thenReturn(List.of());
+        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
+        when(mapper.countAgentsByProject()).thenReturn(List.of());
 
-        assertTrue(service.countPuppetsByProject().isEmpty());
+        assertTrue(service.countAgentsByProject().isEmpty());
     }
 
     @Test
-    void inheritsProjectScopeFromAttachedAncestorPuppet() {
+    void inheritsProjectScopeFromAttachedAncestorAgent() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        PuppetService puppetService = mock(PuppetService.class);
-        ProjectService service = new ProjectService(mapper, puppetService);
+        AgentService agentService = mock(AgentService.class);
+        ProjectService service = new ProjectService(mapper, agentService);
 
-        Puppet child = new Puppet();
-        child.setPuppetId("child");
-        child.setParentPuppetId("gateway");
-        when(mapper.containsPuppet("project-1", "child")).thenReturn(0);
-        when(mapper.containsPuppet("project-1", "gateway")).thenReturn(1);
-        when(puppetService.findPuppetById("child")).thenReturn(child);
+        Agent child = new Agent();
+        child.setAgentId("child");
+        child.setParentAgentId("gateway");
+        when(mapper.containsAgent("project-1", "child")).thenReturn(0);
+        when(mapper.containsAgent("project-1", "gateway")).thenReturn(1);
+        when(agentService.findAgentById("child")).thenReturn(child);
 
-        assertTrue(service.containsPuppet("project-1", "child"));
+        assertTrue(service.containsAgent("project-1", "child"));
     }
 
     @Test
-    void resolvesChildSelectionToItsEntryPuppet() {
+    void resolvesChildSelectionToItsEntryAgent() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        PuppetService puppetService = mock(PuppetService.class);
-        ProjectService service = new ProjectService(mapper, puppetService);
+        AgentService agentService = mock(AgentService.class);
+        ProjectService service = new ProjectService(mapper, agentService);
 
-        Puppet child = puppet("child", "gateway");
-        Puppet gateway = puppet("gateway", "root");
-        when(puppetService.findPuppetById("child")).thenReturn(child);
-        when(puppetService.findPuppetById("gateway")).thenReturn(gateway);
+        Agent child = agent("child", "gateway");
+        Agent gateway = agent("gateway", "root");
+        when(agentService.findAgentById("child")).thenReturn(child);
+        when(agentService.findAgentById("gateway")).thenReturn(gateway);
 
-        assertEquals("gateway", service.resolveEntryPuppetId("child"));
+        assertEquals("gateway", service.resolveEntryAgentId("child"));
     }
 
     @Test
     void exposesEntryProjectMembershipsOnChildNodes() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        PuppetService puppetService = mock(PuppetService.class);
-        ProjectService service = new ProjectService(mapper, puppetService);
+        AgentService agentService = mock(AgentService.class);
+        ProjectService service = new ProjectService(mapper, agentService);
         User user = new User();
         user.setUserId("user-1");
         user.setPrivilege("normal");
         Project visible = project("user-1", null, "private");
         visible.setProjectId("project-1");
 
-        when(puppetService.findPuppetById("child")).thenReturn(puppet("child", "gateway"));
-        when(puppetService.findPuppetById("gateway")).thenReturn(puppet("gateway", "root"));
-        when(mapper.findProjectsByPuppetId("gateway")).thenReturn(List.of(visible));
+        when(agentService.findAgentById("child")).thenReturn(agent("child", "gateway"));
+        when(agentService.findAgentById("gateway")).thenReturn(agent("gateway", "root"));
+        when(mapper.findProjectsByAgentId("gateway")).thenReturn(List.of(visible));
 
         Map<String, List<Project>> result = service.listVisibleMemberships(List.of("child"), user);
 
@@ -97,7 +97,7 @@ class ProjectServiceTest {
     @Test
     void appliesOwnerAndTeamVisibilityWithoutGrantingPrivateProjects() {
         ProjectService service = new ProjectService(
-                mock(ProjectMapper.class), mock(PuppetService.class));
+                mock(ProjectMapper.class), mock(AgentService.class));
         User user = new User();
         user.setUserId("user-1");
         user.setTeamId("team-1");
@@ -115,7 +115,7 @@ class ProjectServiceTest {
     @Test
     void separatesPublicVisibilityFromProjectContentEditing() {
         ProjectService service = new ProjectService(
-                mock(ProjectMapper.class), mock(PuppetService.class));
+                mock(ProjectMapper.class), mock(AgentService.class));
         User user = new User();
         user.setUserId("user-1");
         user.setTeamId("team-1");
@@ -134,16 +134,16 @@ class ProjectServiceTest {
     @Test
     void deletesRelationsAndClearsSessionReferencesBeforeDeletingProject() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         Project project = projectWithId("project-1");
-        when(mapper.deletePuppetRelations("project-1")).thenReturn(3);
+        when(mapper.deleteAgentRelations("project-1")).thenReturn(3);
         when(mapper.clearSessionProject("project-1")).thenReturn(2);
         when(mapper.deleteProject("project-1")).thenReturn(1);
 
         assertEquals(3, service.delete(project));
 
         InOrder order = inOrder(mapper);
-        order.verify(mapper).deletePuppetRelations("project-1");
+        order.verify(mapper).deleteAgentRelations("project-1");
         order.verify(mapper).clearSessionProject("project-1");
         order.verify(mapper).deleteProject("project-1");
     }
@@ -151,7 +151,7 @@ class ProjectServiceTest {
     @Test
     void reportsConcurrentOrMissingProjectDeletion() {
         ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         when(mapper.deleteProject("project-1")).thenReturn(0);
 
         IllegalStateException error = assertThrows(
@@ -174,10 +174,10 @@ class ProjectServiceTest {
         return project;
     }
 
-    private static Puppet puppet(String puppetId, String parentPuppetId) {
-        Puppet puppet = new Puppet();
-        puppet.setPuppetId(puppetId);
-        puppet.setParentPuppetId(parentPuppetId);
-        return puppet;
+    private static Agent agent(String agentId, String parentAgentId) {
+        Agent agent = new Agent();
+        agent.setAgentId(agentId);
+        agent.setParentAgentId(parentAgentId);
+        return agent;
     }
 }

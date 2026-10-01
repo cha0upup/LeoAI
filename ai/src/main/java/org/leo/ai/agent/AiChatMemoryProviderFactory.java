@@ -38,11 +38,11 @@ public class AiChatMemoryProviderFactory {
         this.managedMemory = managedMemory;
     }
 
-    public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens,
+    public ChatMemoryProvider createNodeAiProvider(int modelContextWindowTokens,
                                                    int toolSchemaTokens) {
         return create(modelContextWindowTokens,
                 toolSchemaTokens,
-                agentProperties.getPuppetNode().getMain().getMaxContextTokens());
+                agentProperties.getAgentNode().getMain().getMaxContextTokens());
     }
 
     public ChatMemoryProvider createPlatformProvider(int modelContextWindowTokens,

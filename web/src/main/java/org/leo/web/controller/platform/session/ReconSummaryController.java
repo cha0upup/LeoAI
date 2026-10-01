@@ -1,6 +1,6 @@
 package org.leo.web.controller.platform.session;
 
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.AppendReconSummaryRequest;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
@@ -43,14 +43,14 @@ public class ReconSummaryController {
     @PostMapping("/recon-summary")
     public HashMap<String, Object> getReconSummary(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.load(sessionId, session));
     }
 
     @PostMapping("/recon-summary/set")
     public HashMap<String, Object> setReconSummary(@RequestBody SetReconSummaryRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.set(
                 sessionId,
                 session,
@@ -61,42 +61,42 @@ public class ReconSummaryController {
     public HashMap<String, Object> appendReconSummary(@RequestBody AppendReconSummaryRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
         String content   = requireText(request.content(),   "content");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.append(sessionId, session, content));
     }
 
     @PostMapping("/recon-summary/clear")
     public HashMap<String, Object> clearReconSummary(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.clear(sessionId, session));
     }
 
     @PostMapping("/recon-summary/organize")
     public HashMap<String, Object> organizeReconSummary(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.organize(sessionId, session));
     }
 
     @PostMapping("/recon-summary/digest")
     public HashMap<String, Object> getReconSummaryDigest(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.digestStatus(sessionId, session));
     }
 
     @PostMapping("/recon-summary/digest/generate")
     public HashMap<String, Object> generateReconSummaryDigest(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.generateDigest(sessionId, session));
     }
 
     @PostMapping("/recon-summary/auto-append/toggle")
     public HashMap<String, Object> toggleAutoAppendRecon(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.toggleAutoAppend(sessionId, session));
     }
 

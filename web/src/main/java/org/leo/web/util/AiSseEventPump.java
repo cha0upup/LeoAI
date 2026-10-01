@@ -15,7 +15,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
-/** Runs the shared event/heartbeat loop used by platform and Puppet AI streams. */
+/** Runs the shared event/heartbeat loop used by platform and Node AI streams. */
 @Component
 public final class AiSseEventPump {
 

@@ -3,11 +3,11 @@ package org.leo.web.util;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.AgentNodeCapabilityRegistry;
 import org.leo.core.runtime.CapabilityStatus;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionPolicy;
@@ -126,49 +126,49 @@ public class ControllerUtil {
     }
 
     /**
-     * 获取通用 PuppetNode，用于支持多类型节点的控制器。
+     * 获取通用 AgentNode，用于支持多类型节点的控制器。
      */
-    public static AbstractPuppetNode getAbstractPuppetNode(Map<String, Object> params) {
-        PuppetNodeSession session = getPuppetNodeSession(params);
-        return getAbstractPuppetNode(session);
+    public static AbstractAgentNode getAbstractAgentNode(Map<String, Object> params) {
+        AgentNodeSession session = getAgentNodeSession(params);
+        return getAbstractAgentNode(session);
     }
 
-    public static AbstractPuppetNode getAbstractPuppetNode(String sessionId) {
-        return getAbstractPuppetNode(getPuppetNodeSession(sessionId));
+    public static AbstractAgentNode getAbstractAgentNode(String sessionId) {
+        return getAbstractAgentNode(getAgentNodeSession(sessionId));
     }
 
     public static <T> T requireCapability(Map<String, Object> params, Class<T> capabilityType) {
-        PuppetNodeSession session = getPuppetNodeSession(params);
+        AgentNodeSession session = getAgentNodeSession(params);
         return requireCapability(session, capabilityType);
     }
 
     public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {
-        PuppetNodeSession session = getPuppetNodeSession(sessionId);
+        AgentNodeSession session = getAgentNodeSession(sessionId);
         return requireCapability(session, capabilityType);
     }
 
-    public static <T> T requireCapability(PuppetNodeSession session, Class<T> capabilityType) {
+    public static <T> T requireCapability(AgentNodeSession session, Class<T> capabilityType) {
         if (capabilityType == null) {
             throw ApiException.badRequest("capabilityType不能为空");
         }
-        AbstractPuppetNode node = getAbstractPuppetNode(session);
-        if (PuppetNodeCapabilityRegistry.supports(node, capabilityType)) {
+        AbstractAgentNode node = getAbstractAgentNode(session);
+        if (AgentNodeCapabilityRegistry.supports(node, capabilityType)) {
             return capabilityType.cast(node);
         }
-        String nodeType = node.getPuppet() != null ? node.getPuppet().getType() : node.getClass().getSimpleName();
-        String capabilityName = PuppetNodeCapabilityRegistry.capabilityName(capabilityType);
+        String nodeType = node.getAgent() != null ? node.getAgent().getType() : node.getClass().getSimpleName();
+        String capabilityName = AgentNodeCapabilityRegistry.capabilityName(capabilityType);
         CapabilityStatus status = capabilityName != null
-                ? PuppetNodeCapabilityRegistry.getStatus(node, capabilityName) : null;
+                ? AgentNodeCapabilityRegistry.getStatus(node, capabilityName) : null;
         String reason = status != null && status.getReason() != null && !status.getReason().isBlank()
                 ? ", reason=" + status.getReason() : "";
-        throw ApiException.badRequest("当前 Puppet 类型不支持能力: " + capabilityType.getSimpleName()
+        throw ApiException.badRequest("当前 Agent 类型不支持能力: " + capabilityType.getSimpleName()
                 + " (type=" + safeText(nodeType, "unknown") + reason + ")");
     }
 
-    private static AbstractPuppetNode getAbstractPuppetNode(PuppetNodeSession session) {
-        AbstractPuppetNode node = session.getPuppetNode();
+    private static AbstractAgentNode getAbstractAgentNode(AgentNodeSession session) {
+        AbstractAgentNode node = session.getAgentNode();
         if (node == null) {
-            throw ApiException.notFound("Puppet实体不存在: " + session.getSessionId());
+            throw ApiException.notFound("Agent实体不存在: " + session.getSessionId());
         }
         User currentUser = getCurrentUser();
         if (currentUser != null) {
@@ -180,23 +180,23 @@ public class ControllerUtil {
     /**
      * 从参数中获取并验证当前登录用户对 Session 的访问权限。
      */
-    public static PuppetNodeSession getPuppetNodeSession(Map<String, Object> params) {
+    public static AgentNodeSession getAgentNodeSession(Map<String, Object> params) {
         if (params == null) {
             throw new IllegalArgumentException("params不能为空");
         }
         Object sessionIdObj = params.get(PARAM_SESSION_ID);
         String sessionId = sessionIdObj == null ? null : sessionIdObj.toString();
-        return getPuppetNodeSession(sessionId);
+        return getAgentNodeSession(sessionId);
     }
 
     /**
      * 获取指定 Session，并强制执行会话权限隔离。
      */
-    public static PuppetNodeSession getPuppetNodeSession(String sessionId) {
+    public static AgentNodeSession getAgentNodeSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw ApiException.badRequest("sessionId不能为空");
         }
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId.trim());
+        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId.trim());
         if (session == null) {
             throw ApiException.notFound("会话不存在或已过期: " + sessionId);
         }
@@ -268,7 +268,7 @@ public class ControllerUtil {
     /**
      * 会话权限模型：admin 可访问全部；普通用户仅可访问自己创建的会话。
      */
-    public static boolean canAccessSession(PuppetNodeSession session, User user) {
+    public static boolean canAccessSession(AgentNodeSession session, User user) {
         return PermissionPolicy.canAccessSession(session, user);
     }
 
@@ -299,7 +299,7 @@ public class ControllerUtil {
     }
 
     /**
-     * 统一封装多类型 Puppet 能力调用样板:获取节点 → 校验能力 → 执行回调 → 检查 code==200 → 返回 ApiResponse。
+     * 统一封装多类型 Agent 能力调用样板:获取节点 → 校验能力 → 执行回调 → 检查 code==200 → 返回 ApiResponse。
      */
     public static <T> HashMap<String, Object> handleCapabilityCall(
             Map<String, Object> params, Class<T> capabilityType, String errorPrefix, CapabilityCall<T> call) {
@@ -309,7 +309,7 @@ public class ControllerUtil {
     }
 
     /**
-     * 统一封装多类型 Puppet 能力调用样板，并附带审计日志记录。
+     * 统一封装多类型 Agent 能力调用样板，并附带审计日志记录。
      */
     public static <T> HashMap<String, Object> handleCapabilityCall(
             Map<String, Object> params,
@@ -332,19 +332,19 @@ public class ControllerUtil {
             String errorPrefix,
             CapabilityCall<T> call,
             boolean auditEnabled) {
-        AbstractPuppetNode auditNode = null;
+        AbstractAgentNode auditNode = null;
         String resolvedOperationType = safeText(operationType, inferOperationTypeFromRequest());
         String resolvedOperationName = safeText(operationName, normalizeOperationName(errorPrefix, resolvedOperationType));
         String resolvedOperationPath = safeText(operationPath, currentRequestPath());
         String clientIp = AuditLogUtil.getClientIp();
 
         try {
-            PuppetNodeSession session = getPuppetNodeSession(params);
-            auditNode = getAbstractPuppetNode(session);
+            AgentNodeSession session = getAgentNodeSession(params);
+            auditNode = getAbstractAgentNode(session);
             T node = requireCapability(session, capabilityType);
             Map<String, Object> result = call.apply(node);
             if (result == null) {
-                String message = safeText(errorPrefix, "Puppet调用失败") + ": 返回为空";
+                String message = safeText(errorPrefix, "Agent调用失败") + ": 返回为空";
                 if (auditEnabled) {
                     AuditLogUtil.logFailure(auditNode, resolvedOperationType, resolvedOperationName,
                             resolvedOperationPath, params, message, clientIp);
@@ -362,7 +362,7 @@ public class ControllerUtil {
                 return ApiResponse.success(result);
             }
 
-            String message = safeText(responseMessage, safeText(errorPrefix, "Puppet调用失败") + ": 失败");
+            String message = safeText(responseMessage, safeText(errorPrefix, "Agent调用失败") + ": 失败");
             if (auditEnabled) {
                 AuditLogUtil.logOperation(auditNode, resolvedOperationType, resolvedOperationName,
                         resolvedOperationPath, params, responseCode, responseMessage, "FAILED", message, clientIp);
@@ -376,7 +376,7 @@ public class ControllerUtil {
             }
             throw ae;
         } catch (Exception e) {
-            String message = safeText(errorPrefix, "Puppet调用失败") + ": " + e.getMessage();
+            String message = safeText(errorPrefix, "Agent调用失败") + ": " + e.getMessage();
             if (auditEnabled && auditNode != null) {
                 AuditLogUtil.logError(auditNode, resolvedOperationType, resolvedOperationName,
                         resolvedOperationPath, params, message, clientIp);
@@ -422,7 +422,7 @@ public class ControllerUtil {
     private static String inferOperationTypeFromRequest() {
         String path = currentRequestPath();
         if (path == null || path.isBlank()) {
-            return "PUPPET_OPERATION";
+            return "AGENT_OPERATION";
         }
         String normalizedPath = path.trim();
         int queryIndex = normalizedPath.indexOf('?');
@@ -430,15 +430,15 @@ public class ControllerUtil {
             normalizedPath = normalizedPath.substring(0, queryIndex);
         }
         normalizedPath = normalizedPath.replaceFirst("^/+", "");
-        if (normalizedPath.startsWith("puppet-node/")) {
-            normalizedPath = normalizedPath.substring("puppet-node/".length());
+        if (normalizedPath.startsWith("agent-node/")) {
+            normalizedPath = normalizedPath.substring("agent-node/".length());
         }
         String operationType = normalizedPath
                 .replaceAll("[^A-Za-z0-9]+", "_")
                 .replaceAll("_+", "_")
                 .replaceAll("^_|_$", "")
                 .toUpperCase(Locale.ROOT);
-        return operationType.isBlank() ? "PUPPET_OPERATION" : operationType;
+        return operationType.isBlank() ? "AGENT_OPERATION" : operationType;
     }
 
     private static boolean shouldAuditGenericOperation(String operationType) {

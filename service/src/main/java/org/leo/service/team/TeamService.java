@@ -35,9 +35,9 @@ public class TeamService {
 
     // ── 查询 ─────────────────────────────────────────────────────────────────────
 
-    public List<Team> getAllTeam() {
-        List<Team> list = teamMapper.getAllTeam();
-        return list != null ? list : new ArrayList<>();
+    public List<Team> getAllTeams() {
+        List<Team> teams = teamMapper.getAllTeams();
+        return teams != null ? teams : new ArrayList<>();
     }
 
     public Team getTeamById(String teamId) {
@@ -52,8 +52,8 @@ public class TeamService {
 
     public List<Team> getTeamsByLeader(String leaderId) {
         if (leaderId == null || leaderId.isBlank()) return new ArrayList<>();
-        List<Team> list = teamMapper.findTeamByLeader(leaderId.trim());
-        return list != null ? list : new ArrayList<>();
+        List<Team> teams = teamMapper.findTeamsByLeaderId(leaderId.trim());
+        return teams != null ? teams : new ArrayList<>();
     }
 
     // ── 写操作 ───────────────────────────────────────────────────────────────────

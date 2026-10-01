@@ -56,8 +56,8 @@ public class AuditLogService {
             auditLog.getLogId(),
             auditLog.getUserId(),
             auditLog.getUserName(),
-            auditLog.getPuppetId(),
-            auditLog.getPuppetName(),
+            auditLog.getAgentId(),
+            auditLog.getAgentName(),
             auditLog.getSessionId(),
             auditLog.getOperationType(),
             auditLog.getOperationName(),
@@ -167,26 +167,26 @@ public class AuditLogService {
     /**
      * 统计主机的操作日志数量
      */
-    public Integer countAuditLogsByPuppetId(String puppetId) {
-        if (puppetId == null || puppetId.isBlank()) {
+    public Integer countAuditLogsByAgentId(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
             return 0;
         }
-        Integer count = auditLogMapper.countAuditLogsByPuppetId(puppetId);
+        Integer count = auditLogMapper.countAuditLogsByAgentId(agentId);
         return count != null ? count : 0;
     }
 
-    public Map<String, Object> getPuppetStatistics(String puppetId) {
-        if (puppetId == null || puppetId.isBlank()) {
+    public Map<String, Object> getAgentStatistics(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
             return new HashMap<>();
         }
-        String normalizedPuppetId = puppetId.trim();
-        AuditLog latest = auditLogMapper.findLatestAuditLogByPuppetId(normalizedPuppetId);
+        String normalizedAgentId = agentId.trim();
+        AuditLog latest = auditLogMapper.findLatestAuditLogByAgentId(normalizedAgentId);
 
         Map<String, Object> statistics = new HashMap<>();
-        statistics.put("hostId", normalizedPuppetId);
-        statistics.put("puppetId", normalizedPuppetId);
-        statistics.put("totalOperations", countAuditLogsByPuppetId(normalizedPuppetId));
-        statistics.put("recentOperations", defaultCount(auditLogMapper.countRecentAuditLogsByPuppetId(normalizedPuppetId, RECENT_DAYS)));
+        statistics.put("hostId", normalizedAgentId);
+        statistics.put("agentId", normalizedAgentId);
+        statistics.put("totalOperations", countAuditLogsByAgentId(normalizedAgentId));
+        statistics.put("recentOperations", defaultCount(auditLogMapper.countRecentAuditLogsByAgentId(normalizedAgentId, RECENT_DAYS)));
         statistics.put("lastOperation", latest != null ? latest.getCreateTime() : null);
         return statistics;
     }
@@ -288,8 +288,8 @@ public class AuditLogService {
         }
         return hasText(query.getUserId())
                 || hasText(query.getUserName())
-                || hasText(query.getPuppetId())
-                || hasText(query.getPuppetName())
+                || hasText(query.getAgentId())
+                || hasText(query.getAgentName())
                 || hasText(query.getSessionId())
                 || hasText(query.getOperationType())
                 || hasText(query.getStatus())
@@ -311,8 +311,8 @@ public class AuditLogService {
         AuditLogQuery normalizedQuery = query != null ? query : new AuditLogQuery();
         normalizedQuery.setUserId(trimToNull(normalizedQuery.getUserId()));
         normalizedQuery.setUserName(trimToNull(normalizedQuery.getUserName()));
-        normalizedQuery.setPuppetId(trimToNull(normalizedQuery.getPuppetId()));
-        normalizedQuery.setPuppetName(trimToNull(normalizedQuery.getPuppetName()));
+        normalizedQuery.setAgentId(trimToNull(normalizedQuery.getAgentId()));
+        normalizedQuery.setAgentName(trimToNull(normalizedQuery.getAgentName()));
         normalizedQuery.setSessionId(trimToNull(normalizedQuery.getSessionId()));
         normalizedQuery.setOperationType(trimToNull(normalizedQuery.getOperationType()));
         normalizedQuery.setStatus(trimToNull(normalizedQuery.getStatus()));

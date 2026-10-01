@@ -6,7 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.io.ByteArrayOutputStream;
@@ -376,7 +376,7 @@ class PhpScriptGeneratorProviderTest {
                                        Disguise response, Map<String, Object> options) throws Exception {
         Map<String, Object> effective = new java.util.LinkedHashMap<>(options);
         effective.putIfAbsent("payloadKey", "php-generator-test-key");
-        return provider.generate(new GenerationRequest(PuppetRuntime.PHP, "webshell", request, response, effective));
+        return provider.generate(new GenerationRequest(AgentRuntime.PHP, "webshell", request, response, effective));
     }
 
     private Disguise disguise(String id) {

@@ -67,7 +67,7 @@ public class SkillController {
     /**
      * 列出指定 scope 下所有 skill 的元数据（name + description）。
      *
-     * @param scope puppet-node 或 platform
+     * @param scope agent-node 或 platform
      */
     @RequestMapping(value = "/list", method = RequestMethod.GET)
     public HashMap<String, Object> list(@RequestParam(PARAM_SCOPE) String scope) {
@@ -129,7 +129,7 @@ public class SkillController {
     /**
      * 读取指定 skill 的完整 SKILL.md 内容。
      *
-     * @param scope puppet-node 或 platform
+     * @param scope agent-node 或 platform
      * @param name  skill 目录名，如 recon-basic-info
      */
     @RequestMapping(value = "/content", method = RequestMethod.GET)
@@ -224,7 +224,7 @@ public class SkillController {
     /**
      * 在指定 scope 下全文搜索 skill（匹配 name、description 或正文内容）。
      *
-     * @param scope   puppet-node 或 platform
+     * @param scope   agent-node 或 platform
      * @param keyword 搜索关键字（不区分大小写）
      */
     @RequestMapping(value = "/search", method = RequestMethod.GET)

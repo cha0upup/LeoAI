@@ -1,10 +1,10 @@
 package org.leo.web.service;
 
-import org.leo.core.entity.Puppet;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.repository.session.PuppetHostCacheRepository;
-import org.leo.core.repository.session.PuppetReconRepository;
-import org.leo.service.PuppetService;
+import org.leo.core.entity.Agent;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.repository.session.AgentHostCacheRepository;
+import org.leo.core.repository.session.AgentReconRepository;
+import org.leo.service.AgentService;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
@@ -17,7 +17,7 @@ import java.util.Map;
 /**
  * 会话侦察报告生成服务。
  *
- * <p>汇聚 puppet 级持久化目录中的 basic-info.json、recon-summary.md、
+ * <p>汇聚 agent 级持久化目录中的 basic-info.json、recon-summary.md、
  * recon-summary.json，拼装为结构化 Markdown 字符串返回给调用方。
  */
 @Service
@@ -27,13 +27,13 @@ public class SessionReportService {
             .ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault());
 
-    private final PuppetService puppetService;
-    private final PuppetHostCacheRepository hostCacheRepository;
-    private final PuppetReconRepository reconRepository;
+    private final AgentService agentService;
+    private final AgentHostCacheRepository hostCacheRepository;
+    private final AgentReconRepository reconRepository;
 
-    public SessionReportService(PuppetService puppetService, PuppetHostCacheRepository hostCacheRepository,
-                                PuppetReconRepository reconRepository) {
-        this.puppetService = puppetService;
+    public SessionReportService(AgentService agentService, AgentHostCacheRepository hostCacheRepository,
+                                AgentReconRepository reconRepository) {
+        this.agentService = agentService;
         this.hostCacheRepository = hostCacheRepository;
         this.reconRepository = reconRepository;
     }
@@ -43,42 +43,42 @@ public class SessionReportService {
      *
      * @param session 目标会话（不能为 null）
      * @return 含报告内容和建议文件名的 DTO
-     * @throws ApiException 若无法确定 puppetId
+     * @throws ApiException 若无法确定 agentId
      */
-    public ReportResponse generate(PuppetNodeSession session) {
+    public ReportResponse generate(AgentNodeSession session) {
         String userId   = session.getCreateByUser();
-        String puppetId = resolvePuppetId(session);
+        String agentId = resolveAgentId(session);
 
-        Puppet puppet     = puppetService.findPuppetById(puppetId);
-        String puppetName = puppet != null ? puppet.getPuppetName() : puppetId;
-        String connLink   = puppet != null && puppet.getConnLink() != null ? puppet.getConnLink() : "-";
+        Agent agent     = agentService.findAgentById(agentId);
+        String agentName = agent != null ? agent.getAgentName() : agentId;
+        String connLink   = agent != null && agent.getConnLink() != null ? agent.getConnLink() : "-";
 
         String reportTime = REPORT_TIME_FMT.format(Instant.now());
 
         StringBuilder sb = new StringBuilder();
-        appendHeader(sb, puppetName, connLink, reportTime);
-        appendBasicInfoSection(sb, hostCacheRepository.loadBasicInfo(userId, puppetId, session.getCurrentHostId()));
-        appendReconSummarySection(sb, reconRepository.load(userId, puppetId));
+        appendHeader(sb, agentName, connLink, reportTime);
+        appendBasicInfoSection(sb, hostCacheRepository.loadBasicInfo(userId, agentId, session.getCurrentHostId()));
+        appendReconSummarySection(sb, reconRepository.load(userId, agentId));
 
-        String filename = "recon-report-" + puppetName.replaceAll("[^\\w\\-]", "_") + ".md";
+        String filename = "recon-report-" + agentName.replaceAll("[^\\w\\-]", "_") + ".md";
         return new ReportResponse(session.getSessionId(), sb.toString(), filename);
     }
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────
 
-    private String resolvePuppetId(PuppetNodeSession session) {
+    private String resolveAgentId(AgentNodeSession session) {
         if (session.isCacheMode()) {
-            String id = session.getPuppetId();
+            String id = session.getAgentId();
             if (id != null && !id.isBlank()) return id.trim();
-        } else if (session.getPuppetNode() != null
-                && session.getPuppetNode().getPuppet() != null) {
-            return session.getPuppetNode().getPuppet().getPuppetId();
+        } else if (session.getAgentNode() != null
+                && session.getAgentNode().getAgent() != null) {
+            return session.getAgentNode().getAgent().getAgentId();
         }
-        throw ApiException.badRequest("无法确定 puppetId，无法生成报告");
+        throw ApiException.badRequest("无法确定 agentId，无法生成报告");
     }
 
-    private void appendHeader(StringBuilder sb, String puppetName, String connLink, String reportTime) {
-        sb.append("# 侦察报告 — ").append(puppetName).append("\n\n");
+    private void appendHeader(StringBuilder sb, String agentName, String connLink, String reportTime) {
+        sb.append("# 侦察报告 — ").append(agentName).append("\n\n");
         sb.append("> 生成时间：").append(reportTime)
           .append("  \n> 连接地址：`").append(connLink).append("`\n\n");
         sb.append("---\n\n");

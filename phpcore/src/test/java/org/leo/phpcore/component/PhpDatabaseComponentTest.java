@@ -6,7 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.leo.core.util.json.PortableJsonCodec;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.phpcore.database.PhpDatabaseConnectionAdapter;
 
 import java.net.URL;

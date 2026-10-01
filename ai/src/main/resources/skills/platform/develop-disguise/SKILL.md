@@ -12,9 +12,9 @@ description: 当用户希望在平台侧开发、测试、创建或更新 Disgui
 | 侧 | trafficEncode（出站） | trafficDecode（入站） |
 |---|---|---|
 | 平台侧 | PayloadCodec 序列化/压缩/加密，再经 trafficEncodeBody 伪装 | 先经 trafficDecodeBody 还原字节，再由 PayloadCodec 解密/解压/反序列化 |
-| puppet 侧 | PayloadCodec 序列化/压缩/加密，再经 trafficEncodeBody 伪装 | 先经 trafficDecodeBody 还原字节，再由 PayloadCodec 解密/解压/反序列化 |
+| agent 侧 | PayloadCodec 序列化/压缩/加密，再经 trafficEncodeBody 伪装 | 先经 trafficDecodeBody 还原字节，再由 PayloadCodec 解密/解压/反序列化 |
 
-平台侧 `trafficEncodeBody` 和 `trafficDecodeBody` 只处理不透明字节，必须与 puppet 侧协议严格匹配，且在平台侧测试逻辑下必须可互逆。
+平台侧 `trafficEncodeBody` 和 `trafficDecodeBody` 只处理不透明字节，必须与 agent 侧协议严格匹配，且在平台侧测试逻辑下必须可互逆。
 
 ---
 
@@ -239,7 +239,7 @@ Headers 与协议体必须一致：JSON Content-Type 时 encode 产出 JSON 风�
 
 建议示例：
 
-- 已保存 → "建议在目标 Puppet 配置中选择该 Disguise，并发起一次连接测试验证通信正常"
+- 已保存 → "建议在目标 Agent 配置中选择该 Disguise，并发起一次连接测试验证通信正常"
 - 测试多次失败 → "建议检查 traffic 编解码是否保持任意字节互逆，PayloadCodec 不应出现在伪装代码中"
 - 只生成草案 → "草案已就绪，确认后可调用 addDisguise 保存"
 

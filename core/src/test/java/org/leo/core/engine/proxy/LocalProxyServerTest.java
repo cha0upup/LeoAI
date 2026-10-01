@@ -8,7 +8,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.engine.forward.LocalForwardServer;
 import org.leo.core.engine.http.HttpProxyServer;
 import org.leo.core.engine.socks5.Socks5ProxyServer;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

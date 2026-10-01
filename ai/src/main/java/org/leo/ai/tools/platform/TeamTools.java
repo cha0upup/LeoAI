@@ -45,7 +45,7 @@ public class TeamTools {
         if (normalizedLeaderId != null) {
             return teamService.getTeamsByLeader(normalizedLeaderId);
         }
-        return teamService.getAllTeam();
+        return teamService.getAllTeams();
     }
 
     @Tool("按 teamId 或 teamName 获取团队详情；两者必须且只能提供一个。")
@@ -156,7 +156,7 @@ public class TeamTools {
         if (team == null) throw new IllegalArgumentException("团队不存在");
 
         // 清空团队成员
-        for (User member : userService.getUserByTeamId(teamId)) {
+        for (User member : userService.getUsersByTeamId(teamId)) {
             if (member == null) continue;
             member.setTeamId(null);
             if (UserService.PRIVILEGE_LEADER.equals(member.getPrivilege())) {

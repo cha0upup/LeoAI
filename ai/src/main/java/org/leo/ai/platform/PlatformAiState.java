@@ -2,7 +2,7 @@ package org.leo.ai.platform;
 
 import org.leo.core.ai.AiRuntimeState;
 
-/** 平台 AI 对话状态；与 Puppet AI 共用同一运行时状态机。 */
+/** 平台 AI 对话状态；与 Node AI 共用同一运行时状态机。 */
 public class PlatformAiState extends AiRuntimeState {
 
     private final String stateId;

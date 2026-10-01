@@ -21,7 +21,7 @@ class SpringFrameworkBoundaryTest {
                 new Object[]{new PatternValue("/private/**")}, null}) {
             Object mapped = mappedInterceptor(excluded);
             Object component = withInterceptors(payload, mapped, new Object());
-            List<?> result = (List<?>) call(component, "getAllMappedInterceptor", new Class[0]);
+            List<?> result = (List<?>) call(component, "getAllMappedInterceptors", new Class[0]);
             assertEquals(2, result.size());
             Map<?, ?> first = (Map<?, ?>) result.get(0);
             assertEquals(List.of("/**"), first.get("pathPatterns"));

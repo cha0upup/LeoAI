@@ -2,9 +2,9 @@ package org.leo.service;
 
 import jakarta.annotation.PreDestroy;
 import org.leo.core.config.LeoConfig;
-import org.leo.core.entity.Puppet;
-import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.capability.FileCapable;
+import org.leo.core.entity.Agent;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.FileCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.leo.service.transfer.TransferStage;
 import org.leo.service.transfer.TransferTaskState;
@@ -750,10 +750,10 @@ public class UploadEngineService {
     }
 
     private static String resolveNodeScopeKey(FileCapable fileNode, String sessionId) {
-        if (fileNode instanceof AbstractPuppetNode node) {
-            Puppet puppet = node.getPuppet();
-            if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
-                return puppet.getPuppetId();
+        if (fileNode instanceof AbstractAgentNode node) {
+            Agent agent = node.getAgent();
+            if (agent != null && agent.getAgentId() != null && !agent.getAgentId().isBlank()) {
+                return agent.getAgentId();
             }
         }
         return sessionId;

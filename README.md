@@ -10,11 +10,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
-[![PHP Runtime](https://img.shields.io/badge/PHP%20Puppet-5.6%2B-777BB4)](https://www.php.net/)
+[![PHP Runtime](https://img.shields.io/badge/PHP%20Agent-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Puppet 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v1.0.0 引入平等的 Java/PHP Puppet 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Puppet AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
+LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Agent 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v3.0.0 引入平等的 Java/PHP Agent 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Node AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
 
 <img src="docs/images/screenshot-dashboard.png" alt="主界面截图" width="800" />
 
@@ -22,11 +22,15 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 </div>
 
+> **节点命名**：执行节点统一使用 Agent / AgentNode，AI 智能体使用 NodeAiAgent / PlatformAiAgent，详见 [Agent 命名与部署说明](docs/agent-naming.md)。
+>
+> **历史数据不兼容**：本版本需要重新部署，并使用全新的数据库路径或数据目录重建数据库。历史数据库不作为升级输入；首次启动会按当前 `schema.sql` 自动建表并初始化基础数据。
+
 ---
 
 ## 目录
 
-- [v1.0.0 版本亮点](#v100-版本亮点)
+- [v3.0.0 版本亮点](#v300-版本亮点)
 - [Java/PHP 双运行时](#javaphp-双运行时)
 - [功能特性](#功能特性)
 - [工作方式](#工作方式)
@@ -42,39 +46,39 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 ---
 
-## v1.0.0 版本亮点
+## v3.0.0 版本亮点
 
-v1.0.0 是 LeoAI 首个正式开源版本，也是一次覆盖运行时、组件、平台服务、Web 控制台和部署方式的大版本升级。
+v3.0.0 是一次覆盖运行时、组件、平台服务、Web 控制台和部署方式的大版本升级，统一 Agent 语义命名，并采用与历史数据不兼容的全新数据库基线。
 
-| 方向 | v1.0.0 主要变化 |
+| 方向 | v3.0.0 主要变化 |
 |------|----------------|
-| **PHP Puppet** | 新增 PHP 5.6+ 单文件入口、HTTP RPC、按需 Component 与运行时能力注册；覆盖命令、文件、终端、数据库、网络、代理隧道和基础系统管理 |
-| **双运行时架构** | Java 与 PHP 通过同一 `PuppetRuntimeModule` SPI、Capability 契约和 RPC 响应协议接入，上层服务按能力工作，而非绑定具体运行时 |
+| **PHP Agent** | 新增 PHP 5.6+ 单文件入口、HTTP RPC、按需 Component 与运行时能力注册；覆盖命令、文件、终端、数据库、网络、代理隧道和基础系统管理 |
+| **双运行时架构** | Java 与 PHP 通过同一 `AgentRuntimeModule` SPI、Capability 契约和 RPC 响应协议接入，上层服务按能力工作，而非绑定具体运行时 |
 | **Component 稳定性** | Java/PHP Component 加入有界任务、TTL、资源注销、缓存上限和生命周期清理；Java 构建产物同步精简调试元数据与冗余常量 |
-| **控制台与 AI** | Puppet 路由、插件、文件传输、SQL、代理、后台任务和 AI SSE 统一到共享服务边界；界面按 Runtime Profile 展示可用功能 |
-| **全新数据库基线** | `schema.sql` 与 `data.sql` 直接建立 v1.0.0 最终结构，首次启动创建 SQLite、基础配置及管理员账户 |
-| **发布与部署** | Maven 模块、前端、Docker 和制品统一使用 `1.0.0`；正式制品为 `LeoAi-1.0.0.jar`，首次登录强制修改初始密码 |
+| **控制台与 AI** | Agent 路由、插件、文件传输、SQL、代理、后台任务和 AI SSE 统一到共享服务边界；界面按 Runtime Profile 展示可用功能 |
+| **全新数据库基线** | `schema.sql` 与 `data.sql` 直接建立 v3.0.0 最终结构，首次启动创建 SQLite、基础配置及管理员账户 |
+| **发布与部署** | Maven 模块、前端、Docker 和制品统一使用 `3.0.0`；正式制品为 `LeoAi-3.0.0.jar`，首次登录强制修改初始密码 |
 
-> **安装基线**：v1.0.0 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
+> **安装基线**：v3.0.0 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
 
 ---
 
 ## Java/PHP 双运行时
 
-Java 与 PHP 是平等的 Puppet Runtime。共享模块只定义协议、会话和能力契约，具体实现分别位于 `javacore` 与 `phpcore`，`web` 负责最终组装。
+Java 与 PHP 是平等的 Agent Runtime。共享模块只定义协议、会话和能力契约，具体实现分别位于 `javacore` 与 `phpcore`，`web` 负责最终组装。
 
 ```mermaid
 graph TD
     web["web：应用组合与 Web 控制台"] --> service["service / ai：共享业务与智能编排"]
-    web --> java["javacore：Java Puppet Runtime"]
-    web --> php["phpcore：PHP Puppet Runtime"]
+    web --> java["javacore：Java Agent Runtime"]
+    web --> php["phpcore：PHP Agent Runtime"]
     service --> core["core：Runtime SPI / Capability / RPC / Session"]
     java --> core
     php --> core
     web --> jmg["jmg：Java Shell 与内存马构建"]
 ```
 
-| 能力 | Java Puppet | PHP Puppet |
+| 能力 | Java Agent | PHP Agent |
 |------|-------------|------------|
 | **入口形态** | Java Core 与容器/脚本生成器 | PHP 5.6+ 单文件 HTTP 入口 |
 | **组件加载** | 独立 Java Component 字节码按需加载 | 独立 PHP Component 按 digest 懒加载 |
@@ -94,7 +98,7 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 
 | 能力域 | LeoAI 提供的能力 |
 |--------|------------------|
-| **AI 协同** | 平台 AI 统一分析与任务分发，Puppet AI 在目标会话内执行；支持实时过程回传、多轮工具调用、计划跟踪和报告归档 |
+| **AI 协同** | 平台 AI 统一分析与任务分发，Node AI 在目标会话内执行；支持实时过程回传、多轮工具调用、计划跟踪和报告归档 |
 | **主机与会话** | 主机资产目录、在线会话挂载、离线缓存、节点链路、HostId 与批量管理 |
 | **操作控制台** | 文件、终端、数据库、扫描、HTTP 发包、代理隧道、系统管理、Web 运行时和脚本插件等模块化工具 |
 | **构建与扩展** | Shell/内存马构建、流量伪装、指纹规则、插件、Skills 与能力库管理 |
@@ -105,13 +109,13 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 | 功能 | 描述 |
 |------|------|
 | **AI Agent 自动化** | 基于 LangChain4j，支持多轮工具调用和并行执行，自动规划和执行后渗透操作 |
-| **平台 AI → Puppet AI** | 平台 AI 可选择目标 Puppet 分发任务，在平台会话中查看子任务状态与执行过程，并接收最终交付 |
+| **平台 AI → Node AI** | 平台 AI 可选择目标 Agent 分发任务，在平台会话中查看子任务状态与执行过程，并接收最终交付 |
 | **多模型支持** | 兼容 OpenAI、通义千问、DeepSeek、Claude 等，支持运行时热切换 |
-| **统一 AI 输入区** | 平台 AI 与 Puppet AI 均支持模型切换、推理强度切换和文本/代码文件输入；切换结果会在会话中明确提示 |
+| **统一 AI 输入区** | 平台 AI 与 Node AI 均支持模型切换、推理强度切换和文本/代码文件输入；切换结果会在会话中明确提示 |
 | **大上下文窗口** | 动态适配模型上下文窗口（最高 1M），自动压缩历史消息保留关键信息 |
 | **任务计划** | AI 自动规划多步任务、逐步执行并回写结果，前端顶栏实时追踪进度 |
 | **100+ 个 AI Tools** | AI Agent 可调用的原子能力，涵盖命令执行、文件、网络、凭据、扫描、HTTP 发包、数据库、脚本、插件等全场景 |
-| **多套内置 AI Skills** | 预置 puppet-node / platform 两类场景化任务提示词，一键启动侦察、凭据收集、提权、持久化、横向移动、伪装开发、指纹开发、漏洞建议等流程 |
+| **多套内置 AI Skills** | 预置 agent-node / platform 两类场景化任务提示词，一键启动侦察、凭据收集、提权、持久化、横向移动、伪装开发、指纹开发、漏洞建议等流程 |
 | **Skill 管理器** | 可视化管理 Skills：查看/编辑内容与描述、标签分类、启用/禁用、全文搜索、导入/导出，修改实时生效无需重启 |
 | **上下文积累** | 侦察摘要自动积累与压缩，AI 上下文随操作深入持续增强 |
 | **操作报告生成** | AI 自动生成操作总结和风险分析报告 |
@@ -141,9 +145,9 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 - **文件管理器**：树形目录浏览、上传/下载、在线编辑、压缩/解压、预览（文本/图片/PDF）、大文件分片传输
 - **用户文件空间**：每个用户独立的本地文件存储区域
 
-<img src="docs/images/screenshot-file-manager.png" alt="Puppet 文件管理器" width="800" />
+<img src="docs/images/screenshot-file-manager.png" alt="Agent 文件管理器" width="800" />
 
-*Puppet 文件管理器：目录树、面包屑、类型筛选、权限信息和批量文件操作*
+*Agent 文件管理器：目录树、面包屑、类型筛选、权限信息和批量文件操作*
 
 #### 数据库与信息系统
 - **数据库控制台**：支持 MySQL、PostgreSQL、Oracle、SQLite、SQL Server，提供 SQL 编辑器和表结构浏览
@@ -174,12 +178,12 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 
 #### 其他工具
 - **类字节码查看**：提取并反编译 JVM 中的已加载类
-- **类与资源浏览**：按类名或路径读取 puppet 进程的 classpath 资源（jar 内 .class、`application.yml`、`META-INF/MANIFEST.MF` 等），自动识别二进制/文本/.class 类型并反编译为 Java 源码；当 puppet 注入 Tomcat 全局 ClassLoader 时，自动降级遍历所有 WebappClassLoader 兜底
+- **类与资源浏览**：按类名或路径读取 agent 进程的 classpath 资源（jar 内 .class、`application.yml`、`META-INF/MANIFEST.MF` 等），自动识别二进制/文本/.class 类型并反编译为 Java 源码；当 agent 注入 Tomcat 全局 ClassLoader 时，自动降级遍历所有 WebappClassLoader 兜底
 - **HostId 切换**：单节点可管理多个内网主机
 
 <img src="docs/images/screenshot-console.png" alt="操作控制台截图" width="800" />
 
-*Puppet 控制台：运行态概览、模块标签页与具备当前会话上下文的 AI 副驾*
+*Agent 控制台：运行态概览、模块标签页与具备当前会话上下文的 AI 副驾*
 
 ### Shell 生成器
 
@@ -249,16 +253,16 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 ```text
 平台 AI
   ├─ 分析平台侧主机、规则、插件与成果
-  └─ 将目标相关任务分发给 Puppet AI
+  └─ 将目标相关任务分发给 Node AI
        ├─ 在指定会话上下文中调用工具
        ├─ 实时回传思考、工具、计划和子任务状态
        └─ 将执行结果交付回平台 AI 会话
 ```
 
 - **平台 AI** 适合跨主机分析、任务编排、规则与插件开发、结果汇总。
-- **Puppet AI** 适合针对当前目标执行侦察、文件、命令、数据库、网络和系统操作。
+- **Node AI** 适合针对当前目标执行侦察、文件、命令、数据库、网络和系统操作。
 - 两类 AI 使用统一输入体验，每个会话独立维护模型选择、推理强度和上下文。
-- 高影响工具仍受权限策略与确认流程约束；平台 AI 的任务委派不会绕过 Puppet 会话边界。
+- 高影响工具仍受权限策略与确认流程约束；平台 AI 的任务委派不会绕过 Agent 会话边界。
 
 ---
 
@@ -275,7 +279,7 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 | **字节码操作** | Javassist 3.30 |
 | **构建工具** | Maven（多模块）|
 | **平台运行环境** | Java 17+ |
-| **Puppet Runtime** | Java Component、PHP 5.6+ Component |
+| **Agent Runtime** | Java Component、PHP 5.6+ Component |
 
 ---
 
@@ -288,7 +292,7 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 | **内存** | 建议 4 GB 以上 |
 | **磁盘** | 至少 500 MB 可用空间 |
 | **浏览器** | Chrome、Firefox、Edge 等现代浏览器 |
-| **PHP Puppet** | 目标环境 PHP 5.6+；按所用能力安装 PDO/ZipArchive 等扩展 |
+| **PHP Agent** | 目标环境 PHP 5.6+；按所用能力安装 PDO/ZipArchive 等扩展 |
 
 > 无需单独安装数据库：内置 SQLite，首次启动自动初始化。  
 > 无需额外部署前端：Web 界面已打包至 JAR 文件中。
@@ -299,18 +303,20 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 
 ### 第一步：获取 JAR
 
-> v1.0.0 使用全新数据库基线。首次部署请准备新的运行目录或新的 SQLite 路径。
+> **历史数据不兼容，需要重新部署并重建数据库。** 停止旧服务并备份后，使用新的运行目录或全新的 SQLite 路径部署本版本；首次启动自动创建当前数据库结构，业务数据与节点配置需重新建立。
+>
+> Docker 部署请使用新的持久化数据卷或数据目录。仅重启、重新构建容器仍会复用旧数据卷，不会重建数据库。
 
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-2.2.0.jar
+LeoAi-3.0.0.jar
 ```
 
 ### 第二步：启动
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.2.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -485,7 +491,7 @@ LEOAI_PORT=9090 docker compose up -d
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.2.0.jar --server.port=9090
+  LeoAi-3.0.0.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -494,7 +500,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.2.0.jar \
+  LeoAi-3.0.0.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -542,7 +548,7 @@ spring.datasource.url=jdbc:sqlite:data.db
 2. 点击「**新增主机**」，填写：
    - **主机名称**：自定义标识
    - **运行时类型**：根据入口选择 Java 或 PHP
-   - **目标 URL**：目标 Puppet 地址（如 `http://target.com/shell`）
+   - **目标 URL**：目标 Agent 地址（如 `http://target.com/shell`）
    - **通信协议**：HTTP / HTTP Chunked / WebSocket
    - **访问密钥**：与 Shell 端保持一致
 3. 按需配置流量伪装模板，保存
@@ -561,7 +567,7 @@ spring.datasource.url=jdbc:sqlite:data.db
 
 - **虚拟终端**：多会话执行 Shell 命令，实时流式输出；支持检索输出、清屏、中断、关闭会话，并在关闭/重置时回收后端进程
 - **文件管理**：树形浏览、上传下载、在线编辑、压缩解压、文件预览
-- **数据库**：在数据库工作台添加统一连接配置，Java/PHP Puppet 会分别转换为 JDBC/PDO 运行参数
+- **数据库**：在数据库工作台添加统一连接配置，Java/PHP Agent 会分别转换为 JDBC/PDO 运行参数
 - **端口扫描**：快速扫描 / 自定义端口范围 / 结果导出
 - **HTTP 发包器**：Repeater 单次发包，Fuzzer 批量模糊测试
 
@@ -582,7 +588,7 @@ SOCKS5、HTTP 和本地端口转发支持在面板中配置 **LeoAI 后端所在
 
 ### Skill 管理器
 
-进入主工作台侧边栏「**能力库**」，可对两个 scope（puppet-node / platform）下的所有 Skills 进行可视化管理：
+进入主工作台侧边栏「**能力库**」，可对两个 scope（agent-node / platform）下的所有 Skills 进行可视化管理：
 
 - **查看与编辑**：点击列表中的 Skill 可在右侧预览内容；切换到编辑模式后可修改正文和描述，保存后实时生效，无需重启
 - **标签（Tags）**：每个 Skill 可附加多个标签（如 `recon`、`exploit`、`linux`），在列表和编辑模式中均可查看和修改；左侧提供标签筛选面板，可多选组合过滤
@@ -614,9 +620,9 @@ tags:
 
 ### AI 助手
 
-**Puppet AI / AI 副驾**：进入主机控制台后，在右侧 AI 面板输入指令（如“扫描 C 类网段的 80 端口”）。AI 会基于当前 Puppet 会话调用工具、展示执行过程，并持续积累侦察上下文。
+**Node AI / AI 副驾**：进入主机控制台后，在右侧 AI 面板输入指令（如“扫描 C 类网段的 80 端口”）。AI 会基于当前 Agent 会话调用工具、展示执行过程，并持续积累侦察上下文。
 
-AI 副驾提供侦察、凭据、提权、横向移动和 Java Web Runtime 检查等快捷入口；也可以通过 `/` 调出常用指令。内置 puppet-node Skills 可启动完整场景任务：
+AI 副驾提供侦察、凭据、提权、横向移动和 Java Web Runtime 检查等快捷入口；也可以通过 `/` 调出常用指令。内置 agent-node Skills 可启动完整场景任务：
 
 | 类别 | Skills |
 |------|--------|
@@ -626,7 +632,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Java Web Runtime 检�
 | **持久化** | `persistence-linux` |
 | **横向移动** | `lateral-move-ssh` |
 
-**平台 AI**：从页面右上角随时打开。它可以分析平台资源、编写流量伪装与指纹规则、给出漏洞建议，也可以选定目标 Puppet，将任务分发给 Puppet AI 执行并在当前会话中跟踪过程。
+**平台 AI**：从页面右上角随时打开。它可以分析平台资源、编写流量伪装与指纹规则、给出漏洞建议，也可以选定目标 Agent，将任务分发给 Node AI 执行并在当前会话中跟踪过程。
 
 两类 AI 的输入区均支持：
 
@@ -674,7 +680,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Java Web Runtime 检�
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.2.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
 ```
 
 ---

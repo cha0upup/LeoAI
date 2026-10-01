@@ -21,10 +21,10 @@ public interface UserMapper {
     User findUserById(@Param("userId") String userId);
 
     @Select("SELECT * FROM users WHERE team_id = #{teamId}")
-    List<User> findUserByTeamId(@Param("teamId") String teamId);
+    List<User> findUsersByTeamId(@Param("teamId") String teamId);
 
     @Select("SELECT * FROM users")
-    List<User> getAllUser();
+    List<User> getAllUsers();
 
     @Insert("INSERT INTO users (user_id, user_name, password, privilege, email, phone, status, last_login_time, login_count, password_change_required, create_time, update_time, team_id, remark) VALUES (#{userId}, #{userName}, #{password}, #{privilege}, #{email}, #{phone}, #{status}, #{lastLoginTime}, #{loginCount}, #{passwordChangeRequired}, #{createTime}, #{updateTime}, #{teamId}, #{remark})")
     boolean insertUser(@Param("userId") String userId, 

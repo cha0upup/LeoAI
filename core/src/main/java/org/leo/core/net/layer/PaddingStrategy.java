@@ -1,7 +1,7 @@
 package org.leo.core.net.layer;
 
 /**
- * 请求体 Padding 策略配置（per puppet session）。
+ * 请求体 Padding 策略配置（per agent session）。
  * <p>
  * Padding 是伪装链的内部能力，填充数据由外层伪装统一加密保护。
  * 填充字段会在 PayloadCodec 序列化前写入业务 Map，外层 traffic profile 只处理编码后的不透明字节。

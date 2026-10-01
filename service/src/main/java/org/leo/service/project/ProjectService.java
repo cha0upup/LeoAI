@@ -1,13 +1,13 @@
 package org.leo.service.project;
 
 import org.leo.core.entity.Project;
-import org.leo.core.entity.ProjectPuppet;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.ProjectAgent;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
-import org.leo.dao.entity.ProjectPuppetCount;
+import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
-import org.leo.service.PuppetService;
+import org.leo.service.AgentService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,11 +31,11 @@ public class ProjectService {
     private static final Set<String> STATUSES = Set.of(Project.STATUS_ACTIVE, Project.STATUS_ARCHIVED);
 
     private final ProjectMapper projectMapper;
-    private final PuppetService puppetService;
+    private final AgentService agentService;
 
-    public ProjectService(ProjectMapper projectMapper, PuppetService puppetService) {
+    public ProjectService(ProjectMapper projectMapper, AgentService agentService) {
         this.projectMapper = projectMapper;
-        this.puppetService = puppetService;
+        this.agentService = agentService;
     }
 
     public Project findById(String projectId) {
@@ -133,96 +133,96 @@ public class ProjectService {
             throw new IllegalArgumentException("项目参数不能为空");
         }
         String projectId = project.getProjectId().trim();
-        int detachedPuppets = projectMapper.deletePuppetRelations(projectId);
+        int detachedAgents = projectMapper.deleteAgentRelations(projectId);
         projectMapper.clearSessionProject(projectId);
         if (projectMapper.deleteProject(projectId) != 1) {
             throw new IllegalStateException("删除项目失败");
         }
-        return detachedPuppets;
+        return detachedAgents;
     }
 
     @Transactional
-    public int attachPuppets(String projectId, Collection<String> puppetIds,
+    public int attachAgents(String projectId, Collection<String> agentIds,
                              String alias, String environment, String tags, String userId) {
         int changed = 0;
-        for (String puppetId : normalizedEntryIds(puppetIds)) {
-            ProjectPuppet relation = new ProjectPuppet();
+        for (String agentId : normalizedEntryIds(agentIds)) {
+            ProjectAgent relation = new ProjectAgent();
             relation.setProjectId(projectId);
-            relation.setPuppetId(puppetId);
+            relation.setAgentId(agentId);
             relation.setAlias(trimToNull(alias));
             relation.setEnvironment(trimToNull(environment));
             relation.setTags(trimToNull(tags));
             relation.setSortOrder(0);
             relation.setAddedByUserId(userId);
             relation.setCreateTime(now());
-            if (projectMapper.attachPuppet(relation)) changed++;
+            if (projectMapper.attachAgent(relation)) changed++;
         }
         return changed;
     }
 
     @Transactional
-    public int detachPuppets(String projectId, Collection<String> puppetIds) {
+    public int detachAgents(String projectId, Collection<String> agentIds) {
         int changed = 0;
-        for (String puppetId : normalizedEntryIds(puppetIds)) {
-            if (projectMapper.detachPuppet(projectId, puppetId)) changed++;
+        for (String agentId : normalizedEntryIds(agentIds)) {
+            if (projectMapper.detachAgent(projectId, agentId)) changed++;
         }
         return changed;
     }
 
-    public boolean containsPuppet(String projectId, String puppetId) {
-        if (projectId == null || puppetId == null) return false;
-        String currentId = puppetId;
+    public boolean containsAgent(String projectId, String agentId) {
+        if (projectId == null || agentId == null) return false;
+        String currentId = agentId;
         for (int depth = 0; depth < 100 && currentId != null && !currentId.isBlank(); depth++) {
-            if (projectMapper.containsPuppet(projectId, currentId) > 0) return true;
-            Puppet current = puppetService.findPuppetById(currentId);
-            if (current == null || current.getParentPuppetId() == null
-                    || "root".equals(current.getParentPuppetId())) return false;
-            currentId = current.getParentPuppetId();
+            if (projectMapper.containsAgent(projectId, currentId) > 0) return true;
+            Agent current = agentService.findAgentById(currentId);
+            if (current == null || current.getParentAgentId() == null
+                    || "root".equals(current.getParentAgentId())) return false;
+            currentId = current.getParentAgentId();
         }
         return false;
     }
 
-    public Map<String, Integer> countPuppetsByProject() {
+    public Map<String, Integer> countAgentsByProject() {
         Map<String, Integer> counts = new HashMap<>();
-        for (ProjectPuppetCount count : projectMapper.countPuppetsByProject()) {
-            counts.put(count.projectId(), count.puppetCount());
+        for (ProjectAgentCount count : projectMapper.countAgentsByProject()) {
+            counts.put(count.projectId(), count.agentCount());
         }
         return counts;
     }
 
-    public List<Puppet> listRootPuppets(String projectId) {
-        return listPuppetsByParent(projectId, "root");
+    public List<Agent> listRootAgents(String projectId) {
+        return listAgentsByParent(projectId, "root");
     }
 
-    public List<Puppet> listPuppetsByParent(String projectId, String parentPuppetId) {
-        if ("root".equals(parentPuppetId)) {
-            List<Puppet> roots = projectMapper.findPuppetsByProjectAndParent(projectId, parentPuppetId);
+    public List<Agent> listAgentsByParent(String projectId, String parentAgentId) {
+        if ("root".equals(parentAgentId)) {
+            List<Agent> roots = projectMapper.findAgentsByProjectAndParent(projectId, parentAgentId);
             return roots != null ? roots : List.of();
         }
-        if (!containsPuppet(projectId, parentPuppetId)) return List.of();
-        return puppetService.findPuppetByParentPuppetId(parentPuppetId);
+        if (!containsAgent(projectId, parentAgentId)) return List.of();
+        return agentService.findAgentsByParentAgentId(parentAgentId);
     }
 
-    public List<Puppet> listUnassignedRootPuppets() {
-        List<Puppet> list = projectMapper.findUnassignedRootPuppets();
+    public List<Agent> listUnassignedRootAgents() {
+        List<Agent> list = projectMapper.findUnassignedRootAgents();
         return list != null ? list : List.of();
     }
 
-    public Map<String, List<Project>> listVisibleMemberships(Collection<String> puppetIds, User user) {
+    public Map<String, List<Project>> listVisibleMemberships(Collection<String> agentIds, User user) {
         Map<String, List<Project>> result = new LinkedHashMap<>();
         Map<String, List<Project>> projectsByEntryId = new HashMap<>();
-        for (String puppetId : normalizedIds(puppetIds)) {
-            String entryId = resolveEntryPuppetId(puppetId);
+        for (String agentId : normalizedIds(agentIds)) {
+            String entryId = resolveEntryAgentId(agentId);
             if (entryId == null) {
-                result.put(puppetId, List.of());
+                result.put(agentId, List.of());
                 continue;
             }
             List<Project> memberships = projectsByEntryId.computeIfAbsent(entryId, id -> {
-                List<Project> projects = projectMapper.findProjectsByPuppetId(id);
+                List<Project> projects = projectMapper.findProjectsByAgentId(id);
                 if (projects == null) return List.of();
                 return projects.stream().filter(project -> canView(project, user)).toList();
             });
-            result.put(puppetId, memberships);
+            result.put(agentId, memberships);
         }
         return result;
     }
@@ -231,15 +231,15 @@ public class ProjectService {
      * 项目以入口主机为归属单位。用户从树中选中子节点时，自动提升到其入口主机，
      * 避免生成在项目根列表中不可见的孤立关系。
      */
-    public String resolveEntryPuppetId(String puppetId) {
-        String currentId = trimToNull(puppetId);
+    public String resolveEntryAgentId(String agentId) {
+        String currentId = trimToNull(agentId);
         if (currentId == null) return null;
         Set<String> visited = new HashSet<>();
         for (int depth = 0; depth < 100 && visited.add(currentId); depth++) {
-            Puppet current = puppetService.findPuppetById(currentId);
+            Agent current = agentService.findAgentById(currentId);
             if (current == null) return null;
-            String parentId = trimToNull(current.getParentPuppetId());
-            if (parentId == null || "root".equals(parentId)) return current.getPuppetId();
+            String parentId = trimToNull(current.getParentAgentId());
+            if (parentId == null || "root".equals(parentId)) return current.getAgentId();
             currentId = parentId;
         }
         return null;
@@ -247,7 +247,7 @@ public class ProjectService {
 
     private List<String> normalizedEntryIds(Collection<String> ids) {
         return normalizedIds(ids).stream()
-                .map(this::resolveEntryPuppetId)
+                .map(this::resolveEntryAgentId)
                 .filter(id -> id != null && !id.isBlank())
                 .distinct()
                 .toList();

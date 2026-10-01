@@ -1,6 +1,6 @@
 package org.leo.service.sql.dialect;
 
-import org.leo.core.puppet.database.SqlCommand;
+import org.leo.core.agent.database.SqlCommand;
 import org.leo.service.sql.SqlObjectRef;
 
 import java.util.*;

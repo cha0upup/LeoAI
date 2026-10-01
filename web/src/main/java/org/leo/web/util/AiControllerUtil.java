@@ -6,7 +6,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * AI 控制器公共工具类。
  *
- * <p>提取 {@code PlatformAiController} 和 {@code PuppetNodeAiController} 中重复的
+ * <p>提取 {@code PlatformAiController} 和 {@code NodeAiController} 中重复的
  * 私有方法，统一维护。
  */
 public final class AiControllerUtil {

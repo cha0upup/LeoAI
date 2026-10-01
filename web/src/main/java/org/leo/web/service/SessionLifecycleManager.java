@@ -2,9 +2,9 @@ package org.leo.web.service;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,7 +15,7 @@ import java.util.ArrayList;
 import java.util.function.Consumer;
 
 /**
- * Application-level entry point for Puppet session lifecycle operations.
+ * Application-level entry point for Agent session lifecycle operations.
  *
  * <p>The core container remains the low-level registry. Web controllers,
  * schedulers and session creators use this service so registration, explicit
@@ -37,22 +37,22 @@ public final class SessionLifecycleManager {
 
     @PostConstruct
     void registerDestroyHook() {
-        PuppetNodeSessionContainer.registerDestroyListener(sessionDestroyListener);
+        AgentNodeSessionContainer.registerDestroyListener(sessionDestroyListener);
     }
 
     @PreDestroy
     void unregisterDestroyHook() {
-        PuppetNodeSessionContainer.unregisterDestroyListener(sessionDestroyListener);
+        AgentNodeSessionContainer.unregisterDestroyListener(sessionDestroyListener);
     }
 
-    public PuppetNodeSession get(String sessionId) {
-        return PuppetNodeSessionContainer.getSession(requireId(sessionId));
+    public AgentNodeSession get(String sessionId) {
+        return AgentNodeSessionContainer.getSession(requireId(sessionId));
     }
 
-    public void register(PuppetNodeSession session) {
+    public void register(AgentNodeSession session) {
         if (session == null) throw new IllegalArgumentException("session不能为空");
         String sessionId = requireId(session.getSessionId());
-        PuppetNodeSessionContainer.addSession(sessionId, session);
+        AgentNodeSessionContainer.addSession(sessionId, session);
     }
 
     /**
@@ -61,19 +61,19 @@ public final class SessionLifecycleManager {
      */
     public boolean destroy(String sessionId, boolean deleteWorkDir) {
         String normalized = requireId(sessionId);
-        if (deleteWorkDir && !PuppetNodeSessionWorkDirUtil.deleteSessionWorkDir(normalized)) {
+        if (deleteWorkDir && !AgentNodeSessionWorkDirUtil.deleteSessionWorkDir(normalized)) {
             throw new IllegalStateException("删除会话目录失败: " + normalized);
         }
-        return PuppetNodeSessionContainer.removeSession(normalized);
+        return AgentNodeSessionContainer.removeSession(normalized);
     }
 
     public List<String> evictExpired(long maxIdleMs) {
         if (maxIdleMs < 1L) throw new IllegalArgumentException("maxIdleMs必须大于0");
         long cutoff = System.currentTimeMillis() - maxIdleMs;
         List<String> expired = new ArrayList<>();
-        for (Map.Entry<String, PuppetNodeSession> entry
-                : PuppetNodeSessionContainer.getAllSession().entrySet()) {
-            PuppetNodeSession session = entry.getValue();
+        for (Map.Entry<String, AgentNodeSession> entry
+                : AgentNodeSessionContainer.getAllSessions().entrySet()) {
+            AgentNodeSession session = entry.getValue();
             if (session != null && session.getLastActiveTime() < cutoff
                     && destroy(entry.getKey(), true)) {
                 expired.add(entry.getKey());

@@ -22,8 +22,8 @@ class AiExecutionClaimServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void bindsLeaseAndRejectsConcurrentExecution(boolean puppet) {
-        Fixture fixture = new Fixture(puppet, new AiTurnCoordinator());
+    void bindsLeaseAndRejectsConcurrentExecution(boolean agent) {
+        Fixture fixture = new Fixture(agent, new AiTurnCoordinator());
         when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn("lease");
 
         assertTrue(fixture.claim());
@@ -39,8 +39,8 @@ class AiExecutionClaimServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void leaseDenialReleasesLocalClaimForRetry(boolean puppet) {
-        Fixture fixture = new Fixture(puppet, new AiTurnCoordinator());
+    void leaseDenialReleasesLocalClaimForRetry(boolean agent) {
+        Fixture fixture = new Fixture(agent, new AiTurnCoordinator());
         when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn(null, "retry-lease");
 
         assertFalse(fixture.claim());
@@ -52,8 +52,8 @@ class AiExecutionClaimServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void leaseFailureReleasesLocalClaimForRetry(boolean puppet) {
-        Fixture fixture = new Fixture(puppet, new AiTurnCoordinator());
+    void leaseFailureReleasesLocalClaimForRetry(boolean agent) {
+        Fixture fixture = new Fixture(agent, new AiTurnCoordinator());
         when(fixture.leases.tryAcquireToken(eq("thread"), any()))
                 .thenThrow(new IllegalStateException("database unavailable")).thenReturn("retry-lease");
 
@@ -65,8 +65,8 @@ class AiExecutionClaimServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void lostLeaseCancelsTheOwningRuntime(boolean puppet) {
-        Fixture fixture = new Fixture(puppet, new AiTurnCoordinator());
+    void lostLeaseCancelsTheOwningRuntime(boolean agent) {
+        Fixture fixture = new Fixture(agent, new AiTurnCoordinator());
         when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn("lease");
         assertTrue(fixture.claim());
         ArgumentCaptor<Runnable> callback = ArgumentCaptor.forClass(Runnable.class);
@@ -80,7 +80,7 @@ class AiExecutionClaimServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void cancelledTurnMustReleaseBeforeAnotherLeaseIsAcquired(boolean puppet) throws Exception {
+    void cancelledTurnMustReleaseBeforeAnotherLeaseIsAcquired(boolean agent) throws Exception {
         CountDownLatch waiting = new CountDownLatch(1);
         AiTurnCoordinator coordinator = new AiTurnCoordinator() {
             @Override
@@ -90,7 +90,7 @@ class AiExecutionClaimServiceTest {
                 return super.tryClaimAfterRelease(runtime, executing, waitMillis);
             }
         };
-        Fixture fixture = new Fixture(puppet, coordinator);
+        Fixture fixture = new Fixture(agent, coordinator);
         fixture.runtime.claimExecution();
         fixture.runtime.markCancelled();
         when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn("next-lease");
@@ -113,22 +113,22 @@ class AiExecutionClaimServiceTest {
         private final AiExecutionLeaseService leases = mock(AiExecutionLeaseService.class);
         private final AiRuntimeState runtime;
         private final PlatformAiTurnService platform;
-        private final PuppetNodeAiTurnService puppet;
+        private final NodeAiTurnService agent;
 
-        private Fixture(boolean isPuppet, AiTurnCoordinator coordinator) {
+        private Fixture(boolean isAgent, AiTurnCoordinator coordinator) {
             AiExecutionClaimService claims = new AiExecutionClaimService(coordinator, leases);
-            runtime = isPuppet ? new AiThread("thread", "test") : new PlatformAiState("thread");
+            runtime = isAgent ? new AiThread("thread", "test") : new PlatformAiState("thread");
             platform = new PlatformAiTurnService(null, null, null, null, coordinator, null, claims, null);
-            puppet = new PuppetNodeAiTurnService(null, null, null, coordinator, null, claims, null);
+            agent = new NodeAiTurnService(null, null, null, coordinator, null, claims, null);
         }
 
         private boolean claim() {
-            return runtime instanceof AiThread thread ? puppet.tryClaimExecution(thread)
+            return runtime instanceof AiThread thread ? agent.tryClaimExecution(thread)
                     : platform.tryClaimExecution((PlatformAiState) runtime);
         }
 
         private void release() {
-            if (runtime instanceof AiThread thread) puppet.releaseExecutionLease(thread);
+            if (runtime instanceof AiThread thread) agent.releaseExecutionLease(thread);
             else platform.releaseExecutionLease((PlatformAiState) runtime);
         }
     }

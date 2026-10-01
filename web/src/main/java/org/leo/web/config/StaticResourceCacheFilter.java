@@ -54,7 +54,7 @@ public class StaticResourceCacheFilter extends OncePerRequestFilter {
         if ("/".equals(requestPath) || "/index.html".equals(requestPath)) {
             return true;
         }
-        if (requestPath.startsWith("/platform/") || requestPath.startsWith("/puppet-node/")) {
+        if (requestPath.startsWith("/platform/") || requestPath.startsWith("/agent-node/")) {
             return false;
         }
         int lastSlash = requestPath.lastIndexOf('/');

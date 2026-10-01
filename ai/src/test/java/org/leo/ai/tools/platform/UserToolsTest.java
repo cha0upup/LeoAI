@@ -24,7 +24,7 @@ class UserToolsTest {
     @Test
     void listingUsersDoesNotModifyStoredPasswordHashes() {
         User stored = user();
-        when(service.getAllUser()).thenReturn(List.of(stored));
+        when(service.getAllUsers()).thenReturn(List.of(stored));
 
         User result = tools.listUsers(false).get(0);
 
@@ -54,7 +54,7 @@ class UserToolsTest {
         assertEquals("alice", tools.listUsers(true).get(0).getUserName());
         assertEquals("stored-hash", stored.getPassword());
         verify(service).getUsersWithoutTeam();
-        verify(service, never()).getAllUser();
+        verify(service, never()).getAllUsers();
     }
 
     @Test

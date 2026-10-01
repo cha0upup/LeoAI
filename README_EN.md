@@ -10,11 +10,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
-[![PHP Runtime](https://img.shields.io/badge/PHP%20Puppet-5.6%2B-777BB4)](https://www.php.net/)
+[![PHP Runtime](https://img.shields.io/badge/PHP%20Agent-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v1.0.0 introduces equal Java and PHP Puppet runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
+LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v3.0.0 introduces equal Java and PHP Agent runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
 
 <img src="docs/images/screenshot-dashboard.png" alt="Dashboard Screenshot" width="800" />
 
@@ -22,11 +22,15 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 </div>
 
+> **Node naming**: execution nodes use Agent / AgentNode; AI interfaces use NodeAiAgent / PlatformAiAgent. See the [Agent naming and deployment guide](docs/agent-naming.md).
+>
+> **Historical data is incompatible**: redeploy this version with a fresh database path or data directory to rebuild the database. Existing databases are not upgrade inputs; the first startup creates tables from the current `schema.sql` and initializes seed data.
+
 ---
 
 ## Table of Contents
 
-- [v1.0.0 Highlights](#v100-highlights)
+- [v3.0.0 Highlights](#v300-highlights)
 - [Java/PHP Dual Runtime](#javaphp-dual-runtime)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
@@ -41,39 +45,39 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 ---
 
-## v1.0.0 Highlights
+## v3.0.0 Highlights
 
-v1.0.0 is LeoAI's first official open-source release and a major update spanning runtimes, components, platform services, the web console, and deployment.
+v3.0.0 is a major update spanning runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and uses a fresh database baseline that is incompatible with historical data.
 
-| Area | What changed in v1.0.0 |
+| Area | What changed in v3.0.0 |
 |------|-------------------------|
-| **PHP Puppet** | Adds a PHP 5.6+ single-file entry point, HTTP RPC, on-demand Components, and runtime capability registration for commands, files, terminals, databases, networking, tunnels, and core system administration |
-| **Dual-runtime architecture** | Java and PHP use the same `PuppetRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
+| **PHP Agent** | Adds a PHP 5.6+ single-file entry point, HTTP RPC, on-demand Components, and runtime capability registration for commands, files, terminals, databases, networking, tunnels, and core system administration |
+| **Dual-runtime architecture** | Java and PHP use the same `AgentRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
 | **Component reliability** | Java/PHP Components now use bounded tasks, TTLs, resource deregistration, cache limits, and unified lifecycle cleanup; Java artifacts also remove redundant debug metadata and constants |
-| **Console and AI** | Puppet routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
-| **Fresh database baseline** | `schema.sql` and `data.sql` create the final v1.0.0 structure directly, followed by base configuration and administrator bootstrap |
-| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `1.0.0`; the release artifact is `LeoAi-1.0.0.jar` and the initial administrator password must be changed after login |
+| **Console and AI** | Agent routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
+| **Fresh database baseline** | `schema.sql` and `data.sql` create the final v3.0.0 structure directly, followed by base configuration and administrator bootstrap |
+| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.0`; the release artifact is `LeoAi-3.0.0.jar` and the initial administrator password must be changed after login |
 
-> **Installation baseline:** v1.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
+> **Installation baseline:** v3.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
 
 ---
 
 ## Java/PHP Dual Runtime
 
-Java and PHP are equal Puppet runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root.
+Java and PHP are equal Agent runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root.
 
 ```mermaid
 graph TD
     web["web: application composition and console"] --> service["service / ai: shared business and orchestration"]
-    web --> java["javacore: Java Puppet Runtime"]
-    web --> php["phpcore: PHP Puppet Runtime"]
+    web --> java["javacore: Java Agent Runtime"]
+    web --> php["phpcore: PHP Agent Runtime"]
     service --> core["core: Runtime SPI / Capability / RPC / Session"]
     java --> core
     php --> core
     web --> jmg["jmg: Java shell and memory-shell generation"]
 ```
 
-| Capability | Java Puppet | PHP Puppet |
+| Capability | Java Agent | PHP Agent |
 |------------|-------------|------------|
 | **Entry point** | Java Core plus container/script generators | PHP 5.6+ single-file HTTP entry point |
 | **Component loading** | Independent Java Component bytecode loaded on demand | Independent PHP Components loaded lazily by digest |
@@ -98,7 +102,7 @@ The exact PHP feature set depends on the target environment: database operations
 | **Large Context Window** | Dynamically adapts to model context windows (up to 1M tokens); auto-compresses history to preserve key information |
 | **Task Planning** | AI auto-plans multi-step tasks, executes sequentially with result writeback, tracked in real-time via sticky top bar |
 | **100+ AI Tools** | Atomic capabilities callable by the AI Agent — covering command execution, files, networking, credentials, scanning, HTTP requests, databases, scripting, plugins, and more |
-| **Built-in AI Skills** | Pre-configured puppet-node / platform task prompts for launching reconnaissance, credential hunting, privilege escalation, persistence, lateral movement, disguise development, fingerprint development, and exploit suggestion workflows |
+| **Built-in AI Skills** | Pre-configured agent-node / platform task prompts for launching reconnaissance, credential hunting, privilege escalation, persistence, lateral movement, disguise development, fingerprint development, and exploit suggestion workflows |
 | **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
 | **Context Accumulation** | Reconnaissance summaries accumulate and compress automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
@@ -156,7 +160,7 @@ The exact PHP feature set depends on the target environment: database operations
 
 #### Other Tools
 - **Class Bytecode Viewer**: Extract and decompile classes loaded in the JVM
-- **Class & Resource Browser**: Read any classpath resource the puppet process can see (`.class` files inside jars, `application.yml`, `META-INF/MANIFEST.MF`, etc.) by class name or path. Auto-detects binary/text/`.class` and decompiles to Java source. When the puppet is injected into Tomcat's global ClassLoader, falls back to scanning every WebappClassLoader so webapp-private classes remain reachable.
+- **Class & Resource Browser**: Read any classpath resource the agent process can see (`.class` files inside jars, `application.yml`, `META-INF/MANIFEST.MF`, etc.) by class name or path. Auto-detects binary/text/`.class` and decompiles to Java source. When the agent is injected into Tomcat's global ClassLoader, falls back to scanning every WebappClassLoader so webapp-private classes remain reachable.
 - **HostId Switching**: Manage multiple intranet hosts under a single node
 
 <img src="docs/images/screenshot-console.png" alt="Operations Console Screenshot" width="800" />
@@ -223,7 +227,7 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 | **Bytecode Manipulation** | Javassist 3.30 |
 | **Build Tool** | Maven (multi-module) |
 | **Platform Runtime** | Java 17+ |
-| **Puppet Runtimes** | Java Components, PHP 5.6+ Components |
+| **Agent Runtimes** | Java Components, PHP 5.6+ Components |
 
 ---
 
@@ -236,7 +240,7 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 | **Memory** | 4 GB or more recommended |
 | **Disk Space** | At least 500 MB available |
 | **Browser** | Modern browsers: Chrome, Firefox, Edge, etc. |
-| **PHP Puppet** | PHP 5.6+ on the target; PDO/ZipArchive and related extensions as required by the selected capabilities |
+| **PHP Agent** | PHP 5.6+ on the target; PDO/ZipArchive and related extensions as required by the selected capabilities |
 
 > No separate database installation needed: SQLite is embedded and auto-initialized on first launch.  
 > No separate frontend deployment needed: the web interface is bundled inside the JAR.
@@ -247,18 +251,20 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 
 ### Step 1: Get the JAR
 
-> v1.0.0 uses a fresh database baseline. For the first official deployment, use a new working directory or a new SQLite path.
+> **Historical data is incompatible; redeploy and rebuild the database.** Stop the old service and back it up, then deploy this version in a fresh working directory or with a new SQLite path. The first startup creates the current database structure; business data and node configurations need to be recreated.
+>
+> For Docker, use a fresh persistent data volume or data directory. Restarting or rebuilding a container still reuses its existing data volume and does not rebuild the database.
 
 Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-2.2.0.jar
+LeoAi-3.0.0.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.2.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -431,7 +437,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.2.0.jar --server.port=9090
+  LeoAi-3.0.0.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -440,7 +446,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-2.2.0.jar \
+  LeoAi-3.0.0.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -507,7 +513,7 @@ After entering a node, use the available tool modules:
 
 - **Virtual Terminal**: Run shell commands in multiple sessions with real-time streaming output; search output, clear screen, interrupt, close sessions, and reclaim backend processes on close/reset
 - **File Manager**: Tree browsing, upload/download, online editing, compress/decompress, file preview
-- **Database**: Add a shared connection profile in the database workspace; Java and PHP Puppets convert it to JDBC or PDO runtime parameters respectively
+- **Database**: Add a shared connection profile in the database workspace; Java and PHP Agents convert it to JDBC or PDO runtime parameters respectively
 - **Port Scanner**: Quick scan / custom port range / export results
 - **HTTP Requester**: Repeater for single requests, Fuzzer for bulk fuzzing
 
@@ -528,7 +534,7 @@ SOCKS5, HTTP, and local port forwarding let you configure the **listen address o
 
 ### Skill Manager
 
-Navigate to **Skills** in the main sidebar to visually manage all Skills under both scopes (puppet-node / platform):
+Navigate to **Skills** in the main sidebar to visually manage all Skills under both scopes (agent-node / platform):
 
 - **View & Edit**: Click a Skill in the list to preview its content on the right; switch to edit mode to modify the body and description — changes take effect immediately without restarting
 - **Tags**: Each Skill can have multiple tags (e.g., `recon`, `exploit`, `linux`), viewable and editable in both list and edit modes; a tag filter panel on the left supports multi-select filtering
@@ -557,7 +563,7 @@ tags:
 
 **Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
 
-The console's skill quick-launch panel provides 5 pre-configured puppet-node Skills for launching complete scenario tasks with one click:
+The console's skill quick-launch panel provides 5 pre-configured agent-node Skills for launching complete scenario tasks with one click:
 
 | Category | Skills |
 |----------|--------|
@@ -604,7 +610,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-2.2.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
 ```
 
 ---

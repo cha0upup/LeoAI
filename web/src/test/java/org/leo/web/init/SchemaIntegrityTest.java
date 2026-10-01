@@ -26,17 +26,17 @@ class SchemaIntegrityTest {
 
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("""
-                        INSERT INTO puppets
-                          (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, conn_link,
+                        INSERT INTO agents
+                          (agent_id, agent_name, parent_agent_id, create_by_user_id, conn_link,
                            req_disguise_id, resp_disguise_id, create_time, update_time)
                         VALUES ('request-policy-default', 'test', 'root', 'user', '/',
                                 'request', 'response', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """);
                 assertEquals(1, scalar(statement,
-                        "SELECT max_req_count FROM puppets WHERE puppet_id='request-policy-default'"));
+                        "SELECT max_req_count FROM agents WHERE agent_id='request-policy-default'"));
                 assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                        INSERT INTO puppets
-                          (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, conn_link,
+                        INSERT INTO agents
+                          (agent_id, agent_name, parent_agent_id, create_by_user_id, conn_link,
                            req_disguise_id, resp_disguise_id, max_req_count, create_time, update_time)
                         VALUES ('request-policy-invalid', 'test', 'root', 'user', '/',
                                 'request', 'response', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

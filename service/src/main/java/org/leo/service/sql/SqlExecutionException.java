@@ -3,7 +3,7 @@ package org.leo.service.sql;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Preserves the structured database error returned by a Puppet runtime. */
+/** Preserves the structured database error returned by a Agent runtime. */
 public final class SqlExecutionException extends Exception {
 
     private final int statusCode;

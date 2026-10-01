@@ -45,6 +45,9 @@
 - Java 代码遵循项目现有风格
 - 前端代码使用 ESLint + Prettier 格式化
 - 提交前确保 `mvn package -DskipTests` 能通过
+- 命名区分执行节点与 AI：节点模型使用 `Agent`，执行运行时使用 `AgentNode` / `AgentRuntime`，AI 接口使用 `NodeAiAgent` / `PlatformAiAgent`；资产与连接上下文继续使用 `Host` / `Session`。
+- 节点 HTTP API 使用 `/agent-node`，管理 API 使用 `/platform/agent-manage`，节点 Skills scope 使用 `agent-node`。命名切换见 [命名与部署说明](docs/agent-naming.md)；历史数据不兼容，部署时使用全新数据库重建。
+- 集合、控制台视图、父子节点、AI 运行实例与连接测试的具体名称遵循 [语义命名约定](docs/naming-conventions.md)；提交前运行 `python3 tools/check_semantic_names.py --frontend ../LeoVueAi`。
 
 ## 注意事项
 

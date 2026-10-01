@@ -12,7 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Platform/Puppet 共用的计划状态机与事件发布器。 */
+/** Platform/Agent 共用的计划状态机与事件发布器。 */
 @Component
 public class AiPlanCoordinator {
 

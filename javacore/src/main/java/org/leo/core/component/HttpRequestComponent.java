@@ -26,7 +26,7 @@ import javax.net.ssl.X509TrustManager;
 /**
  * HTTP 请求组件
  * <p>
- * 在 puppet 侧发起 HTTP 请求，支持 GET/POST/PUT/DELETE/HEAD 方法。
+ * 在 agent 侧发起 HTTP 请求，支持 GET/POST/PUT/DELETE/HEAD 方法。
  * 用于替代通过 execOnce("curl ...") 执行 HTTP 请求的场景，
  * 不依赖目标机器是否安装 curl，且提供结构化的响应结果。
  * <p>

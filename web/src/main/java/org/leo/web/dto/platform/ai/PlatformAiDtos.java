@@ -19,7 +19,7 @@ public final class PlatformAiDtos {
                               String answerToQuestionId) {
     }
 
-    public record AgentConfigRequest(String threadId, Integer configId) {
+    public record AiAgentConfigRequest(String threadId, Integer configId) {
     }
 
     public record EventsRequest(String threadId, Long afterSeq, Integer limit) {

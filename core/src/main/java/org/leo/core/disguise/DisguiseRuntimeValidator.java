@@ -1,14 +1,14 @@
 package org.leo.core.disguise;
 
 import org.leo.core.entity.Disguise;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 
 import java.util.Map;
 
 /** Runtime extension point for validating user supplied disguise implementations. */
 public interface DisguiseRuntimeValidator {
 
-    PuppetRuntime getRuntime();
+    AgentRuntime getRuntime();
 
     /**
      * Validate a runtime implementation without mutating the disguise.

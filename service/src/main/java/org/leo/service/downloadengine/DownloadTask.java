@@ -1,6 +1,6 @@
 package org.leo.service.downloadengine;
 
-import org.leo.core.puppet.capability.FileCapable;
+import org.leo.core.agent.capability.FileCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.leo.service.transfer.TransferStage;
 import org.leo.service.transfer.TransferTaskState;

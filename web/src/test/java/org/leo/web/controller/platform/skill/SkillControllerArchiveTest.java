@@ -41,7 +41,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         writeSkill("alpha", "original");
         Files.createDirectories(skillDir("alpha").resolve("assets"));
         Files.write(skillDir("alpha").resolve("assets/data.bin"), new byte[]{0, 1, -1});
-        var exported = controller.exportSkill(" puppet-node ", " alpha ");
+        var exported = controller.exportSkill(" agent-node ", " alpha ");
 
         assertEquals(200, exported.getStatusCode().value());
         assertEquals("application/zip", exported.getHeaders().getContentType().toString());
@@ -50,19 +50,19 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         assertEquals(Set.of("SKILL.md", "manifest.yaml", "assets/data.bin"), entries.keySet());
         assertArrayEquals(new byte[]{0, 1, -1}, entries.get("assets/data.bin"));
 
-        assertTrue(management.delete("puppet-node", "alpha").succeeded());
-        assertTrue(registry.listAllSkills("puppet-node").isEmpty());
+        assertTrue(management.delete("agent-node", "alpha").succeeded());
+        assertTrue(registry.listAllSkills("agent-node").isEmpty());
         clearInvocations(registry);
-        var imported = controller.importSkills(upload(exported.getBody()), "puppet-node", "alpha", null);
+        var imported = controller.importSkills(upload(exported.getBody()), "agent-node", "alpha", null);
         assertEquals(200, imported.get("code"));
         assertEquals("imported", result(imported, "alpha").get("status"));
         assertArrayEquals(new byte[]{0, 1, -1}, Files.readAllBytes(skillDir("alpha").resolve("assets/data.bin")));
-        var descriptor = manifestService.inspect(skillDir("alpha"), "puppet-node").descriptor();
+        var descriptor = manifestService.inspect(skillDir("alpha"), "agent-node").descriptor();
         assertEquals("draft", descriptor.status());
         assertEquals("imported", descriptor.source());
         assertFalse(descriptor.enabled());
-        assertEquals(1, registry.listAllSkills("puppet-node").size());
-        assertFalse(provider.getFormattedSkills("puppet-node").contains("alpha"));
+        assertEquals(1, registry.listAllSkills("agent-node").size());
+        assertFalse(provider.getFormattedSkills("agent-node").contains("alpha"));
         verify(registry).invalidate();
     }
 
@@ -74,7 +74,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
                 "references/nested/notes.txt", "resource content"));
         URI destination = URI.create("jar:" + tempDir.resolve("destination.zip").toUri());
         try (var fileSystem = FileSystems.newFileSystem(destination, Map.of("create", "true"))) {
-            var scopeRoot = fileSystem.getPath("/puppet-node");
+            var scopeRoot = fileSystem.getPath("/agent-node");
 
             var results = archives.importSkills(upload(archive), scopeRoot, "alpha", ConflictPolicy.SKIP);
 
@@ -83,11 +83,11 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
             var imported = scopeRoot.resolve("alpha");
             assertEquals(skill("alpha", "imported"), Files.readString(imported.resolve("SKILL.md")));
             assertEquals("resource content", Files.readString(imported.resolve("references/nested/notes.txt")));
-            var descriptor = manifestService.inspect(imported, "puppet-node").descriptor();
+            var descriptor = manifestService.inspect(imported, "agent-node").descriptor();
             assertEquals("draft", descriptor.status());
             assertFalse(descriptor.enabled());
         }
-        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("agent-node", "alpha").isLocked());
     }
 
     @Test
@@ -97,26 +97,26 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         var response = controller.exportSkillsBatch(batch(" beta ", "alpha", "beta", "missing", "../outside", 7));
 
         assertEquals(200, response.getStatusCode().value());
-        assertTrue(response.getHeaders().getContentDisposition().getFilename().startsWith("skills_puppet-node_"));
+        assertTrue(response.getHeaders().getContentDisposition().getFilename().startsWith("skills_agent-node_"));
         assertEquals(Set.of("alpha/SKILL.md", "alpha/manifest.yaml", "beta/SKILL.md", "beta/manifest.yaml"),
                 unzip(response.getBody()).keySet());
-        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
-        assertFalse(operationLock.lockFor("puppet-node", "beta").isLocked());
+        assertFalse(operationLock.lockFor("agent-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("agent-node", "beta").isLocked());
     }
 
     @Test
     void archiveErrorsKeepExistingResponseShapeAndReleaseLocks() throws Exception {
         assertEquals(400, controller.exportSkill("unknown", "alpha").getStatusCode().value());
-        assertEquals(400, controller.exportSkill("puppet-node", "../outside").getStatusCode().value());
-        assertEquals(404, controller.exportSkill("puppet-node", "missing").getStatusCode().value());
-        assertNull(controller.exportSkill("puppet-node", "missing").getBody());
+        assertEquals(400, controller.exportSkill("agent-node", "../outside").getStatusCode().value());
+        assertEquals(404, controller.exportSkill("agent-node", "missing").getStatusCode().value());
+        assertNull(controller.exportSkill("agent-node", "missing").getBody());
         assertEquals(400, controller.exportSkillsBatch(batch("missing", "../outside")).getStatusCode().value());
         writeSkill("alpha", "first");
         doThrow(new IOException("read failed")).when(archives).exportSkill(any(), any());
-        var response = controller.exportSkill("puppet-node", "alpha");
+        var response = controller.exportSkill("agent-node", "alpha");
         assertEquals(500, response.getStatusCode().value());
         assertEquals("导出失败：read failed", new String(response.getBody(), StandardCharsets.UTF_8));
-        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("agent-node", "alpha").isLocked());
     }
 
     @Test
@@ -125,44 +125,44 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         entries.put("alpha/SKILL.md", skill("alpha", "valid"));
         entries.put("alpha/manifest.yaml", manifest("alpha"));
         entries.put("broken/SKILL.md", skill("broken", "missing manifest"));
-        var response = controller.importSkills(upload(zip(entries)), "puppet-node", null, "skip");
+        var response = controller.importSkills(upload(zip(entries)), "agent-node", null, "skip");
 
         assertEquals(200, response.get("code"));
         assertEquals("imported", result(response, "alpha").get("status"));
         assertEquals("failed", result(response, "broken").get("status"));
         assertFalse(Files.exists(skillDir("broken")));
-        assertFalse(registry.isSkillEnabled("puppet-node", "alpha"));
+        assertFalse(registry.isSkillEnabled("agent-node", "alpha"));
     }
 
     @Test
     void malformedArchiveNeverWritesOutsideStaging() throws Exception {
         var response = controller.importSkills(upload(zip(Map.of("../outside.txt", "bad"))),
-                "puppet-node", null, "overwrite");
+                "agent-node", null, "overwrite");
         assertEquals(400, response.get("code"));
-        assertFalse(Files.exists(tempDir.resolve("skills/puppet-node")));
+        assertFalse(Files.exists(tempDir.resolve("skills/agent-node")));
         verify(operationLock, never()).lockFor(anyString(), anyString());
-        assertEquals(400, controller.importSkills(null, "puppet-node", "alpha", null).get("code"));
+        assertEquals(400, controller.importSkills(null, "agent-node", "alpha", null).get("code"));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"skip", "overwrite"})
     void importChecksConflictsAfterAcquiringTheSharedLock(String policy) throws Exception {
-        ReentrantLock targetLock = operationLock.lockFor("puppet-node", "alpha");
+        ReentrantLock targetLock = operationLock.lockFor("agent-node", "alpha");
         CountDownLatch attempted = new CountDownLatch(1);
         doAnswer(invocation -> {
             attempted.countDown();
             return targetLock;
-        }).when(operationLock).lockFor("puppet-node", "alpha");
+        }).when(operationLock).lockFor("agent-node", "alpha");
         var executor = Executors.newSingleThreadExecutor();
         targetLock.lock();
         try {
             var pending = executor.submit(() -> controller.importSkills(
                     upload(zip(Map.of("SKILL.md", skill("alpha", "imported"), "manifest.yaml", manifest("alpha")))),
-                    "puppet-node", "alpha", policy));
+                    "agent-node", "alpha", policy));
             assertTrue(attempted.await(5, TimeUnit.SECONDS));
             assertFalse(pending.isDone());
             // Another writer creates the target while import is waiting for its lock.
-            assertTrue(management.save("puppet-node", "alpha", skill("alpha", "concurrent"), manifest("alpha")).succeeded());
+            assertTrue(management.save("agent-node", "alpha", skill("alpha", "concurrent"), manifest("alpha")).succeeded());
             targetLock.unlock();
             var response = pending.get(5, TimeUnit.SECONDS);
             assertEquals(200, response.get("code"));
@@ -180,7 +180,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
     @Test
     void importFailureAfterCommitStillInvalidatesCatalog() throws Exception {
         writeSkill("alpha", "old");
-        assertTrue(provider.getFormattedSkills("puppet-node").contains("alpha"));
+        assertTrue(provider.getFormattedSkills("agent-node").contains("alpha"));
         clearInvocations(registry);
         doAnswer(invocation -> {
             invocation.callRealMethod();
@@ -189,29 +189,29 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
 
         var response = controller.importSkills(upload(zip(Map.of(
                 "SKILL.md", skill("alpha", "updated"), "manifest.yaml", manifest("alpha")))),
-                "puppet-node", "alpha", "overwrite");
+                "agent-node", "alpha", "overwrite");
         assertEquals(500, response.get("code"));
         assertTrue(Files.readString(skillDir("alpha").resolve("SKILL.md")).contains("updated"));
-        assertFalse(provider.getFormattedSkills("puppet-node").contains("alpha"));
+        assertFalse(provider.getFormattedSkills("agent-node").contains("alpha"));
         verify(registry).invalidate();
-        assertFalse(operationLock.lockFor("puppet-node", "alpha").isLocked());
+        assertFalse(operationLock.lockFor("agent-node", "alpha").isLocked());
     }
 
     @Test
     void exportRechecksExistenceAfterAConcurrentDelete() throws Exception {
         writeSkill("alpha", "old");
-        ReentrantLock targetLock = operationLock.lockFor("puppet-node", "alpha");
+        ReentrantLock targetLock = operationLock.lockFor("agent-node", "alpha");
         CountDownLatch attempted = new CountDownLatch(1);
         doAnswer(invocation -> {
             attempted.countDown();
             return targetLock;
-        }).when(operationLock).lockFor("puppet-node", "alpha");
+        }).when(operationLock).lockFor("agent-node", "alpha");
         var executor = Executors.newSingleThreadExecutor();
         targetLock.lock();
         try {
-            var pending = executor.submit(() -> controller.exportSkill("puppet-node", "alpha"));
+            var pending = executor.submit(() -> controller.exportSkill("agent-node", "alpha"));
             assertTrue(attempted.await(5, TimeUnit.SECONDS));
-            assertTrue(management.delete("puppet-node", "alpha").succeeded());
+            assertTrue(management.delete("agent-node", "alpha").succeeded());
             targetLock.unlock();
             assertEquals(404, pending.get(5, TimeUnit.SECONDS).getStatusCode().value());
         } finally {
@@ -268,7 +268,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
     }
 
     private static HashMap<String, Object> batch(Object... names) {
-        return new HashMap<>(Map.of("scope", "puppet-node", "names", List.of(names)));
+        return new HashMap<>(Map.of("scope", "agent-node", "names", List.of(names)));
     }
 
     private static MockMultipartFile upload(byte[] bytes) {

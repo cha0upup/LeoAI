@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-/** HTTP-facing adapter for Puppet-owned database profile management. */
+/** HTTP-facing adapter for Agent-owned database profile management. */
 @Service
 public final class DatabaseConnectionManagementService {
 
@@ -20,27 +20,27 @@ public final class DatabaseConnectionManagementService {
         this.profileService = profileService;
     }
 
-    public Map<String, Object> save(User user, String puppetId, Map<String, Object> params) {
-        return translate(() -> profileService.save(userId(user), puppetId, params));
+    public Map<String, Object> save(User user, String agentId, Map<String, Object> params) {
+        return translate(() -> profileService.save(userId(user), agentId, params));
     }
 
-    public List<Map<String, Object>> listByPuppet(String puppetId, User user) {
-        return translate(() -> profileService.listByPuppet(userId(user), puppetId));
+    public List<Map<String, Object>> listByAgent(String agentId, User user) {
+        return translate(() -> profileService.listByAgent(userId(user), agentId));
     }
 
-    public void delete(String connectionId, String puppetId, User user) {
+    public void delete(String connectionId, String agentId, User user) {
         translate(() -> {
-            profileService.delete(userId(user), puppetId, connectionId);
+            profileService.delete(userId(user), agentId, connectionId);
             return null;
         });
     }
 
     public Map<String, Object> setEnabled(String connectionId,
-                                          String puppetId,
+                                          String agentId,
                                           boolean enabled,
                                           User user) {
         return translate(() -> profileService.setEnabled(
-                userId(user), puppetId, connectionId, enabled));
+                userId(user), agentId, connectionId, enabled));
     }
 
     private String userId(User user) {

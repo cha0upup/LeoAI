@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * leo:
  *   ai:
  *     agent:
- *       puppet-node:
+ *       agent-node:
  *         main:
  *           max-parallel-tools: 5
  *           max-context-tokens: 180000        # 主 Agent token 滑动窗口上限
@@ -28,33 +28,33 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "leo.ai.agent")
 public class AiAgentProperties {
 
-    private final PuppetNodeConfig puppetNode = new PuppetNodeConfig();
-    private final PlatformConfig platform = new PlatformConfig();
+    private final NodeAiSettings agentNode = new NodeAiSettings();
+    private final PlatformAiSettings platform = new PlatformAiSettings();
 
     // ── Getters ──────────────────────────────────────────────────────────────
 
-    public PuppetNodeConfig getPuppetNode() { return puppetNode; }
-    public PlatformConfig getPlatform() { return platform; }
+    public NodeAiSettings getAgentNode() { return agentNode; }
+    public PlatformAiSettings getPlatform() { return platform; }
 
-    // ── PuppetNode ────────────────────────────────────────────────────────────
+    // ── AgentNode ────────────────────────────────────────────────────────────
 
-    public static class PuppetNodeConfig {
-        private final MainAgentConfig main = new MainAgentConfig(5);
+    public static class NodeAiSettings {
+        private final AiExecutionSettings main = new AiExecutionSettings(5);
 
-        public MainAgentConfig getMain() { return main; }
+        public AiExecutionSettings getMain() { return main; }
     }
 
     // ── Platform ──────────────────────────────────────────────────────────────
 
-    public static class PlatformConfig {
-        private final MainAgentConfig main = new MainAgentConfig(5);
+    public static class PlatformAiSettings {
+        private final AiExecutionSettings main = new AiExecutionSettings(5);
 
-        public MainAgentConfig getMain() { return main; }
+        public AiExecutionSettings getMain() { return main; }
     }
 
-    // ── MainAgentConfig ───────────────────────────────────────────────────────
+    // ── AiExecutionSettings ───────────────────────────────────────────────────────
 
-    public static class MainAgentConfig {
+    public static class AiExecutionSettings {
         private int maxParallelTools;
         /** 主 Agent token 滑动窗口上限，默认 180000（Claude 200k 窗口预留 system + tools 空间）。 */
         private int maxContextTokens = 180000;
@@ -67,7 +67,7 @@ public class AiAgentProperties {
         /** 大型工具结果归档保留时间。 */
         private long toolArchiveTtlMs = 30 * 60 * 1000L;
 
-        public MainAgentConfig(int maxParallelTools) {
+        public AiExecutionSettings(int maxParallelTools) {
             this.maxParallelTools = maxParallelTools;
         }
 
@@ -78,11 +78,11 @@ public class AiAgentProperties {
         public long getToolIdempotencyTtlMs()  { return toolIdempotencyTtlMs; }
         public long getToolArchiveTtlMs()      { return toolArchiveTtlMs; }
 
-        public void setMaxParallelTools(int v)       { this.maxParallelTools = v; }
-        public void setMaxContextTokens(int v)       { this.maxContextTokens = v; }
-        public void setToolTimeoutMs(long v)         { this.toolTimeoutMs = Math.max(1L, v); }
-        public void setMaxToolResultChars(int v)     { this.maxToolResultChars = Math.max(512, v); }
-        public void setToolIdempotencyTtlMs(long v)  { this.toolIdempotencyTtlMs = Math.max(1_000L, v); }
-        public void setToolArchiveTtlMs(long v)      { this.toolArchiveTtlMs = Math.max(1_000L, v); }
+        public void setMaxParallelTools(int value)       { this.maxParallelTools = value; }
+        public void setMaxContextTokens(int value)       { this.maxContextTokens = value; }
+        public void setToolTimeoutMs(long value)         { this.toolTimeoutMs = Math.max(1L, value); }
+        public void setMaxToolResultChars(int value)     { this.maxToolResultChars = Math.max(512, value); }
+        public void setToolIdempotencyTtlMs(long value)  { this.toolIdempotencyTtlMs = Math.max(1_000L, value); }
+        public void setToolArchiveTtlMs(long value)      { this.toolArchiveTtlMs = Math.max(1_000L, value); }
     }
 }

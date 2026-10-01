@@ -3,8 +3,8 @@ package org.leo.ai.agent;
 import org.leo.ai.service.SkillMeta;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.ai.AiRuntimeState;
-import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.agent.capability.AgentNodeCapabilityRegistry;
+import org.leo.core.session.AgentNodeSession;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -18,7 +18,7 @@ import java.util.Set;
  * 控制每次模型调用真正可见的工具集合。
  *
  * <p>基础工具常驻；Skill 声明的专项工具在激活后由动态 ToolProvider 追加；
- * Puppet 工具还会按当前节点 capability 过滤，避免把必然不可用的 Schema 发给模型。
+ * Agent 工具还会按当前节点 capability 过滤，避免把必然不可用的 Schema 发给模型。
  */
 @Component
 public class AiToolExposurePolicy {
@@ -34,34 +34,34 @@ public class AiToolExposurePolicy {
             "startDownloadTask", "startUploadTask", "stageRemoteFileToWorkspace",
             "queryRemoteFileStage", "readTextFile", "searchFileContent",
             "readResources", "getClassBytecode",
-            // Puppet 管理经常需要先读取 Disguise，保持只读发现能力常驻。
+            // Agent 管理经常需要先读取 Disguise，保持只读发现能力常驻。
             "getDisguises", "getDisguiseById"
     );
 
-    private static final Map<String, String> PUPPET_CAPABILITIES = capabilityMap();
+    private static final Map<String, String> AGENT_CAPABILITIES = capabilityMap();
 
-    private final AgentRuntimeResolver runtimeResolver;
+    private final AiRuntimeResolver runtimeResolver;
     private final SkillRegistryService skillRegistry;
 
-    public AiToolExposurePolicy(AgentRuntimeResolver runtimeResolver,
+    public AiToolExposurePolicy(AiRuntimeResolver runtimeResolver,
                                 SkillRegistryService skillRegistry) {
         this.runtimeResolver = runtimeResolver;
         this.skillRegistry = skillRegistry;
     }
 
-    public boolean isVisible(AiToolAuthorizationPolicy.AgentScope scope,
+    public boolean isVisible(AiToolAuthorizationPolicy.AiAgentScope scope,
                              Object memoryId, String toolName) {
         if (toolName == null || toolName.isBlank()) return false;
         return visibleToolNames(scope, memoryId, List.of(toolName)).contains(toolName);
     }
 
     /** 单次模型调用批量计算可见工具，避免为每个 Schema 重复读取 Skill 目录。 */
-    public Set<String> visibleToolNames(AiToolAuthorizationPolicy.AgentScope scope,
+    public Set<String> visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope scope,
                                         Object memoryId, Collection<String> toolNames) {
         if (toolNames == null || toolNames.isEmpty()) return Set.of();
-        String skillScope = scope == AiToolAuthorizationPolicy.AgentScope.PLATFORM
+        String skillScope = scope == AiToolAuthorizationPolicy.AiAgentScope.PLATFORM
                 ? SkillRegistryService.SCOPE_PLATFORM
-                : SkillRegistryService.SCOPE_PUPPET_NODE;
+                : SkillRegistryService.SCOPE_AGENT_NODE;
         List<SkillMeta> skills = skillRegistry.listSkills(skillScope);
         // 所有清单声明都参与门控；禁用、草稿或校验失败的 Skill 也按 fail-closed 隐藏其工具。
         List<SkillMeta> declaredSkills = skillRegistry.listAllSkills(skillScope);
@@ -70,13 +70,13 @@ public class AiToolExposurePolicy {
         AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
         Set<String> activeTools = runtime == null || runtime.getActivatedSkills().isEmpty()
                 ? Set.of() : activatedTools(skills, runtime.getActivatedSkills());
-        PuppetNodeSession puppetSession = scope == AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE
-                ? runtimeResolver.resolvePuppetSession(memoryId) : null;
+        AgentNodeSession agentSession = scope == AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE
+                ? runtimeResolver.resolveAgentSession(memoryId) : null;
         Set<String> visible = new HashSet<>();
         for (String toolName : toolNames) {
             if (toolName == null || toolName.isBlank()) continue;
-            if (scope == AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE
-                    && !supportsCapability(puppetSession, toolName)) continue;
+            if (scope == AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE
+                    && !supportsCapability(agentSession, toolName)) continue;
             if (CORE_TOOLS.contains(toolName)
                     || !gatedTools.contains(toolName)
                     || activeTools.contains(toolName)) {
@@ -86,11 +86,11 @@ public class AiToolExposurePolicy {
         return Set.copyOf(visible);
     }
 
-    private boolean supportsCapability(PuppetNodeSession session, String toolName) {
-        String capability = PUPPET_CAPABILITIES.get(toolName);
+    private boolean supportsCapability(AgentNodeSession session, String toolName) {
+        String capability = AGENT_CAPABILITIES.get(toolName);
         if (capability == null) return true;
-        return session != null && PuppetNodeCapabilityRegistry.supports(
-                session.getPuppetNode(), capability);
+        return session != null && AgentNodeCapabilityRegistry.supports(
+                session.getAgentNode(), capability);
     }
 
     private static Set<String> activatedTools(List<SkillMeta> skills,

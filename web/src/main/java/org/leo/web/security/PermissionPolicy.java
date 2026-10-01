@@ -1,9 +1,9 @@
 package org.leo.web.security;
 
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.AgentNodeSession;
 
 /**
  * 纯权限规则，不依赖 Spring Bean。
@@ -32,11 +32,11 @@ public final class PermissionPolicy {
         return AccessPolicy.isTeamVisiblePermission(permission);
     }
 
-    public static boolean canAccessSession(PuppetNodeSession session, User user) {
+    public static boolean canAccessSession(AgentNodeSession session, User user) {
         return AccessPolicy.canAccessSession(session, user);
     }
 
-    public static boolean canAccessPuppet(Puppet puppet, User user) {
-        return AccessPolicy.canAccessPuppet(puppet, user);
+    public static boolean canAccessAgent(Agent agent, User user) {
+        return AccessPolicy.canAccessAgent(agent, user);
     }
 }

@@ -1,17 +1,17 @@
 package org.leo.phpcore;
 
-import org.leo.core.runtime.PuppetRuntime;
-import org.leo.core.runtime.PuppetRuntimeModule;
-import org.leo.core.runtime.PuppetNodeCreationContext;
-import org.leo.core.entity.Puppet;
+import org.leo.core.runtime.AgentRuntime;
+import org.leo.core.runtime.AgentRuntimeModule;
+import org.leo.core.runtime.AgentNodeCreationContext;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.agent.AbstractAgentNode;
 import org.springframework.stereotype.Component;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.util.json.JsonUtil;
-import org.leo.phpcore.puppet.PhpPuppetNode;
+import org.leo.phpcore.agent.PhpAgentNode;
 import org.leo.phpcore.rpc.PhpRpcClient;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 
@@ -24,9 +24,9 @@ import org.leo.phpcore.component.PhpComponentArtifactRegistry;
  * the shared protocol and capability contracts.
  */
 @Component
-public final class PhpCoreModule implements PuppetRuntimeModule {
+public final class PhpCoreModule implements AgentRuntimeModule {
 
-    public static final PuppetRuntime RUNTIME = PuppetRuntime.PHP;
+    public static final AgentRuntime RUNTIME = AgentRuntime.PHP;
 
     private final PhpComponentArtifactRegistry componentRegistry;
 
@@ -35,7 +35,7 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
     }
 
     @Override
-    public PuppetRuntime getRuntime() {
+    public AgentRuntime getRuntime() {
         return RUNTIME;
     }
 
@@ -45,13 +45,13 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
     }
 
     @Override
-    public AbstractPuppetNode createNode(Puppet puppet,
+    public AbstractAgentNode createNode(Agent agent,
                                          User user,
-                                         PuppetNodeCreationContext context) throws Exception {
-        PuppetNodeCreationContext.ConnectionPlan plan = context.createConnectionPlan(puppet);
-        PuppetNodeCreationContext.TransportLayers layers = plan.getTransportLayers();
+                                         AgentNodeCreationContext context) throws Exception {
+        AgentNodeCreationContext.ConnectionPlan plan = context.createConnectionPlan(agent);
+        AgentNodeCreationContext.TransportLayers layers = plan.getTransportLayers();
         if (layers.getRequestLayers().isEmpty() || layers.getResponseLayers().isEmpty()) {
-            throw new IllegalArgumentException("PHP Puppet 必须配置请求和响应伪装");
+            throw new IllegalArgumentException("PHP Agent 必须配置请求和响应伪装");
         }
         if (!layers.getRequestLayers().get(0).getDisguise().supportsRuntime("php")) {
             throw new IllegalArgumentException("请求伪装不支持 PHP: "
@@ -63,32 +63,32 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
         }
         PhpRpcClient client = new PhpRpcClient(
                 plan.getCommunication(), layers.getRequestLayers(), layers.getResponseLayers());
-        client.setMaxReqCount(puppet.getMaxReqCount());
-        applyStrategies(puppet, client);
+        client.setMaxReqCount(agent.getMaxReqCount());
+        applyStrategies(agent, client);
 
-        PhpPuppetNode node = new PhpPuppetNode(client, componentRegistry);
-        node.setPuppet(puppet);
+        PhpAgentNode node = new PhpAgentNode(client, componentRegistry);
+        node.setAgent(agent);
         node.setUser(user);
         return node;
     }
 
-    private void applyStrategies(Puppet puppet, PhpRpcClient client) {
+    private void applyStrategies(Agent agent, PhpRpcClient client) {
         try {
-            if (puppet.getUrlStrategy() != null && !puppet.getUrlStrategy().isBlank()) {
+            if (agent.getUrlStrategy() != null && !agent.getUrlStrategy().isBlank()) {
                 client.setUrlStrategy((UrlStrategy) JsonUtil.fromJsonString(
-                        puppet.getUrlStrategy(), UrlStrategy.class));
+                        agent.getUrlStrategy(), UrlStrategy.class));
             }
         } catch (Exception ignored) { }
         try {
-            if (puppet.getPaddingStrategy() != null && !puppet.getPaddingStrategy().isBlank()) {
+            if (agent.getPaddingStrategy() != null && !agent.getPaddingStrategy().isBlank()) {
                 client.setPaddingStrategy((PaddingStrategy) JsonUtil.fromJsonString(
-                        puppet.getPaddingStrategy(), PaddingStrategy.class));
+                        agent.getPaddingStrategy(), PaddingStrategy.class));
             }
         } catch (Exception ignored) { }
         try {
-            if (puppet.getHeaderNoiseStrategy() != null && !puppet.getHeaderNoiseStrategy().isBlank()) {
+            if (agent.getHeaderNoiseStrategy() != null && !agent.getHeaderNoiseStrategy().isBlank()) {
                 client.setHeaderNoiseStrategy((HeaderNoiseStrategy) JsonUtil.fromJsonString(
-                        puppet.getHeaderNoiseStrategy(), HeaderNoiseStrategy.class));
+                        agent.getHeaderNoiseStrategy(), HeaderNoiseStrategy.class));
             }
         } catch (Exception ignored) { }
     }

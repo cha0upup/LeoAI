@@ -277,8 +277,8 @@ public class PluginManageController {
     }
 
     @RequestMapping(value = "/plugins", method = RequestMethod.GET)
-    public HashMap<String, Object> getPlugin() {
-        return ApiResponse.success(pluginManager.getPluginAsList());
+    public HashMap<String, Object> getPlugins() {
+        return ApiResponse.success(pluginManager.getPlugins());
     }
 
     // ── 导出 ──────────────────────────────────────────────────────────────────

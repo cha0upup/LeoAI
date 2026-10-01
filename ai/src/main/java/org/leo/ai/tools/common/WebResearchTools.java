@@ -6,22 +6,22 @@ import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.service.web.WebResearchService;
-import org.leo.ai.service.workspace.AgentWorkspaceService;
+import org.leo.ai.service.workspace.AiWorkspaceService;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
-/** Agent 公网搜索/抓取工具；与 Puppet 目标侧 HTTP 请求严格分离。 */
+/** Agent 公网搜索/抓取工具；与 Agent 目标侧 HTTP 请求严格分离。 */
 @Component
 public class WebResearchTools {
 
     private final WebResearchService webService;
-    private final AgentWorkspaceService workspaceService;
+    private final AiWorkspaceService workspaceService;
 
     public WebResearchTools(WebResearchService webService,
-                            AgentWorkspaceService workspaceService) {
+                            AiWorkspaceService workspaceService) {
         this.webService = webService;
         this.workspaceService = workspaceService;
     }
@@ -47,7 +47,7 @@ public class WebResearchTools {
         return webService.toMap(webService.fetch(url, maxChars));
     }
 
-    @Tool("抓取公开网页正文并保存到当前 Agent 工作空间，适合后续分段搜索、读取和分析；外部内容仍保持未信任标记。")
+    @Tool("抓取公开网页正文并保存到当前 AI 工作空间，适合后续分段搜索、读取和分析；外部内容仍保持未信任标记。")
     @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE,
             business = false)
     public Map<String, Object> webFetchToWorkspace(

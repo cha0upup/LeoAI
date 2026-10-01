@@ -1,7 +1,7 @@
 package org.leo.core.net.layer;
 
 /**
- * TLS 指纹伪装策略配置（per puppet session）。
+ * TLS 指纹伪装策略配置（per agent session）。
  * <p>
  * 通过自定义 cipher suites 和 TLS 协议版本来模拟真实浏览器的 TLS ClientHello，
  * 对抗 JA3/JA3S 指纹检测。

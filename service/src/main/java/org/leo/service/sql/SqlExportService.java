@@ -1,9 +1,9 @@
 package org.leo.service.sql;
 
 import jakarta.annotation.PreDestroy;
-import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.util.json.JsonUtil;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Service;
 
@@ -33,16 +33,16 @@ public class SqlExportService {
 
     private final ConcurrentHashMap<String, Map<String, Object>> liveTasks = new ConcurrentHashMap<String, Map<String, Object>>();
     private final ConcurrentHashMap<String, TaskControl> liveControls = new ConcurrentHashMap<String, TaskControl>();
-    private final PuppetNodeSqlService puppetNodeSqlService;
+    private final AgentNodeSqlService agentNodeSqlService;
     private final ServiceTaskExecutor taskExecutor;
 
-    public SqlExportService(PuppetNodeSqlService puppetNodeSqlService,
+    public SqlExportService(AgentNodeSqlService agentNodeSqlService,
                             ServiceTaskExecutor taskExecutor) {
-        this.puppetNodeSqlService = puppetNodeSqlService;
+        this.agentNodeSqlService = agentNodeSqlService;
         this.taskExecutor = taskExecutor;
     }
 
-    public Map<String, Object> startTableExport(SqlCapable puppetNode,
+    public Map<String, Object> startTableExport(SqlCapable agentNode,
                                                 String userId,
                                                 String sessionId,
                                                 Map<String, Object> connection,
@@ -74,12 +74,12 @@ public class SqlExportService {
         task.put("status", "PENDING");
         persistTask(task);
         liveTasks.put(taskId, task);
-        scheduleTask(task, puppetNode, connection);
+        scheduleTask(task, agentNode, connection);
 
         return publicTask(task);
     }
 
-    public Map<String, Object> startDatabaseExport(SqlCapable puppetNode,
+    public Map<String, Object> startDatabaseExport(SqlCapable agentNode,
                                                    String userId,
                                                    String sessionId,
                                                    Map<String, Object> connection,
@@ -122,7 +122,7 @@ public class SqlExportService {
         task.put("tableRefs", toRefMaps(tableRefs));
         persistTask(task);
         liveTasks.put(taskId, task);
-        scheduleTask(task, puppetNode, connection);
+        scheduleTask(task, agentNode, connection);
 
         return publicTask(task);
     }
@@ -184,7 +184,7 @@ public class SqlExportService {
         return publicTask(task);
     }
 
-    public Map<String, Object> resume(SqlCapable puppetNode,
+    public Map<String, Object> resume(SqlCapable agentNode,
                                       String userId,
                                       String sessionId,
                                       String taskId,
@@ -208,7 +208,7 @@ public class SqlExportService {
         }
         persistTask(task);
         liveTasks.put(taskId, task);
-        scheduleTask(task, puppetNode, connection);
+        scheduleTask(task, agentNode, connection);
         return publicTask(task);
     }
 
@@ -254,7 +254,7 @@ public class SqlExportService {
     }
 
     private void scheduleTask(final Map<String, Object> task,
-                              final SqlCapable puppetNode,
+                              final SqlCapable agentNode,
                               final Map<String, Object> connection) {
         final String taskId = String.valueOf(task.get("taskId"));
         final TaskControl newControl = new TaskControl();
@@ -270,12 +270,12 @@ public class SqlExportService {
                     Path finalPath = new File(String.valueOf(task.get("finalPath"))).toPath();
                     try {
                         if ("TABLE_EXPORT".equals(type)) {
-                            runTableExport(taskId, puppetNode, connection,
+                            runTableExport(taskId, agentNode, connection,
                                     refValue(task.get("objectRef")),
                                     finalPath,
                                     newControl);
                         } else if ("DATABASE_EXPORT".equals(type)) {
-                            runDatabaseExport(taskId, puppetNode, connection,
+                            runDatabaseExport(taskId, agentNode, connection,
                                     refValue(task.get("objectRef")),
                                     refListValue(task.get("tableRefs")),
                                     toBoolean(task.get("includeStructure"), true),
@@ -330,7 +330,7 @@ public class SqlExportService {
     }
 
     private void runTableExport(String taskId,
-                                SqlCapable puppetNode,
+                                SqlCapable agentNode,
                                 Map<String, Object> connection,
                                 SqlObjectRef tableRef,
                                 Path finalPath,
@@ -341,8 +341,8 @@ public class SqlExportService {
         }
         try {
             updateTask(task, "RUNNING", 1, null);
-            Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(
-                    puppetNode, connection, tableRef);
+            Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
+                    agentNode, connection, tableRef);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
@@ -353,7 +353,7 @@ public class SqlExportService {
                     writer.write(csvLine(header));
                     writer.newLine();
                 }
-                long total = exportTableDataAsCsv(writer, puppetNode, connection,
+                long total = exportTableDataAsCsv(writer, agentNode, connection,
                         tableRef, header, task, 10, 95, control);
                 task.put("rowCount", total);
             }
@@ -377,7 +377,7 @@ public class SqlExportService {
     }
 
     private void runDatabaseExport(String taskId,
-                                   SqlCapable puppetNode,
+                                   SqlCapable agentNode,
                                    Map<String, Object> connection,
                                    SqlObjectRef namespaceRef,
                                    List<SqlObjectRef> selectedTableRefs,
@@ -394,7 +394,7 @@ public class SqlExportService {
             updateTask(task, "RUNNING", 1, null);
             Files.createDirectories(workDir);
             List<SqlObjectRef> tables = resolveExportTableRefs(
-                    puppetNode, connection, namespaceRef, selectedTableRefs);
+                    agentNode, connection, namespaceRef, selectedTableRefs);
             task.put("tableCount", Integer.valueOf(tables.size()));
 
             if (includeStructure) {
@@ -418,8 +418,8 @@ public class SqlExportService {
                 int progressBase = tables.isEmpty() ? 90 : (int) Math.min(90, 5 + ((double) i / (double) tables.size()) * 85);
                 updateTask(task, "RUNNING", progressBase, null);
 
-                Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(
-                        puppetNode, connection, tableRef);
+                Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
+                        agentNode, connection, tableRef);
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> columns =
                         (List<Map<String, Object>>) columnResult.get("columns");
@@ -436,7 +436,7 @@ public class SqlExportService {
                             writer.write(csvLine(header));
                             writer.newLine();
                         }
-                        exportTableDataAsCsv(writer, puppetNode, connection, tableRef,
+                        exportTableDataAsCsv(writer, agentNode, connection, tableRef,
                                 header, task, progressBase, 95, control);
                     }
                 }
@@ -476,7 +476,7 @@ public class SqlExportService {
     }
 
     private long exportTableDataAsCsv(BufferedWriter writer,
-                                      SqlCapable puppetNode,
+                                      SqlCapable agentNode,
                                       Map<String, Object> connection,
                                       SqlObjectRef tableRef,
                                       List<String> header,
@@ -491,8 +491,8 @@ public class SqlExportService {
             if (checkPausedOrCancelled(task, control)) {
                 return totalRows;
             }
-            Map<String, Object> pageResult = puppetNodeSqlService.queryTable(
-                    puppetNode, connection, tableRef,
+            Map<String, Object> pageResult = agentNodeSqlService.queryTable(
+                    agentNode, connection, tableRef,
                     Integer.valueOf(page), Integer.valueOf(PAGE_SIZE),
                     header, Collections.<Map<String, Object>>emptyList(),
                     Collections.<Map<String, Object>>emptyList(), Boolean.valueOf(page == 1), null);
@@ -549,7 +549,7 @@ public class SqlExportService {
         return false;
     }
 
-    private List<SqlObjectRef> resolveExportTableRefs(SqlCapable puppetNode,
+    private List<SqlObjectRef> resolveExportTableRefs(SqlCapable agentNode,
                                                       Map<String, Object> connection,
                                                       SqlObjectRef namespaceRef,
                                                       List<SqlObjectRef> selectedTableRefs) throws Exception {
@@ -559,8 +559,8 @@ public class SqlExportService {
                     .distinct()
                     .sorted(Comparator.comparing(this::refSortKey)).toList();
         }
-        Map<String, Object> result = puppetNodeSqlService.getTables(
-                puppetNode, connection, namespaceRef);
+        Map<String, Object> result = agentNodeSqlService.getTables(
+                agentNode, connection, namespaceRef);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> tables = (List<Map<String, Object>>) result.get("tables");
         List<SqlObjectRef> refs = new ArrayList<SqlObjectRef>();
@@ -743,7 +743,7 @@ public class SqlExportService {
     }
 
     private Path userBaseDir(String userId) {
-        return new File(new File(PuppetNodeSessionWorkDirUtil.getRootDir(), "users"), userId).toPath().toAbsolutePath().normalize();
+        return new File(new File(AgentNodeSessionWorkDirUtil.getRootDir(), "users"), userId).toPath().toAbsolutePath().normalize();
     }
 
     private String toUserRelativePath(String userId, Path path) {

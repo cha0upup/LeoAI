@@ -12,15 +12,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 资源读取组件（在 puppet 上跑）。
+ * 资源读取组件（在 agent 上跑）。
  *
- * <p>用途：从 puppet JVM 的某个 ClassLoader 中读取资源（典型用例是类字节码 .class、
+ * <p>用途：从 agent JVM 的某个 ClassLoader 中读取资源（典型用例是类字节码 .class、
  * 配置文件 application.yml 等）。Web 端的「字节码查看」、AI 工具 readSpringBootConfig
  * 等都最终走到这里。
  *
  * <p>调用约定与 {@link PluginComponent} 一致：
  * <ul>
- *   <li>puppet 把当前线程 contextClassLoader cast 成 InvocationHandler 作为参数/结果通道</li>
+ *   <li>agent 把当前线程 contextClassLoader cast 成 InvocationHandler 作为参数/结果通道</li>
  *   <li>{@code h.invoke(null, null, null)} 取入参</li>
  *   <li>{@code h.invoke(null, null, new Object[]{results})} 回写结果</li>
  * </ul>
@@ -166,7 +166,7 @@ public class ResourceComponent implements Runnable {
 
     /**
      * 通过 PlatformMBeanServer 查所有 Tomcat WebModule，提取每个 StandardContext 上挂的
-     * Loader.getClassLoader() 作为候选。这条路径在 puppet 注入到 Tomcat 全局 CL 时尤其关键。
+     * Loader.getClassLoader() 作为候选。这条路径在 agent 注入到 Tomcat 全局 CL 时尤其关键。
      */
     private HashSet collectWebappClassLoaders() throws Throwable {
         HashSet result = new HashSet();

@@ -325,7 +325,7 @@ public class ReverseTunnelComponent implements Runnable {
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
-                // 写超时：关闭连接，避免 puppet 线程池被卡住
+                // 写超时：关闭连接，避免 agent 线程池被卡住
                 closeConnection(connId);
                 results.put("code", Integer.valueOf(500));
                 results.put("msg", "write timeout");

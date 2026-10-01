@@ -1,7 +1,7 @@
 package org.leo.service;
 
-import org.leo.core.entity.PuppetDatabaseConnection;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.entity.AgentDatabaseConnection;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.springframework.stereotype.Service;
 
@@ -18,40 +18,40 @@ import static org.leo.service.DatabaseConnectionProfileException.Kind.VALIDATION
 /**
  * Shared application service for HTTP and AI database-profile management.
  *
- * <p>Profiles are scoped to a Puppet. Updates are patch-based: omitted
+ * <p>Profiles are scoped to a Agent. Updates are patch-based: omitted
  * connection and metadata fields retain their persisted values.</p>
  */
 @Service
 public final class DatabaseConnectionProfileService {
 
-    private final PuppetDatabaseConnectionService connectionService;
+    private final AgentDatabaseConnectionService connectionService;
     private final SqlDialectRegistry sqlDialectRegistry;
 
-    public DatabaseConnectionProfileService(PuppetDatabaseConnectionService connectionService,
+    public DatabaseConnectionProfileService(AgentDatabaseConnectionService connectionService,
                                             SqlDialectRegistry sqlDialectRegistry) {
         this.connectionService = connectionService;
         this.sqlDialectRegistry = sqlDialectRegistry;
     }
 
     public Map<String, Object> create(String userId,
-                                      String puppetId,
+                                      String agentId,
                                       Map<String, Object> params) {
-        requireContext(userId, puppetId);
+        requireContext(userId, agentId);
         if (params == null) throw failure(VALIDATION, "params不能为空");
         if (text(params.get("connectionId")) != null) {
             throw failure(VALIDATION, "新增数据库连接时不要传 connectionId");
         }
-        return persist(userId, puppetId, null, params);
+        return persist(userId, agentId, null, params);
     }
 
     public Map<String, Object> update(String userId,
-                                      String puppetId,
+                                      String agentId,
                                       String connectionId,
                                       Map<String, Object> patch) {
-        requireContext(userId, puppetId);
+        requireContext(userId, agentId);
         if (patch == null) throw failure(VALIDATION, "patch不能为空");
-        PuppetDatabaseConnection existing = requirePuppetConnection(connectionId, puppetId);
-        return persist(userId, puppetId, existing, patch);
+        AgentDatabaseConnection existing = requireAgentConnection(connectionId, agentId);
+        return persist(userId, agentId, existing, patch);
     }
 
     /**
@@ -59,48 +59,48 @@ public final class DatabaseConnectionProfileService {
      * the supplied values patch the existing profile.
      */
     public Map<String, Object> save(String userId,
-                                    String puppetId,
+                                    String agentId,
                                     Map<String, Object> params) {
-        requireContext(userId, puppetId);
+        requireContext(userId, agentId);
         if (params == null) throw failure(VALIDATION, "params不能为空");
         String connectionId = text(params.get("connectionId"));
-        if (connectionId == null) return persist(userId, puppetId, null, params);
-        return persist(userId, puppetId,
-                requirePuppetConnection(connectionId, puppetId), params);
+        if (connectionId == null) return persist(userId, agentId, null, params);
+        return persist(userId, agentId,
+                requireAgentConnection(connectionId, agentId), params);
     }
 
-    public List<Map<String, Object>> listByPuppet(String userId, String puppetId) {
-        requireContext(userId, puppetId);
-        return connectionService.findByPuppetId(puppetId).stream()
+    public List<Map<String, Object>> listByAgent(String userId, String agentId) {
+        requireContext(userId, agentId);
+        return connectionService.findByAgentId(agentId).stream()
                 .map(connectionService::toConnectionView)
                 .toList();
     }
 
-    public void delete(String userId, String puppetId, String connectionId) {
-        requireContext(userId, puppetId);
-        PuppetDatabaseConnection connection = requirePuppetConnection(connectionId, puppetId);
-        if (!connectionService.deleteById(connection.getConnectionId(), puppetId)) {
+    public void delete(String userId, String agentId, String connectionId) {
+        requireContext(userId, agentId);
+        AgentDatabaseConnection connection = requireAgentConnection(connectionId, agentId);
+        if (!connectionService.deleteById(connection.getConnectionId(), agentId)) {
             throw failure(PERSISTENCE, "删除数据库连接失败");
         }
     }
 
     public Map<String, Object> setEnabled(String userId,
-                                          String puppetId,
+                                          String agentId,
                                           String connectionId,
                                           boolean enabled) {
-        requireContext(userId, puppetId);
-        PuppetDatabaseConnection connection = requirePuppetConnection(connectionId, puppetId);
-        if (!connectionService.setEnabled(connection.getConnectionId(), puppetId, enabled)) {
+        requireContext(userId, agentId);
+        AgentDatabaseConnection connection = requireAgentConnection(connectionId, agentId);
+        if (!connectionService.setEnabled(connection.getConnectionId(), agentId, enabled)) {
             throw failure(PERSISTENCE, "更新数据库连接状态失败");
         }
         return Map.of("connectionId", connection.getConnectionId(), "status", enabled ? 1 : 0);
     }
 
     public DatabaseConnectionSpec resolveActive(String userId,
-                                                String puppetId,
+                                                String agentId,
                                                 String connectionId) {
-        requireContext(userId, puppetId);
-        PuppetDatabaseConnection connection = requirePuppetConnection(connectionId, puppetId);
+        requireContext(userId, agentId);
+        AgentDatabaseConnection connection = requireAgentConnection(connectionId, agentId);
         try {
             return connectionService.toActiveConnectionSpec(connection);
         } catch (IllegalArgumentException error) {
@@ -109,11 +109,11 @@ public final class DatabaseConnectionProfileService {
     }
 
     private Map<String, Object> persist(String userId,
-                                        String puppetId,
-                                        PuppetDatabaseConnection existing,
+                                        String agentId,
+                                        AgentDatabaseConnection existing,
                                         Map<String, Object> params) {
-        PuppetDatabaseConnection connection = existing == null
-                ? newConnection(userId, puppetId) : existing;
+        AgentDatabaseConnection connection = existing == null
+                ? newConnection(userId, agentId) : existing;
         DatabaseConnectionSpec spec = connectionSpec(params, existing);
         validateDialect(spec);
         connectionService.applyConnectionSpec(connection, spec);
@@ -125,15 +125,15 @@ public final class DatabaseConnectionProfileService {
         return connectionService.toConnectionView(connection);
     }
 
-    private PuppetDatabaseConnection newConnection(String userId, String puppetId) {
-        PuppetDatabaseConnection connection = new PuppetDatabaseConnection();
+    private AgentDatabaseConnection newConnection(String userId, String agentId) {
+        AgentDatabaseConnection connection = new AgentDatabaseConnection();
         connection.setCreateUserId(userId);
-        connection.setPuppetId(puppetId);
+        connection.setAgentId(agentId);
         return connection;
     }
 
     private DatabaseConnectionSpec connectionSpec(Map<String, Object> params,
-                                                  PuppetDatabaseConnection existing) {
+                                                  AgentDatabaseConnection existing) {
         Object nested = params.get("connection");
         if (existing == null && !(nested instanceof Map<?, ?>)) {
             throw failure(VALIDATION, "connection 不能为空");
@@ -175,7 +175,7 @@ public final class DatabaseConnectionProfileService {
                 + "runtimeOptions.php(pdoDriver、dsn)");
     }
 
-    private void applyMetadata(PuppetDatabaseConnection connection,
+    private void applyMetadata(AgentDatabaseConnection connection,
                                Map<String, Object> params,
                                DatabaseConnectionSpec spec) {
         String connectionName = params.containsKey("connectionName")
@@ -183,7 +183,7 @@ public final class DatabaseConnectionProfileService {
                 : text(connection.getConnectionName());
         if (connectionName == null) connectionName = generateName(spec);
         if (connectionService.existsByName(
-                connection.getPuppetId(), connectionName, connection.getConnectionId())) {
+                connection.getAgentId(), connectionName, connection.getConnectionId())) {
             connectionName = connectionName + "_" + System.currentTimeMillis();
         }
         connection.setConnectionName(connectionName);
@@ -213,28 +213,28 @@ public final class DatabaseConnectionProfileService {
         }
     }
 
-    private Map<String, Object> currentConnectionValues(PuppetDatabaseConnection existing) {
+    private Map<String, Object> currentConnectionValues(AgentDatabaseConnection existing) {
         Map<String, Object> current = new LinkedHashMap<String, Object>(
                 connectionService.toConnectionSpec(existing).toMap());
         current.put("password", "");
         return current;
     }
 
-    private PuppetDatabaseConnection requirePuppetConnection(String connectionId,
-                                                             String puppetId) {
+    private AgentDatabaseConnection requireAgentConnection(String connectionId,
+                                                             String agentId) {
         String normalizedId = text(connectionId);
         if (normalizedId == null) throw failure(VALIDATION, "connectionId不能为空");
-        PuppetDatabaseConnection connection = connectionService.findById(normalizedId);
+        AgentDatabaseConnection connection = connectionService.findById(normalizedId);
         if (connection == null) throw failure(NOT_FOUND, "数据库连接不存在");
-        if (!Objects.equals(connection.getPuppetId(), puppetId)) {
-            throw failure(FORBIDDEN, "数据库连接配置与当前 Puppet 不匹配");
+        if (!Objects.equals(connection.getAgentId(), agentId)) {
+            throw failure(FORBIDDEN, "数据库连接配置与当前 Agent 不匹配");
         }
         return connection;
     }
 
-    private void requireContext(String userId, String puppetId) {
+    private void requireContext(String userId, String agentId) {
         if (text(userId) == null) throw failure(VALIDATION, "用户上下文缺失");
-        if (text(puppetId) == null) throw failure(VALIDATION, "Puppet ID 不能为空");
+        if (text(agentId) == null) throw failure(VALIDATION, "Agent ID 不能为空");
     }
 
     private String generateName(DatabaseConnectionSpec connection) {

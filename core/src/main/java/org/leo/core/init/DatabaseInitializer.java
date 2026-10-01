@@ -30,11 +30,26 @@ public class DatabaseInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
+        rejectLegacyNodeNaming();
         enableWalMode();
         validateSchema();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             executeScript("sql/data.sql");
+        }
+    }
+
+    /** 历史数据库不兼容，明确要求重新部署并重建数据库。 */
+    private void rejectLegacyNodeNaming() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(
+                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='puppets'")) {
+            if (result.next()) {
+                throw new IllegalStateException(
+                        "检测到旧节点命名数据库，本版本不兼容历史数据。"
+                                + "请停止旧服务并备份，重新部署到全新的数据库路径或数据目录，以重建数据库。");
+            }
         }
     }
 
@@ -69,8 +84,8 @@ public class DatabaseInitializer implements CommandLineRunner {
     /** 校验当前数据库基线，不迁移历史结构或数据。 */
     private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
-            requireColumns(connection, "puppets",
-                    Set.of("puppet_id", "create_by_user_id", "team_id", "permission", "payload_key"));
+            requireColumns(connection, "agents",
+                    Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key"));
             requireColumns(connection, "ai_threads",
                     Set.of("thread_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",

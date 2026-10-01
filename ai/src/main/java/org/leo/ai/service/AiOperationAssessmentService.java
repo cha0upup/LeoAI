@@ -39,7 +39,7 @@ public class AiOperationAssessmentService {
         if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) {
             throw AiToolException.modelCorrectable(
                     "OPERATION_ASSESSMENT_NOT_REQUIRED",
-                    "该工具不是 Puppet 或平台业务变更工具，不需要操作评估。",
+                    "该工具不是 Agent 或平台业务变更工具，不需要操作评估。",
                     "直接调用只读工具或内部控制工具，不要调用 assess_operation。");
         }
         String threadKey = effectiveThreadKey(memoryId);

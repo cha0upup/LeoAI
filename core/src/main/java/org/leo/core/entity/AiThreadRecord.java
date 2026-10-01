@@ -5,7 +5,7 @@ public class AiThreadRecord {
     private String threadId;
     private String scope;
     private String userId;
-    private String puppetId;
+    private String agentId;
     private String sessionId;
     private String title;
     private Integer configId;
@@ -37,8 +37,8 @@ public class AiThreadRecord {
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
-    public String getPuppetId() { return puppetId; }
-    public void setPuppetId(String puppetId) { this.puppetId = puppetId; }
+    public String getAgentId() { return agentId; }
+    public void setAgentId(String agentId) { this.agentId = agentId; }
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }

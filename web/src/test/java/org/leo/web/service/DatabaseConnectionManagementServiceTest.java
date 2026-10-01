@@ -1,12 +1,12 @@
 package org.leo.web.service;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.PuppetDatabaseConnection;
+import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
-import org.leo.dao.mapper.PuppetDatabaseConnectionMapper;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
+import org.leo.dao.mapper.AgentDatabaseConnectionMapper;
 import org.leo.service.DatabaseConnectionProfileService;
-import org.leo.service.PuppetDatabaseConnectionService;
+import org.leo.service.AgentDatabaseConnectionService;
 import org.leo.service.security.DatabaseCredentialCryptoService;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.leo.web.exception.ApiException;
@@ -26,23 +26,23 @@ import static org.mockito.Mockito.when;
 
 class DatabaseConnectionManagementServiceTest {
 
-    private final PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+    private final AgentDatabaseConnectionMapper mapper = mock(AgentDatabaseConnectionMapper.class);
     private final DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-    private final PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
+    private final AgentDatabaseConnectionService persistence = new AgentDatabaseConnectionService(mapper, crypto);
     private final DatabaseConnectionManagementService management = management(persistence);
 
     @Test
-    void savesPuppetOwnedProfilesWithoutVisibilityScope() {
+    void savesAgentOwnedProfilesWithoutVisibilityScope() {
         doAnswer(invocation -> {
-            PuppetDatabaseConnection saved = invocation.getArgument(0);
-            assertEquals("puppet-1", saved.getPuppetId());
+            AgentDatabaseConnection saved = invocation.getArgument(0);
+            assertEquals("agent-1", saved.getAgentId());
             assertEquals("mysql", saved.getDialect());
             assertTrue(crypto.isEncrypted(saved.getPassword()));
             return 1;
-        }).when(mapper).insert(any(PuppetDatabaseConnection.class));
+        }).when(mapper).insert(any(AgentDatabaseConnection.class));
 
         Map<String, Object> result = management.save(user("creator"),
-                "puppet-1", params(null, "secret"));
+                "agent-1", params(null, "secret"));
 
         assertEquals("inventory", result.get("connectionName"));
         assertEquals("mysql", connection(result).get("dialect"));
@@ -52,44 +52,44 @@ class DatabaseConnectionManagementServiceTest {
     }
 
     @Test
-    void anyUserConnectedToTheSamePuppetCanUpdateAndReuseStoredPassword() {
-        PuppetDatabaseConnection existing = existing(persistence, crypto);
+    void anyUserConnectedToTheSameAgentCanUpdateAndReuseStoredPassword() {
+        AgentDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
-        when(mapper.update(any(PuppetDatabaseConnection.class))).thenReturn(1);
+        when(mapper.update(any(AgentDatabaseConnection.class))).thenReturn(1);
 
         Map<String, Object> result = management.save(user("teammate"),
-                "puppet-1", params("connection-1", ""));
+                "agent-1", params("connection-1", ""));
 
         assertEquals("existing-secret", persistence.toConnectionSpec(existing).getPassword());
         assertEquals("mysql", connection(result).get("dialect"));
     }
 
     @Test
-    void managementOperationsRejectConnectionsOwnedByAnotherPuppet() {
-        PuppetDatabaseConnection existing = existing(persistence, crypto);
+    void managementOperationsRejectConnectionsOwnedByAnotherAgent() {
+        AgentDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
 
         ApiException deleteError = assertThrows(ApiException.class,
-                () -> management.delete("connection-1", "puppet-2", user("teammate")));
+                () -> management.delete("connection-1", "agent-2", user("teammate")));
         ApiException statusError = assertThrows(ApiException.class,
-                () -> management.setEnabled("connection-1", "puppet-2", false, user("teammate")));
+                () -> management.setEnabled("connection-1", "agent-2", false, user("teammate")));
 
         assertEquals(403, deleteError.getHttpStatus().value());
         assertEquals(403, statusError.getHttpStatus().value());
     }
 
     @Test
-    void mutationsRemainScopedToTheResolvedPuppetAtTheMapperBoundary() {
-        PuppetDatabaseConnection existing = existing(persistence, crypto);
+    void mutationsRemainScopedToTheResolvedAgentAtTheMapperBoundary() {
+        AgentDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
-        when(mapper.updateStatusByPuppet("connection-1", "puppet-1", 0)).thenReturn(1);
-        when(mapper.deleteByIdAndPuppet("connection-1", "puppet-1")).thenReturn(1);
+        when(mapper.updateStatusByAgent("connection-1", "agent-1", 0)).thenReturn(1);
+        when(mapper.deleteByIdAndAgent("connection-1", "agent-1")).thenReturn(1);
 
-        management.setEnabled("connection-1", "puppet-1", false, user("teammate"));
-        management.delete("connection-1", "puppet-1", user("teammate"));
+        management.setEnabled("connection-1", "agent-1", false, user("teammate"));
+        management.delete("connection-1", "agent-1", user("teammate"));
 
-        verify(mapper).updateStatusByPuppet("connection-1", "puppet-1", 0);
-        verify(mapper).deleteByIdAndPuppet("connection-1", "puppet-1");
+        verify(mapper).updateStatusByAgent("connection-1", "agent-1", 0);
+        verify(mapper).deleteByIdAndAgent("connection-1", "agent-1");
     }
 
     @SuppressWarnings("unchecked")
@@ -97,12 +97,12 @@ class DatabaseConnectionManagementServiceTest {
         return (Map<String, Object>) view.get("connection");
     }
 
-    private PuppetDatabaseConnection existing(PuppetDatabaseConnectionService persistence,
+    private AgentDatabaseConnection existing(AgentDatabaseConnectionService persistence,
                                                 DatabaseCredentialCryptoService crypto) {
-        PuppetDatabaseConnection connection = new PuppetDatabaseConnection();
+        AgentDatabaseConnection connection = new AgentDatabaseConnection();
         connection.setConnectionId("connection-1");
         connection.setConnectionName("inventory");
-        connection.setPuppetId("puppet-1");
+        connection.setAgentId("agent-1");
         connection.setCreateUserId("creator");
         persistence.applyConnectionSpec(connection, DatabaseConnectionSpec.fromMap(Map.of(
                 "dialect", "mysql", "connectionMode", "standard",
@@ -131,7 +131,7 @@ class DatabaseConnectionManagementServiceTest {
     }
 
     private DatabaseConnectionManagementService management(
-            PuppetDatabaseConnectionService persistence) {
+            AgentDatabaseConnectionService persistence) {
         return new DatabaseConnectionManagementService(
                 new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry()));
     }

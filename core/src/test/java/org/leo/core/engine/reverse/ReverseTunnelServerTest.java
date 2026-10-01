@@ -1,7 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 
 import java.net.ServerSocket;
 import java.net.Socket;

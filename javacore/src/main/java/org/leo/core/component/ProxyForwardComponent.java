@@ -150,7 +150,7 @@ public class ProxyForwardComponent implements Runnable {
     /**
      * 处理写入数据操作。
      * 非阻塞 channel 单次 write 可能写不完，必须循环；
-     * 加总超时保护，防止对端慢/卡死时占用 puppet 请求处理线程。
+     * 加总超时保护，防止对端慢/卡死时占用 agent 请求处理线程。
      */
     private void handleWrite(SocketChannel socketChannel, String connId) throws IOException {
         Object dataObj = params.get("data");

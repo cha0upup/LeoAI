@@ -49,7 +49,7 @@ public class UserTools {
             @P(value = "是否只返回未加入团队的用户", required = false)
             Boolean withoutTeam) {
         return sanitize(Boolean.TRUE.equals(withoutTeam)
-                ? userService.getUsersWithoutTeam() : userService.getAllUser());
+                ? userService.getUsersWithoutTeam() : userService.getAllUsers());
     }
 
     @Tool("按 userId 或 userName 获取用户详情；两者必须且只能提供一个。结果不会返回密码。")

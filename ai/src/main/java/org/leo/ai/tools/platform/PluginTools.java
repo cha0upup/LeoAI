@@ -50,8 +50,8 @@ public class PluginTools {
             @P(value = "可选插件类型，如 java/js/groovy/python", required = false)
             String pluginType) {
         List<Plugin> plugins = isBlank(pluginType)
-                ? pluginManager.getPluginAsList()
-                : pluginManager.getPluginAsListByType(pluginType.trim());
+                ? pluginManager.getPlugins()
+                : pluginManager.getPluginsByType(pluginType.trim());
         return toPluginSummaries(plugins, false);
     }
 

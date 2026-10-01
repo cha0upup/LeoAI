@@ -1,8 +1,8 @@
 package org.leo.web.security;
 
-import org.leo.core.entity.PuppetDatabaseConnection;
+import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.entity.User;
-import org.leo.service.PuppetDatabaseConnectionService;
+import org.leo.service.AgentDatabaseConnectionService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Component;
 
@@ -19,14 +19,14 @@ public final class DatabaseConnectionResolver {
 
     private static final String CONNECTION_ID = "connectionId";
 
-    private final PuppetDatabaseConnectionService connectionService;
+    private final AgentDatabaseConnectionService connectionService;
 
-    public DatabaseConnectionResolver(PuppetDatabaseConnectionService connectionService) {
+    public DatabaseConnectionResolver(AgentDatabaseConnectionService connectionService) {
         this.connectionService = connectionService;
     }
 
     public Map<String, Object> resolve(Map<String, Object> supplied,
-                                       String expectedPuppetId,
+                                       String expectedAgentId,
                                        User currentUser) {
         if (supplied == null) {
             throw ApiException.badRequest("connection 不能为空");
@@ -39,13 +39,13 @@ public final class DatabaseConnectionResolver {
             throw ApiException.unauthorized("用户未登录");
         }
 
-        PuppetDatabaseConnection saved = connectionService.findById(connectionId);
+        AgentDatabaseConnection saved = connectionService.findById(connectionId);
         if (saved == null) {
             throw ApiException.notFound("数据库连接配置不存在");
         }
-        if (expectedPuppetId == null || expectedPuppetId.isBlank()
-                || !Objects.equals(saved.getPuppetId(), expectedPuppetId)) {
-            throw ApiException.forbidden("数据库连接配置与当前 Puppet 不匹配");
+        if (expectedAgentId == null || expectedAgentId.isBlank()
+                || !Objects.equals(saved.getAgentId(), expectedAgentId)) {
+            throw ApiException.forbidden("数据库连接配置与当前 Agent 不匹配");
         }
         return connectionService.toActiveConnectionSpec(saved).toMap();
     }

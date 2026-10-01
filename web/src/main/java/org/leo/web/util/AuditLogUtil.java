@@ -2,9 +2,9 @@ package org.leo.web.util;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AuditLog;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.agent.AbstractAgentNode;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
 import org.leo.service.audit.AuditParameterSanitizer;
@@ -81,7 +81,7 @@ public class AuditLogUtil {
     /**
      * 记录审计日志
      * 
-     * @param puppetNode Puppet实体（包含用户和主机信息）
+     * @param agentNode Agent实体（包含用户和主机信息）
      * @param operationType 操作类型
      * @param operationName 操作名称
      * @param operationPath 操作路径
@@ -92,7 +92,7 @@ public class AuditLogUtil {
      * @param errorMessage 错误信息
      * @param clientIp 客户端IP
      */
-    public static void logOperation(AbstractPuppetNode puppetNode,
+    public static void logOperation(AbstractAgentNode agentNode,
                                     String operationType,
                                     String operationName,
                                     String operationPath,
@@ -110,17 +110,17 @@ public class AuditLogUtil {
             AuditLog auditLog = new AuditLog();
             
             // 设置用户信息
-            if (puppetNode != null && puppetNode.getUser() != null) {
-                User user = puppetNode.getUser();
+            if (agentNode != null && agentNode.getUser() != null) {
+                User user = agentNode.getUser();
                 auditLog.setUserId(user.getUserId());
                 auditLog.setUserName(user.getUserName());
             }
             
             // 设置主机信息
-            if (puppetNode != null && puppetNode.getPuppet() != null) {
-                Puppet puppet = puppetNode.getPuppet();
-                auditLog.setPuppetId(puppet.getPuppetId());
-                auditLog.setPuppetName(puppet.getPuppetName());
+            if (agentNode != null && agentNode.getAgent() != null) {
+                Agent agent = agentNode.getAgent();
+                auditLog.setAgentId(agent.getAgentId());
+                auditLog.setAgentName(agent.getAgentName());
             }
             
             // 设置会话ID（从请求参数中提取）
@@ -140,7 +140,7 @@ public class AuditLogUtil {
     }
 
     /**
-     * 记录系统侧操作，不要求绑定 Puppet 会话。
+     * 记录系统侧操作，不要求绑定 Agent 会话。
      */
     public static void logSystemOperation(User user,
                                           String operationType,
@@ -178,7 +178,7 @@ public class AuditLogUtil {
     /**
      * 记录成功操作的审计日志
      */
-    public static void logSuccess(AbstractPuppetNode puppetNode,
+    public static void logSuccess(AbstractAgentNode agentNode,
                                   String operationType,
                                   String operationName,
                                   String operationPath,
@@ -186,35 +186,35 @@ public class AuditLogUtil {
                                   Integer responseCode,
                                   String responseMessage,
                                   String clientIp) {
-        logOperation(puppetNode, operationType, operationName, operationPath,
+        logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, "SUCCESS", null, clientIp);
     }
     
     /**
      * 记录失败操作的审计日志
      */
-    public static void logFailure(AbstractPuppetNode puppetNode,
+    public static void logFailure(AbstractAgentNode agentNode,
                                   String operationType,
                                   String operationName,
                                   String operationPath,
                                   Map<String, Object> requestParams,
                                   String errorMessage,
                                   String clientIp) {
-        logOperation(puppetNode, operationType, operationName, operationPath,
+        logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, null, null, "FAILED", errorMessage, clientIp);
     }
     
     /**
      * 记录错误操作的审计日志
      */
-    public static void logError(AbstractPuppetNode puppetNode,
+    public static void logError(AbstractAgentNode agentNode,
                                String operationType,
                                String operationName,
                                String operationPath,
                                Map<String, Object> requestParams,
                                String errorMessage,
                                String clientIp) {
-        logOperation(puppetNode, operationType, operationName, operationPath,
+        logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, null, null, "ERROR", errorMessage, clientIp);
     }
 

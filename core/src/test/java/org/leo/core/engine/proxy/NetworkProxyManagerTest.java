@@ -2,7 +2,7 @@ package org.leo.core.engine.proxy;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
 
 import java.net.ServerSocket;
 import java.util.List;

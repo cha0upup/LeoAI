@@ -1,12 +1,12 @@
 package org.leo.web.controller.platform.session;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
-import org.leo.service.PuppetService;
+import org.leo.service.AgentService;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkChainResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkItem;
 import org.leo.web.dto.platform.session.SessionDtos.SessionInfo;
@@ -42,12 +42,12 @@ import java.util.stream.Collectors;
 @RequestMapping("/platform/session")
 public class SessionManageController {
 
-    private final PuppetService puppetService;
+    private final AgentService agentService;
     private final SessionLifecycleManager sessionLifecycleManager;
 
-    public SessionManageController(PuppetService puppetService,
+    public SessionManageController(AgentService agentService,
                                    SessionLifecycleManager sessionLifecycleManager) {
-        this.puppetService = puppetService;
+        this.agentService = agentService;
         this.sessionLifecycleManager = sessionLifecycleManager;
     }
 
@@ -59,7 +59,7 @@ public class SessionManageController {
             HttpServletRequest request,
             @RequestParam(value = "projectId", required = false) String projectId) {
         User user = ControllerUtil.getCurrentUser(request);
-        Map<String, PuppetNodeSession> sessionMap = PuppetNodeSessionContainer.getAllSession();
+        Map<String, AgentNodeSession> sessionMap = AgentNodeSessionContainer.getAllSessions();
 
         Set<SessionInfo> sessions = sessionMap.entrySet().stream()
                 .filter(e -> isValidSession(e.getValue()))
@@ -78,7 +78,7 @@ public class SessionManageController {
     @PostMapping("/sessions/delete")
     public HashMap<String, Object> deleteSession(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        ControllerUtil.getPuppetNodeSession(sessionId);
+        ControllerUtil.getAgentNodeSession(sessionId);
         try {
             sessionLifecycleManager.destroy(sessionId, true);
         } catch (IllegalStateException error) {
@@ -93,14 +93,14 @@ public class SessionManageController {
     @PostMapping("/conn-link-chain")
     public HashMap<String, Object> getConnLinkChain(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
 
         List<ConnLinkItem> chain;
         if (session.isCacheMode()) {
             chain = buildCacheModeChain(session);
         } else {
-            if (session.getPuppetNode() == null || session.getPuppetNode().getPuppet() == null) {
-                throw ApiException.badRequest("会话中不存在 Puppet 实体: " + sessionId);
+            if (session.getAgentNode() == null || session.getAgentNode().getAgent() == null) {
+                throw ApiException.badRequest("会话中不存在 Agent 实体: " + sessionId);
             }
             chain = buildLiveChain(session);
         }
@@ -110,21 +110,21 @@ public class SessionManageController {
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────
 
-    private boolean isValidSession(PuppetNodeSession session) {
+    private boolean isValidSession(AgentNodeSession session) {
         return session != null
-                && session.getPuppetNode() != null
-                && session.getPuppetNode().getPuppet() != null;
+                && session.getAgentNode() != null
+                && session.getAgentNode().getAgent() != null;
     }
 
-    private SessionInfo toSessionInfo(String sessionId, PuppetNodeSession session) {
-        Puppet puppet = session.getPuppetNode().getPuppet();
+    private SessionInfo toSessionInfo(String sessionId, AgentNodeSession session) {
+        Agent agent = session.getAgentNode().getAgent();
         return new SessionInfo(
                 sessionId,
                 session.getProjectId(),
-                puppet.getPuppetId(),
-                puppet.getPuppetName(),
-                puppet.getConnLink(),
-                puppet.getParentPuppetId(),
+                agent.getAgentId(),
+                agent.getAgentName(),
+                agent.getConnLink(),
+                agent.getParentAgentId(),
                 session.getUpdateTime(),
                 session.getLastActiveTime(),
                 session.isCacheMode(),
@@ -132,36 +132,36 @@ public class SessionManageController {
                 session.getCurrentHostId());
     }
 
-    private List<ConnLinkItem> buildCacheModeChain(PuppetNodeSession session) {
+    private List<ConnLinkItem> buildCacheModeChain(AgentNodeSession session) {
         List<ConnLinkItem> chain = new ArrayList<>();
-        String pId = session.getPuppetId();
+        String pId = session.getAgentId();
         if (pId != null && !pId.isBlank()) {
-            Puppet puppet = puppetService.findPuppetById(pId);
-            if (puppet != null) {
-                chain.add(toConnLinkItem(puppet));
+            Agent agent = agentService.findAgentById(pId);
+            if (agent != null) {
+                chain.add(toConnLinkItem(agent));
             }
         }
         return chain;
     }
 
-    private List<ConnLinkItem> buildLiveChain(PuppetNodeSession session) {
-        return session.buildConnLinkChain(puppetService::findPuppetById)
+    private List<ConnLinkItem> buildLiveChain(AgentNodeSession session) {
+        return session.buildConnLinkChain(agentService::findAgentById)
                 .stream()
                 .map(m -> new ConnLinkItem(
-                        str(m, "puppetId"),
-                        str(m, "puppetName"),
+                        str(m, "agentId"),
+                        str(m, "agentName"),
                         str(m, "connLink"),
-                        str(m, "parentPuppetId"),
+                        str(m, "parentAgentId"),
                         str(m, "protocol")))
                 .toList();
     }
 
-    private ConnLinkItem toConnLinkItem(Puppet p) {
+    private ConnLinkItem toConnLinkItem(Agent p) {
         return new ConnLinkItem(
-                p.getPuppetId(),
-                p.getPuppetName(),
+                p.getAgentId(),
+                p.getAgentName(),
                 p.getConnLink(),
-                p.getParentPuppetId(),
+                p.getParentAgentId(),
                 p.getProtocol());
     }
 

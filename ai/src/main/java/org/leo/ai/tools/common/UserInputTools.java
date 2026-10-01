@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
-/** Platform 与 Puppet Agent 共用的结构化提问工具。 */
+/** Platform AI 与 Node AI 共用的结构化提问工具。 */
 @Component
 @AiToolPolicy(
         kind = AiToolKind.CONTROL,

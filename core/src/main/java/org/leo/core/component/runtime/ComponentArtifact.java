@@ -1,6 +1,6 @@
 package org.leo.core.component.runtime;
 
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 
 /** Immutable runtime-specific component payload. */
 public final class ComponentArtifact {
@@ -8,17 +8,17 @@ public final class ComponentArtifact {
     private final String componentId;
     private final String version;
     private final String digest;
-    private final PuppetRuntime runtime;
+    private final AgentRuntime runtime;
     private final ComponentDeliveryMode deliveryMode;
     private final byte[] content;
 
     public ComponentArtifact(String componentId, String version, String digest,
-                             PuppetRuntime runtime, ComponentDeliveryMode deliveryMode,
+                             AgentRuntime runtime, ComponentDeliveryMode deliveryMode,
                              byte[] content) {
         if (componentId == null || componentId.isBlank()) {
             throw new IllegalArgumentException("componentId不能为空");
         }
-        if (runtime == null || runtime == PuppetRuntime.UNKNOWN) {
+        if (runtime == null || runtime == AgentRuntime.UNKNOWN) {
             throw new IllegalArgumentException("component runtime不能为空或unknown");
         }
         if (deliveryMode == null) {
@@ -44,7 +44,7 @@ public final class ComponentArtifact {
         return digest;
     }
 
-    public PuppetRuntime getRuntime() {
+    public AgentRuntime getRuntime() {
         return runtime;
     }
 

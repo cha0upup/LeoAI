@@ -66,7 +66,7 @@ public class ExecCommandSimpleComponent implements Runnable {
             return;
         }
 
-        // Puppet 框架入口：获取参数、调用业务逻辑、回写结果
+        // Agent 框架入口：获取参数、调用业务逻辑、回写结果
         java.lang.reflect.InvocationHandler h =
                 (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {

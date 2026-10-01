@@ -1,10 +1,10 @@
 package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.PuppetDatabaseConnection;
+import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.database.DatabaseConnectionSpec;
-import org.leo.service.PuppetDatabaseConnectionService;
+import org.leo.core.agent.database.DatabaseConnectionSpec;
+import org.leo.service.AgentDatabaseConnectionService;
 import org.leo.web.exception.ApiException;
 
 import java.util.LinkedHashMap;
@@ -21,14 +21,14 @@ class DatabaseConnectionResolverTest {
 
     @Test
     void keepsInlineConnectionsIndependentFromPersistence() {
-        PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
+        AgentDatabaseConnectionService service = mock(AgentDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
         Map<String, Object> supplied = new LinkedHashMap<String, Object>();
         supplied.put("dialect", "mysql");
         supplied.put("connectionMode", "standard");
         supplied.put("host", "db.internal");
 
-        Map<String, Object> resolved = resolver.resolve(supplied, "puppet-1", null);
+        Map<String, Object> resolved = resolver.resolve(supplied, "agent-1", null);
 
         assertEquals(supplied, resolved);
         assertNotSame(supplied, resolved);
@@ -36,12 +36,12 @@ class DatabaseConnectionResolverTest {
     }
 
     @Test
-    void resolvesConnectionReferencesOnlyAfterPuppetBindingChecks() {
-        PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
+    void resolvesConnectionReferencesOnlyAfterAgentBindingChecks() {
+        AgentDatabaseConnectionService service = mock(AgentDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
-        PuppetDatabaseConnection saved = new PuppetDatabaseConnection();
+        AgentDatabaseConnection saved = new AgentDatabaseConnection();
         saved.setConnectionId("connection-1");
-        saved.setPuppetId("puppet-1");
+        saved.setAgentId("agent-1");
         saved.setCreateUserId("owner");
         saved.setStatus(1);
         User owner = user("owner");
@@ -53,32 +53,32 @@ class DatabaseConnectionResolverTest {
         when(service.toActiveConnectionSpec(saved)).thenReturn(spec);
 
         Map<String, Object> resolved = resolver.resolve(
-                Map.of("connectionId", " connection-1 "), "puppet-1", owner);
+                Map.of("connectionId", " connection-1 "), "agent-1", owner);
 
         assertEquals("db.internal", resolved.get("host"));
         assertEquals("connection-1", resolver.reference(Map.of("connectionId", " connection-1 ")));
     }
 
     @Test
-    void rejectsMissingProfilesCrossPuppetUseAndAnonymousCredentialResolution() {
-        PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
+    void rejectsMissingProfilesCrossAgentUseAndAnonymousCredentialResolution() {
+        AgentDatabaseConnectionService service = mock(AgentDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
-        PuppetDatabaseConnection saved = new PuppetDatabaseConnection();
+        AgentDatabaseConnection saved = new AgentDatabaseConnection();
         saved.setConnectionId("connection-1");
-        saved.setPuppetId("puppet-1");
+        saved.setAgentId("agent-1");
         saved.setCreateUserId("owner");
         when(service.findById("connection-1")).thenReturn(saved);
 
         ApiException anonymous = assertThrows(ApiException.class,
-                () -> resolver.resolve(Map.of("connectionId", "connection-1"), "puppet-1", null));
-        ApiException wrongPuppet = assertThrows(ApiException.class,
-                () -> resolver.resolve(Map.of("connectionId", "connection-1"), "puppet-2", user("owner")));
+                () -> resolver.resolve(Map.of("connectionId", "connection-1"), "agent-1", null));
+        ApiException wrongAgent = assertThrows(ApiException.class,
+                () -> resolver.resolve(Map.of("connectionId", "connection-1"), "agent-2", user("owner")));
         when(service.findById("missing")).thenReturn(null);
         ApiException missing = assertThrows(ApiException.class,
-                () -> resolver.resolve(Map.of("connectionId", "missing"), "puppet-1", user("owner")));
+                () -> resolver.resolve(Map.of("connectionId", "missing"), "agent-1", user("owner")));
 
         assertEquals(401, anonymous.getHttpStatus().value());
-        assertEquals(403, wrongPuppet.getHttpStatus().value());
+        assertEquals(403, wrongAgent.getHttpStatus().value());
         assertEquals(404, missing.getHttpStatus().value());
     }
 

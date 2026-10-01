@@ -3,7 +3,7 @@ package org.leo.web.controller.platform.user;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
 import org.springframework.mock.web.MockHttpServletRequest;
 
@@ -23,7 +23,7 @@ class UserFileControllerTest {
 
     @AfterEach
     void cleanWorkspace() throws Exception {
-        Path userDir = PuppetNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
+        Path userDir = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
                 .toPath().toAbsolutePath().normalize().getParent();
         if (userDir == null || !Files.exists(userDir)) return;
         try (var paths = Files.walk(userDir)) {
@@ -48,7 +48,7 @@ class UserFileControllerTest {
         assertEquals(200, created.get("code"));
         assertEquals(409, conflict.get("code"));
         assertEquals(200, overwritten.get("code"));
-        Path file = PuppetNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
+        Path file = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
                 .toPath().resolve("notes/report.md");
         assertEquals("second", Files.readString(file));
     }

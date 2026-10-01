@@ -6,9 +6,9 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.agent.AiAsyncExecutionConfig;
-import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.repository.session.PuppetReconRepository;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.core.repository.session.AgentReconRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -75,12 +75,12 @@ public class AutoReconAppendService {
     private final ChatModel chatModel;
     private final ReconSummaryDigestService reconSummaryDigestService;
     private final ReconSummaryOrganizeService reconSummaryOrganizeService;
-    private final PuppetReconRepository reconRepository;
+    private final AgentReconRepository reconRepository;
 
     public AutoReconAppendService(ChatModel chatModel,
                                   ReconSummaryDigestService reconSummaryDigestService,
                                   ReconSummaryOrganizeService reconSummaryOrganizeService,
-                                  PuppetReconRepository reconRepository) {
+                                  AgentReconRepository reconRepository) {
         this.chatModel = chatModel;
         this.reconSummaryDigestService = reconSummaryDigestService;
         this.reconSummaryOrganizeService = reconSummaryOrganizeService;
@@ -98,7 +98,7 @@ public class AutoReconAppendService {
     public void analyzeAndAppend(String sessionId, String toolName, String toolOutput) {
         if (toolOutput == null || toolOutput.trim().length() < MIN_CONTENT_LEN) return;
 
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
+        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
         if (session == null) return;
 
         if (!analysisSemaphore.tryAcquire()) {

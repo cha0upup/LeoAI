@@ -6,32 +6,32 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.service.tool.AiServiceTool;
 import dev.langchain4j.service.tool.ToolService;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
-import org.leo.ai.tools.common.AgentWorkspaceTools;
+import org.leo.ai.tools.common.AiWorkspaceCommandTools;
+import org.leo.ai.tools.common.AiWorkspaceTools;
 import org.leo.ai.tools.common.PlanTools;
 import org.leo.ai.tools.common.UserInputTools;
 import org.leo.ai.tools.common.WebResearchTools;
 import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
 import org.leo.ai.tools.platform.PluginTools;
-import org.leo.ai.tools.platform.PuppetTools;
+import org.leo.ai.tools.platform.AgentTools;
 import org.leo.ai.tools.platform.ShellGeneratorTools;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
-import org.leo.ai.tools.puppetnode.BasicInfoTools;
-import org.leo.ai.tools.puppetnode.CommandTools;
-import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
-import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
-import org.leo.ai.tools.puppetnode.FileTools;
-import org.leo.ai.tools.puppetnode.HttpRequestTools;
-import org.leo.ai.tools.puppetnode.JavaPluginTools;
-import org.leo.ai.tools.puppetnode.ResourceTools;
-import org.leo.ai.tools.puppetnode.ReverseTunnelTools;
-import org.leo.ai.tools.puppetnode.ScanTools;
-import org.leo.ai.tools.puppetnode.ScriptTools;
-import org.leo.ai.tools.puppetnode.SqlTools;
-import org.leo.ai.tools.puppetnode.WebRuntimeTools;
+import org.leo.ai.tools.agentnode.BasicInfoTools;
+import org.leo.ai.tools.agentnode.CommandTools;
+import org.leo.ai.tools.agentnode.CredentialHarvestTools;
+import org.leo.ai.tools.agentnode.DatabaseConnectionTools;
+import org.leo.ai.tools.agentnode.FileTools;
+import org.leo.ai.tools.agentnode.HttpRequestTools;
+import org.leo.ai.tools.agentnode.JavaPluginTools;
+import org.leo.ai.tools.agentnode.ResourceTools;
+import org.leo.ai.tools.agentnode.ReverseTunnelTools;
+import org.leo.ai.tools.agentnode.ScanTools;
+import org.leo.ai.tools.agentnode.ScriptTools;
+import org.leo.ai.tools.agentnode.SqlTools;
+import org.leo.ai.tools.agentnode.WebRuntimeTools;
 import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.ai.service.AiUserInputService;
 
@@ -52,10 +52,10 @@ import static org.mockito.Mockito.mock;
 class AiToolCatalogContractTest {
 
     private static final List<Class<?>> TOOL_CLASSES = List.of(
-            AgentWorkspaceCommandTools.class, AgentWorkspaceTools.class, PlanTools.class,
+            AiWorkspaceCommandTools.class, AiWorkspaceTools.class, PlanTools.class,
             UserInputTools.class, WebResearchTools.class,
             DisguiseTools.class, FingerprintTools.class, PluginTools.class,
-            PuppetTools.class, ShellGeneratorTools.class, SkillActivationTools.class,
+            AgentTools.class, ShellGeneratorTools.class, SkillActivationTools.class,
             TeamTools.class, UserTools.class,
             BasicInfoTools.class,
             CommandTools.class, CredentialHarvestTools.class,
@@ -97,7 +97,7 @@ class AiToolCatalogContractTest {
         assertEquals(List.of("prompt"), inputRequired);
 
         AiServiceTool planTool = namedTool(ToolService.findTools(new PlanTools(
-                mock(AgentRuntimeResolver.class), mock(AiPlanCoordinator.class))), "createPlan");
+                mock(AiRuntimeResolver.class), mock(AiPlanCoordinator.class))), "createPlan");
         JsonObjectSchema parameters = planTool.toolSpecification().parameters();
         assertEquals(Set.of("title", "goal", "steps"), Set.copyOf(parameters.required()));
         JsonArraySchema steps = assertInstanceOf(

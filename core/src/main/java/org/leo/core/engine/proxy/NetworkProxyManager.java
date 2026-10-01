@@ -5,11 +5,11 @@ import org.leo.core.engine.http.HttpProxyServer;
 import org.leo.core.engine.reverse.ReverseTunnelServer;
 import org.leo.core.engine.socks5.Socks5ProxyServer;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.capability.ComponentInvokeCapable;
-import org.leo.core.puppet.capability.HttpProxyCapable;
-import org.leo.core.puppet.capability.LocalForwardCapable;
-import org.leo.core.puppet.capability.ReverseTunnelCapable;
-import org.leo.core.puppet.capability.Socks5ProxyCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.HttpProxyCapable;
+import org.leo.core.agent.capability.LocalForwardCapable;
+import org.leo.core.agent.capability.ReverseTunnelCapable;
+import org.leo.core.agent.capability.Socks5ProxyCapable;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,15 +24,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyCapable,
         LocalForwardCapable, ReverseTunnelCapable, AutoCloseable {
 
-    private final ComponentInvokeCapable puppetNode;
+    private final ComponentInvokeCapable agentNode;
     private final Map<Integer, LocalForwardServer> localForwards = new ConcurrentHashMap<>();
     private final Map<String, ReverseTunnelServer> reverseTunnels = new ConcurrentHashMap<>();
     private Socks5ProxyServer socks5Proxy;
     private HttpProxyServer httpProxy;
 
-    public NetworkProxyManager(ComponentInvokeCapable puppetNode) {
-        if (puppetNode == null) throw new IllegalArgumentException("puppetNode不能为空");
-        this.puppetNode = puppetNode;
+    public NetworkProxyManager(ComponentInvokeCapable agentNode) {
+        if (agentNode == null) throw new IllegalArgumentException("agentNode不能为空");
+        this.agentNode = agentNode;
     }
 
     @Override
@@ -45,7 +45,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
             }
             return listenerResult(socks5Proxy, "already running");
         }
-        Socks5ProxyServer server = new Socks5ProxyServer(puppetNode, port, address);
+        Socks5ProxyServer server = new Socks5ProxyServer(agentNode, port, address);
         server.start();
         socks5Proxy = server;
         return listenerResult(server, "started");
@@ -84,7 +84,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
             }
             return listenerResult(httpProxy, "already running");
         }
-        HttpProxyServer server = new HttpProxyServer(puppetNode, port, address);
+        HttpProxyServer server = new HttpProxyServer(agentNode, port, address);
         server.start();
         httpProxy = server;
         return listenerResult(server, "started");
@@ -124,7 +124,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         if (localForwards.containsKey(localPort)) {
             return result(409, "forward already exists", "localPort", localPort);
         }
-        LocalForwardServer server = new LocalForwardServer(puppetNode, localPort, address, targetHost.trim(), targetPort);
+        LocalForwardServer server = new LocalForwardServer(agentNode, localPort, address, targetHost.trim(), targetPort);
         server.start();
         localForwards.put(localPort, server);
         Map<String, Object> response = result(200, "started", "localPort", localPort);
@@ -183,7 +183,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
                 return result(409, "reverse tunnel already exists", "remoteListenPort", remoteListenPort);
             }
         }
-        ReverseTunnelServer server = new ReverseTunnelServer(puppetNode, remoteListenPort,
+        ReverseTunnelServer server = new ReverseTunnelServer(agentNode, remoteListenPort,
                 normalizeBindAddress(bindAddr), forwardHost.trim(), forwardPort);
         String listenId = server.getListenId();
         server.setOnDead(() -> reverseTunnels.remove(listenId, server));
@@ -260,11 +260,11 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         if (port < 1 || port > 65535) throw new IllegalArgumentException(name + "必须在1到65535之间");
     }
 
-    private void requireTarget(String host, int port, String hostName, String portName) {
+    private void requireTarget(String host, int port, String hostParameterName, String portParameterName) {
         if (host == null || host.isBlank() || host.indexOf('\0') >= 0) {
-            throw new IllegalArgumentException(hostName + "不能为空");
+            throw new IllegalArgumentException(hostParameterName + "不能为空");
         }
-        requirePort(port, portName);
+        requirePort(port, portParameterName);
     }
 
     private String normalizeBindAddress(String bindAddr) {

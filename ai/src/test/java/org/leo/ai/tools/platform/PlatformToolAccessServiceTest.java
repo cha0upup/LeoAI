@@ -4,7 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.service.user.UserService;
 
@@ -24,43 +24,43 @@ class PlatformToolAccessServiceTest {
     }
 
     @Test
-    void filtersPuppetsByOwnerTeamAndPublicScope() {
+    void filtersAgentsByOwnerTeamAndPublicScope() {
         UserService users = mock(UserService.class);
         User caller = user("caller", "normal", "team-a");
         when(users.getUserById("caller")).thenReturn(caller);
         PlatformToolAccessService access = new PlatformToolAccessService(users);
         AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(caller));
 
-        List<Puppet> visible = access.filterVisible(List.of(
-                puppet("owned", "caller", null, "private"),
-                puppet("team", "other", "team-a", "team"),
-                puppet("public", "other", null, "public"),
-                puppet("private", "other", null, "private")));
+        List<Agent> visible = access.filterVisible(List.of(
+                agent("owned", "caller", null, "private"),
+                agent("team", "other", "team-a", "team"),
+                agent("public", "other", null, "public"),
+                agent("private", "other", null, "private")));
 
         assertEquals(List.of("owned", "team", "public"),
-                visible.stream().map(Puppet::getPuppetId).toList());
+                visible.stream().map(Agent::getAgentId).toList());
     }
 
     @Test
-    void onlyLeaderCanModifyTeamPuppetOwnedByAnotherUser() {
+    void onlyLeaderCanModifyTeamAgentOwnedByAnotherUser() {
         UserService users = mock(UserService.class);
         PlatformToolAccessService access = new PlatformToolAccessService(users);
-        Puppet teamPuppet = puppet("team", "other", "team-a", "team");
+        Agent teamAgent = agent("team", "other", "team-a", "team");
         User normal = user("normal", "normal", "team-a");
         User leader = user("leader", "leader", "team-a");
 
-        assertFalse(access.canModify(teamPuppet, normal));
-        assertTrue(access.canModify(teamPuppet, leader));
+        assertFalse(access.canModify(teamAgent, normal));
+        assertTrue(access.canModify(teamAgent, leader));
     }
 
-    private static Puppet puppet(String id, String owner,
+    private static Agent agent(String id, String owner,
                                  String teamId, String permission) {
-        Puppet puppet = new Puppet();
-        puppet.setPuppetId(id);
-        puppet.setCreateByUserId(owner);
-        puppet.setTeamId(teamId);
-        puppet.setPermission(permission);
-        return puppet;
+        Agent agent = new Agent();
+        agent.setAgentId(id);
+        agent.setCreateByUserId(owner);
+        agent.setTeamId(teamId);
+        agent.setPermission(permission);
+        return agent;
     }
 
     private static User user(String id, String privilege, String teamId) {

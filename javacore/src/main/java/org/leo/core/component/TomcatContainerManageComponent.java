@@ -300,10 +300,10 @@ public class TomcatContainerManageComponent implements Runnable {
                 contextInfo.put("basePath", String.valueOf(getFV(context, "path")));
 
                 // 获取各类组件信息
-                contextInfo.put("allFilter", getAllFilter(context));
-                contextInfo.put("allServlet", getAllServlet(context));
-                contextInfo.put("allValve", getAllValve(context));
-                contextInfo.put("allListener", getAllListener(context)); // 新增：获取监听器
+                contextInfo.put("allFilter", getAllFilters(context));
+                contextInfo.put("allServlet", getAllServlets(context));
+                contextInfo.put("allValve", getAllValves(context));
+                contextInfo.put("allListener", getAllListeners(context)); // 新增：获取监听器
 
                 runtimeContexts.add(contextInfo);
             } catch (Exception e) {
@@ -365,7 +365,7 @@ public class TomcatContainerManageComponent implements Runnable {
         return false;
     }
 
-    public ArrayList getAllValve(Object standardContext) {
+    public ArrayList getAllValves(Object standardContext) {
         ArrayList valveInfoList = new ArrayList();
         try {
             // 逐级向上追踪：Context -> Host -> Engine
@@ -386,7 +386,7 @@ public class TomcatContainerManageComponent implements Runnable {
     }
 
     /**
-     * 通用的 Pipeline Valve 收集逻辑，避免 getAllValve 中重复代码
+     * 通用的 Pipeline Valve 收集逻辑，避免 getAllValves 中重复代码
      */
     private void addPipelineValves(Object container, ArrayList valveInfoList) throws Exception {
         Object pipeline = invokeMethod(container, "getPipeline");
@@ -405,7 +405,7 @@ public class TomcatContainerManageComponent implements Runnable {
         }
     }
 
-    public ArrayList getAllFilter(Object standardContext) {
+    public ArrayList getAllFilters(Object standardContext) {
         ArrayList filters = new ArrayList();
         try {
             Object[] filterMaps = (Object[]) invokeMethod(standardContext, "findFilterMaps");
@@ -441,7 +441,7 @@ public class TomcatContainerManageComponent implements Runnable {
         return filters;
     }
 
-    public ArrayList getAllServlet(Object standardContext) {
+    public ArrayList getAllServlets(Object standardContext) {
         ArrayList servlets = new ArrayList();
         try {
             String[] patterns;
@@ -479,7 +479,7 @@ public class TomcatContainerManageComponent implements Runnable {
             return servlets;
         }
     }
-    public ArrayList getAllListener(Object standardContext) {
+    public ArrayList getAllListeners(Object standardContext) {
         ArrayList listeners = new ArrayList();
         // 同时收集事件监听器和生命周期监听器
         //   - getApplicationEventListeners → ServletRequestListener / ServletContextAttributeListener / HttpSessionAttributeListener 等

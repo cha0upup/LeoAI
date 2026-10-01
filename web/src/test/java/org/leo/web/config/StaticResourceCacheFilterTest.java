@@ -18,7 +18,7 @@ class StaticResourceCacheFilterTest {
         assertHtmlIsNotCached("/");
         assertHtmlIsNotCached("/index.html");
         assertHtmlIsNotCached("/change-password");
-        assertHtmlIsNotCached("/main/puppet/HOME");
+        assertHtmlIsNotCached("/main/agent/HOME");
     }
 
     @Test

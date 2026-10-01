@@ -11,7 +11,7 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.AgentConfigRequest;
+import org.leo.web.dto.platform.ai.PlatformAiDtos.AiAgentConfigRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.ChatRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
@@ -196,7 +196,7 @@ public class PlatformAiController {
     }
 
     @PostMapping("/createAgent")
-    public Map<String, Object> createAgent(@RequestBody(required = false) AgentConfigRequest body,
+    public Map<String, Object> createAgent(@RequestBody(required = false) AiAgentConfigRequest body,
                                            HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         Integer configId = body != null ? body.configId() : null;
@@ -208,7 +208,7 @@ public class PlatformAiController {
      * 热切换 AI 通道。
      */
     @PostMapping("/switchChannel")
-    public Map<String, Object> switchChannel(@RequestBody(required = false) AgentConfigRequest body,
+    public Map<String, Object> switchChannel(@RequestBody(required = false) AiAgentConfigRequest body,
                                              HttpServletRequest request) {
         Integer configId = body != null ? body.configId() : null;
         PlatformAiState state = threadService.requireOwnedRuntime(
@@ -305,7 +305,7 @@ public class PlatformAiController {
                 body.offset(), body.limit()));
     }
 
-    /** 加载当前平台 AI 线程派发过的 Puppet AI 子任务。 */
+    /** 加载当前平台 AI 线程派发过的 Node AI 子任务。 */
     @PostMapping("/subagents")
     public Map<String, Object> subagents(
             @RequestBody PlatformAiDtos.ThreadIdRequest body,

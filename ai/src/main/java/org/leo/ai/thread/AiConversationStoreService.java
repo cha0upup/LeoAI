@@ -25,7 +25,7 @@ import java.util.UUID;
 @Service
 public class AiConversationStoreService {
 
-    public static final String SCOPE_PUPPET = "puppet";
+    public static final String SCOPE_AGENT = "agent";
     public static final String SCOPE_PLATFORM = "platform";
     public static final String MESSAGE_PENDING = "pending";
     public static final String MESSAGE_COMMITTED = "committed";
@@ -63,11 +63,11 @@ public class AiConversationStoreService {
         this.checkpoints = checkpoints;
     }
 
-    public List<AiThreadRecord> listPuppetThreads(String userId, String puppetId) {
-        if (isBlank(puppetId)) {
+    public List<AiThreadRecord> listAgentThreads(String userId, String agentId) {
+        if (isBlank(agentId)) {
             return List.of();
         }
-        return mapper.listThreads(SCOPE_PUPPET, userId, puppetId);
+        return mapper.listThreads(SCOPE_AGENT, userId, agentId);
     }
 
     public List<AiThreadRecord> listPlatformThreads(String userId) {
@@ -84,13 +84,13 @@ public class AiConversationStoreService {
         return mapper.findThread(threadId);
     }
 
-    public void createPuppetThread(String userId, String puppetId, String sessionId,
+    public void createAgentThread(String userId, String agentId, String sessionId,
                                    AiThread thread, AiModelConfig config) {
         AiThreadRecord row = new AiThreadRecord();
         row.setThreadId(thread.getThreadId());
-        row.setScope(SCOPE_PUPPET);
+        row.setScope(SCOPE_AGENT);
         row.setUserId(userId);
-        row.setPuppetId(puppetId);
+        row.setAgentId(agentId);
         row.setSessionId(sessionId);
         row.setTitle(thread.getTitle());
         applyConfig(row, config);

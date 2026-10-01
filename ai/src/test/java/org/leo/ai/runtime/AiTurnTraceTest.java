@@ -42,7 +42,7 @@ class AiTurnTraceTest {
     @Test
     void telemetryRecordsATraceExactlyOnce() {
         AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "puppet", "thread-1",
+                "trace-1", "agent", "thread-1",
                 System.currentTimeMillis());
         trace.finish(
                 AiTurnOutcome.FAILED,

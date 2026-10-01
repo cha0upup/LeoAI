@@ -7,7 +7,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import java.util.stream.Stream;
-import org.leo.core.puppet.capability.NetworkProbeCapable;
+import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
 import org.leo.service.discovery.NetworkDiscoveryDtos.*;

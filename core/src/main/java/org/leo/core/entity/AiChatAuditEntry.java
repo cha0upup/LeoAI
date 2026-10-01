@@ -10,7 +10,7 @@ import java.util.UUID;
  */
 public class AiChatAuditEntry {
 
-    public enum SessionType { PLATFORM, PUPPET }
+    public enum SessionType { PLATFORM, AGENT }
 
     /** 记录 ID（epoch 毫秒 + 随机后缀） */
     private String id;
@@ -18,7 +18,7 @@ public class AiChatAuditEntry {
     private long timestamp;
     /** 会话类型 */
     private SessionType sessionType;
-    /** Puppet 会话 ID（PUPPET 类型时有值） */
+    /** Agent 会话 ID（AGENT 类型时有值） */
     private String sessionId;
     /** 用户 ID */
     private String userId;
@@ -47,9 +47,9 @@ public class AiChatAuditEntry {
         return create(SessionType.PLATFORM, null, userId, userName, privilege, message);
     }
 
-    public static AiChatAuditEntry puppet(String sessionId, String userId, String userName,
+    public static AiChatAuditEntry agent(String sessionId, String userId, String userName,
                                           String privilege, String message) {
-        return create(SessionType.PUPPET, sessionId, userId, userName, privilege, message);
+        return create(SessionType.AGENT, sessionId, userId, userName, privilege, message);
     }
 
     private static AiChatAuditEntry create(SessionType type, String sessionId,

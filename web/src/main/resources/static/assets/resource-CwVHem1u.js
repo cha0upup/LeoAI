@@ -1,1 +1,0 @@
-import{n as e}from"./http-D-kiFYGg.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};

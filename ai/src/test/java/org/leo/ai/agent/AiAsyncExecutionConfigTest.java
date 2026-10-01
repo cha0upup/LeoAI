@@ -34,7 +34,7 @@ class AiAsyncExecutionConfigTest {
         assertDedicatedExecutor(
                 ReconSummaryDigestService.class.getMethod(
                         "generateAndSaveAsync",
-                        org.leo.core.session.PuppetNodeSession.class));
+                        org.leo.core.session.AgentNodeSession.class));
         assertDedicatedExecutor(
                 AutoReconAppendService.class.getMethod(
                         "analyzeAndAppend",

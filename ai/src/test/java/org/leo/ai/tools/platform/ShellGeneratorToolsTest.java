@@ -10,7 +10,7 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
-import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.AgentRuntime;
 import org.leo.jmg.generation.WebShellWrapperContract;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
@@ -67,7 +67,7 @@ class ShellGeneratorToolsTest {
 
         GenerationRequest request = captured.get();
         assertNotNull(request);
-        assertEquals(PuppetRuntime.PHP, request.getRuntime());
+        assertEquals(AgentRuntime.PHP, request.getRuntime());
         assertEquals("webshell", request.getArtifactType());
         assertEquals("portable", request.getOptions().get("outputMode"));
         assertEquals("X-Test", request.getOptions().get("headerName"));
@@ -202,8 +202,8 @@ class ShellGeneratorToolsTest {
     private static ScriptGeneratorProvider phpProvider(AtomicReference<GenerationRequest> captured) {
         return new ScriptGeneratorProvider() {
             @Override
-            public PuppetRuntime getRuntime() {
-                return PuppetRuntime.PHP;
+            public AgentRuntime getRuntime() {
+                return AgentRuntime.PHP;
             }
 
             @Override
