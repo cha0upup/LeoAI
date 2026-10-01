@@ -5,6 +5,7 @@ import org.leo.core.entity.Project;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.ProjectMapper;
+import org.leo.dao.entity.ProjectPuppetCount;
 import org.leo.service.PuppetService;
 import org.mockito.InOrder;
 
@@ -18,8 +19,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class ProjectServiceTest {
+
+    @Test
+    void groupsAllHostCountsWithOneMapperCall() {
+        ProjectMapper mapper = mock(ProjectMapper.class);
+        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        when(mapper.countPuppetsByProject()).thenReturn(List.of(
+                new ProjectPuppetCount("project-1", 3),
+                new ProjectPuppetCount("project-2", 1)));
+
+        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countPuppetsByProject());
+        verify(mapper).countPuppetsByProject();
+    }
+
+    @Test
+    void returnsEmptyCountsWhenNoHostRelationsExist() {
+        ProjectMapper mapper = mock(ProjectMapper.class);
+        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        when(mapper.countPuppetsByProject()).thenReturn(List.of());
+
+        assertTrue(service.countPuppetsByProject().isEmpty());
+    }
 
     @Test
     void inheritsProjectScopeFromAttachedAncestorPuppet() {

@@ -52,10 +52,6 @@ public final class CapabilitySet {
         return Collections.unmodifiableList(new ArrayList<>(statuses.values()));
     }
 
-    public Map<String, CapabilityStatus> asMap() {
-        return statuses;
-    }
-
     public boolean isEmpty() {
         return statuses.isEmpty();
     }

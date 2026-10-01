@@ -63,10 +63,6 @@ public final class AiTimelineRecorder {
         return thinking.length() > 0;
     }
 
-    public boolean hasPendingText() {
-        return textSegment.length() > 0;
-    }
-
     // ── 累积 ────────────────────────────────────────────────────────────────
 
     /**

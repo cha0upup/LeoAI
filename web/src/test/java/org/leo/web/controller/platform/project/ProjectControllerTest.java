@@ -8,21 +8,76 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.service.project.ProjectService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.Map;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProjectControllerTest {
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void usesOneSessionSnapshotAndOneGroupedHostCountWithoutChangingProjectOrder() {
+        ProjectService projectService = mock(ProjectService.class);
+        PermissionService permissionService = mock(PermissionService.class);
+        ProjectController controller = new ProjectController(projectService, permissionService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User user = new User();
+        user.setUserId("user-1");
+        Project first = project("project-2");
+        Project second = project("project-1");
+        when(permissionService.requireLogin(request)).thenReturn(user);
+        when(projectService.listVisible(user)).thenReturn(List.of(first, second));
+        when(projectService.countPuppetsByProject()).thenReturn(Map.of("project-1", 3));
+        when(projectService.canManage(first, user)).thenReturn(true);
+        when(projectService.canEditContent(first, user)).thenReturn(true);
+
+        try (var sessions = mockStatic(PuppetNodeSessionContainer.class)) {
+            sessions.when(PuppetNodeSessionContainer::getAllSession).thenReturn(Map.of(
+                    "own-1", session("project-1", "user-1"),
+                    "own-2", session("project-1", "user-1"),
+                    "other", session("project-1", "user-2"),
+                    "unassigned", session(null, "user-1"),
+                    "hidden", session("hidden", "user-1")));
+
+            List<ProjectSummary> result = (List<ProjectSummary>) controller.listProjects(request).get("data");
+
+            assertEquals(List.of(
+                    new ProjectSummary(first, 0, 0, true, true),
+                    new ProjectSummary(second, 3, 2, false, false)), result);
+            verify(projectService).countPuppetsByProject();
+            sessions.verify(PuppetNodeSessionContainer::getAllSession);
+        }
+    }
+
+    @Test
+    void skipsHostAndSessionAggregationWhenNoProjectIsVisible() {
+        ProjectService projectService = mock(ProjectService.class);
+        PermissionService permissionService = mock(PermissionService.class);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User user = new User();
+        when(permissionService.requireLogin(request)).thenReturn(user);
+        when(projectService.listVisible(user)).thenReturn(List.of());
+
+        try (var sessions = mockStatic(PuppetNodeSessionContainer.class)) {
+            assertEquals(List.of(), new ProjectController(projectService, permissionService)
+                    .listProjects(request).get("data"));
+            verify(projectService, never()).countPuppetsByProject();
+            sessions.verifyNoInteractions();
+        }
+    }
 
     @AfterEach
     void clearSessions() {
@@ -83,5 +138,12 @@ class ProjectControllerTest {
         project.setProjectId(projectId);
         project.setProjectName("测试项目");
         return project;
+    }
+
+    private static PuppetNodeSession session(String projectId, String ownerId) {
+        PuppetNodeSession session = new PuppetNodeSession();
+        session.setProjectId(projectId);
+        session.setCreateByUser(ownerId);
+        return session;
     }
 }

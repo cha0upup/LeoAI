@@ -10,6 +10,8 @@ import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
+
 /**
  * Web 层权限入口，负责把纯规则和需要查库的链路判断组合起来。
  */
@@ -18,6 +20,9 @@ public class PermissionService {
 
     private static final int MAX_PARENT_DEPTH = 100;
     private static final String SESSION_ATTR_USER = "user";
+    private static final String REQUEST_ATTR_VERIFIED_USER = PermissionService.class.getName() + ".verifiedUser";
+
+    private record VerifiedUser(HttpSession session, User user, String userId) {}
 
     private final PuppetService puppetService;
     private final UserService userService;
@@ -35,12 +40,22 @@ public class PermissionService {
         if (session == null) return null;
         Object cached = session.getAttribute(SESSION_ATTR_USER);
         if (!(cached instanceof User user) || user.getUserId() == null) return null;
+        // 只复用当前请求已校验的对象；Session 替换、登出或身份变更后重新查库。
+        Object verified = request.getAttribute(REQUEST_ATTR_VERIFIED_USER);
+        if (verified instanceof VerifiedUser snapshot
+                && snapshot.session() == session && snapshot.user() == user
+                && Objects.equals(snapshot.userId(), user.getUserId())
+                && Integer.valueOf(1).equals(user.getStatus())) {
+            return user;
+        }
         User fresh = userService.getUserById(user.getUserId());
         if (fresh == null || !Integer.valueOf(1).equals(fresh.getStatus())) {
+            request.removeAttribute(REQUEST_ATTR_VERIFIED_USER);
             session.invalidate();
             return null;
         }
         session.setAttribute(SESSION_ATTR_USER, fresh);
+        request.setAttribute(REQUEST_ATTR_VERIFIED_USER, new VerifiedUser(session, fresh, fresh.getUserId()));
         return fresh;
     }
 

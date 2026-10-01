@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,11 +45,15 @@ public class ProjectController {
     @GetMapping
     public Map<String, Object> listProjects(HttpServletRequest request) {
         User user = permissionService.requireLogin(request);
-        List<ProjectSummary> projects = projectService.listVisible(user).stream()
+        List<Project> visibleProjects = projectService.listVisible(user);
+        if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
+        Map<String, Integer> hostCounts = projectService.countPuppetsByProject();
+        Map<String, Integer> sessionCounts = countActiveSessionsByProject(user);
+        List<ProjectSummary> projects = visibleProjects.stream()
                 .map(project -> new ProjectSummary(
                         project,
-                        projectService.countPuppets(project.getProjectId()),
-                        countActiveSessions(project.getProjectId(), user),
+                        hostCounts.getOrDefault(project.getProjectId(), 0),
+                        sessionCounts.getOrDefault(project.getProjectId(), 0),
                         projectService.canManage(project, user),
                         projectService.canEditContent(project, user)))
                 .toList();
@@ -208,11 +213,16 @@ public class ProjectController {
         return puppets.stream().filter(puppet -> permissionService.canAccessPuppetChain(puppet, user)).toList();
     }
 
-    private int countActiveSessions(String projectId, User user) {
-        return (int) PuppetNodeSessionContainer.getAllSession().values().stream()
-                .filter(session -> session != null && projectId.equals(session.getProjectId()))
-                .filter(session -> PermissionPolicy.canAccessSession(session, user))
-                .count();
+    private Map<String, Integer> countActiveSessionsByProject(User user) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (PuppetNodeSession session : PuppetNodeSessionContainer.getAllSession().values()) {
+            if (session == null) continue;
+            String projectId = session.getProjectId();
+            if (projectId != null && PermissionPolicy.canAccessSession(session, user)) {
+                counts.merge(projectId, 1, Integer::sum);
+            }
+        }
+        return counts;
     }
 
     private int clearProjectFromActiveSessions(String projectId) {

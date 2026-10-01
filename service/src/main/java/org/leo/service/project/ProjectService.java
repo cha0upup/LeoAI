@@ -5,6 +5,7 @@ import org.leo.core.entity.ProjectPuppet;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
+import org.leo.dao.entity.ProjectPuppetCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.PuppetService;
 import org.springframework.stereotype.Service;
@@ -181,7 +182,13 @@ public class ProjectService {
         return false;
     }
 
-    public int countPuppets(String projectId) { return projectMapper.countPuppets(projectId); }
+    public Map<String, Integer> countPuppetsByProject() {
+        Map<String, Integer> counts = new HashMap<>();
+        for (ProjectPuppetCount count : projectMapper.countPuppetsByProject()) {
+            counts.put(count.projectId(), count.puppetCount());
+        }
+        return counts;
+    }
 
     public List<Puppet> listRootPuppets(String projectId) {
         return listPuppetsByParent(projectId, "root");

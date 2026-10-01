@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
+import java.util.UUID;
 
 /**
  * 全局异常处理器。
@@ -65,9 +66,12 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<HashMap<String, Object>> handleException(Exception e) {
-        logger.error("未处理异常: {}", e.getMessage(), e);
+        String traceId = UUID.randomUUID().toString();
+        logger.error("未处理异常 traceId={}", traceId, e);
+        HashMap<String, Object> body = ApiResponse.error("服务器内部错误，请稍后重试");
+        body.put("traceId", traceId);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error("服务器内部错误：" + e.getMessage()));
+                .body(body);
     }
 
     @ExceptionHandler(AsyncRequestNotUsableException.class)

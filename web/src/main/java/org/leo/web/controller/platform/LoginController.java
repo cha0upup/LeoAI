@@ -132,11 +132,7 @@ public class LoginController {
     /** 获取当前用户的完整个人资料（不含密码）。 */
     @GetMapping("/profile")
     public Map<String, Object> profile(HttpServletRequest request) {
-        User sessionUser = permissionService.requireLogin(request);
-        User user = userService.getUserById(sessionUser.getUserId());
-        if (user == null) {
-            throw ApiException.notFound("用户不存在");
-        }
+        User user = permissionService.requireLogin(request);
         return ApiResponse.success(profileView(user));
     }
 
@@ -162,6 +158,7 @@ public class LoginController {
             throw ApiException.badRequest("邮箱格式不正确");
         }
 
+        // 写操作单独读取对象，避免持久化失败时污染当前请求和 Session 的已校验用户。
         User user = userService.getUserById(sessionUser.getUserId());
         if (user == null) {
             throw ApiException.notFound("用户不存在");
@@ -189,6 +186,7 @@ public class LoginController {
         String newPassword = requireText(body != null ? body.newPassword() : null, "newPassword不能为空");
         passwordPolicy.validate(newPassword);
 
+        // 与资料更新相同，验证和修改使用独立对象，成功后才替换 Session 用户。
         User user = userService.getUserById(sessionUser.getUserId());
         if (user == null || !PasswordUtil.verify(oldPassword, user.getPassword())) {
             logger.warn("修改密码失败，旧密码不正确，userId: {}", sessionUser.getUserId());

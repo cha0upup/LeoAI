@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class LoginControllerTest {
 
@@ -72,6 +73,7 @@ class LoginControllerTest {
                 "teamName", "remark", "lastLoginTime", "loginCount", "createTime", "updateTime"), data.keySet());
         assertEquals("Example team", data.get("teamName"));
         assertEquals("stored-hash", user.getPassword());
+        verifyNoInteractions(userService);
     }
 
     @Test

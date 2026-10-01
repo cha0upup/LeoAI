@@ -1,5 +1,7 @@
 package org.leo.dao.mapper;
 
+import org.apache.ibatis.annotations.Arg;
+import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -9,6 +11,7 @@ import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.ProjectPuppet;
 import org.leo.core.entity.Puppet;
+import org.leo.dao.entity.ProjectPuppetCount;
 
 import java.util.List;
 
@@ -48,8 +51,12 @@ public interface ProjectMapper {
     boolean detachPuppet(@Param("projectId") String projectId,
                          @Param("puppetId") String puppetId);
 
-    @Select("SELECT COUNT(*) FROM project_puppets WHERE project_id=#{projectId}")
-    int countPuppets(@Param("projectId") String projectId);
+    @Select("SELECT project_id, COUNT(*) AS puppet_count FROM project_puppets GROUP BY project_id")
+    @ConstructorArgs({
+            @Arg(column = "project_id", javaType = String.class),
+            @Arg(column = "puppet_count", javaType = int.class)
+    })
+    List<ProjectPuppetCount> countPuppetsByProject();
 
     @Select("SELECT COUNT(*) FROM project_puppets WHERE project_id=#{projectId} AND puppet_id=#{puppetId}")
     int containsPuppet(@Param("projectId") String projectId,
