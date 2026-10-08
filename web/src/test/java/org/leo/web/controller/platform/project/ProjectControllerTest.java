@@ -11,6 +11,7 @@ import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
+import org.leo.web.service.AgentDirectoryService;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.Map;
@@ -32,7 +33,7 @@ class ProjectControllerTest {
     void usesOneSessionSnapshotAndOneGroupedHostCountWithoutChangingProjectOrder() {
         ProjectService projectService = mock(ProjectService.class);
         PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService);
+        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         User user = new User();
         user.setUserId("user-1");
@@ -72,7 +73,7 @@ class ProjectControllerTest {
         when(projectService.listVisible(user)).thenReturn(List.of());
 
         try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
-            assertEquals(List.of(), new ProjectController(projectService, permissionService)
+            assertEquals(List.of(), new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class))
                     .listProjects(request).get("data"));
             verify(projectService, never()).countAgentsByProject();
             sessions.verifyNoInteractions();
@@ -89,7 +90,7 @@ class ProjectControllerTest {
     void deletesManageableProjectAndKeepsLiveSessionInGlobalWorkspace() {
         ProjectService projectService = mock(ProjectService.class);
         PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService);
+        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         User user = new User();
         Project project = project("project-1");
@@ -117,7 +118,7 @@ class ProjectControllerTest {
     void rejectsDeletionWhenProjectIsNotManageable() {
         ProjectService projectService = mock(ProjectService.class);
         PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService);
+        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         User user = new User();
         Project project = project("project-1");

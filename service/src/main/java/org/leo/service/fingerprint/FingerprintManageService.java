@@ -79,10 +79,6 @@ public class FingerprintManageService {
 
     public void deleteFingerprint(User user, String fingerprintId) {
         ensureLoggedIn(user);
-        deleteFingerprint(fingerprintId);
-    }
-
-    private void deleteFingerprint(String fingerprintId) {
         String normalizedFingerprintId = requireNonBlank(fingerprintId, "fingerprintId 不能为空");
         File fingerprintFile = resolveFingerprintFile(normalizedFingerprintId);
         if (!fingerprintFile.exists() || !fingerprintFile.isFile()) {
@@ -122,7 +118,7 @@ public class FingerprintManageService {
             content.put("tags", tags);
         }
 
-        HashMap<String, Object> info = normalizeInfo(infoObj);
+        HashMap<String, Object> info = new HashMap<>(FingerprintMetadata.normalizeInfo(infoObj));
         info.put("version", resolvedVersion);
         content.put("info", info);
 
@@ -245,17 +241,8 @@ public class FingerprintManageService {
             HashMap<String, Object> content = loadFingerprintFile(fileId);
             if (content != null) {
                 item.put("fingerprintId", content.get("fingerprintId"));
-                if (content.containsKey("protocol")) {
-                    item.put("protocol", content.get("protocol"));
-                }
-                if (content.containsKey("name")) {
-                    item.put("name", content.get("name"));
-                }
-                if (content.containsKey("tags")) {
-                    item.put("tags", content.get("tags"));
-                }
-                if (content.containsKey("info")) {
-                    item.put("info", content.get("info"));
+                for (String key : List.of("protocol", "name", "tags", "info")) {
+                    if (content.containsKey(key)) item.put(key, content.get(key));
                 }
                 return item;
             }
@@ -293,10 +280,6 @@ public class FingerprintManageService {
 
     private File resolveFingerprintFile(String fingerprintId) {
         return new File(resolveFingerprintDir(), getSafeFileName(fingerprintId) + FINGERPRINT_FILE_SUFFIX);
-    }
-
-    private HashMap<String, Object> normalizeInfo(Object infoObj) {
-        return new HashMap<>(FingerprintMetadata.normalizeInfo(infoObj));
     }
 
     private String extractVersion(Map<String, Object> record) {
@@ -422,7 +405,7 @@ public class FingerprintManageService {
                                                   User user) throws Exception {
         ensureLoggedIn(user);
         String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
-        List<Map<String, Object>> records = new ArrayList<>();
+        List<Map<String, Object>> records;
 
         if (filename.endsWith(".zip")) {
             records = parseZip(file.getInputStream());
@@ -472,20 +455,11 @@ public class FingerprintManageService {
             switch (policy) {
                 case SKIP:
                     return new ImportResult(name, fingerprintId, "skipped", "已存在，跳过");
-                case RENAME: {
-                    String ts = String.valueOf(System.currentTimeMillis());
-                    version = version + "_imported_" + ts;
+                case RENAME:
+                    version = version + "_imported_" + System.currentTimeMillis();
                     fingerprintId = generateFingerprintId(name, version);
-                    // 更新 rec 中的版本
-                    rec = new HashMap<>(rec);
-                    if (rec.get("info") instanceof Map<?, ?> info) {
-                        HashMap<String, Object> newInfo = new HashMap<>();
-                        info.forEach((k, v) -> newInfo.put(String.valueOf(k), v));
-                        newInfo.put("version", version);
-                        rec.put("info", newInfo);
-                    }
+                    // saveFingerprintContent 会把新版本写入 info，无需修改导入记录。
                     break;
-                }
                 case OVERWRITE:
                     break; // 直接覆盖
             }

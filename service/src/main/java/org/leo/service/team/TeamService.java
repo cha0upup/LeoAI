@@ -61,15 +61,7 @@ public class TeamService {
     public boolean addTeam(Team team) {
         if (team == null) throw new IllegalArgumentException("team不能为空");
         String now = DATE_FORMAT.format(LocalDateTime.now());
-        return teamMapper.insertTeam(
-                team.getTeamId(),
-                team.getTeamName(),
-                team.getLeaderId(),
-                team.getDescription(),
-                team.getStatus() != null ? team.getStatus() : 1,
-                now, now,
-                team.getRemark()
-        );
+        return teamMapper.insertTeam(team, now);
     }
 
     public boolean updateTeam(Team team) {
@@ -77,15 +69,7 @@ public class TeamService {
             throw new IllegalArgumentException("teamId不能为空");
         }
         String now = DATE_FORMAT.format(LocalDateTime.now());
-        return teamMapper.updateTeamById(
-                team.getTeamId(),
-                team.getTeamName(),
-                team.getLeaderId(),
-                team.getDescription(),
-                team.getStatus(),
-                now,
-                team.getRemark()
-        );
+        return teamMapper.updateTeamById(team, now);
     }
 
     public boolean delTeam(String teamId) {

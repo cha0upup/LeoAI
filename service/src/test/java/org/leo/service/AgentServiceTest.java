@@ -5,15 +5,56 @@ import org.leo.core.entity.Agent;
 import org.leo.dao.mapper.AgentMapper;
 
 import java.util.List;
+import java.util.Arrays;
+import java.util.stream.IntStream;
+import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AgentServiceTest {
+
+    @Test
+    void skipsChildQueriesForEmptyOrInvalidParentIds() {
+        AgentMapper mapper = mock(AgentMapper.class);
+        AgentService service = new AgentService(mapper);
+        assertEquals(List.of(), service.findAgentsByParentAgentIds(null));
+        assertEquals(List.of(), service.findAgentsByParentAgentIds(List.of()));
+        assertEquals(List.of(), service.findAgentsByParentAgentIds(Arrays.asList(null, "", " ")));
+        verifyNoInteractions(mapper);
+    }
+
+    @Test
+    void normalizesAndDeduplicatesParentsBeforeOneChildQuery() {
+        AgentMapper mapper = mock(AgentMapper.class);
+        AgentService service = new AgentService(mapper);
+        Agent child = agent("child");
+        when(mapper.findAgentsByParentAgentIds(List.of("a", "b"))).thenReturn(List.of(child));
+        assertEquals(List.of(child), service.findAgentsByParentAgentIds(Arrays.asList(" a ", "b", "a", null)));
+        verify(mapper).findAgentsByParentAgentIds(List.of("a", "b"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void chunksLargeDirectoriesBelowSqliteParameterLimits() {
+        AgentMapper mapper = mock(AgentMapper.class);
+        AgentService service = new AgentService(mapper);
+        when(mapper.findAgentsByParentAgentIds(anyList())).thenReturn(List.of());
+        List<String> ids = IntStream.range(0, 1001).mapToObj(i -> "parent-" + i).toList();
+        assertEquals(List.of(), service.findAgentsByParentAgentIds(ids));
+        ArgumentCaptor<List<String>> batches = ArgumentCaptor.forClass((Class) List.class);
+        verify(mapper, times(3)).findAgentsByParentAgentIds(batches.capture());
+        assertEquals(List.of(500, 500, 1), batches.getAllValues().stream().map(List::size).toList());
+        assertEquals(ids, batches.getAllValues().stream().flatMap(List::stream).toList());
+    }
 
     @Test
     void rejectsMaximumRequestCountOutsideThePublicContract() {

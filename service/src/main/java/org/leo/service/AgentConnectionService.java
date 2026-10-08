@@ -27,8 +27,6 @@ public class AgentConnectionService {
         this.agentNodeFactory = agentNodeFactory;
     }
 
-    // ── 公开 API ─────────────────────────────────────────────────────────────────
-
     /**
      * 仅测试连通性，不创建 Session。
      *
@@ -63,20 +61,16 @@ public class AgentConnectionService {
             long latency = System.currentTimeMillis() - start;
 
             if (!AgentRpcEnvelopeMapper.isCurrentPingResult(result)) {
-                Map<String, Object> data = new HashMap<>();
-                data.put("success",   false);
-                data.put("latencyMs", latency);
-                data.put("message", result == null ? "无响应" :
+                return fail(result == null ? "无响应" :
                         result.get("msg") != null ? String.valueOf(result.get("msg"))
-                                : "节点响应格式不符合当前协议");
-                return data;
+                                : "节点响应格式不符合当前协议", latency);
             }
 
             Map<String, Object> data = new HashMap<>();
-            data.put("success",    true);
-            data.put("hostId",     result.get("hostId"));
+            data.put("success", true);
+            data.put("hostId", result.get("hostId"));
             data.put("components", result.get("components"));
-            data.put("latencyMs",  latency);
+            data.put("latencyMs", latency);
 
             // 测试连接成功，记录心跳时间
             if (updateHeartbeat && agent.getAgentId() != null) {

@@ -66,24 +66,22 @@ public interface AuditLogMapper {
             </where>
             """;
 
-    @Insert("INSERT INTO audit_logs (log_id, user_id, user_name, agent_id, agent_name, session_id, operation_type, operation_name, operation_path, request_params, response_code, response_message, status, error_message, client_ip, create_time, remark) VALUES (#{logId}, #{userId}, #{userName}, #{agentId}, #{agentName}, #{sessionId}, #{operationType}, #{operationName}, #{operationPath}, #{requestParams}, #{responseCode}, #{responseMessage}, #{status}, #{errorMessage}, #{clientIp}, #{createTime}, #{remark})")
-    boolean insertAuditLog(@Param("logId") String logId,
-                          @Param("userId") String userId,
-                          @Param("userName") String userName,
-                          @Param("agentId") String agentId,
-                          @Param("agentName") String agentName,
-                          @Param("sessionId") String sessionId,
-                          @Param("operationType") String operationType,
-                          @Param("operationName") String operationName,
-                          @Param("operationPath") String operationPath,
-                          @Param("requestParams") String requestParams,
-                          @Param("responseCode") Integer responseCode,
-                          @Param("responseMessage") String responseMessage,
-                          @Param("status") String status,
-                          @Param("errorMessage") String errorMessage,
-                          @Param("clientIp") String clientIp,
-                          @Param("createTime") String createTime,
-                          @Param("remark") String remark);
+    @Insert("""
+            INSERT INTO audit_logs (
+                log_id, user_id, user_name, agent_id,
+                agent_name, session_id, operation_type, operation_name,
+                operation_path, request_params, response_code, response_message,
+                status, error_message, client_ip, create_time,
+                remark
+            ) VALUES (
+                #{log.logId}, #{log.userId}, #{log.userName}, #{log.agentId},
+                #{log.agentName}, #{log.sessionId}, #{log.operationType}, #{log.operationName},
+                #{log.operationPath}, #{log.requestParams}, #{log.responseCode}, #{log.responseMessage},
+                #{log.status}, #{log.errorMessage}, #{log.clientIp}, #{log.createTime},
+                #{log.remark}
+            )
+            """)
+    boolean insertAuditLog(@Param("log") AuditLog log);
 
     @Select("SELECT * FROM audit_logs WHERE log_id = #{logId}")
     AuditLog findAuditLogById(@Param("logId") String logId);

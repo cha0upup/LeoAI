@@ -94,7 +94,7 @@ public class AgentDatabaseConnectionService {
             target.setPassword(spec.getPassword());
         }
         target.setTimeoutSeconds(spec.getTimeoutSeconds() == null ? 30 : spec.getTimeoutSeconds());
-        Map<String, Object> persisted = new LinkedHashMap<String, Object>(spec.toMap());
+        Map<String, Object> persisted = new LinkedHashMap<>(spec.toMap());
         persisted.remove("password");
         target.setConnectionSpec(new String(PortableJsonCodec.encode(persisted), StandardCharsets.UTF_8));
         target.setTestStatus(0);
@@ -117,12 +117,12 @@ public class AgentDatabaseConnectionService {
     }
 
     public Map<String, Object> toConnectionView(AgentDatabaseConnection source) {
-        Map<String, Object> view = new LinkedHashMap<String, Object>();
+        Map<String, Object> view = new LinkedHashMap<>();
         view.put("connectionId", source.getConnectionId());
         view.put("connectionName", source.getConnectionName());
         view.put("agentId", source.getAgentId());
         view.put("connection", sanitizeConnectionView(
-                withoutPassword(DatabaseConnectionSpec.fromMap(storedConnectionValues(source)).toMap())));
+                DatabaseConnectionSpec.fromMap(storedConnectionValues(source)).toMap()));
         view.put("status", source.getStatus());
         view.put("testStatus", source.getTestStatus());
         view.put("lastTestTime", source.getLastTestTime());
@@ -141,22 +141,15 @@ public class AgentDatabaseConnectionService {
      */
     public Map<String, Object> mergeProtectedValues(AgentDatabaseConnection source,
                                                     Map<String, Object> incoming) {
-        if (source == null) return new LinkedHashMap<String, Object>(incoming);
-        Map<String, Object> merged = new LinkedHashMap<String, Object>(incoming);
-        mergeProtectedValues(storedConnectionValues(source), merged);
+        Map<String, Object> merged = new LinkedHashMap<>(incoming);
+        if (source != null) mergeProtectedValues(storedConnectionValues(source), merged);
         return merged;
-    }
-
-    private Map<String, Object> withoutPassword(Map<String, Object> source) {
-        Map<String, Object> copy = new LinkedHashMap<String, Object>(source);
-        copy.remove("password");
-        return copy;
     }
 
     private Map<String, Object> storedConnectionValues(AgentDatabaseConnection source) {
         if (source == null) throw new IllegalArgumentException("数据库连接配置不存在");
         Map<String, Object> values = source.getConnectionSpec() == null || source.getConnectionSpec().isBlank()
-                ? new LinkedHashMap<String, Object>()
+                ? new LinkedHashMap<>()
                 : PortableJsonCodec.decode(source.getConnectionSpec().getBytes(StandardCharsets.UTF_8));
         values.putIfAbsent("dialect", source.getDialect());
         values.put("username", source.getUsername());
@@ -165,7 +158,7 @@ public class AgentDatabaseConnectionService {
     }
 
     private Map<String, Object> sanitizeConnectionView(Map<String, Object> source) {
-        Map<String, Object> safe = new LinkedHashMap<String, Object>();
+        Map<String, Object> safe = new LinkedHashMap<>();
         source.forEach((key, value) -> {
             if (!isSecretKey(key)) safe.put(key, sanitizeViewValue(value));
         });
@@ -182,7 +175,7 @@ public class AgentDatabaseConnectionService {
             Object incomingValue = incoming.get(key);
             if (storedValue instanceof Map<?, ?> storedMap
                     && incomingValue instanceof Map<?, ?> incomingMap) {
-                Map<String, Object> writable = new LinkedHashMap<String, Object>();
+                Map<String, Object> writable = new LinkedHashMap<>();
                 incomingMap.forEach((nestedKey, value) -> writable.put(String.valueOf(nestedKey), value));
                 mergeProtectedValues((Map<String, Object>) storedMap, writable);
                 incoming.put(key, writable);
@@ -199,7 +192,7 @@ public class AgentDatabaseConnectionService {
 
     private Object sanitizeViewValue(Object value) {
         if (value instanceof Map<?, ?> map) {
-            Map<String, Object> safe = new LinkedHashMap<String, Object>();
+            Map<String, Object> safe = new LinkedHashMap<>();
             map.forEach((key, item) -> {
                 String name = String.valueOf(key);
                 if (!isSecretKey(name)) safe.put(name, sanitizeViewValue(item));

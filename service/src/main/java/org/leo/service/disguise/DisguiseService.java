@@ -91,10 +91,7 @@ public class DisguiseService {
 
     public void updateDisguise(HashMap<String, Object> params) throws Exception {
         String disguiseId = requireString(params, "disguiseId");
-        Disguise existingDisguise = disguiseManager.getDisguiseById(disguiseId);
-        if (existingDisguise == null) {
-            throw new IllegalArgumentException("disguise不存在");
-        }
+        Disguise existingDisguise = getDisguiseById(disguiseId);
         Disguise disguise = (Disguise) JsonUtil.fromJsonString(existingDisguise.toString(), Disguise.class);
 
         if (params.containsKey("disguiseName")) {
@@ -133,11 +130,7 @@ public class DisguiseService {
     }
 
     public void deleteDisguise(String disguiseId) {
-        requireNonBlank(disguiseId, "disguiseId不能为空");
-        Disguise disguise = disguiseManager.getDisguiseById(disguiseId);
-        if (disguise == null) {
-            throw new IllegalArgumentException("disguise不存在");
-        }
+        getDisguiseById(disguiseId);
 
         File disguiseFile = resolveDisguiseFile(disguiseId);
         if (!disguiseFile.exists()) {
@@ -472,8 +465,7 @@ public class DisguiseService {
     }
 
     private String requireString(HashMap<String, Object> params, String key) {
-        Object value = params.get(key);
-        String stringValue = value == null ? null : String.valueOf(value);
+        String stringValue = optionalString(params, key);
         requireNonBlank(stringValue, key + "不能为空");
         return stringValue;
     }

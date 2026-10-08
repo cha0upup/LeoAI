@@ -18,6 +18,8 @@ import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionPolicy;
 import org.leo.web.security.PermissionService;
+import org.leo.web.service.AgentDirectoryService;
+import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -36,10 +38,13 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final PermissionService permissionService;
+    private final AgentDirectoryService directoryService;
 
-    public ProjectController(ProjectService projectService, PermissionService permissionService) {
+    public ProjectController(ProjectService projectService, PermissionService permissionService,
+                             AgentDirectoryService directoryService) {
         this.projectService = projectService;
         this.permissionService = permissionService;
+        this.directoryService = directoryService;
     }
 
     @GetMapping
@@ -209,8 +214,8 @@ public class ProjectController {
         return project;
     }
 
-    private List<Agent> filterAccessible(List<Agent> agents, User user) {
-        return agents.stream().filter(agent -> permissionService.canAccessAgentChain(agent, user)).toList();
+    private List<AgentDirectoryEntry> filterAccessible(List<Agent> agents, User user) {
+        return directoryService.describe(agents, agent -> permissionService.canAccessAgentChain(agent, user));
     }
 
     private Map<String, Integer> countActiveSessionsByProject(User user) {

@@ -12,6 +12,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.request.ComponentClassNameStrategy;
 import org.leo.web.util.ControllerUtil;
+import org.leo.web.service.AgentDirectoryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,7 +28,6 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,14 +64,17 @@ public class AgentManageController {
     private final UserService userService;
     private final UrlProbeService urlProbeService;
     private final ProjectService projectService;
+    private final AgentDirectoryService directoryService;
 
     public AgentManageController(AgentService agentService, UserService userService,
                                   UrlProbeService urlProbeService,
-                                  ProjectService projectService){
+                                  ProjectService projectService,
+                                  AgentDirectoryService directoryService){
         this.agentService = agentService;
         this.userService = userService;
         this.urlProbeService = urlProbeService;
         this.projectService = projectService;
+        this.directoryService = directoryService;
     }
     
     @RequestMapping(value = "/children", method = RequestMethod.POST)
@@ -83,7 +86,7 @@ public class AgentManageController {
             }
             String parentAgentId = ControllerUtil.getRequiredStringParam(params, PARAM_PARENT_AGENT_ID);
             List<Agent> childAgents = agentService.findAgentsByParentAgentId(parentAgentId);
-            return ApiResponse.success(filterVisibleAgents(childAgents, user));
+            return ApiResponse.success(directoryService.describe(childAgents, agent -> canViewAgent(agent, user)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -95,16 +98,9 @@ public class AgentManageController {
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
-        List<Agent> mergedList = filterVisibleAgents(agentService.getAllAgents(), user);
-        Iterator<Agent> iterator = mergedList.iterator();
-        while (iterator.hasNext()) {
-            Agent agent = iterator.next();
-            String parentAgentId = agent.getParentAgentId();
-            if (parentAgentId == null || !ROOT_PARENT_ID.equals(parentAgentId)) {
-                iterator.remove();
-            }
-        }
-        return ApiResponse.success(mergedList);
+        List<Agent> roots = agentService.getAllAgents().stream()
+                .filter(agent -> agent != null && ROOT_PARENT_ID.equals(agent.getParentAgentId())).toList();
+        return ApiResponse.success(directoryService.describe(roots, agent -> canViewAgent(agent, user)));
     }
     
     @RequestMapping(value = "/agents", method = RequestMethod.POST)
@@ -368,19 +364,6 @@ public class AgentManageController {
      */
     private User getUserFromSession(HttpServletRequest request) {
         return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
-    }
-
-    private List<Agent> filterVisibleAgents(List<Agent> agents, User user) {
-        if (agents == null || agents.isEmpty()) {
-            return new ArrayList<Agent>();
-        }
-        List<Agent> visible = new ArrayList<Agent>();
-        for (Agent agent : agents) {
-            if (canViewAgent(agent, user)) {
-                visible.add(agent);
-            }
-        }
-        return visible;
     }
 
     private boolean canViewAgent(Agent agent, User user) {

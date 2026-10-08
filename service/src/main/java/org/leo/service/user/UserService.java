@@ -73,21 +73,7 @@ public class UserService {
     public boolean addUser(User user) {
         if (user == null) throw new IllegalArgumentException("user不能为空");
         String now = now();
-        return userMapper.insertUser(
-                user.getUserId(),
-                user.getUserName(),
-                user.getPassword(),
-                user.getPrivilege() != null ? user.getPrivilege() : PRIVILEGE_NORMAL,
-                user.getEmail(),
-                user.getPhone(),
-                user.getStatus() != null ? user.getStatus() : 1,
-                user.getLastLoginTime(),
-                user.getLoginCount() != null ? user.getLoginCount() : 0,
-                user.getPasswordChangeRequired() != null ? user.getPasswordChangeRequired() : 0,
-                now, now,
-                user.getTeamId(),
-                user.getRemark()
-        );
+        return userMapper.insertUser(user, now);
     }
 
     public boolean updateUser(User user) {
@@ -95,21 +81,7 @@ public class UserService {
             throw new IllegalArgumentException("userId不能为空");
         }
         String now = now();
-        return userMapper.updateUserById(
-                user.getUserName(),
-                user.getPassword(),
-                user.getPrivilege(),
-                user.getEmail(),
-                user.getPhone(),
-                user.getStatus(),
-                user.getLastLoginTime(),
-                user.getLoginCount(),
-                user.getPasswordChangeRequired() != null ? user.getPasswordChangeRequired() : 0,
-                now,
-                user.getTeamId(),
-                user.getRemark(),
-                user.getUserId()
-        );
+        return userMapper.updateUserById(user, now);
     }
 
     public boolean delUser(String userId) {

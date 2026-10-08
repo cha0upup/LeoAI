@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * 审计日志管理控制器
@@ -86,14 +87,11 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/mode", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditMode() {
-        try {
+        return readResponse("获取审计模式失败", () -> {
             String mode = auditPolicyService.getMode();
             HashMap<String, Object> data = buildAuditModeView(mode);
             return ApiResponse.success(data);
-        } catch (Exception e) {
-            logger.error("获取审计模式失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取审计模式失败: " + e.getMessage());
-        }
+        });
     }
 
     /**
@@ -143,7 +141,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "", method = RequestMethod.GET)
     public HashMap<String, Object> getAllAuditLogs(@RequestParam Map<String, String> params) {
-        try {
+        return readResponse("获取审计日志列表失败", () -> {
             AuditLogQuery query = buildQuery(params, true);
             List<AuditLog> logs = auditLogService.searchAuditLogs(query);
             Integer total = auditLogService.countAuditLogs(query);
@@ -155,10 +153,7 @@ public class AuditLogController {
             data.put("offset", query.getOffset());
             
             return ApiResponse.success(data);
-        } catch (Exception e) {
-            logger.error("获取审计日志列表失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取审计日志列表失败: " + e.getMessage());
-        }
+        });
     }
     
     /**
@@ -166,7 +161,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/detail", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditLogById(@RequestParam(PARAM_LOG_ID) String logId) {
-        try {
+        return readResponse("获取审计日志详情失败", () -> {
             if (logId == null || logId.isBlank()) {
                 return ApiResponse.badRequest("logId参数不能为空");
             }
@@ -177,10 +172,7 @@ public class AuditLogController {
             }
             
             return ApiResponse.success(log);
-        } catch (Exception e) {
-            logger.error("获取审计日志详情失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取审计日志详情失败: " + e.getMessage());
-        }
+        });
     }
     
     /**
@@ -188,76 +180,56 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/count", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditLogCount(@RequestParam Map<String, String> params) {
-        try {
+        return readResponse("统计审计日志数量失败", () -> {
             AuditLogQuery query = buildQuery(params, false);
             HashMap<String, Object> data = new HashMap<String, Object>();
             data.put("count", auditLogService.countAuditLogs(query));
             
             return ApiResponse.success(data);
-        } catch (Exception e) {
-            logger.error("统计审计日志数量失败: {}", e.getMessage(), e);
-            return ApiResponse.error("统计审计日志数量失败: " + e.getMessage());
-        }
+        });
     }
 
     @RequestMapping(value = "/statistics/user", method = RequestMethod.GET)
     public HashMap<String, Object> getUserStatistics(@RequestParam(PARAM_USER_ID) String userId) {
-        try {
+        return readResponse("获取用户审计统计失败", () -> {
             if (userId == null || userId.isBlank()) {
                 return ApiResponse.badRequest("userId参数不能为空");
             }
             return ApiResponse.success(auditLogService.getUserStatistics(userId));
-        } catch (Exception e) {
-            logger.error("获取用户审计统计失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取用户审计统计失败: " + e.getMessage());
-        }
+        });
     }
 
     @RequestMapping(value = "/statistics/team", method = RequestMethod.GET)
     public HashMap<String, Object> getTeamStatistics(@RequestParam(PARAM_TEAM_ID) String teamId) {
-        try {
+        return readResponse("获取团队审计统计失败", () -> {
             if (teamId == null || teamId.isBlank()) {
                 return ApiResponse.badRequest("teamId参数不能为空");
             }
             return ApiResponse.success(auditLogService.getTeamStatistics(teamId));
-        } catch (Exception e) {
-            logger.error("获取团队审计统计失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取团队审计统计失败: " + e.getMessage());
-        }
+        });
     }
 
     @RequestMapping(value = "/statistics/agent", method = RequestMethod.GET)
     public HashMap<String, Object> getAgentStatistics(@RequestParam(PARAM_AGENT_ID) String agentId) {
-        try {
+        return readResponse("获取主机审计统计失败", () -> {
             if (agentId == null || agentId.isBlank()) {
                 return ApiResponse.badRequest("agentId参数不能为空");
             }
             return ApiResponse.success(auditLogService.getAgentStatistics(agentId));
-        } catch (Exception e) {
-            logger.error("获取主机审计统计失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取主机审计统计失败: " + e.getMessage());
-        }
+        });
     }
 
     @RequestMapping(value = "/statistics/operations", method = RequestMethod.GET)
     public HashMap<String, Object> getOperationStatistics() {
-        try {
-            return ApiResponse.success(auditLogService.getOperationStatistics());
-        } catch (Exception e) {
-            logger.error("获取操作类型审计统计失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取操作类型审计统计失败: " + e.getMessage());
-        }
+        return readResponse("获取操作类型审计统计失败",
+                () -> ApiResponse.success(auditLogService.getOperationStatistics()));
     }
 
     @RequestMapping(value = "/statistics/trend", method = RequestMethod.GET)
     public HashMap<String, Object> getTrendStatistics(
             @RequestParam(value = PARAM_DAYS, required = false) Integer days) {
-        try {
-            return ApiResponse.success(auditLogService.getTrendStatistics(days));
-        } catch (Exception e) {
-            logger.error("获取审计趋势统计失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取审计趋势统计失败: " + e.getMessage());
-        }
+        return readResponse("获取审计趋势统计失败",
+                () -> ApiResponse.success(auditLogService.getTrendStatistics(days)));
     }
     
     /**
@@ -413,11 +385,17 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/operation-types", method = RequestMethod.GET)
     public HashMap<String, Object> getOperationTypes() {
+        return readResponse("获取操作类型列表失败",
+                () -> ApiResponse.success(auditPolicyService.getKnownOperationTypes()));
+    }
+
+    private HashMap<String, Object> readResponse(String errorMessage,
+                                               Supplier<HashMap<String, Object>> request) {
         try {
-            return ApiResponse.success(auditPolicyService.getKnownOperationTypes());
+            return request.get();
         } catch (Exception e) {
-            logger.error("获取操作类型列表失败: {}", e.getMessage(), e);
-            return ApiResponse.error("获取操作类型列表失败: " + e.getMessage());
+            logger.error(errorMessage + ": {}", e.getMessage(), e);
+            return ApiResponse.error(errorMessage + ": " + e.getMessage());
         }
     }
 

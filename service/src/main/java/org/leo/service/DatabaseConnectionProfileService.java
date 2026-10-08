@@ -112,8 +112,11 @@ public final class DatabaseConnectionProfileService {
                                         String agentId,
                                         AgentDatabaseConnection existing,
                                         Map<String, Object> params) {
-        AgentDatabaseConnection connection = existing == null
-                ? newConnection(userId, agentId) : existing;
+        AgentDatabaseConnection connection = existing == null ? new AgentDatabaseConnection() : existing;
+        if (existing == null) {
+            connection.setCreateUserId(userId);
+            connection.setAgentId(agentId);
+        }
         DatabaseConnectionSpec spec = connectionSpec(params, existing);
         validateDialect(spec);
         connectionService.applyConnectionSpec(connection, spec);
@@ -123,13 +126,6 @@ public final class DatabaseConnectionProfileService {
             throw failure(PERSISTENCE, "保存数据库连接失败");
         }
         return connectionService.toConnectionView(connection);
-    }
-
-    private AgentDatabaseConnection newConnection(String userId, String agentId) {
-        AgentDatabaseConnection connection = new AgentDatabaseConnection();
-        connection.setCreateUserId(userId);
-        connection.setAgentId(agentId);
-        return connection;
     }
 
     private DatabaseConnectionSpec connectionSpec(Map<String, Object> params,
@@ -146,13 +142,8 @@ public final class DatabaseConnectionProfileService {
         }
 
         Map<String, Object> supplied = stringKeyMap(source);
-        Map<String, Object> values;
-        if (existing == null) {
-            values = supplied;
-        } else {
-            Map<String, Object> current = currentConnectionValues(existing);
-            values = mergeMaps(current, supplied);
-        }
+        Map<String, Object> values = existing == null
+                ? supplied : mergeMaps(currentConnectionValues(existing), supplied);
         try {
             String dialect = text(values.get("dialect"));
             if (dialect != null && sqlDialectRegistry.supports(dialect)) {
@@ -214,8 +205,7 @@ public final class DatabaseConnectionProfileService {
     }
 
     private Map<String, Object> currentConnectionValues(AgentDatabaseConnection existing) {
-        Map<String, Object> current = new LinkedHashMap<String, Object>(
-                connectionService.toConnectionSpec(existing).toMap());
+        Map<String, Object> current = connectionService.toConnectionSpec(existing).toMap();
         current.put("password", "");
         return current;
     }

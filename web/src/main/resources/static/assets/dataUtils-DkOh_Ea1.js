@@ -1,0 +1,1 @@
+function e(e,t){let n={...e};return t.forEach(e=>{delete n[e]}),n}function t(e,{prop:t,order:n}){return!t||!n||e.sort((e,r)=>{let i=(e[t]||``).toString(),a=(r[t]||``).toString(),o=i.localeCompare(a);return n===`ascending`?o:-o}),e}export{t as n,e as t};

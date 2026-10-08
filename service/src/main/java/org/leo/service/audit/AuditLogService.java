@@ -43,41 +43,23 @@ public class AuditLogService {
         if (auditLog == null) {
             return false;
         }
-        if (auditLog.getLogId() == null || auditLog.getLogId().isBlank()) {
+        if (!hasText(auditLog.getLogId())) {
             auditLog.setLogId(UUID.randomUUID().toString());
         }
-        if (auditLog.getCreateTime() == null || auditLog.getCreateTime().isBlank()) {
+        if (!hasText(auditLog.getCreateTime())) {
             auditLog.setCreateTime(DATE_TIME_FORMAT.format(LocalDateTime.now()));
         }
-        if (auditLog.getStatus() == null || auditLog.getStatus().isBlank()) {
+        if (!hasText(auditLog.getStatus())) {
             auditLog.setStatus("SUCCESS");
         }
-        return auditLogMapper.insertAuditLog(
-            auditLog.getLogId(),
-            auditLog.getUserId(),
-            auditLog.getUserName(),
-            auditLog.getAgentId(),
-            auditLog.getAgentName(),
-            auditLog.getSessionId(),
-            auditLog.getOperationType(),
-            auditLog.getOperationName(),
-            auditLog.getOperationPath(),
-            auditLog.getRequestParams(),
-            auditLog.getResponseCode(),
-            auditLog.getResponseMessage(),
-            auditLog.getStatus(),
-            auditLog.getErrorMessage(),
-            auditLog.getClientIp(),
-            auditLog.getCreateTime(),
-            auditLog.getRemark()
-        );
+        return auditLogMapper.insertAuditLog(auditLog);
     }
 
     /**
      * 根据ID查询审计日志
      */
     public AuditLog findAuditLogById(String logId) {
-        if (logId == null || logId.isBlank()) {
+        if (!hasText(logId)) {
             return null;
         }
         return auditLogMapper.findAuditLogById(logId);
@@ -87,7 +69,7 @@ public class AuditLogService {
      * 根据会话ID查询审计日志（按时间升序，适合生成操作报告）
      */
     public List<AuditLog> findAuditLogsBySessionId(String sessionId, Integer limit, Integer offset) {
-        if (sessionId == null || sessionId.isBlank()) {
+        if (!hasText(sessionId)) {
             return new ArrayList<>();
         }
         if (limit == null || limit <= 0) {
@@ -104,11 +86,10 @@ public class AuditLogService {
      * 统计会话的操作日志数量
      */
     public Integer countAuditLogsBySessionId(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
+        if (!hasText(sessionId)) {
             return 0;
         }
-        Integer count = auditLogMapper.countAuditLogsBySessionId(sessionId);
-        return count != null ? count : 0;
+        return defaultCount(auditLogMapper.countAuditLogsBySessionId(sessionId));
     }
 
     /**
@@ -133,24 +114,21 @@ public class AuditLogService {
     }
 
     public Integer countAuditLogs(AuditLogQuery query) {
-        AuditLogQuery normalizedQuery = normalizeQuery(query);
-        Integer count = auditLogMapper.countAuditLogs(normalizedQuery);
-        return count != null ? count : 0;
+        return defaultCount(auditLogMapper.countAuditLogs(normalizeQuery(query)));
     }
 
     /**
      * 统计用户的操作日志数量
      */
     public Integer countAuditLogsByUserId(String userId) {
-        if (userId == null || userId.isBlank()) {
+        if (!hasText(userId)) {
             return 0;
         }
-        Integer count = auditLogMapper.countAuditLogsByUserId(userId);
-        return count != null ? count : 0;
+        return defaultCount(auditLogMapper.countAuditLogsByUserId(userId));
     }
 
     public Map<String, Object> getUserStatistics(String userId) {
-        if (userId == null || userId.isBlank()) {
+        if (!hasText(userId)) {
             return new HashMap<>();
         }
         String normalizedUserId = userId.trim();
@@ -168,15 +146,14 @@ public class AuditLogService {
      * 统计主机的操作日志数量
      */
     public Integer countAuditLogsByAgentId(String agentId) {
-        if (agentId == null || agentId.isBlank()) {
+        if (!hasText(agentId)) {
             return 0;
         }
-        Integer count = auditLogMapper.countAuditLogsByAgentId(agentId);
-        return count != null ? count : 0;
+        return defaultCount(auditLogMapper.countAuditLogsByAgentId(agentId));
     }
 
     public Map<String, Object> getAgentStatistics(String agentId) {
-        if (agentId == null || agentId.isBlank()) {
+        if (!hasText(agentId)) {
             return new HashMap<>();
         }
         String normalizedAgentId = agentId.trim();
@@ -192,7 +169,7 @@ public class AuditLogService {
     }
 
     public Map<String, Object> getTeamStatistics(String teamId) {
-        if (teamId == null || teamId.isBlank()) {
+        if (!hasText(teamId)) {
             return new HashMap<>();
         }
         String normalizedTeamId = teamId.trim();
@@ -242,8 +219,7 @@ public class AuditLogService {
      * 统计所有日志数量
      */
     public Integer countAllAuditLogs() {
-        Integer count = auditLogMapper.countAllAuditLogs();
-        return count != null ? count : 0;
+        return defaultCount(auditLogMapper.countAllAuditLogs());
     }
 
     /**
@@ -253,8 +229,7 @@ public class AuditLogService {
         if (days == null || days <= 0) {
             days = 30; // 默认30天
         }
-        Integer deleted = auditLogMapper.deleteOldAuditLogs(days);
-        return deleted != null ? deleted : 0;
+        return defaultCount(auditLogMapper.deleteOldAuditLogs(days));
     }
 
     public Integer deleteAuditLogsByIds(List<String> logIds) {
@@ -262,15 +237,14 @@ public class AuditLogService {
             return 0;
         }
         List<String> normalizedIds = logIds.stream()
-                .filter(id -> id != null && !id.isBlank())
+                .filter(this::hasText)
                 .map(String::trim)
                 .distinct()
                 .toList();
         if (normalizedIds.isEmpty()) {
             return 0;
         }
-        Integer deleted = auditLogMapper.deleteAuditLogsByIds(normalizedIds);
-        return deleted != null ? deleted : 0;
+        return defaultCount(auditLogMapper.deleteAuditLogsByIds(normalizedIds));
     }
 
     public Integer deleteAuditLogsByFilter(AuditLogQuery query) {
@@ -278,8 +252,7 @@ public class AuditLogService {
         if (!hasDeleteFilter(normalizedQuery)) {
             throw new IllegalArgumentException("按筛选条件删除至少需要一个筛选条件");
         }
-        Integer deleted = auditLogMapper.deleteAuditLogsByFilter(normalizedQuery);
-        return deleted != null ? deleted : 0;
+        return defaultCount(auditLogMapper.deleteAuditLogsByFilter(normalizedQuery));
     }
 
     public boolean hasDeleteFilter(AuditLogQuery query) {
@@ -332,10 +305,7 @@ public class AuditLogService {
     }
 
     private String trimToNull(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value.trim();
+        return hasText(value) ? value.trim() : null;
     }
 
     private boolean hasText(String value) {

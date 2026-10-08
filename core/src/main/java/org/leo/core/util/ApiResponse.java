@@ -37,36 +37,21 @@ public class ApiResponse {
      * 创建成功响应（带数据）
      */
     public static HashMap<String, Object> success(Object data) {
-        HashMap<String, Object> result = new HashMap<String, Object>();
-        result.put(FIELD_CODE, CODE_SUCCESS);
-        result.put(FIELD_MSG, "success");
-        if (data != null) {
-            result.put(FIELD_DATA, data);
-        }
-        return result;
+        return success(null, data);
     }
     
     /**
      * 创建成功响应（带消息和数据）
      */
     public static HashMap<String, Object> success(String message, Object data) {
-        HashMap<String, Object> result = new HashMap<String, Object>();
-        result.put(FIELD_CODE, CODE_SUCCESS);
-        result.put(FIELD_MSG, message != null ? message : "success");
-        if (data != null) {
-            result.put(FIELD_DATA, data);
-        }
-        return result;
+        return createResponse(CODE_SUCCESS, message != null ? message : "success", data);
     }
     
     /**
      * 创建错误响应
      */
     public static HashMap<String, Object> error(int code, String message) {
-        HashMap<String, Object> result = new HashMap<String, Object>();
-        result.put(FIELD_CODE, code);
-        result.put(FIELD_MSG, message != null ? message : "error");
-        return result;
+        return createResponse(code, message != null ? message : "error", null);
     }
     
     /**
@@ -113,5 +98,13 @@ public class ApiResponse {
 
     public static HashMap<String, Object> tooManyRequests(String message) {
         return error(CODE_TOO_MANY_REQUESTS, message);
+    }
+
+    private static HashMap<String, Object> createResponse(int code, String message, Object data) {
+        HashMap<String, Object> result = new HashMap<>();
+        result.put(FIELD_CODE, code);
+        result.put(FIELD_MSG, message);
+        if (data != null) result.put(FIELD_DATA, data);
+        return result;
     }
 }

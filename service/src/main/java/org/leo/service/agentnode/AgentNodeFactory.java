@@ -137,14 +137,17 @@ public class AgentNodeFactory implements AgentNodeCreationContext {
 
     @Override
     public Communication createCommunication(Agent agent) throws Exception {
-        AgentRouteResolver.Route route = routeResolver.resolve(agent);
+        return createCommunication(routeResolver.resolve(agent));
+    }
+
+    private Communication createCommunication(AgentRouteResolver.Route route) throws Exception {
         Agent transportAgent = route.transport();
         Communication communication = getCommunication(transportAgent, getProxy(transportAgent));
         if (communication == null) {
             throw new IllegalArgumentException("无法创建通信连接，协议不支持: "
                     + transportAgent.getProtocol());
         }
-        applyTlsFingerprintStrategy(agent, communication);
+        applyTlsFingerprintStrategy(route.requested(), communication);
         return communication;
     }
 
@@ -156,14 +159,7 @@ public class AgentNodeFactory implements AgentNodeCreationContext {
     @Override
     public ConnectionPlan createConnectionPlan(Agent agent) throws Exception {
         AgentRouteResolver.Route route = routeResolver.resolve(agent);
-        Agent transportAgent = route.transport();
-        Communication communication = getCommunication(transportAgent, getProxy(transportAgent));
-        if (communication == null) {
-            throw new IllegalArgumentException("无法创建通信连接，协议不支持: "
-                    + transportAgent.getProtocol());
-        }
-        applyTlsFingerprintStrategy(route.requested(), communication);
-        return new ConnectionPlan(communication, createTransportLayers(route));
+        return new ConnectionPlan(createCommunication(route), createTransportLayers(route));
     }
 
     private TransportLayers createTransportLayers(AgentRouteResolver.Route route) {

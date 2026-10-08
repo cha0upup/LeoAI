@@ -50,14 +50,8 @@ public class ProjectService {
     }
 
     public boolean canView(Project project, User user) {
-        if (project == null || user == null) return false;
-        if (AccessPolicy.isAdmin(user)) return true;
-        if (user.getUserId() != null && user.getUserId().equals(project.getOwnerUserId())) return true;
-        if ("public".equals(project.getPermission())) return true;
-        return "team".equals(project.getPermission())
-                && user.getTeamId() != null
-                && !user.getTeamId().isBlank()
-                && user.getTeamId().equals(project.getTeamId());
+        return project != null && user != null
+                && ("public".equals(project.getPermission()) || canEditContent(project, user));
     }
 
     public boolean canManage(Project project, User user) {
@@ -103,11 +97,9 @@ public class ProjectService {
         existing.setDescription(trimToNull(changes.getDescription()));
         existing.setPermission(normalizePermission(changes.getPermission()));
         existing.setStatus(normalizeStatus(changes.getStatus()));
-        if ("team".equals(existing.getPermission())) {
-            existing.setTeamId(trimToNull(changes.getTeamId()) != null
-                    ? changes.getTeamId().trim() : existing.getTeamId());
-        } else {
-            existing.setTeamId(trimToNull(changes.getTeamId()));
+        String teamId = trimToNull(changes.getTeamId());
+        if (teamId != null || !"team".equals(existing.getPermission())) {
+            existing.setTeamId(teamId);
         }
         existing.setUpdateTime(now());
         if (!projectMapper.updateProject(existing)) throw new IllegalStateException("更新项目失败");

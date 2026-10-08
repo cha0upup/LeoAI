@@ -77,7 +77,6 @@ public class PluginManageController {
 
     // 默认值常量
     private static final String DEFAULT_VERSION = "1.0";
-    private static final String DEFAULT_PLUGIN_PREFIX = "Plugin_";
     
     // 安全字符正则表达式
     private static final String SAFE_CHAR_REGEX = "[^A-Za-z0-9_-]";
@@ -103,23 +102,11 @@ public class PluginManageController {
     }
     
     /**
-     * 生成安全的类名
-     */
-    private String generateSafeClassName(String className) {
-        String safeClassName = className.replaceAll(SAFE_CHAR_REGEX, "_");
-        if (safeClassName == null) {
-            safeClassName = DEFAULT_PLUGIN_PREFIX + System.currentTimeMillis();
-        }
-        return safeClassName;
-    }
-    
-    /**
      * 生成插件ID
      */
     private String generatePluginId(String className, String version) {
-        String safeClassName = generateSafeClassName(className);
-        String pluginVersion = (version == null ) ? DEFAULT_VERSION : version;
-        return safeClassName + "_" + pluginVersion + PLUGIN_FILE_EXTENSION;
+        return className.replaceAll(SAFE_CHAR_REGEX, "_") + "_"
+                + (version == null ? DEFAULT_VERSION : version) + PLUGIN_FILE_EXTENSION;
     }
     
     @RequestMapping(value = "/plugins", method = RequestMethod.POST)
@@ -262,10 +249,7 @@ public class PluginManageController {
         updatePluginFields(params, existingPlugin);
         
         // 如果提供了新的字节码，需要验证并更新
-        String newPluginId = updateBytecodeIfProvided(params, existingPlugin, pluginId, safeFileName);
-        if (newPluginId != null) {
-            pluginId = newPluginId;
-        }
+        updateBytecodeIfProvided(params, existingPlugin, pluginId, safeFileName);
         
         // 更新时间和用户信息
         existingPlugin.setUpdateTime(String.valueOf(System.currentTimeMillis()));
@@ -415,24 +399,15 @@ public class PluginManageController {
     }
 
     private Map<String, Object> importOnePluginFile(byte[] pluginBytes, ConflictPolicy policy, User user) {
-        Map<String, Object> result = new LinkedHashMap<>();
         Plugin plugin;
         try {
             String decrypted = AesUtil.decrypt(new String(pluginBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
             plugin = (Plugin) JsonUtil.fromJsonString(decrypted, Plugin.class);
         } catch (Exception e) {
-            result.put("pluginId", null);
-            result.put("pluginName", null);
-            result.put("status", "failed");
-            result.put("message", "文件解析失败: " + e.getMessage());
-            return result;
+            return importResult(null, null, "failed", "文件解析失败: " + e.getMessage());
         }
         if (plugin.getBytecode() == null || plugin.getBytecode().length == 0) {
-            result.put("pluginId", plugin.getPluginId());
-            result.put("pluginName", plugin.getPluginName());
-            result.put("status", "failed");
-            result.put("message", "插件字节码为空");
-            return result;
+            return importResult(plugin.getPluginId(), plugin.getPluginName(), "failed", "插件字节码为空");
         }
         // 重新派生 pluginId，确保一致性
         try {
@@ -441,36 +416,32 @@ public class PluginManageController {
                     : plugin.getPluginName();
             plugin.setPluginId(generatePluginId(identifier, plugin.getVersion()));
         } catch (Exception e) {
-            result.put("pluginId", plugin.getPluginId());
-            result.put("pluginName", plugin.getPluginName());
-            result.put("status", "failed");
-            result.put("message", "字节码验证失败: " + e.getMessage());
-            return result;
+            return importResult(plugin.getPluginId(), plugin.getPluginName(),
+                    "failed", "字节码验证失败: " + e.getMessage());
         }
         String pluginId = plugin.getPluginId();
         boolean exists = pluginManager.getPluginById(pluginId) != null;
         if (exists && policy == ConflictPolicy.SKIP) {
-            result.put("pluginId", pluginId);
-            result.put("pluginName", plugin.getPluginName());
-            result.put("status", "skipped");
-            result.put("message", "已存在，已跳过");
-            return result;
+            return importResult(pluginId, plugin.getPluginName(), "skipped", "已存在，已跳过");
         }
         try {
             plugin.setCreateUserId(user.getUserId());
             plugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
             pluginManager.installPlugin(plugin);
             savePlugin(plugin);
-            result.put("pluginId", pluginId);
-            result.put("pluginName", plugin.getPluginName());
-            result.put("status", exists ? "overwritten" : "imported");
-            result.put("message", exists ? "已覆盖" : "导入成功");
+            return importResult(pluginId, plugin.getPluginName(),
+                    exists ? "overwritten" : "imported", exists ? "已覆盖" : "导入成功");
         } catch (Exception e) {
-            result.put("pluginId", pluginId);
-            result.put("pluginName", plugin.getPluginName());
-            result.put("status", "failed");
-            result.put("message", "保存失败: " + e.getMessage());
+            return importResult(pluginId, plugin.getPluginName(), "failed", "保存失败: " + e.getMessage());
         }
+    }
+
+    private Map<String, Object> importResult(String pluginId, String pluginName, String status, String message) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("pluginId", pluginId);
+        result.put("pluginName", pluginName);
+        result.put("status", status);
+        result.put("message", message);
         return result;
     }
 
@@ -545,23 +516,23 @@ public class PluginManageController {
     }
     
     /**
-     * 如果提供了新的字节码或脚本内容，更新插件 payload 并返回新的 pluginId（如果变化）。
+     * 如果提供了新的字节码或脚本内容，更新插件 payload 并同步派生 pluginId。
      *
      * <p>java 类型走 bytecode + 反编译校验；脚本类型走 scriptContent UTF-8 文本字节。
      * 两者互斥：传哪个就用哪个，都不传则保持现状。
      */
-    private String updateBytecodeIfProvided(HashMap<String, Object> params, Plugin plugin,
+    private void updateBytecodeIfProvided(HashMap<String, Object> params, Plugin plugin,
                                              String currentPluginId, String safeFileName) throws Exception {
         boolean isJava = isJavaPlugin(plugin.getPluginType());
         byte[] payloadBytes;
         String identifier;
         if (isJava) {
             if (!params.containsKey(PARAM_BYTECODE)) {
-                return null;
+                return;
             }
             Object bytecodeObj = params.get(PARAM_BYTECODE);
             if (!(bytecodeObj instanceof String s) || s.isBlank()) {
-                return null;
+                return;
             }
             try {
                 payloadBytes = decodeAndValidateBytecode(s);
@@ -571,11 +542,11 @@ public class PluginManageController {
             identifier = DecompilerUtil.extractClassName(payloadBytes);
         } else {
             if (!params.containsKey(PARAM_SCRIPT_CONTENT)) {
-                return null;
+                return;
             }
             Object scriptObj = params.get(PARAM_SCRIPT_CONTENT);
             if (!(scriptObj instanceof String s) || s.isBlank()) {
-                return null;
+                return;
             }
             payloadBytes = s.getBytes(StandardCharsets.UTF_8);
             identifier = plugin.getPluginName();
@@ -596,8 +567,6 @@ public class PluginManageController {
             if (oldPluginFile.exists()) {
                 oldPluginFile.delete();
             }
-            return newPluginId;
         }
-        return null;
     }
 }

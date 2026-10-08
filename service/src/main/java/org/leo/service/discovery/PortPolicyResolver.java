@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 端口策略解析器 - 将端口策略展开为具体端口列表。
@@ -46,7 +47,7 @@ public class PortPolicyResolver {
      */
     public List<Integer> resolve(PortPolicy policy) {
         if (policy == null) {
-            return toList(QUICK_PORTS);
+            return Arrays.stream(QUICK_PORTS).boxed().collect(Collectors.toCollection(ArrayList::new));
         }
 
         Set<Integer> ports = new LinkedHashSet<>();
@@ -54,20 +55,11 @@ public class PortPolicyResolver {
         // 根据 profile 添加预定义端口
         String profile = policy.profile() != null ? policy.profile().toLowerCase() : "standard";
         switch (profile) {
-            case "quick":
-                addPorts(ports, QUICK_PORTS);
-                break;
-            case "standard":
-                addPorts(ports, STANDARD_PORTS);
-                break;
-            case "extended":
-                addPorts(ports, EXTENDED_PORTS);
-                break;
-            case "custom":
-                // custom 不添加预定义端口
-                break;
-            default:
-                throw new IllegalArgumentException("不支持的端口策略: " + profile);
+            case "quick" -> addPorts(ports, QUICK_PORTS);
+            case "standard" -> addPorts(ports, STANDARD_PORTS);
+            case "extended" -> addPorts(ports, EXTENDED_PORTS);
+            case "custom" -> { } // custom 不添加预定义端口
+            default -> throw new IllegalArgumentException("不支持的端口策略: " + profile);
         }
 
         // 解析自定义范围
@@ -88,21 +80,17 @@ public class PortPolicyResolver {
 
         // 移除排除端口
         if (policy.exclude() != null) {
-            for (Integer port : policy.exclude()) {
-                ports.remove(port);
-            }
+            policy.exclude().forEach(ports::remove);
         }
 
         if (ports.isEmpty()) {
             throw new IllegalArgumentException("端口策略展开后为空");
         }
 
-        List<Integer> result = new ArrayList<>(ports);
-        Collections.sort(result);
-        return result;
+        return ports.stream().sorted().collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private void addPorts(Set<Integer> target, int[] ports) {
+    private static void addPorts(Set<Integer> target, int[] ports) {
         for (int port : ports) {
             target.add(port);
         }
@@ -126,21 +114,11 @@ public class PortPolicyResolver {
         }
     }
 
-    private List<Integer> toList(int[] ports) {
-        List<Integer> result = new ArrayList<>(ports.length);
-        for (int port : ports) {
-            result.add(port);
-        }
-        return result;
-    }
-
     private static int[] expandStandard() {
         Set<Integer> ports = new LinkedHashSet<>();
 
         // 包含所有 quick 端口
-        for (int port : QUICK_PORTS) {
-            ports.add(port);
-        }
+        addPorts(ports, QUICK_PORTS);
 
         // 常见服务端口
         int[] additional = {
@@ -182,40 +160,23 @@ public class PortPolicyResolver {
             58080, 60020, 60443, 61532, 61900, 62078, 63331, 64623, 64680, 65000, 65129, 65389
         };
 
-        for (int port : additional) {
-            ports.add(port);
-        }
-
-        int[] result = new int[ports.size()];
-        int i = 0;
-        for (Integer port : ports) {
-            result[i++] = port;
-        }
-        Arrays.sort(result);
-        return result;
+        addPorts(ports, additional);
+        return ports.stream().mapToInt(Integer::intValue).sorted().toArray();
     }
 
     private static int[] expandExtended() {
         Set<Integer> ports = new LinkedHashSet<>();
 
         // 包含所有 standard 端口
-        for (int port : STANDARD_PORTS) {
-            ports.add(port);
-        }
+        addPorts(ports, STANDARD_PORTS);
 
         // 1-10000 范围内每隔一定间隔的端口
         for (int port = 1; port <= 10000; port++) {
-            if (port <= 1024 || port % 10 == 0 || port % 100 == 0) {
+            if (port <= 1024 || port % 10 == 0) {
                 ports.add(port);
             }
         }
 
-        int[] result = new int[ports.size()];
-        int i = 0;
-        for (Integer port : ports) {
-            result[i++] = port;
-        }
-        Arrays.sort(result);
-        return result;
+        return ports.stream().mapToInt(Integer::intValue).sorted().toArray();
     }
 }

@@ -136,7 +136,7 @@ public class UserFileController {
             }
             long maxUploadBytes = getMaxUploadSizeBytes();
             if (file.getSize() > maxUploadBytes) {
-                return ApiResponse.badRequest("文件超过单文件上传上限（" + formatMegabytes(maxUploadBytes) + " MB）");
+                return ApiResponse.badRequest("文件超过单文件上传上限（" + (maxUploadBytes / 1024 / 1024) + " MB）");
             }
 
             String uploadName = sanitizeFileName(filename);
@@ -207,11 +207,7 @@ public class UserFileController {
 
             try (InputStream in = Files.newInputStream(target);
                  ServletOutputStream out = response.getOutputStream()) {
-                byte[] buf = new byte[64 * 1024];
-                int n;
-                while ((n = in.read(buf)) >= 0) {
-                    out.write(buf, 0, n);
-                }
+                in.transferTo(out);
                 out.flush();
             }
         } catch (IllegalArgumentException e) {
@@ -303,10 +299,7 @@ public class UserFileController {
             byte[] bytes = new byte[readSize];
             int n;
             try (InputStream in = Files.newInputStream(target)) {
-                n = in.read(bytes);
-            }
-            if (n < 0) {
-                n = 0;
+                n = Math.max(0, in.read(bytes));
             }
             byte[] actual = n == bytes.length ? bytes : java.util.Arrays.copyOf(bytes, n);
             String base64 = Base64.getEncoder().encodeToString(actual);
@@ -386,10 +379,6 @@ public class UserFileController {
         } catch (NumberFormatException e) {
             return DEFAULT_MAX_UPLOAD_SIZE_MB * 1024 * 1024;
         }
-    }
-
-    private String formatMegabytes(long bytes) {
-        return String.valueOf(bytes / 1024 / 1024);
     }
 
     private Path resolveUserPath(String userId, String relativePath, boolean asDirectory) {
@@ -525,8 +514,7 @@ public class UserFileController {
         if (!p.startsWith(base)) {
             return "";
         }
-        String rel = base.relativize(p).toString().replace(File.separatorChar, '/');
-        return rel;
+        return base.relativize(p).toString().replace(File.separatorChar, '/');
     }
 
     private void deleteRecursively(Path rootPath) throws Exception {

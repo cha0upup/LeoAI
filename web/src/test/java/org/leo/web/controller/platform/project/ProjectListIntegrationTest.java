@@ -25,6 +25,7 @@ import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
+import org.leo.web.service.AgentDirectoryService;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -71,7 +72,8 @@ class ProjectListIntegrationTest {
         users = mock(UserService.class);
         permissions = new PermissionService(agents, users);
         controller = new ProjectController(
-                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents), permissions);
+                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents), permissions,
+                new AgentDirectoryService(agents));
     }
 
     @AfterEach

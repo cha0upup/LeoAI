@@ -62,10 +62,18 @@ public class AgentService {
         return agents != null ? agents : new ArrayList<>();
     }
 
-    public List<Agent> findAgentsByPermission(String permission) {
-        if (permission == null || permission.isBlank()) return new ArrayList<>();
-        List<Agent> agents = agentMapper.findAgentsByPermission(permission.trim());
-        return agents != null ? agents : new ArrayList<>();
+    /** 批量加载目录行的直接子节点，避免逐行查询和 SQLite 参数数量限制。 */
+    public List<Agent> findAgentsByParentAgentIds(List<String> parentAgentIds) {
+        if (parentAgentIds == null || parentAgentIds.isEmpty()) return List.of();
+        List<String> ids = parentAgentIds.stream()
+                .filter(id -> id != null && !id.isBlank()).map(String::trim).distinct().toList();
+        List<Agent> children = new ArrayList<>();
+        for (int offset = 0; offset < ids.size(); offset += 500) {
+            List<Agent> batch = agentMapper.findAgentsByParentAgentIds(
+                    ids.subList(offset, Math.min(offset + 500, ids.size())));
+            if (batch != null) children.addAll(batch);
+        }
+        return children;
     }
 
     public List<Agent> getAllAgents() {
@@ -79,35 +87,7 @@ public class AgentService {
         if (agent == null) throw new IllegalArgumentException("agent参数不能为空");
         validateRequestPolicy(agent);
         String now = DATE_FORMAT.format(LocalDateTime.now());
-        return agentMapper.insertAgent(
-                agent.getAgentId(),
-                agent.getAgentName(),
-                agent.getParentAgentId(),
-                agent.getCreateByUserId(),
-                agent.getTeamId(),
-                agent.getConnLink(),
-                agent.getProtocol(),
-                agent.getHeaders(),
-                agent.getReqDisguiseId(),
-                agent.getRespDisguiseId(),
-                agent.getPayloadKey(),
-                agent.getProxyEnabled(),
-                agent.getProxyType(),
-                agent.getProxyHost(),
-                agent.getProxyPort(),
-                agent.getMaxReqCount(),
-                agent.getPermission(),
-                agent.getLastHeartbeat(),
-                agent.getHeartbeatInterval(),
-                now, now,
-                agent.getRemark(),
-                agent.getUrlStrategy(),
-                agent.getPaddingStrategy(),
-                agent.getHeaderNoiseStrategy(),
-                agent.getTlsFingerprintStrategy(),
-                agent.getComponentClassNameStrategy(),
-                agent.getType()
-        );
+        return agentMapper.insertAgent(agent, now);
     }
 
     public boolean updateAgentById(Agent agent) {
@@ -116,35 +96,7 @@ public class AgentService {
         }
         validateRequestPolicy(agent);
         String now = DATE_FORMAT.format(LocalDateTime.now());
-        return agentMapper.updateAgentById(
-                agent.getAgentId(),
-                agent.getAgentName(),
-                agent.getParentAgentId(),
-                agent.getCreateByUserId(),
-                agent.getTeamId(),
-                agent.getConnLink(),
-                agent.getProtocol(),
-                agent.getHeaders(),
-                agent.getReqDisguiseId(),
-                agent.getRespDisguiseId(),
-                agent.getPayloadKey(),
-                agent.getProxyEnabled(),
-                agent.getProxyType(),
-                agent.getProxyHost(),
-                agent.getProxyPort(),
-                agent.getMaxReqCount(),
-                agent.getPermission(),
-                agent.getLastHeartbeat(),
-                agent.getHeartbeatInterval(),
-                now,
-                agent.getRemark(),
-                agent.getUrlStrategy(),
-                agent.getPaddingStrategy(),
-                agent.getHeaderNoiseStrategy(),
-                agent.getTlsFingerprintStrategy(),
-                agent.getComponentClassNameStrategy(),
-                agent.getType()
-        );
+        return agentMapper.updateAgentById(agent, now);
     }
 
     /**

@@ -93,12 +93,8 @@ public class PluginExecutionService {
 
     public Map<String, Object> parsePluginParams(Object raw) {
         if (raw == null || String.valueOf(raw).isBlank()) return new LinkedHashMap<>();
-        if (raw instanceof Map<?, ?> map) {
-            LinkedHashMap<String, Object> result = new LinkedHashMap<>();
-            map.forEach((key, value) -> result.put(String.valueOf(key), value));
-            return result;
-        }
-        Object parsed = JsonUtil.fromJsonString(String.valueOf(raw), HashMap.class);
+        Object parsed = raw instanceof Map<?, ?> ? raw
+                : JsonUtil.fromJsonString(String.valueOf(raw), HashMap.class);
         if (!(parsed instanceof Map<?, ?> map)) {
             throw new IllegalArgumentException("pluginParam必须是JSON对象");
         }
