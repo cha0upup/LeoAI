@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -39,6 +40,7 @@ public class ReverseTunnelServer {
     static final int OP_READ         = 3;
     static final int OP_WRITE        = 4;
     static final int OP_CLOSE        = 5;
+    static final int OP_LIST_LISTENS = 6;
 
     private static final long DEFAULT_POLL_INTERVAL_MS = 150L;
     private static final int  DEFAULT_MAX_CONNS        = 200;
@@ -55,6 +57,12 @@ public class ReverseTunnelServer {
     private final ProxySessionResources resources;
     private final Object lifecycleLock = new Object();
 
+    private enum RemoteState { ABSENT, PRESENT, UNKNOWN }
+    private volatile RemoteState remoteState = RemoteState.ABSENT;
+    // A lost START may still execute later; LIST absence alone does not cancel it.
+    private volatile boolean startUncertain;
+    private volatile boolean stopRequested;
+    private volatile boolean starting;
     private volatile boolean running;
     private Thread pollThread;
     private ThreadPoolExecutor dialerExecutor;
@@ -167,25 +175,53 @@ public class ReverseTunnelServer {
      * 若后续初始化失败，主动 STOP_LISTEN 回滚，避免 agent 端孤儿 ServerSocket。
      */
     public void start() throws Exception {
+        synchronized (this) { stopRequested = false; }
         start(() -> true);
+    }
+
+    public boolean isCleanupPending() {
+        return stopRequested && remoteState != RemoteState.ABSENT;
+    }
+
+    public boolean isStarting() {
+        return starting;
+    }
+
+    public String getState() {
+        return running ? "running" : isCleanupPending() ? "cleanup_pending" : starting ? "starting" : "stopped";
     }
 
     public void start(BooleanSupplier stillRequested) throws Exception {
         synchronized (lifecycleLock) {
-            if (!stillRequested.getAsBoolean()) throw new IllegalStateException("reverse tunnel start cancelled");
+            if (stopRequested || !stillRequested.getAsBoolean()) throw new CancellationException("reverse tunnel start cancelled");
             if (running) return;
             if (resources != null && resources.isClosed()) throw new IllegalStateException("proxy session closed");
-            Map<String, Object> params = listenerParams(OP_START_LISTEN);
-            params.put("listenPort", remoteListenPort);
-            params.put("bindAddr", bindAddr);
-            Map<String, Object> response = agentNode.invokeComponent("ReverseTunnelComponent", params);
-            if (!hasResponseCode(response, 200)) {
-                throw new IllegalStateException("agent START_LISTEN failed: "
-                        + (response == null ? "unknown" : response.get("msg")));
-            }
+            starting = true;
             try {
+                remoteState = RemoteState.UNKNOWN;
+                startUncertain = true;
+                Map<String, Object> params = listenerParams(OP_START_LISTEN);
+                params.put("listenPort", remoteListenPort);
+                params.put("bindAddr", bindAddr);
+                Map<String, Object> response;
+                try {
+                    response = agentNode.invokeComponent("ReverseTunnelComponent", params);
+                } catch (Exception error) {
+                    if (!refreshRemoteState()) throw error;
+                    response = Map.of("code", 200);
+                }
+                if (hasResponseCode(response, 200)) {
+                    startUncertain = false;
+                    remoteState = RemoteState.PRESENT;
+                }
+                else {
+                    if (!refreshRemoteState()) {
+                        throw new IllegalStateException("agent START_LISTEN failed: "
+                                + (response == null ? "unknown" : response.get("msg")));
+                    }
+                }
                 synchronized (this) {
-                    if (!stillRequested.getAsBoolean()) throw new IllegalStateException("reverse tunnel start cancelled");
+                    if (stopRequested || !stillRequested.getAsBoolean()) throw new CancellationException("reverse tunnel start cancelled");
                     if (resources != null && resources.isClosed()) throw new IllegalStateException("proxy session closed");
                     dialerExecutor = resources == null
                             ? ProxySessionResources.newDialerExecutor(Math.min(DEFAULT_DIALER_THREADS, maxConns), maxConns)
@@ -195,51 +231,94 @@ public class ReverseTunnelServer {
                     pollThread.setDaemon(true);
                     pollThread.start();
                 }
+                logger.info("反向隧道启动: agent:{}:{} -> {}:{} (listenId={})",
+                        bindAddr, remoteListenPort, forwardHost, forwardPort, listenId);
             } catch (Exception error) {
-                synchronized (this) {
-                    running = false;
-                    cleanupLocalResources();
-                }
-                try {
-                    stopRemoteListener();
-                } catch (Exception rollbackError) {
-                    logger.warn("start 回滚时 STOP_LISTEN 失败: {}", rollbackError.getMessage());
-                }
+                stopConfirmed();
                 throw error;
+            } finally {
+                starting = false;
             }
-            logger.info("反向隧道启动: agent:{}:{} -> {}:{} (listenId={})",
-                    bindAddr, remoteListenPort, forwardHost, forwardPort, listenId);
         }
     }
 
-    /** Local state locks never cover transport RPCs. */
+    /** Phase one has no RPC and never waits for an in-flight START/STOP. */
+    public synchronized void stopLocal() {
+        stopRequested = true;
+        running = false;
+        Thread polling = pollThread;
+        pollThread = null;
+        if (polling != null && polling != Thread.currentThread()) polling.interrupt();
+        cleanupLocalResources();
+    }
+
     public void stop() {
+        stopConfirmed();
+    }
+
+    /** Phase two checks the acknowledgment; pending cleanup keeps its listener reservation. */
+    public boolean stopConfirmed() {
+        stopLocal();
         synchronized (lifecycleLock) {
-            boolean wasRunning;
-            synchronized (this) {
-                wasRunning = running;
-                running = false;
-                Thread polling = pollThread;
-                pollThread = null;
-                if (polling != null && polling != Thread.currentThread()) polling.interrupt();
-                cleanupLocalResources();
+            if (remoteState == RemoteState.ABSENT && !starting) return true;
+            try {
+                Map<String, Object> response = agentNode.invokeComponent(
+                        "ReverseTunnelComponent", listenerParams(OP_STOP_LISTEN));
+                int code = responseCode(response);
+                if (code == 200 || code == 404) startUncertain = false;
+                if (code == 404 || (code == 200 && !Boolean.TRUE.equals(response.get("cleanupPending")))) {
+                    remoteState = RemoteState.ABSENT;
+                } else refreshRemoteState();
+            } catch (Exception error) {
+                logger.debug("STOP_LISTEN 待确认: listenId={} {}", listenId, error.getMessage());
+                refreshRemoteState();
             }
-            if (wasRunning) {
-                try {
-                    stopRemoteListener();
-                } catch (Exception error) {
-                    logger.debug("STOP_LISTEN 调用异常: {}", error.getMessage());
-                }
-                logger.info("反向隧道停止: listenId={}", listenId);
-            }
+            return remoteState == RemoteState.ABSENT;
         }
+    }
+
+    private boolean refreshRemoteState() {
+        try {
+            Map<String, Object> response = agentNode.invokeComponent(
+                    "ReverseTunnelComponent", listenerParams(OP_LIST_LISTENS));
+            if (!hasResponseCode(response, 200) || !validListeners(response.get("listens"))) {
+                remoteState = RemoteState.UNKNOWN;
+                return false;
+            }
+            List<?> listens = (List<?>) response.get("listens");
+            boolean active = listens.stream().anyMatch(item -> item instanceof Map<?, ?> row && listenId.equals(row.get("listenId"))
+                    && !"starting".equals(row.get("state"))
+                    && row.get("listenPort") instanceof Number port && port.intValue() == remoteListenPort);
+            if (active) startUncertain = false;
+            remoteState = containsListener(listens) ? RemoteState.PRESENT
+                    : startUncertain ? RemoteState.UNKNOWN : RemoteState.ABSENT;
+            return active;
+        } catch (Exception error) {
+            remoteState = RemoteState.UNKNOWN;
+            return false;
+        }
+    }
+
+    public static boolean validListeners(Object value) {
+        return value instanceof List<?> listens && listens.stream().allMatch(item ->
+                item instanceof Map<?, ?> row && row.get("listenId") instanceof String id && !id.isBlank());
+    }
+
+    /** One manager-level LIST response can reconcile every pending listener. */
+    public synchronized boolean confirmStopped(List<?> listens) {
+        if (!stopRequested || starting || startUncertain || running || containsListener(listens)) return false;
+        remoteState = RemoteState.ABSENT;
+        return true;
+    }
+
+    private boolean containsListener(List<?> listens) {
+        return listens.stream().anyMatch(item -> item instanceof Map<?, ?> row && listenId.equals(row.get("listenId")));
     }
 
     private synchronized boolean handleRemoteListenerGone() {
         if (!running || pollThread != Thread.currentThread()) return false;
-        running = false;
-        pollThread = null;
-        cleanupLocalResources();
+        remoteState = RemoteState.ABSENT;
+        stopLocal();
         return true;
     }
 
@@ -367,10 +446,6 @@ public class ReverseTunnelServer {
         params.put("op", Integer.valueOf(operation));
         params.put("listenId", listenId);
         return params;
-    }
-
-    private void stopRemoteListener() throws Exception {
-        agentNode.invokeComponent("ReverseTunnelComponent", listenerParams(OP_STOP_LISTEN));
     }
 
     private static boolean hasResponseCode(Map<String, Object> response, int expectedCode) {

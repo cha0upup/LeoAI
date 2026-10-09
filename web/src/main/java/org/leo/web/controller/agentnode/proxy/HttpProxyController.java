@@ -58,7 +58,7 @@ public class HttpProxyController {
                 "获取HTTP代理统计信息失败", "HTTP代理未启动", () -> {
                     HttpProxyCapable node =
                             ControllerUtil.requireCapability(params, HttpProxyCapable.class);
-                    return node.getHttpProxyStatistics();
+                    return node.getHttpProxyStatistics(ProxyControllerSupport.statisticsQuery(params));
                 });
     }
 }

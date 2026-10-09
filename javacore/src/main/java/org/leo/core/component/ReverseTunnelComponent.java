@@ -45,6 +45,7 @@ public class ReverseTunnelComponent implements Runnable {
 
     // listenId -> ServerSocketChannel
     private static Map listenMap = new ConcurrentHashMap();
+    private static Map cancelledListens = new ConcurrentHashMap();
     // listenId -> info Map(port, bindAddr)
     private static Map listenInfoMap = new ConcurrentHashMap();
     // connId -> SocketChannel
@@ -129,6 +130,14 @@ public class ReverseTunnelComponent implements Runnable {
             results.put("msg", "listenPort out of range");
             return;
         }
+        synchronized (listenMap) {
+            sweepCancelledListens();
+            if (cancelledListens.containsKey(listenId)) {
+                results.put("code", Integer.valueOf(409));
+                results.put("msg", "listener start cancelled");
+                return;
+            }
+        }
         if (listenMap.containsKey(listenId)) {
             results.put("code", Integer.valueOf(409));
             results.put("msg", "listenId already exists");
@@ -146,7 +155,7 @@ public class ReverseTunnelComponent implements Runnable {
             info.put("listenPort", Integer.valueOf(actualPort));
             info.put("bindAddr", bindAddr);
             synchronized (listenMap) {
-                if (listenMap.containsKey(listenId)) {
+                if (cancelledListens.containsKey(listenId) || listenMap.containsKey(listenId)) {
                     ssc.close();
                     results.put("code", Integer.valueOf(409));
                     results.put("msg", "listenId already exists");
@@ -172,11 +181,32 @@ public class ReverseTunnelComponent implements Runnable {
         }
     }
 
+    private void sweepCancelledListens() {
+        long now = System.currentTimeMillis();
+        Iterator entries = cancelledListens.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry entry = (Map.Entry) entries.next();
+            if (((Long) entry.getValue()).longValue() <= now) cancelledListens.remove(entry.getKey());
+        }
+    }
+
     private void handleStopListen() {
         String listenId = getRequiredString("listenId");
         if (listenId == null) return;
         ServerSocketChannel ssc;
         synchronized (listenMap) {
+            sweepCancelledListens();
+            if (!cancelledListens.containsKey(listenId) && cancelledListens.size() >= 512) {
+                Object oldestKey = null;
+                long oldest = Long.MAX_VALUE;
+                for (Object value : cancelledListens.entrySet()) {
+                    Map.Entry entry = (Map.Entry) value;
+                    long expires = ((Long) entry.getValue()).longValue();
+                    if (expires < oldest) { oldest = expires; oldestKey = entry.getKey(); }
+                }
+                if (oldestKey != null) cancelledListens.remove(oldestKey);
+            }
+            cancelledListens.put(listenId, Long.valueOf(System.currentTimeMillis() + 600000L));
             ssc = (ServerSocketChannel) listenMap.remove(listenId);
             listenInfoMap.remove(listenId);
         }

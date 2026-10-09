@@ -1,6 +1,7 @@
 package org.leo.web.controller.agentnode.proxy;
 
 import org.leo.core.engine.proxy.ProxyBindAddress;
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
@@ -46,6 +47,25 @@ final class ProxyControllerSupport {
                     ? ApiResponse.error(unavailableMessage)
                     : toView(snapshot);
         });
+    }
+
+    static ProxyStatisticsQuery statisticsQuery(Map<String, Object> params) {
+        if (params == null || (!params.containsKey("includeConnections")
+                && !params.containsKey("page") && !params.containsKey("pageSize"))) return ProxyStatisticsQuery.ALL;
+        Object include = params.getOrDefault("includeConnections", Boolean.TRUE);
+        if (!(include instanceof Boolean)) throw new IllegalArgumentException("includeConnections必须为布尔值");
+        return new ProxyStatisticsQuery((Boolean) include,
+                positiveInteger(params, "page", 1, Integer.MAX_VALUE),
+                positiveInteger(params, "pageSize", 50, 200));
+    }
+
+    private static int positiveInteger(Map<String, Object> params, String name, int fallback, int maximum) {
+        Object value = params.getOrDefault(name, fallback);
+        try {
+            int number = Integer.parseInt(String.valueOf(value));
+            if (number >= 1 && number <= maximum) return number;
+        } catch (NumberFormatException ignored) { }
+        throw new IllegalArgumentException(name + "必须在1到" + maximum + "之间");
     }
 
     static String optionalBindAddress(Map<String, Object> params) {
@@ -104,26 +124,33 @@ final class ProxyControllerSupport {
         data.put("startTime", snapshot.startTime);
         data.put("uptime", snapshot.uptime);
 
-        List<Map<String, Object>> connections = new ArrayList<>(
-                snapshot.connections == null ? 0 : snapshot.connections.size());
-        if (snapshot.connections != null) {
-            for (Socks5ProxyStatistics.ConnectionInfo connection : snapshot.connections) {
-                if (connection == null) {
-                    continue;
+        if (snapshot.connectionsIncluded) {
+            List<Map<String, Object>> connections = new ArrayList<>(
+                    snapshot.connections == null ? 0 : snapshot.connections.size());
+            if (snapshot.connections != null) {
+                for (Socks5ProxyStatistics.ConnectionInfo connection : snapshot.connections) {
+                    if (connection == null) {
+                        continue;
+                    }
+                    Map<String, Object> view = new LinkedHashMap<String, Object>();
+                    view.put("connId", connection.connId);
+                    view.put("targetHost", connection.targetHost);
+                    view.put("targetPort", connection.targetPort);
+                    view.put("clientIp", connection.clientIp);
+                    view.put("connectTime", connection.connectTime);
+                    view.put("uptime", connection.getUptime());
+                    view.put("uploadBytes", connection.uploadBytes);
+                    view.put("downloadBytes", connection.downloadBytes);
+                    connections.add(view);
                 }
-                Map<String, Object> view = new LinkedHashMap<String, Object>();
-                view.put("connId", connection.connId);
-                view.put("targetHost", connection.targetHost);
-                view.put("targetPort", connection.targetPort);
-                view.put("clientIp", connection.clientIp);
-                view.put("connectTime", connection.connectTime);
-                view.put("uptime", connection.getUptime());
-                view.put("uploadBytes", connection.uploadBytes);
-                view.put("downloadBytes", connection.downloadBytes);
-                connections.add(view);
             }
+            data.put("connections", connections);
         }
-        data.put("connections", connections);
+        if (snapshot.connectionPageSize > 0) {
+            data.put("connectionCount", snapshot.connectionCount);
+            data.put("connectionPage", snapshot.connectionPage);
+            data.put("connectionPageSize", snapshot.connectionPageSize);
+        }
         return data;
     }
 

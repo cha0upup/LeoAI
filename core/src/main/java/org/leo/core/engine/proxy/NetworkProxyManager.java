@@ -16,6 +16,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Runtime-neutral lifecycle manager for all socket proxy modes.
@@ -31,6 +36,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     private final Map<Integer, ReverseTunnelServer> reversePorts = new ConcurrentHashMap<>();
     private final ProxySessionResources resources;
     private final int maxListeners;
+    private final ThreadPoolExecutor cleanupExecutor;
     private volatile Socks5ProxyServer socks5Proxy;
     private volatile HttpProxyServer httpProxy;
     private boolean closed;
@@ -45,6 +51,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         if (maxListeners < 1) throw new IllegalArgumentException("maxListeners must be positive");
         this.maxListeners = maxListeners;
         this.resources = new ProxySessionResources(maxConnections, maxDialers);
+        this.cleanupExecutor = ProxySessionResources.newDaemonExecutor("Proxy-Cleanup", Math.min(4, maxListeners), maxListeners);
         this.agentNode = agentNode;
     }
 
@@ -86,8 +93,13 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
+        return getSocks5ProxyStatistics(ProxyStatisticsQuery.ALL);
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics(ProxyStatisticsQuery query) {
         Socks5ProxyServer server = socks5Proxy;
-        return snapshot(server == null ? null : server.getStatistics());
+        return snapshot(server == null ? null : server.getStatistics(), query);
     }
 
     @Override
@@ -130,8 +142,13 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
+        return getHttpProxyStatistics(ProxyStatisticsQuery.ALL);
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics(ProxyStatisticsQuery query) {
         HttpProxyServer server = httpProxy;
-        return snapshot(server == null ? null : server.getStatistics());
+        return snapshot(server == null ? null : server.getStatistics(), query);
     }
 
     @Override
@@ -189,8 +206,13 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
+        return getLocalForwardStatistics(localPort, ProxyStatisticsQuery.ALL);
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort, ProxyStatisticsQuery query) {
         LocalForwardServer server = localForwards.get(localPort);
-        return snapshot(server == null ? null : server.getStatistics());
+        return snapshot(server == null ? null : server.getStatistics(), query);
     }
 
     @Override
@@ -212,12 +234,13 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         }
         try {
             server.start(() -> reverseTunnels.get(server.getListenId()) == server);
-            if (reverseTunnels.get(server.getListenId()) != server) {
-                stopReverse(server);
+            if (reverseTunnels.get(server.getListenId()) != server || !server.isRunning()) {
+                if (!stopReverse(server)) return pendingReverseResult(server);
                 return result(409, "reverse tunnel start cancelled", "listenId", server.getListenId());
             }
         } catch (Exception error) {
-            boolean cancelled = reverseTunnels.get(server.getListenId()) != server;
+            boolean cancelled = error instanceof CancellationException || reverseTunnels.get(server.getListenId()) != server;
+            if (server.isCleanupPending()) return pendingReverseResult(server);
             stopReverse(server);
             if (cancelled) return result(409, "reverse tunnel start cancelled", "listenId", server.getListenId());
             throw error;
@@ -232,31 +255,72 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public Map<String, Object> stopReverseTunnel(String listenId) {
-        ReverseTunnelServer server = reverseTunnels.remove(listenId);
+        ReverseTunnelServer server = reverseTunnels.get(listenId);
         if (server == null) return result(200, "not running", "listenId", listenId);
-        stopReverse(server);
-        return result(200, "stopped", "listenId", listenId);
+        return stopReverse(server) ? result(200, "stopped", "listenId", listenId) : pendingReverseResult(server);
     }
 
     @Override
     public Map<String, Object> stopAllReverseTunnels() {
-        List<ReverseTunnelServer> servers = drainReverseTunnels();
-        servers.forEach(this::stopReverse);
-        return result(200, "stopped " + servers.size() + " reverse tunnel(s)");
+        return stopReverseBatch(new ArrayList<>(reverseTunnels.values()));
     }
 
-    private synchronized List<ReverseTunnelServer> drainReverseTunnels() {
-        List<ReverseTunnelServer> servers = new ArrayList<>(reverseTunnels.values());
-        reverseTunnels.clear();
-        return servers;
-    }
-
-    private void stopReverse(ReverseTunnelServer server) {
-        try {
-            server.stop();
-        } finally {
-            releaseReverse(server);
+    private Map<String, Object> stopReverseBatch(List<ReverseTunnelServer> servers) {
+        // Finish every local shutdown before the first remote cleanup can block.
+        servers.forEach(ReverseTunnelServer::stopLocal);
+        List<Future<Boolean>> cleanups = new ArrayList<>(servers.size());
+        for (ReverseTunnelServer server : servers) {
+            try {
+                cleanups.add(cleanupExecutor.submit(() -> stopReverse(server)));
+            } catch (RejectedExecutionException ignored) { }
         }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        int stopped = 0;
+        boolean interrupted = false;
+        for (Future<Boolean> cleanup : cleanups) {
+            try {
+                if (cleanup.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) stopped++;
+            } catch (InterruptedException error) {
+                interrupted = true;
+            } catch (Exception ignored) { }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+        int pending = servers.size() - stopped;
+        Map<String, Object> response = result(pending == 0 ? 200 : 202,
+                pending == 0 ? "stopped " + stopped + " reverse tunnel(s)"
+                        : "本地已全部停止，" + pending + " 条隧道的远端清理待确认");
+        response.put("stoppedCount", stopped);
+        response.put("pendingCount", pending);
+        return response;
+    }
+
+    private boolean stopReverse(ReverseTunnelServer server) {
+        if (!server.stopConfirmed()) return false;
+        releaseReverse(server);
+        return true;
+    }
+
+    private Map<String, Object> pendingReverseResult(ReverseTunnelServer server) {
+        Map<String, Object> response = result(202, "本地已停止，远端清理待确认", "listenId", server.getListenId());
+        response.put("cleanupPending", true);
+        response.put("state", "cleanup_pending");
+        return response;
+    }
+
+    private void refreshPendingReverseTunnels() {
+        List<ReverseTunnelServer> pending = reverseTunnels.values().stream()
+                .filter(server -> server.isCleanupPending() && !server.isStarting()).toList();
+        if (pending.isEmpty()) return;
+        try {
+            Map<String, Object> response = agentNode.invokeComponent("ReverseTunnelComponent", Map.of("op", 6));
+            if (response != null && response.get("code") instanceof Number code && code.intValue() == 200
+                    && ReverseTunnelServer.validListeners(response.get("listens"))) {
+                List<?> listens = (List<?>) response.get("listens");
+                for (ReverseTunnelServer server : pending) {
+                    if (server.confirmStopped(listens)) releaseReverse(server);
+                }
+            }
+        } catch (Exception ignored) { }
     }
 
     private void releaseReverse(ReverseTunnelServer server) {
@@ -266,12 +330,15 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public List<Map<String, Object>> listReverseTunnels() {
+        refreshPendingReverseTunnels();
         List<Map<String, Object>> result = new ArrayList<>();
         reverseTunnels.values().stream()
                 .sorted((left, right) -> Integer.compare(left.getRemoteListenPort(), right.getRemoteListenPort()))
                 .forEach(server -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("listenId", server.getListenId());
+                    item.put("state", server.getState());
+                    item.put("cleanupPending", server.isCleanupPending());
                     item.put("remoteListenPort", server.getRemoteListenPort());
                     item.put("bindAddr", server.getBindAddr());
                     item.put("forwardHost", server.getForwardHost());
@@ -285,8 +352,13 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
 
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
+        return getReverseTunnelStatistics(listenId, ProxyStatisticsQuery.ALL);
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId, ProxyStatisticsQuery query) {
         ReverseTunnelServer server = reverseTunnels.get(listenId);
-        return snapshot(server == null ? null : server.getStatistics());
+        return snapshot(server == null ? null : server.getStatistics(), query);
     }
 
     @Override
@@ -298,11 +370,14 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
             stopSocks5Proxy();
             stopHttpProxy();
             stopAllLocalForwards();
-            servers = drainReverseTunnels();
+            servers = new ArrayList<>(reverseTunnels.values());
         }
         try {
-            servers.forEach(this::stopReverse);
+            stopReverseBatch(servers);
         } finally {
+            for (Runnable queued : cleanupExecutor.shutdownNow()) {
+                if (queued instanceof Future<?> future) future.cancel(false);
+            }
             resources.close();
         }
     }
@@ -315,8 +390,8 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         if (count >= maxListeners) throw new IllegalStateException("proxy session listener limit reached: " + maxListeners);
     }
 
-    private Socks5ProxyStatistics.StatisticsSnapshot snapshot(Socks5ProxyStatistics statistics) {
-        return statistics == null ? null : statistics.getSnapshot();
+    private Socks5ProxyStatistics.StatisticsSnapshot snapshot(Socks5ProxyStatistics statistics, ProxyStatisticsQuery query) {
+        return statistics == null ? null : statistics.getSnapshot(query);
     }
 
     private void requirePort(int port, String name) {

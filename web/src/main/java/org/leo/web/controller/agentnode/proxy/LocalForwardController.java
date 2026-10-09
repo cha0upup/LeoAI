@@ -77,7 +77,7 @@ public class LocalForwardController {
                     int localPort = ProxyControllerSupport.requirePort(params, "localPort");
                     LocalForwardCapable node =
                             ControllerUtil.requireCapability(params, LocalForwardCapable.class);
-                    return node.getLocalForwardStatistics(localPort);
+                    return node.getLocalForwardStatistics(localPort, ProxyControllerSupport.statisticsQuery(params));
                 });
     }
 }

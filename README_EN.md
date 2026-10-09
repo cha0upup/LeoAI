@@ -534,6 +534,8 @@ SOCKS5, HTTP, and local port forwarding let you configure the **listen address o
 
 The four proxy modes share per-node-session limits: 64 listeners, 512 connections (including handshakes, queued dials, and unfinished RPCs), and 16 reverse-tunnel dialer workers. Each listener still allows at most 200 connections. When capacity is exhausted, new connections are closed while existing ones continue. Idle reverse-tunnel ACCEPT polling backs off from 150 ms to 1 s and returns to 150 ms when connections arrive or remain active. Remote start/stop RPCs run outside the management lock so other proxy operations stay responsive.
 
+Statistics endpoints keep their default full response and support `includeConnections: false` for summaries and `page` / `pageSize` for details (at most 200 rows per page). The panel refreshes summaries every 3 seconds and expanded details roughly every 10 seconds or on demand, showing 50 rows per page. Batch stop closes all local resources first, then uses at most four cleanup workers; after a 15-second wait it reports any unconfirmed cleanup. Lost startup replies are reconciled by `listenId`. Unconfirmed remote listeners retain their port reservations and remain visible for automatic reconciliation or cleanup retry.
+
 ### Skill Manager
 
 Navigate to **Skills** in the main sidebar to visually manage all Skills under both scopes (agent-node / platform):

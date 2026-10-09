@@ -47,7 +47,7 @@ public class Socks5ProxyController {
                 "获取统计信息失败", "SOCKS5代理未启动", () -> {
                     Socks5ProxyCapable node =
                             ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
-                    return node.getSocks5ProxyStatistics();
+                    return node.getSocks5ProxyStatistics(ProxyControllerSupport.statisticsQuery(params));
                 });
     }
 

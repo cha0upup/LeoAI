@@ -1,5 +1,6 @@
 package org.leo.core.agent.capability;
 
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 
 import java.util.List;
@@ -23,4 +24,8 @@ public interface LocalForwardCapable {
     List<Map<String, Object>> listLocalForwards();
 
     Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort);
+
+    default Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort, ProxyStatisticsQuery query) {
+        return query.applyTo(getLocalForwardStatistics(localPort));
+    }
 }

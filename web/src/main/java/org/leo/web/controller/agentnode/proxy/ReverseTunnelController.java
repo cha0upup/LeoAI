@@ -83,7 +83,7 @@ public class ReverseTunnelController {
                     String listenId = ProxyControllerSupport.requireText(params, "listenId");
                     ReverseTunnelCapable node =
                             ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
-                    return node.getReverseTunnelStatistics(listenId);
+                    return node.getReverseTunnelStatistics(listenId, ProxyControllerSupport.statisticsQuery(params));
                 });
     }
 

@@ -39,10 +39,14 @@ public final class ProxySessionResources implements AutoCloseable {
     }
 
     public static ThreadPoolExecutor newDialerExecutor(int workers, int queueSize) {
+        return newDaemonExecutor("Proxy-Dialer", workers, queueSize);
+    }
+
+    public static ThreadPoolExecutor newDaemonExecutor(String prefix, int workers, int queueSize) {
         AtomicInteger sequence = new AtomicInteger();
         ThreadPoolExecutor executor = new ThreadPoolExecutor(workers, workers, 60, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(queueSize), task -> {
-                    Thread thread = new Thread(task, "Proxy-Dialer-" + sequence.incrementAndGet());
+                    Thread thread = new Thread(task, prefix + "-" + sequence.incrementAndGet());
                     thread.setDaemon(true);
                     return thread;
                 }, new ThreadPoolExecutor.AbortPolicy());

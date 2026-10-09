@@ -1,5 +1,6 @@
 package org.leo.core.agent.impl;
 
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.leo.core.engine.proxy.NetworkProxyManager;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.entity.Agent;
@@ -607,6 +608,11 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     }
 
     @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics(ProxyStatisticsQuery query) {
+        return networkProxyManager.getSocks5ProxyStatistics(query);
+    }
+
+    @Override
     public Map<String, Object> startHttpProxy(int port, String bindAddr) throws Exception {
         return networkProxyManager.startHttpProxy(port, bindAddr);
     }
@@ -624,6 +630,11 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
         return networkProxyManager.getHttpProxyStatistics();
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics(ProxyStatisticsQuery query) {
+        return networkProxyManager.getHttpProxyStatistics(query);
     }
 
     @Override
@@ -652,6 +663,11 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     }
 
     @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort, ProxyStatisticsQuery query) {
+        return networkProxyManager.getLocalForwardStatistics(localPort, query);
+    }
+
+    @Override
     public Map<String, Object> startReverseTunnel(int remoteListenPort, String bindAddr,
                                                    String forwardHost, int forwardPort) throws Exception {
         return networkProxyManager.startReverseTunnel(remoteListenPort, bindAddr, forwardHost, forwardPort);
@@ -675,6 +691,11 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     @Override
     public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
         return networkProxyManager.getReverseTunnelStatistics(listenId);
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId, ProxyStatisticsQuery query) {
+        return networkProxyManager.getReverseTunnelStatistics(listenId, query);
     }
 
     // ==================== HTTP 请求 ====================

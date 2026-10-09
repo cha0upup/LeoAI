@@ -19,6 +19,9 @@ $rtListenPath = static function ($listenId) use ($rtBase) {
     }
     return $rtBase . DIRECTORY_SEPARATOR . hash('sha256', $listenId);
 };
+$rtCancelPath = static function ($listenId) use ($rtListenPath) {
+    return $rtListenPath($listenId) . '.cancel';
+};
 $rtConnPath = static function ($directory, $connId) use ($rtName) {
     if (!is_string($connId) || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $connId)) {
         throw new InvalidArgumentException('invalid connId');
@@ -86,6 +89,9 @@ $rtRemoveTree = static function ($directory) use (&$rtRemoveTree) {
 };
 $rtCleanup = static function () use ($rtBase, $rtName, $rtReadJson, $rtRemoveTree) {
     if (!is_dir($rtBase)) return;
+    foreach ((array)glob($rtBase . DIRECTORY_SEPARATOR . '*.cancel') as $marker) {
+        if (time() - (int)@filemtime($marker) > 600) @unlink($marker);
+    }
     foreach ((array)glob($rtBase . DIRECTORY_SEPARATOR . '*') as $directory) {
         if (!is_dir($directory)) continue;
         $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
@@ -144,10 +150,15 @@ $rtCloseClient = static function ($connId, &$clients, $paths, $rtWriteJson, $rtN
     }
 };
 $rtWorker = static function ($directory) use (
-    $rtName, $rtReadJson, $rtWriteJson, $rtAppend, $rtTake, $rtCloseClient
+    $rtName, $rtReadJson, $rtWriteJson, $rtAppend, $rtTake, $rtCloseClient, $rtCancelPath
 ) {
     $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('config'));
     if (!is_array($config)) return 2;
+    $cancel = $rtCancelPath((string)$config['listenId']);
+    if (is_file($cancel)) {
+        $rtWriteJson($directory . DIRECTORY_SEPARATOR . $rtName('status'), ['state' => 'closed', 'updatedAt' => time()]);
+        return 0;
+    }
     $bindAddr = (string)$config['bindAddr']; $port = (int)$config['listenPort'];
     $uriHost = strpos($bindAddr, ':') !== false && $bindAddr[0] !== '[' ? '[' . $bindAddr . ']' : $bindAddr;
     $errno = 0; $error = '';
@@ -169,7 +180,7 @@ $rtWorker = static function ($directory) use (
     $heartbeat = $directory . DIRECTORY_SEPARATOR . $rtName('heartbeat');
     $failureMessage = null;
     try {
-        while (!is_file($stop)) {
+        while (!is_file($stop) && !is_file($cancel)) {
             clearstatcache(true, $heartbeat);
             $heartbeatAt = is_file($heartbeat) ? (int)@filemtime($heartbeat) : 0;
             if (time() - max($lastActivity, $heartbeatAt) >= 600) break;
@@ -249,12 +260,13 @@ return [
     'id' => 'ReverseTunnelComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use (
         $rtGet, $rtBase, $rtListenPath, $rtConnPath, $rtName, $rtReadJson, $rtWriteJson,
-        $rtAppend, $rtTake, $rtTakeLines, $rtRemoveTree, $rtCleanup, $rtLaunch
+        $rtAppend, $rtTake, $rtTakeLines, $rtRemoveTree, $rtCleanup, $rtLaunch, $rtCancelPath
     ) {
         $rtCleanup();
         $op = (int)$rtGet($params, 'op', -1);
         if ($op === 0) {
             $listenId = (string)$rtGet($params, 'listenId', ''); $directory = $rtListenPath($listenId);
+            if (is_file($rtCancelPath($listenId))) return ['code' => 409, 'msg' => 'listener start cancelled'];
             $port = (int)$rtGet($params, 'listenPort', 0); $bindAddr = trim((string)$rtGet($params, 'bindAddr', '127.0.0.1'));
             if ($port < 0 || $port > 65535 || $bindAddr === '' || strpos($bindAddr, "\0") !== false) {
                 return ['code' => 400, 'msg' => 'invalid listen address'];
@@ -274,9 +286,11 @@ return [
             @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
             $rtWriteJson($directory . DIRECTORY_SEPARATOR . $rtName('config'), ['listenId' => $listenId, 'listenPort' => $port, 'bindAddr' => $bindAddr]);
             $rtWriteJson($directory . DIRECTORY_SEPARATOR . $rtName('status'), ['state' => 'starting', 'updatedAt' => time()]);
+            if (is_file($rtCancelPath($listenId))) return ['code' => 409, 'msg' => 'listener start cancelled'];
             if (!$rtLaunch($directory)) { $rtRemoveTree($directory); return ['code' => 503, 'msg' => 'background worker unavailable']; }
             $deadline = microtime(true) + 5.0;
             do {
+                if (is_file($rtCancelPath($listenId))) return ['code' => 409, 'msg' => 'listener start cancelled'];
                 usleep(20000); $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
                 if (is_array($status) && $status['state'] === 'open') return ['code' => 200, 'msg' => 'listening',
                     'listenPort' => (int)$status['listenPort'], 'bindAddr' => (string)$status['bindAddr']];
@@ -287,9 +301,19 @@ return [
         }
         if ($op === 1 || $op === 2) {
             $listenId = (string)$rtGet($params, 'listenId', ''); $directory = $rtListenPath($listenId);
+            if ($op === 1) {
+                @mkdir($rtBase, 0700, true);
+                $markers = (array)glob($rtBase . DIRECTORY_SEPARATOR . '*.cancel');
+                if (count($markers) >= 512) {
+                    usort($markers, static function ($a, $b) { return (int)@filemtime($a) - (int)@filemtime($b); });
+                    @unlink($markers[0]);
+                }
+                if (@file_put_contents($rtCancelPath($listenId), '1', LOCK_EX) === false) return ['code' => 500, 'msg' => 'cancel marker write failed'];
+                @chmod($rtCancelPath($listenId), 0600);
+            }
             $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
-            if (!is_array($status) || $status['state'] !== 'open') return ['code' => 404, 'msg' => 'listenId not found'];
-            if ($op === 1) { @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX); return ['code' => 200, 'msg' => 'stopped']; }
+            if (!is_array($status) || !in_array($status['state'], $op === 1 ? ['starting', 'open'] : ['open'], true)) return ['code' => 404, 'msg' => 'listenId not found'];
+            if ($op === 1) { @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX); return ['code' => 200, 'msg' => 'stop requested', 'cleanupPending' => true]; }
             @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
             return ['code' => 200, 'newConns' => $rtTakeLines($directory . DIRECTORY_SEPARATOR . $rtName('accept'), 256)];
         }
@@ -319,8 +343,10 @@ return [
             foreach ((array)glob($rtBase . DIRECTORY_SEPARATOR . '*') as $directory) {
                 $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
                 $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('config'));
-                if (is_array($status) && is_array($config) && $status['state'] === 'open') $listens[] = [
-                    'listenId' => $config['listenId'], 'listenPort' => $status['listenPort'], 'bindAddr' => $status['bindAddr']
+                if (is_array($status) && is_array($config) && in_array($status['state'], ['starting', 'open'], true)) $listens[] = [
+                    'listenId' => $config['listenId'], 'state' => $status['state'],
+                    'listenPort' => isset($status['listenPort']) ? $status['listenPort'] : $config['listenPort'],
+                    'bindAddr' => isset($status['bindAddr']) ? $status['bindAddr'] : $config['bindAddr']
                 ];
             }
             return ['code' => 200, 'listens' => $listens];

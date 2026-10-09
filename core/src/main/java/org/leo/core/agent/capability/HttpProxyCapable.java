@@ -1,5 +1,6 @@
 package org.leo.core.agent.capability;
 
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 
 import java.util.Map;
@@ -20,4 +21,8 @@ public interface HttpProxyCapable {
     Map<String, Object> getHttpProxyStatus();
 
     Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics();
+
+    default Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics(ProxyStatisticsQuery query) {
+        return query.applyTo(getHttpProxyStatistics());
+    }
 }

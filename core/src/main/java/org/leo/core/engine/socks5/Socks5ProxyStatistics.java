@@ -1,5 +1,6 @@
 package org.leo.core.engine.socks5;
 
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -139,7 +140,11 @@ public class Socks5ProxyStatistics {
     /**
      * 获取统计信息快照
      */
-    public synchronized StatisticsSnapshot getSnapshot() {
+    public StatisticsSnapshot getSnapshot() {
+        return getSnapshot(ProxyStatisticsQuery.ALL);
+    }
+
+    public synchronized StatisticsSnapshot getSnapshot(ProxyStatisticsQuery query) {
         updateRates();
         
         StatisticsSnapshot snapshot = new StatisticsSnapshot();
@@ -152,9 +157,7 @@ public class Socks5ProxyStatistics {
         snapshot.downloadRate = downloadRate;
         snapshot.startTime = startTime;
         snapshot.uptime = System.currentTimeMillis() - startTime;
-        snapshot.connections = new java.util.ArrayList<ConnectionInfo>(connections.values());
-        
-        return snapshot;
+        return query.applyTo(snapshot, connections.values());
     }
     
     /**
@@ -204,5 +207,9 @@ public class Socks5ProxyStatistics {
         public long startTime;
         public long uptime;
         public java.util.List<ConnectionInfo> connections;
+        public boolean connectionsIncluded = true;
+        public int connectionCount;
+        public int connectionPage;
+        public int connectionPageSize;
     }
 }

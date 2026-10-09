@@ -1,5 +1,6 @@
 package org.leo.core.agent.capability;
 
+import org.leo.core.engine.proxy.ProxyStatisticsQuery;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 
 import java.util.List;
@@ -20,4 +21,8 @@ public interface ReverseTunnelCapable {
     List<Map<String, Object>> listReverseTunnels();
 
     Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId);
+
+    default Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId, ProxyStatisticsQuery query) {
+        return query.applyTo(getReverseTunnelStatistics(listenId));
+    }
 }
