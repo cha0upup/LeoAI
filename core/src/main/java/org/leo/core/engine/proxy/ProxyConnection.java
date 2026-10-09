@@ -19,6 +19,7 @@ public final class ProxyConnection implements AutoCloseable {
     private final Socket client;
     private final ComponentInvokeCapable node;
     private final Socks5ProxyStatistics statistics;
+    private final ProxySessionResources.ConnectionPermit permit;
     private final String connId = UUID.randomUUID().toString();
     private boolean closed;
     private boolean opening;
@@ -26,6 +27,12 @@ public final class ProxyConnection implements AutoCloseable {
     private boolean remoteCloseSent;
 
     public ProxyConnection(Socket client, ComponentInvokeCapable node, Socks5ProxyStatistics statistics) {
+        this(client, node, statistics, null);
+    }
+
+    ProxyConnection(Socket client, ComponentInvokeCapable node, Socks5ProxyStatistics statistics,
+                    ProxySessionResources.ConnectionPermit permit) {
+        this.permit = permit;
         this.client = client;
         this.node = node;
         this.statistics = statistics;
@@ -101,9 +108,21 @@ public final class ProxyConnection implements AutoCloseable {
     public void relay() throws IOException {
         if (isClosed()) return;
         client.setSoTimeout(0);
-        Thread reader = new Thread(new ReadDataThread(this), "Proxy-Read-" + connId);
+        ProxySessionResources.ConnectionPermit readerPermit = permit == null ? null : permit.retain();
+        Thread reader = new Thread(() -> {
+            try {
+                new ReadDataThread(this).run();
+            } finally {
+                if (readerPermit != null) readerPermit.close();
+            }
+        }, "Proxy-Read-" + connId);
         reader.setDaemon(true);
-        reader.start();
+        try {
+            reader.start();
+        } catch (RuntimeException | Error error) {
+            if (readerPermit != null) readerPermit.close();
+            throw error;
+        }
         try {
             new WriteDataThread(this).run();
         } finally {
@@ -133,6 +152,10 @@ public final class ProxyConnection implements AutoCloseable {
         } catch (Exception error) {
             log.debug("关闭远程代理连接失败: connId={}", connId, error);
         }
+    }
+
+    void releaseReservation() {
+        if (permit != null) permit.close();
     }
 
     private Map<String, Object> params(int operation) {

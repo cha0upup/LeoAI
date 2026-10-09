@@ -532,6 +532,8 @@ All modes provide connection count, upload/download traffic statistics, and a on
 
 SOCKS5, HTTP, and local port forwarding let you configure the **listen address on the machine running the LeoAI backend** in the panel (API parameter `bindAddr`). The default is `0.0.0.0`, listening on all IPv4 interfaces; select `127.0.0.1` to accept local connections only, or enter a specific local IPv4 or IPv6 address. Stop a running proxy before changing its listen address or port and starting it again. Stopping closes the listener and existing client connections, then attempts to clean up node-side connections. Remote cleanup cannot be confirmed when the node is unreachable. Reverse tunnels use `bindAddr` for their node-side listener, defaulting to `127.0.0.1`.
 
+The four proxy modes share per-node-session limits: 64 listeners, 512 connections (including handshakes, queued dials, and unfinished RPCs), and 16 reverse-tunnel dialer workers. Each listener still allows at most 200 connections. When capacity is exhausted, new connections are closed while existing ones continue. Idle reverse-tunnel ACCEPT polling backs off from 150 ms to 1 s and returns to 150 ms when connections arrive or remain active. Remote start/stop RPCs run outside the management lock so other proxy operations stay responsive.
+
 ### Skill Manager
 
 Navigate to **Skills** in the main sidebar to visually manage all Skills under both scopes (agent-node / platform):

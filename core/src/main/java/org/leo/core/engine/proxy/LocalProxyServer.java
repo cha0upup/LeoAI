@@ -20,6 +20,7 @@ public abstract class LocalProxyServer {
     private final String bindAddr;
     private final int handshakeTimeout;
     private final int maxConnections;
+    private final ProxySessionResources resources;
     private final Socks5ProxyStatistics statistics;
     private final Set<ProxyConnection> connections = new HashSet<>();
     private volatile boolean running;
@@ -39,12 +40,18 @@ public abstract class LocalProxyServer {
 
     protected LocalProxyServer(ComponentInvokeCapable node, int port, String bindAddr,
                                int handshakeTimeout, int maxConnections) {
+        this(node, port, bindAddr, handshakeTimeout, maxConnections, null);
+    }
+
+    protected LocalProxyServer(ComponentInvokeCapable node, int port, String bindAddr,
+                               int handshakeTimeout, int maxConnections, ProxySessionResources resources) {
         if (maxConnections < 1) throw new IllegalArgumentException("maxConnections must be positive");
         this.node = node;
         this.port = port;
         this.bindAddr = ProxyBindAddress.normalize(bindAddr);
         this.handshakeTimeout = handshakeTimeout;
         this.maxConnections = maxConnections;
+        this.resources = resources;
         this.statistics = new Socks5ProxyStatistics(port);
     }
 
@@ -101,12 +108,19 @@ public abstract class LocalProxyServer {
         try {
             while (!listener.isClosed()) {
                 Socket client = listener.accept();
-                ProxyConnection connection = new ProxyConnection(client, node, statistics);
+                ProxyConnection connection;
                 synchronized (this) {
                     if (!running || serverSocket != listener || connections.size() >= maxConnections) {
-                        connection.closeLocal();
+                        client.close();
                         continue;
                     }
+                    ProxySessionResources.ConnectionPermit permit = resources == null
+                            ? null : resources.tryAcquireConnection();
+                    if (resources != null && permit == null) {
+                        client.close();
+                        continue;
+                    }
+                    connection = new ProxyConnection(client, node, statistics, permit);
                     connections.add(connection);
                 }
                 try {
@@ -141,6 +155,6 @@ public abstract class LocalProxyServer {
     }
 
     private synchronized void release(ProxyConnection connection) {
-        connections.remove(connection);
+        if (connections.remove(connection)) connection.releaseReservation();
     }
 }

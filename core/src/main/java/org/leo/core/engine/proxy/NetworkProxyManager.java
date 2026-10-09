@@ -27,11 +27,24 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     private final ComponentInvokeCapable agentNode;
     private final Map<Integer, LocalForwardServer> localForwards = new ConcurrentHashMap<>();
     private final Map<String, ReverseTunnelServer> reverseTunnels = new ConcurrentHashMap<>();
-    private Socks5ProxyServer socks5Proxy;
-    private HttpProxyServer httpProxy;
+    // Ports stay reserved through START/STOP, including slow or cancelled RPCs.
+    private final Map<Integer, ReverseTunnelServer> reversePorts = new ConcurrentHashMap<>();
+    private final ProxySessionResources resources;
+    private final int maxListeners;
+    private volatile Socks5ProxyServer socks5Proxy;
+    private volatile HttpProxyServer httpProxy;
+    private boolean closed;
 
     public NetworkProxyManager(ComponentInvokeCapable agentNode) {
+        this(agentNode, 64, 512, 16);
+    }
+
+    public NetworkProxyManager(ComponentInvokeCapable agentNode, int maxListeners,
+                               int maxConnections, int maxDialers) {
         if (agentNode == null) throw new IllegalArgumentException("agentNode不能为空");
+        if (maxListeners < 1) throw new IllegalArgumentException("maxListeners must be positive");
+        this.maxListeners = maxListeners;
+        this.resources = new ProxySessionResources(maxConnections, maxDialers);
         this.agentNode = agentNode;
     }
 
@@ -45,7 +58,8 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
             }
             return listenerResult(socks5Proxy, "already running");
         }
-        Socks5ProxyServer server = new Socks5ProxyServer(agentNode, port, address);
+        requireListenerSlot();
+        Socks5ProxyServer server = new Socks5ProxyServer(agentNode, port, address, resources);
         server.start();
         socks5Proxy = server;
         return listenerResult(server, "started");
@@ -60,18 +74,20 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Map<String, Object> getSocks5ProxyStatus() {
+    public Map<String, Object> getSocks5ProxyStatus() {
+        Socks5ProxyServer server = socks5Proxy;
         Map<String, Object> status = new LinkedHashMap<>();
-        boolean enabled = socks5Proxy != null && socks5Proxy.isRunning();
+        boolean enabled = server != null && server.isRunning();
         status.put("enabled", enabled);
-        status.put("port", enabled ? socks5Proxy.getListenPort() : null);
-        status.put("bindAddr", enabled ? socks5Proxy.getBindAddr() : null);
+        status.put("port", enabled ? server.getListenPort() : null);
+        status.put("bindAddr", enabled ? server.getBindAddr() : null);
         return status;
     }
 
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
-        return snapshot(socks5Proxy == null ? null : socks5Proxy.getStatistics());
+    public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
+        Socks5ProxyServer server = socks5Proxy;
+        return snapshot(server == null ? null : server.getStatistics());
     }
 
     @Override
@@ -84,7 +100,8 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
             }
             return listenerResult(httpProxy, "already running");
         }
-        HttpProxyServer server = new HttpProxyServer(agentNode, port, address);
+        requireListenerSlot();
+        HttpProxyServer server = new HttpProxyServer(agentNode, port, address, resources);
         server.start();
         httpProxy = server;
         return listenerResult(server, "started");
@@ -99,20 +116,22 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Map<String, Object> getHttpProxyStatus() {
+    public Map<String, Object> getHttpProxyStatus() {
+        HttpProxyServer server = httpProxy;
         Map<String, Object> status = new LinkedHashMap<>();
-        boolean running = httpProxy != null && httpProxy.isRunning();
+        boolean running = server != null && server.isRunning();
         status.put("running", running);
         if (running) {
-            status.put("port", httpProxy.getListenPort());
-            status.put("bindAddr", httpProxy.getBindAddr());
+            status.put("port", server.getListenPort());
+            status.put("bindAddr", server.getBindAddr());
         }
         return status;
     }
 
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
-        return snapshot(httpProxy == null ? null : httpProxy.getStatistics());
+    public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
+        HttpProxyServer server = httpProxy;
+        return snapshot(server == null ? null : server.getStatistics());
     }
 
     @Override
@@ -124,7 +143,8 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
         if (localForwards.containsKey(localPort)) {
             return result(409, "forward already exists", "localPort", localPort);
         }
-        LocalForwardServer server = new LocalForwardServer(agentNode, localPort, address, targetHost.trim(), targetPort);
+        requireListenerSlot();
+        LocalForwardServer server = new LocalForwardServer(agentNode, localPort, address, targetHost.trim(), targetPort, resources);
         server.start();
         localForwards.put(localPort, server);
         Map<String, Object> response = result(200, "started", "localPort", localPort);
@@ -151,7 +171,7 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized List<Map<String, Object>> listLocalForwards() {
+    public List<Map<String, Object>> listLocalForwards() {
         List<Map<String, Object>> result = new ArrayList<>();
         localForwards.values().stream()
                 .sorted((left, right) -> Integer.compare(left.getLocalPort(), right.getLocalPort()))
@@ -168,34 +188,41 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
+    public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
         LocalForwardServer server = localForwards.get(localPort);
         return snapshot(server == null ? null : server.getStatistics());
     }
 
     @Override
-    public synchronized Map<String, Object> startReverseTunnel(
+    public Map<String, Object> startReverseTunnel(
             int remoteListenPort, String bindAddr, String forwardHost, int forwardPort) throws Exception {
         requirePort(remoteListenPort, "remoteListenPort");
         requireTarget(forwardHost, forwardPort, "forwardHost", "forwardPort");
-        for (ReverseTunnelServer existing : reverseTunnels.values()) {
-            if (existing.isRunning() && existing.getRemoteListenPort() == remoteListenPort) {
+        ReverseTunnelServer server;
+        synchronized (this) {
+            if (reversePorts.containsKey(remoteListenPort)) {
                 return result(409, "reverse tunnel already exists", "remoteListenPort", remoteListenPort);
             }
+            requireListenerSlot();
+            server = new ReverseTunnelServer(agentNode, remoteListenPort,
+                    normalizeBindAddress(bindAddr), forwardHost.trim(), forwardPort, resources);
+            server.setOnDead(() -> releaseReverse(server));
+            reversePorts.put(remoteListenPort, server);
+            reverseTunnels.put(server.getListenId(), server);
         }
-        ReverseTunnelServer server = new ReverseTunnelServer(agentNode, remoteListenPort,
-                normalizeBindAddress(bindAddr), forwardHost.trim(), forwardPort);
-        String listenId = server.getListenId();
-        server.setOnDead(() -> reverseTunnels.remove(listenId, server));
-        reverseTunnels.put(listenId, server);
         try {
-            server.start();
+            server.start(() -> reverseTunnels.get(server.getListenId()) == server);
+            if (reverseTunnels.get(server.getListenId()) != server) {
+                stopReverse(server);
+                return result(409, "reverse tunnel start cancelled", "listenId", server.getListenId());
+            }
         } catch (Exception error) {
-            reverseTunnels.remove(listenId, server);
-            server.stop();
+            boolean cancelled = reverseTunnels.get(server.getListenId()) != server;
+            stopReverse(server);
+            if (cancelled) return result(409, "reverse tunnel start cancelled", "listenId", server.getListenId());
             throw error;
         }
-        Map<String, Object> response = result(200, "started", "listenId", listenId);
+        Map<String, Object> response = result(200, "started", "listenId", server.getListenId());
         response.put("remoteListenPort", remoteListenPort);
         response.put("bindAddr", server.getBindAddr());
         response.put("forwardHost", forwardHost.trim());
@@ -204,23 +231,41 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Map<String, Object> stopReverseTunnel(String listenId) {
+    public Map<String, Object> stopReverseTunnel(String listenId) {
         ReverseTunnelServer server = reverseTunnels.remove(listenId);
         if (server == null) return result(200, "not running", "listenId", listenId);
-        server.stop();
+        stopReverse(server);
         return result(200, "stopped", "listenId", listenId);
     }
 
     @Override
-    public synchronized Map<String, Object> stopAllReverseTunnels() {
-        int count = reverseTunnels.size();
-        reverseTunnels.values().forEach(ReverseTunnelServer::stop);
+    public Map<String, Object> stopAllReverseTunnels() {
+        List<ReverseTunnelServer> servers = drainReverseTunnels();
+        servers.forEach(this::stopReverse);
+        return result(200, "stopped " + servers.size() + " reverse tunnel(s)");
+    }
+
+    private synchronized List<ReverseTunnelServer> drainReverseTunnels() {
+        List<ReverseTunnelServer> servers = new ArrayList<>(reverseTunnels.values());
         reverseTunnels.clear();
-        return result(200, "stopped " + count + " reverse tunnel(s)");
+        return servers;
+    }
+
+    private void stopReverse(ReverseTunnelServer server) {
+        try {
+            server.stop();
+        } finally {
+            releaseReverse(server);
+        }
+    }
+
+    private void releaseReverse(ReverseTunnelServer server) {
+        reverseTunnels.remove(server.getListenId(), server);
+        reversePorts.remove(server.getRemoteListenPort(), server);
     }
 
     @Override
-    public synchronized List<Map<String, Object>> listReverseTunnels() {
+    public List<Map<String, Object>> listReverseTunnels() {
         List<Map<String, Object>> result = new ArrayList<>();
         reverseTunnels.values().stream()
                 .sorted((left, right) -> Integer.compare(left.getRemoteListenPort(), right.getRemoteListenPort()))
@@ -239,17 +284,35 @@ public final class NetworkProxyManager implements Socks5ProxyCapable, HttpProxyC
     }
 
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
+    public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
         ReverseTunnelServer server = reverseTunnels.get(listenId);
         return snapshot(server == null ? null : server.getStatistics());
     }
 
     @Override
-    public synchronized void close() {
-        stopSocks5Proxy();
-        stopHttpProxy();
-        stopAllLocalForwards();
-        stopAllReverseTunnels();
+    public void close() {
+        List<ReverseTunnelServer> servers;
+        synchronized (this) {
+            if (closed) return;
+            closed = true;
+            stopSocks5Proxy();
+            stopHttpProxy();
+            stopAllLocalForwards();
+            servers = drainReverseTunnels();
+        }
+        try {
+            servers.forEach(this::stopReverse);
+        } finally {
+            resources.close();
+        }
+    }
+
+    private void requireListenerSlot() {
+        if (closed) throw new IllegalStateException("proxy session closed");
+        int count = localForwards.size() + reversePorts.size()
+                + (socks5Proxy != null && socks5Proxy.isRunning() ? 1 : 0)
+                + (httpProxy != null && httpProxy.isRunning() ? 1 : 0);
+        if (count >= maxListeners) throw new IllegalStateException("proxy session listener limit reached: " + maxListeners);
     }
 
     private Socks5ProxyStatistics.StatisticsSnapshot snapshot(Socks5ProxyStatistics statistics) {

@@ -40,19 +40,12 @@ final class ProxyControllerSupport {
     static HashMap<String, Object> statistics(String failureMessage,
                                               String unavailableMessage,
                                               StatisticsAction action) {
-        try {
+        return call(failureMessage, null, () -> {
             Socks5ProxyStatistics.StatisticsSnapshot snapshot = action.execute();
-            if (snapshot == null) {
-                return ApiResponse.error(unavailableMessage);
-            }
-            return ApiResponse.success(toView(snapshot));
-        } catch (ApiException error) {
-            throw error;
-        } catch (IllegalArgumentException error) {
-            return ApiResponse.badRequest(error.getMessage());
-        } catch (Exception error) {
-            return ApiResponse.error(failureMessage + ": " + error.getMessage());
-        }
+            return snapshot == null
+                    ? ApiResponse.error(unavailableMessage)
+                    : toView(snapshot);
+        });
     }
 
     static String optionalBindAddress(Map<String, Object> params) {
@@ -111,7 +104,8 @@ final class ProxyControllerSupport {
         data.put("startTime", snapshot.startTime);
         data.put("uptime", snapshot.uptime);
 
-        List<Map<String, Object>> connections = new ArrayList<Map<String, Object>>();
+        List<Map<String, Object>> connections = new ArrayList<>(
+                snapshot.connections == null ? 0 : snapshot.connections.size());
         if (snapshot.connections != null) {
             for (Socks5ProxyStatistics.ConnectionInfo connection : snapshot.connections) {
                 if (connection == null) {

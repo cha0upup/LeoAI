@@ -1,6 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
+import org.leo.core.engine.proxy.ProxySessionResources;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,13 +12,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 反向隧道服务器（C2 侧）。
@@ -54,6 +52,8 @@ public class ReverseTunnelServer {
     private final int forwardPort;
     private final long pollIntervalMs;
     private final int maxConns;
+    private final ProxySessionResources resources;
+    private final Object lifecycleLock = new Object();
 
     private volatile boolean running;
     private Thread pollThread;
@@ -66,7 +66,9 @@ public class ReverseTunnelServer {
     /** connId -> 本地 Socket（指向 forwardHost:forwardPort） */
     private final ConcurrentHashMap<String, Socket> localConns =
             new ConcurrentHashMap<String, Socket>();
+    private final ConcurrentHashMap<String, DialerTask> dialerTasks = new ConcurrentHashMap<>();
     private final Set<String> pendingConns = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Socket> pendingSockets = new ConcurrentHashMap<>();
 
     public ReverseTunnelServer(ComponentInvokeCapable agentNode,
                                 int remoteListenPort,
@@ -94,6 +96,19 @@ public class ReverseTunnelServer {
                                 int forwardPort,
                                 long pollIntervalMs,
                                 int maxConns) {
+        this(agentNode, remoteListenPort, bindAddr, forwardHost, forwardPort, pollIntervalMs, maxConns, null);
+    }
+
+    public ReverseTunnelServer(ComponentInvokeCapable agentNode, int remoteListenPort, String bindAddr,
+                               String forwardHost, int forwardPort, ProxySessionResources resources) {
+        this(agentNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
+                DEFAULT_POLL_INTERVAL_MS, DEFAULT_MAX_CONNS, resources);
+    }
+
+    public ReverseTunnelServer(ComponentInvokeCapable agentNode, int remoteListenPort, String bindAddr,
+                               String forwardHost, int forwardPort, long pollIntervalMs, int maxConns,
+                               ProxySessionResources resources) {
+        this.resources = resources;
         this.agentNode = agentNode;
         this.remoteListenPort = remoteListenPort;
         this.bindAddr = (bindAddr == null || bindAddr.length() == 0) ? "127.0.0.1" : bindAddr;
@@ -151,96 +166,81 @@ public class ReverseTunnelServer {
      * 启动反向隧道：先在 agent 端开监听，成功后再启动轮询线程。
      * 若后续初始化失败，主动 STOP_LISTEN 回滚，避免 agent 端孤儿 ServerSocket。
      */
-    public synchronized void start() throws Exception {
-        if (running) {
-            return;
-        }
+    public void start() throws Exception {
+        start(() -> true);
+    }
 
-        Map<String, Object> params = listenerParams(OP_START_LISTEN);
-        params.put("listenPort", Integer.valueOf(remoteListenPort));
-        params.put("bindAddr", bindAddr);
-        Map<String, Object> res = agentNode.invokeComponent("ReverseTunnelComponent", params);
-        if (!hasResponseCode(res, 200)) {
-            String msg = res != null ? String.valueOf(res.get("msg")) : "unknown";
-            throw new RuntimeException("agent START_LISTEN failed: " + msg);
-        }
-
-        // START_LISTEN 已成功，后续初始化若失败必须回滚
-        try {
-            running = true;
-            int dialerThreads = Math.max(1, Math.min(DEFAULT_DIALER_THREADS, maxConns));
-            dialerExecutor = new ThreadPoolExecutor(
-                    dialerThreads,
-                    dialerThreads,
-                    60L,
-                    TimeUnit.SECONDS,
-                    new ArrayBlockingQueue<Runnable>(maxConns),
-                    new ThreadFactory() {
-                private final AtomicInteger idx = new AtomicInteger();
-
-                @Override
-                public Thread newThread(Runnable r) {
-                    String threadName = "ReverseTunnel-Dialer-" + remoteListenPort
-                            + "-" + idx.incrementAndGet();
-                    Thread t = new Thread(r, threadName);
-                    t.setDaemon(true);
-                    return t;
+    public void start(BooleanSupplier stillRequested) throws Exception {
+        synchronized (lifecycleLock) {
+            if (!stillRequested.getAsBoolean()) throw new IllegalStateException("reverse tunnel start cancelled");
+            if (running) return;
+            if (resources != null && resources.isClosed()) throw new IllegalStateException("proxy session closed");
+            Map<String, Object> params = listenerParams(OP_START_LISTEN);
+            params.put("listenPort", remoteListenPort);
+            params.put("bindAddr", bindAddr);
+            Map<String, Object> response = agentNode.invokeComponent("ReverseTunnelComponent", params);
+            if (!hasResponseCode(response, 200)) {
+                throw new IllegalStateException("agent START_LISTEN failed: "
+                        + (response == null ? "unknown" : response.get("msg")));
+            }
+            try {
+                synchronized (this) {
+                    if (!stillRequested.getAsBoolean()) throw new IllegalStateException("reverse tunnel start cancelled");
+                    if (resources != null && resources.isClosed()) throw new IllegalStateException("proxy session closed");
+                    dialerExecutor = resources == null
+                            ? ProxySessionResources.newDialerExecutor(Math.min(DEFAULT_DIALER_THREADS, maxConns), maxConns)
+                            : resources.dialers();
+                    running = true;
+                    pollThread = new Thread(new AcceptPollLoop(), "ReverseTunnel-Poll-" + remoteListenPort);
+                    pollThread.setDaemon(true);
+                    pollThread.start();
                 }
-            }, new ThreadPoolExecutor.AbortPolicy());
-            dialerExecutor.allowCoreThreadTimeOut(true);
-
-            pollThread = new Thread(new AcceptPollLoop(), "ReverseTunnel-Poll-" + remoteListenPort);
-            pollThread.setDaemon(true);
-            pollThread.start();
-        } catch (Exception e) {
-            // 回滚：让 agent 端释放已绑定的端口
-            running = false;
-            cleanupLocalResources();
-            try {
-                stopRemoteListener();
-            } catch (Exception rollbackEx) {
-                logger.warn("start 回滚时 STOP_LISTEN 失败: {}", rollbackEx.getMessage());
+            } catch (Exception error) {
+                synchronized (this) {
+                    running = false;
+                    cleanupLocalResources();
+                }
+                try {
+                    stopRemoteListener();
+                } catch (Exception rollbackError) {
+                    logger.warn("start 回滚时 STOP_LISTEN 失败: {}", rollbackError.getMessage());
+                }
+                throw error;
             }
-            throw e;
-        }
-
-        logger.info("反向隧道启动: agent:{}:{} -> {}:{} (listenId={})",
-                bindAddr, remoteListenPort, forwardHost, forwardPort, listenId);
-    }
-
-    /**
-     * 停止反向隧道：先停轮询，再关 agent 监听，最后清理本地连接。
-     */
-    public synchronized void stop() {
-        boolean wasRunning = running;
-        running = false;
-        Thread polling = pollThread;
-        pollThread = null;
-        if (polling != null && polling != Thread.currentThread()) {
-            polling.interrupt();
-        }
-
-        if (wasRunning) {
-            try {
-                stopRemoteListener();
-            } catch (Exception e) {
-                logger.debug("STOP_LISTEN 调用异常: {}", e.getMessage());
-            }
-        }
-
-        cleanupLocalResources();
-        if (wasRunning) {
-            logger.info("反向隧道停止: listenId={}", listenId);
+            logger.info("反向隧道启动: agent:{}:{} -> {}:{} (listenId={})",
+                    bindAddr, remoteListenPort, forwardHost, forwardPort, listenId);
         }
     }
 
-    private synchronized void handleRemoteListenerGone() {
-        if (!running) {
-            return;
+    /** Local state locks never cover transport RPCs. */
+    public void stop() {
+        synchronized (lifecycleLock) {
+            boolean wasRunning;
+            synchronized (this) {
+                wasRunning = running;
+                running = false;
+                Thread polling = pollThread;
+                pollThread = null;
+                if (polling != null && polling != Thread.currentThread()) polling.interrupt();
+                cleanupLocalResources();
+            }
+            if (wasRunning) {
+                try {
+                    stopRemoteListener();
+                } catch (Exception error) {
+                    logger.debug("STOP_LISTEN 调用异常: {}", error.getMessage());
+                }
+                logger.info("反向隧道停止: listenId={}", listenId);
+            }
         }
+    }
+
+    private synchronized boolean handleRemoteListenerGone() {
+        if (!running || pollThread != Thread.currentThread()) return false;
         running = false;
         pollThread = null;
         cleanupLocalResources();
+        return true;
     }
 
     private void cleanupLocalResources() {
@@ -248,11 +248,20 @@ public class ReverseTunnelServer {
             closeSocket(socket);
         }
         localConns.clear();
+        for (Socket socket : pendingSockets.values()) {
+            closeSocket(socket);
+        }
+        pendingSockets.clear();
+        ThreadPoolExecutor executor = dialerExecutor;
+        for (DialerTask task : dialerTasks.values()) {
+            if (executor != null) executor.remove(task);
+            task.cancel();
+        }
+        dialerTasks.clear();
         pendingConns.clear();
 
-        ThreadPoolExecutor executor = dialerExecutor;
         dialerExecutor = null;
-        if (executor != null) {
+        if (executor != null && resources == null) {
             executor.shutdownNow();
         }
         if (statistics != null) {
@@ -268,20 +277,32 @@ public class ReverseTunnelServer {
         return localConns;
     }
 
-    synchronized boolean registerLocalConnection(String connId, Socket socket) {
-        if (!running) {
+    synchronized boolean registerPendingConnection(String connId, Socket socket, DialerTask task) {
+        if (!running || dialerTasks.get(connId) != task) {
             return false;
         }
-        localConns.put(connId, socket);
-        pendingConns.remove(connId);
+        pendingSockets.put(connId, socket);
         return true;
     }
 
-    void completeLocalConnection(String connId, Socket socket) {
+    synchronized boolean registerLocalConnection(String connId, Socket socket, String clientAddr, DialerTask task) {
+        if (!running || dialerTasks.get(connId) != task) {
+            return false;
+        }
+        localConns.put(connId, socket);
+        pendingSockets.remove(connId, socket);
+        pendingConns.remove(connId);
+        statistics.addConnection(connId, forwardHost, forwardPort, clientAddr != null ? clientAddr : "");
+        return true;
+    }
+
+    synchronized void completeLocalConnection(String connId, Socket socket) {
         pendingConns.remove(connId);
         if (socket != null) {
+            pendingSockets.remove(connId, socket);
             localConns.remove(connId, socket);
         } else {
+            pendingSockets.remove(connId);
             localConns.remove(connId);
         }
         if (statistics != null) {
@@ -290,31 +311,46 @@ public class ReverseTunnelServer {
         closeSocket(socket);
     }
 
+    synchronized void recordUpload(String connId, int bytes) {
+        if (running && localConns.containsKey(connId)) {
+            statistics.addUploadBytes(connId, bytes);
+        }
+    }
+
+    synchronized void recordDownload(String connId, int bytes) {
+        if (running && localConns.containsKey(connId)) {
+            statistics.addDownloadBytes(connId, bytes);
+        }
+    }
+
+    synchronized void dialerCompleted(String connId, DialerTask task) {
+        dialerTasks.remove(connId, task);
+    }
+
     private void scheduleDialer(String connId, String clientAddr) {
-        if (!pendingConns.add(connId)) {
-            return;
-        }
-        if (!running || localConns.size() + pendingConns.size() > maxConns) {
-            pendingConns.remove(connId);
-            closeRemoteConnection(connId);
-            if (running) {
-                logger.warn("反向隧道连接数已达上限 {}, 拒绝新连接 connId={}", maxConns, connId);
+        synchronized (this) {
+            if (pollThread != Thread.currentThread()) return;
+            if (localConns.containsKey(connId) || pendingConns.contains(connId)) return;
+            if (running && localConns.size() + pendingConns.size() < maxConns && dialerExecutor != null) {
+                ProxySessionResources.ConnectionPermit permit = resources == null
+                        ? null : resources.tryAcquireConnection();
+                if (resources == null || permit != null) {
+                    DialerTask task = new DialerTask(this, connId, clientAddr, permit);
+                    pendingConns.add(connId);
+                    dialerTasks.put(connId, task);
+                    try {
+                        dialerExecutor.execute(task);
+                        return;
+                    } catch (RejectedExecutionException error) {
+                        task.cancel();
+                        pendingConns.remove(connId);
+                    }
+                }
             }
-            return;
         }
-        ThreadPoolExecutor executor = dialerExecutor;
-        if (executor == null) {
-            pendingConns.remove(connId);
-            closeRemoteConnection(connId);
-            return;
-        }
-        try {
-            executor.execute(new DialerTask(this, connId, clientAddr));
-        } catch (RejectedExecutionException error) {
-            pendingConns.remove(connId);
-            closeRemoteConnection(connId);
-            logger.debug("反向隧道拨号队列繁忙，已关闭连接: connId={}", connId);
-        }
+        // Rejection cleanup may block on the transport, so keep it outside the state lock.
+        closeRemoteConnection(connId);
+        if (running) logger.debug("反向隧道容量已满，已关闭连接: connId={}", connId);
     }
 
     void closeRemoteConnection(String connId) {
@@ -338,11 +374,12 @@ public class ReverseTunnelServer {
     }
 
     private static boolean hasResponseCode(Map<String, Object> response, int expectedCode) {
-        if (response == null) {
-            return false;
-        }
-        Object code = response.get("code");
-        return code instanceof Number && ((Number) code).intValue() == expectedCode;
+        return responseCode(response) == expectedCode;
+    }
+
+    static int responseCode(Map<String, Object> response) {
+        Object code = response != null ? response.get("code") : null;
+        return code instanceof Number ? ((Number) code).intValue() : -1;
     }
 
     private static void closeSocket(Socket socket) {
@@ -362,67 +399,52 @@ public class ReverseTunnelServer {
     private class AcceptPollLoop implements Runnable {
         @Override
         public void run() {
+            long delay = pollIntervalMs;
+            long maxDelay = Math.max(pollIntervalMs, pollIntervalMs >= 125 ? 1_000L : pollIntervalMs * 8);
             while (running) {
+                boolean accepted = false;
                 try {
-                    if (!pollOnce()) {
-                        break;
-                    }
-                } catch (Exception e) {
-                    if (running) {
-                        logger.debug("accept 轮询异常: {}", e.getMessage());
-                    }
+                    int count = pollOnce();
+                    if (count < 0) break;
+                    accepted = count > 0;
+                } catch (Exception error) {
+                    if (running) logger.debug("accept 轮询异常: {}", error.getMessage());
                 }
-                if (!waitForNextPoll()) {
+                delay = accepted || !localConns.isEmpty() || !pendingConns.isEmpty()
+                        ? pollIntervalMs : (delay >= maxDelay / 2 ? maxDelay : delay * 2);
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ignored) {
                     break;
                 }
             }
         }
     }
 
-    private boolean pollOnce() throws Exception {
+    private int pollOnce() throws Exception {
         Map<String, Object> response = agentNode.invokeComponent(
                 "ReverseTunnelComponent", listenerParams(OP_ACCEPT));
-        if (hasResponseCode(response, 200)) {
-            scheduleAcceptedConnections(response.get("newConns"));
-            return true;
+        synchronized (this) {
+            if (!running || pollThread != Thread.currentThread()) return -1;
         }
-        if (!hasResponseCode(response, 404)) {
-            return true;
-        }
-
+        if (hasResponseCode(response, 200)) return scheduleAcceptedConnections(response.get("newConns"));
+        if (!hasResponseCode(response, 404)) return 0;
         logger.warn("反向隧道 listenId 在 agent 端不存在，停止轮询: listenId={}", listenId);
-        handleRemoteListenerGone();
-        notifyDeadListener();
-        return false;
+        if (handleRemoteListenerGone()) notifyDeadListener();
+        return -1;
     }
 
-    private void scheduleAcceptedConnections(Object value) {
-        if (!(value instanceof List<?>)) {
-            return;
+    private int scheduleAcceptedConnections(Object value) {
+        if (!(value instanceof List<?> connections)) return 0;
+        int count = 0;
+        for (Object item : connections) {
+            if (!(item instanceof Map<?, ?> connection) || connection.get("connId") == null) continue;
+            Object clientAddr = connection.get("clientAddr");
+            scheduleDialer(String.valueOf(connection.get("connId")),
+                    clientAddr == null ? null : String.valueOf(clientAddr));
+            count++;
         }
-        for (Object item : (List<?>) value) {
-            if (!(item instanceof Map<?, ?>)) {
-                continue;
-            }
-            Map<?, ?> connection = (Map<?, ?>) item;
-            Object connIdValue = connection.get("connId");
-            if (connIdValue == null) {
-                continue;
-            }
-            Object clientAddrValue = connection.get("clientAddr");
-            String connId = String.valueOf(connIdValue);
-            String clientAddr = clientAddrValue == null ? null : String.valueOf(clientAddrValue);
-            scheduleDialer(connId, clientAddr);
-        }
-    }
-
-    private boolean waitForNextPoll() {
-        try {
-            Thread.sleep(pollIntervalMs);
-            return true;
-        } catch (InterruptedException ignored) {
-            return running;
-        }
+        return count;
     }
 
     private void notifyDeadListener() {

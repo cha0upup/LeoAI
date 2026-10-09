@@ -2,6 +2,7 @@ package org.leo.core.engine.forward;
 
 import org.leo.core.engine.proxy.LocalProxyServer;
 import org.leo.core.engine.proxy.ProxyConnection;
+import org.leo.core.engine.proxy.ProxySessionResources;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 
 /** Local listener forwarding to a fixed target reached from the node. */
@@ -15,7 +16,12 @@ public class LocalForwardServer extends LocalProxyServer {
 
     public LocalForwardServer(ComponentInvokeCapable node, int localPort, String bindAddr,
                               String targetHost, int targetPort) {
-        super(node, localPort, bindAddr, 0);
+        this(node, localPort, bindAddr, targetHost, targetPort, null);
+    }
+
+    public LocalForwardServer(ComponentInvokeCapable node, int localPort, String bindAddr,
+                              String targetHost, int targetPort, ProxySessionResources resources) {
+        super(node, localPort, bindAddr, 0, 200, resources);
         this.targetHost = targetHost;
         this.targetPort = targetPort;
     }

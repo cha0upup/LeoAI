@@ -1,103 +1,105 @@
 package org.leo.core.engine.reverse;
 
-import org.leo.core.engine.socks5.Socks5ProxyStatistics;
+import org.leo.core.engine.proxy.ProxySessionResources.ConnectionPermit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * 反向隧道：拨号 + 启动中继线程的任务。
- * 在 dialerExecutor 中执行，避免阻塞 AcceptPollLoop。
- */
+/** A queued dial owns its connection slot until all relay/RPC work has finished. */
 class DialerTask implements Runnable {
-
     private static final Logger logger = LoggerFactory.getLogger(DialerTask.class);
-
+    private static final int CONNECT_TIMEOUT_MS = 10_000;
     private final ReverseTunnelServer server;
     private final String connId;
     private final String clientAddr;
+    private final ConnectionPermit permit;
+    private final AtomicBoolean claimed = new AtomicBoolean();
+    private volatile boolean cancelled;
 
-    DialerTask(ReverseTunnelServer server, String connId, String clientAddr) {
+    DialerTask(ReverseTunnelServer server, String connId, String clientAddr, ConnectionPermit permit) {
         this.server = server;
         this.connId = connId;
         this.clientAddr = clientAddr;
+        this.permit = permit;
     }
 
+    void cancel() {
+        cancelled = true;
+        if (claimed.compareAndSet(false, true)) {
+            if (permit != null) permit.close();
+            server.dialerCompleted(connId, this);
+        }
+    }
+
+    @Override
     public void run() {
+        if (!claimed.compareAndSet(false, true)) return;
         Socket local = null;
         boolean relaysStarted = false;
         try {
-            local = new Socket(server.getForwardHost(), server.getForwardPort());
+            local = new Socket();
+            if (cancelled || !server.registerPendingConnection(connId, local, this)) return;
+            local.connect(new InetSocketAddress(server.getForwardHost(), server.getForwardPort()), CONNECT_TIMEOUT_MS);
             local.setTcpNoDelay(true);
-            if (!server.registerLocalConnection(connId, local)) {
-                return;
-            }
-
-            Socks5ProxyStatistics stats = server.getStatistics();
-            if (stats != null) {
-                stats.addConnection(connId, server.getForwardHost(), server.getForwardPort(),
-                        clientAddr != null ? clientAddr : "");
-            }
-
-            startRelays(local);
+            if (cancelled || !server.registerLocalConnection(connId, local, clientAddr, this)) return;
             relaysStarted = true;
-        } catch (Exception e) {
-            if (server.isRunning()) {
+            startRelays(local);
+        } catch (Exception error) {
+            if (!cancelled && server.isRunning()) {
                 logger.warn("反向隧道拨号失败 {}:{} connId={}: {}",
-                        server.getForwardHost(), server.getForwardPort(), connId, e.getMessage());
-                closeRemote();
-            } else {
-                logger.debug("反向隧道已停止，取消拨号: connId={}", connId);
+                        server.getForwardHost(), server.getForwardPort(), connId, error.getMessage());
             }
         } finally {
-            if (!relaysStarted) server.completeLocalConnection(connId, local);
+            try {
+                if (!relaysStarted) {
+                    server.completeLocalConnection(connId, local);
+                    if (!cancelled && server.isRunning()) server.closeRemoteConnection(connId);
+                }
+            } finally {
+                server.dialerCompleted(connId, this);
+                if (permit != null) permit.close();
+            }
         }
     }
 
     private void startRelays(Socket local) {
-        final AtomicBoolean cleaned = new AtomicBoolean(false);
-        final Runnable cleanup = new Runnable() {
-            @Override
-            public void run() {
-                if (!cleaned.compareAndSet(false, true)) return;
-                if (server.isRunning()) server.closeRemoteConnection(connId);
-                server.completeLocalConnection(connId, local);
-            }
+        AtomicBoolean cleaned = new AtomicBoolean();
+        Runnable cleanup = () -> {
+            if (!cleaned.compareAndSet(false, true)) return;
+            server.completeLocalConnection(connId, local);
+            if (!cancelled && server.isRunning()) server.closeRemoteConnection(connId);
         };
-        Thread read = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    new ReverseReadThread(server, local, connId).run();
-                } finally {
-                    cleanup.run();
-                }
-            }
-        }, "ReverseTunnel-Read-" + connId);
-        Thread write = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    new ReverseWriteThread(server, local, connId).run();
-                } finally {
-                    cleanup.run();
-                }
-            }
-        }, "ReverseTunnel-Write-" + connId);
-        read.setDaemon(true);
-        write.setDaemon(true);
         try {
-            read.start();
-            write.start();
-        } catch (RuntimeException error) {
+            startRelay(new ReverseReadThread(server, local, connId), cleanup, "Read");
+            startRelay(new ReverseWriteThread(server, local, connId), cleanup, "Write");
+        } catch (RuntimeException | Error error) {
             cleanup.run();
             throw error;
         }
     }
 
-    private void closeRemote() {
-        server.closeRemoteConnection(connId);
+    private void startRelay(Runnable relay, Runnable cleanup, String direction) {
+        ConnectionPermit relayPermit = permit == null ? null : permit.retain();
+        try {
+            Thread thread = new Thread(() -> {
+                try {
+                    relay.run();
+                } finally {
+                    try {
+                        cleanup.run();
+                    } finally {
+                        if (relayPermit != null) relayPermit.close();
+                    }
+                }
+            }, "ReverseTunnel-" + direction + "-" + connId);
+            thread.setDaemon(true);
+            thread.start();
+        } catch (RuntimeException | Error error) {
+            if (relayPermit != null) relayPermit.close();
+            throw error;
+        }
     }
 }
