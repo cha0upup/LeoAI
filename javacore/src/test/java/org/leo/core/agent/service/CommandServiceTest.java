@@ -75,7 +75,7 @@ class CommandServiceTest {
     void encodesABatchAsOneComponentOperation() throws Exception {
         Map<String, Object> params = service.readTerminals(List.of("first", "second"));
         assertEquals(5, params.get("op"));
-        assertArrayEquals("first\nsecond".getBytes(java.nio.charset.StandardCharsets.UTF_8), (byte[]) params.get("processIds"));
+        assertEquals("first\nsecond", params.get("processIds"));
         assertFalse(params.containsKey("waitMs"));
         assertFalse(params.containsKey("cmd"));
     }

@@ -1,5 +1,8 @@
 package org.leo.phpcore.rpc;
 
+import org.leo.core.rpc.AgentRpcRetryPolicy;
+import org.leo.core.rpc.AgentRpcErrorCodes;
+
 import org.leo.core.component.runtime.ComponentArtifact;
 import org.leo.core.entity.Agent;
 import org.leo.core.net.Communication;
@@ -41,7 +44,7 @@ public final class PhpRpcClient implements AutoCloseable {
     private final List<ResponseLayer> responseLayers;
     private final Map<String, PhpPayloadCodec> layerPayloadCodecs = new ConcurrentHashMap<>();
     private volatile String hostId;
-    /** 最大请求总数，包含首次请求。 */
+    /** 可重放请求的通信尝试上限，包含首次；HostId 路由拒绝单独计数。 */
     private int maxAttempts = Agent.DEFAULT_MAX_REQUEST_COUNT;
     private UrlGenerator urlGenerator;
     private UrlStrategy urlStrategy;
@@ -145,18 +148,26 @@ public final class PhpRpcClient implements AutoCloseable {
 
     private Map<String, Object> call(AgentRpcRequest request) throws Exception {
         Exception lastFailure = null;
-        AgentRpcResponse hostMismatchResponse = null;
+        boolean replayable = AgentRpcRetryPolicy.isReplayable(request);
+        int requestAttempts = replayable ? maxAttempts : 1;
+        int failures = 0;
+        boolean requestSent = false;
         int affinityAttempts = request.hostId() == null
-                ? maxAttempts : Math.max(maxAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
+                ? requestAttempts : Math.max(requestAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
         for (int attempt = 1; attempt <= affinityAttempts; attempt++) {
+            requestSent = false;
             try {
+                checkInterrupted();
                 applyTransportStrategies();
                 EncodedPayload encoded = encode(request);
+                checkInterrupted();
+                requestSent = true;
                 Map<String, Object> decoded = decode(
                         communication.sendRequest(encoded.data()), encoded.requestIds());
                 AgentRpcResponse response = AgentRpcEnvelopeMapper.responseFromMap(decoded);
                 if (isHostIdMismatch(response)) {
-                    hostMismatchResponse = response;
+                    requestSent = false; // Correlated routing rejection occurs before component execution.
+                    checkInterrupted();
                     if (attempt < affinityAttempts) {
                         resetTransportAffinity();
                         continue;
@@ -165,16 +176,21 @@ public final class PhpRpcClient implements AutoCloseable {
                 }
                 return AgentRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
+                failures++;
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                 lastFailure = e;
-                if (attempt >= maxAttempts) break;
-                sleepBeforeRetry(request.requestId(), attempt);
+                if (failures >= requestAttempts || attempt >= affinityAttempts || Thread.currentThread().isInterrupted()) break;
+                sleepBeforeRetry(request.requestId(), failures);
             }
         }
-        if (hostMismatchResponse != null) {
-            return recoverHostAffinity(request.hostId(), hostMismatchResponse);
-        }
-        throw new IllegalStateException("PHP Agent 通信失败: "
+        String outcome = !replayable && requestSent
+                ? " [" + AgentRpcErrorCodes.RPC_RESULT_UNKNOWN + " requestId=" + request.requestId() + "；请求可能已执行，结果待确认]" : "";
+        throw new IllegalStateException("PHP Agent 通信失败" + outcome + ": "
                 + (lastFailure != null ? lastFailure.getMessage() : "unknown"), lastFailure);
+    }
+
+    private void checkInterrupted() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("PHP Agent 请求已中断");
     }
 
     public void resetTransportAffinity() {
@@ -318,14 +334,8 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     private void sleepBeforeRetry(String requestId, int attempt) {
-        if (retryBaseDelayMillis <= 0L) return;
-        int shift = Math.min(20, Math.max(0, attempt - 1));
-        long exponential = retryBaseDelayMillis > Long.MAX_VALUE >> shift
-                ? Long.MAX_VALUE : retryBaseDelayMillis << shift;
-        long capped = Math.min(retryMaxDelayMillis, exponential);
-        long hash = retryHash(requestId + "|" + attempt);
-        double factor = 0.75d + (Math.floorMod(hash, 501L) / 1000.0d);
-        long delay = Math.max(1L, Math.min(retryMaxDelayMillis, Math.round(capped * factor)));
+        long delay = AgentRpcRetryPolicy.delayMillis(requestId, attempt, retryBaseDelayMillis, retryMaxDelayMillis);
+        if (delay <= 0L) return;
         try {
             retrySleeper.sleep(delay);
         } catch (InterruptedException interrupted) {
@@ -334,19 +344,6 @@ public final class PhpRpcClient implements AutoCloseable {
         }
     }
 
-    private long retryHash(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            long result = 0L;
-            for (int index = 0; index < Long.BYTES; index++) {
-                result = (result << 8) | (digest[index] & 0xffL);
-            }
-            return result;
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     @FunctionalInterface
     interface RetrySleeper {

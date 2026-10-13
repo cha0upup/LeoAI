@@ -1,6 +1,8 @@
 package org.leo.phpcore.rpc;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Disguise;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -122,14 +125,15 @@ class PhpRpcClientTest {
         Communication communication = data -> {
             calls[0]++;
             Map<String, Object> request = codec().decode(data);
-            return codec().encode(Map.of("code", 200, "hostId", "invalid"));
+            return codec().encode(Map.of("requestId", request.get("requestId") + "-wrong",
+                    "code", 200, "data", Map.of("hostId", "invalid")));
         };
 
         PhpRpcClient client = new PhpRpcClient(communication,
                 List.of(new RequestLayer("/", Map.of(), portable, KEY)),
                 List.of(new ResponseLayer(portable, KEY)));
 
-        assertThrows(IllegalStateException.class, client::ping);
+        assertTrue(assertThrows(IllegalStateException.class, client::ping).getMessage().contains("requestId"));
         assertEquals(1, calls[0]);
     }
 
@@ -208,7 +212,76 @@ class PhpRpcClientTest {
         assertEquals(1, recoveries.get());
     }
 
-    private static final class PortableDisguise extends Disguise {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void routingRejectionsDoNotConsumeReplayBudgetOrMaskLostResponses(boolean replayable) throws Exception {
+        AtomicInteger attempts = new AtomicInteger(), recoveries = new AtomicInteger();
+        List<String> ids = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        PhpRpcClient client = new PhpRpcClient(data -> {
+            Map<String, Object> request = codec().decode(data);
+            ids.add((String) request.get("requestId"));
+            int attempt = attempts.incrementAndGet();
+            if (attempt <= 6) return codec().encode(Map.of("requestId", request.get("requestId"),
+                    "code", 409, "error", Map.of("errorCode", "HOST_ID_MISMATCH")));
+            if (attempt == 7) throw new java.io.IOException("lost response");
+            return codec().encode(Map.of("requestId", request.get("requestId"), "code", 200, "data", Map.of()));
+        }, List.of(new RequestLayer("/", Map.of(), portable, KEY)), List.of(new ResponseLayer(portable, KEY)));
+        client.setHostId("fixture");
+        client.setMaxReqCount(3);
+        client.setRetryBackoff(0, 0);
+        client.setHostIdMismatchRecovery(id -> { recoveries.incrementAndGet(); return Map.of("code", 409); });
+        if (replayable) {
+            assertEquals(200, client.invokeComponent("BasicInfoComponent", "a".repeat(64), Map.of("action", "get")).get("code"));
+        } else {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> client.invokeComponent("FileComponent", "a".repeat(64), Map.of("action", "delete")));
+            assertTrue(failure.getMessage().contains("RPC_RESULT_UNKNOWN requestId=" + ids.get(0)));
+        }
+        assertEquals(replayable ? 8 : 7, attempts.get());
+        assertEquals(0, recoveries.get());
+        assertEquals(1, ids.stream().distinct().count());
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void interruptionBeforeOrDuringEncodingDoesNotSend(boolean duringEncoding) {
+        AtomicInteger attempts = new AtomicInteger();
+        Disguise portable = new PortableDisguise() {
+            @Override public byte[] encodeTraffic(byte[] payload) {
+                if (duringEncoding) Thread.currentThread().interrupt();
+                return payload;
+            }
+        };
+        PhpRpcClient client = new PhpRpcClient(data -> { attempts.incrementAndGet(); return new byte[0]; },
+                List.of(new RequestLayer("/", Map.of(), portable, KEY)), List.of(new ResponseLayer(portable, KEY)));
+        if (!duringEncoding) Thread.currentThread().interrupt();
+        try {
+            IllegalStateException failure = assertThrows(IllegalStateException.class, client::ping);
+            assertFalse(failure.getMessage().contains("RPC_RESULT_UNKNOWN"));
+            assertEquals(0, attempts.get());
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally { Thread.interrupted(); }
+    }
+
+    @Test
+    void interruptionOnFinalRoutingRejectionDoesNotStartRecovery() {
+        AtomicInteger attempts = new AtomicInteger(), recoveries = new AtomicInteger();
+        Disguise portable = new PortableDisguise();
+        PhpRpcClient client = new PhpRpcClient(data -> {
+            Map<String, Object> request = codec().decode(data);
+            if (attempts.incrementAndGet() == 8) Thread.currentThread().interrupt();
+            return codec().encode(Map.of("requestId", request.get("requestId"),
+                    "code", 409, "error", Map.of("errorCode", "HOST_ID_MISMATCH")));
+        }, List.of(new RequestLayer("/", Map.of(), portable, KEY)), List.of(new ResponseLayer(portable, KEY)));
+        client.setHostId("fixture");
+        client.setHostIdMismatchRecovery(id -> { recoveries.incrementAndGet(); return Map.of("code", 409); });
+        try {
+            assertThrows(IllegalStateException.class, client::ping);
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertEquals(0, recoveries.get());
+        } finally { Thread.interrupted(); }
+    }
+
+    private static class PortableDisguise extends Disguise {
         private PortableDisguise() {
             setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
             setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");

@@ -3,15 +3,17 @@ package org.leo.core.net.impl;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,23 +21,33 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class HttpCommunicationCookieTest {
 
-    @Test
-    void passesResponseBodyToDecoderRegardlessOfHttpStatus() throws Exception {
+    @ParameterizedTest @ValueSource(ints = {401, 408, 503, 302, 307, 308})
+    void passesOriginalResponseWithoutHiddenRetriesOrRedirects(int status) throws Exception {
         byte[] body = "encoded-rpc-response".getBytes(StandardCharsets.UTF_8);
+        AtomicInteger calls = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/unauthorized", exchange -> {
-            exchange.sendResponseHeaders(401, body.length);
+            calls.incrementAndGet();
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().set("Retry-After", "0");
+            exchange.getResponseHeaders().set("Location", "/redirected");
+            exchange.sendResponseHeaders(status, body.length);
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(body);
             }
+        });
+        server.createContext("/redirected", exchange -> {
+            calls.incrementAndGet();
+            write(exchange, "unexpected redirect");
         });
 
         server.start();
         try {
             String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/unauthorized";
-            HttpCommunication communication = new HttpCommunication(endpoint, "POST", null, Proxy.NO_PROXY);
-
-            assertArrayEquals(body, communication.sendRequest(new byte[0]));
+            try (HttpCommunication communication = new HttpCommunication(endpoint, "POST", null, Proxy.NO_PROXY)) {
+                assertArrayEquals(body, communication.sendRequest(new byte[]{1, 2}));
+            }
+            assertEquals(1, calls.get());
         } finally {
             server.stop(0);
         }
@@ -61,10 +73,8 @@ class HttpCommunicationCookieTest {
         });
 
         server.start();
-        try {
-            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
-            HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST", null, Proxy.NO_PROXY);
-
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        try (HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST", null, Proxy.NO_PROXY)) {
             communication.sendRequest(new byte[0]);
             communication.setRequestUrl(baseUrl + "/app/ping");
             communication.sendRequest(new byte[0]);
@@ -94,12 +104,9 @@ class HttpCommunicationCookieTest {
         });
 
         server.start();
-        try {
-            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Cookie", "sid=user; theme=dark");
-            HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST", headers, Proxy.NO_PROXY);
-
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        try (HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST",
+                Map.of("Cookie", "sid=user; theme=dark"), Proxy.NO_PROXY)) {
             communication.sendRequest(new byte[0]);
             communication.setRequestUrl(baseUrl + "/next");
             communication.sendRequest(new byte[0]);
@@ -123,10 +130,9 @@ class HttpCommunicationCookieTest {
             write(exchange, "next");
         });
         server.start();
-        try {
-            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
-            HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST",
-                    Map.of("Cookie", "user=explicit"), Proxy.NO_PROXY);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        try (HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST",
+                Map.of("Cookie", "user=explicit"), Proxy.NO_PROXY)) {
             communication.sendRequest(new byte[0]);
             communication.resetSessionAffinity();
             communication.setRequestUrl(baseUrl + "/next");

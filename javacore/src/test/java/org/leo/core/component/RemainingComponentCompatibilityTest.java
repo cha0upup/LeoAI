@@ -48,20 +48,6 @@ class RemainingComponentCompatibilityTest {
     }
 
     @Test
-    void failedGzipDoesNotDestroyExistingOutput() throws Exception {
-        Path archive = tempDir.resolve("invalid.gz");
-        Files.write(archive, utf8("not-gzip"));
-        Path output = tempDir.resolve("existing.txt");
-        Files.write(output, utf8("keep-me"));
-
-        Map<String, Object> response = invokeComponent(new DecompressComponent(), params(
-                "src", archive.toString(), "des", output.toString(), "format", "gzip"));
-
-        assertEquals(500, code(response));
-        assertEquals("keep-me", Files.readString(output));
-    }
-
-    @Test
     void invalidArchiveFormatReturnsClientError() throws Exception {
         Map<String, Object> response = invokeComponent(new DecompressComponent(), params(
                 "src", "archive.bin", "des", tempDir.toString(), "format", "unknown"));

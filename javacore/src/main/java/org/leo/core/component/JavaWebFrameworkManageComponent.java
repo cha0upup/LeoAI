@@ -41,10 +41,10 @@ public class JavaWebFrameworkManageComponent implements Runnable {
     }
 
     public void invoke() throws Exception {
-        Object methodValue = params == null ? null : params.get("methodName");
+        Object methodValue = params == null ? null : params.get("action");
         if (!(methodValue instanceof String)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "methodName required");
+            results.put("msg", "action required");
             return;
         }
         String methodName = (String) methodValue;
@@ -59,7 +59,7 @@ public class JavaWebFrameworkManageComponent implements Runnable {
             putOperationResult(removeInterceptor(frameworkName, stringParam("interceptorId")));
         } else {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "未知 methodName: " + methodName);
+            results.put("msg", "未知 action: " + methodName);
             return;
         }
     }

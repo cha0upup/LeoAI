@@ -14,6 +14,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -40,7 +41,6 @@ class LocalProxyServerTest {
     @EnumSource(Mode.class)
     void stopClosesEstablishedConnectionsAndRemoteState(Mode mode) throws Exception {
         start(mode);
-        assertTrue(server.getServerSocket().getInetAddress().isAnyLocalAddress());
         try (Socket client = connect()) {
             handshake(client, mode);
             await(() -> server.getStatistics().getSnapshot().activeConnections == 1);
@@ -73,7 +73,7 @@ class LocalProxyServerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"500", "404", "429", "null", "partial", "exception"})
+    @ValueSource(strings = {"500", "404", "429", "null", "invalidAck", "exception"})
     void writeFailuresCloseBothEndsWithoutCountingRejectedBytes(String failure) throws Exception {
         node.writeFailure = failure;
         start(Mode.FORWARD);
@@ -108,7 +108,7 @@ class LocalProxyServerTest {
     @Test
     void capacityIncludesClientsThatHaveNotSentAHandshake() throws Exception {
         CountDownLatch accepted = new CountDownLatch(1);
-        server = new LocalProxyServer(node, 0, 15000, 1) {
+        server = new LocalProxyServer(node, 0, "127.0.0.1", 15000, 1) {
             @Override
             protected void handle(ProxyConnection connection) throws Exception {
                 accepted.countDown();
@@ -158,19 +158,17 @@ class LocalProxyServerTest {
     }
 
     @Test
-    void allLocalModesHonorExplicitBindAddresses() throws Exception {
-        for (String address : new String[]{"127.0.0.1", "0.0.0.0"}) {
+    void allLocalModesHonorDefaultAndExplicitBindAddresses() throws Exception {
+        for (String address : new String[]{null, "127.0.0.1", "0.0.0.0"}) {
+            String expected = address == null ? "0.0.0.0" : address;
             for (LocalProxyServer candidate : new LocalProxyServer[]{
                     new Socks5ProxyServer(node, 0, address),
                     new HttpProxyServer(node, 0, address),
                     new LocalForwardServer(node, 0, address, "test.invalid", 80)}) {
                 try {
                     candidate.start();
-                    assertEquals(address, candidate.getBindAddr());
-                    assertEquals("0.0.0.0".equals(address), candidate.getServerSocket().getInetAddress().isAnyLocalAddress());
-                    try (Socket client = new Socket("127.0.0.1", candidate.getListenPort())) {
-                        assertTrue(client.isConnected());
-                    }
+                    assertEquals(expected, candidate.getBindAddr());
+                    assertEquals("0.0.0.0".equals(expected), candidate.getServerSocket().getInetAddress().isAnyLocalAddress());
                 } finally {
                     candidate.stop();
                 }
@@ -190,10 +188,11 @@ class LocalProxyServerTest {
     }
 
     private void start(Mode mode) throws Exception {
+        // Use loopback for protocol fixtures; wildcard binding is verified separately.
         server = switch (mode) {
-            case SOCKS -> new Socks5ProxyServer(node, 0);
-            case HTTP -> new HttpProxyServer(node, 0);
-            case FORWARD -> new LocalForwardServer(node, 0, "test.invalid", 80);
+            case SOCKS -> new Socks5ProxyServer(node, 0, "127.0.0.1");
+            case HTTP -> new HttpProxyServer(node, 0, "127.0.0.1");
+            case FORWARD -> new LocalForwardServer(node, 0, "127.0.0.1", "test.invalid", 80);
         };
         server.start();
     }
@@ -243,11 +242,17 @@ class LocalProxyServerTest {
             if (operation == 0) {
                 opened.countDown();
                 if (!openGate.await(3, TimeUnit.SECONDS)) throw new IOException("test OPEN timed out");
-            } else if (operation == 1) {
-                if (writeFailure != null) return failure(writeFailure);
-                uploads.add((byte[]) params.get("data"));
-            } else if (operation == 2) {
-                return readFailure == null ? Map.of("code", 204) : failure(readFailure);
+            } else if (operation == 5) {
+                Map<?, ?> frame = (Map<?, ?>) ((List<?>) params.get("frames")).get(0);
+                byte[] data = (byte[]) frame.get("data");
+                String fault = data.length > 0 ? writeFailure : readFailure;
+                long ack = ((Number) frame.get("writeOffset")).longValue() + data.length;
+                if (fault != null && !"invalidAck".equals(fault)) return failure(fault);
+                if (fault == null && data.length > 0) uploads.add(data);
+                return Map.of("code", 200, "frames", List.of(Map.of(
+                        "connId", frame.get("connId"), "code", 200,
+                        "writeAck", fault == null ? ack : ack + 1, "readOffset", frame.get("readAck"),
+                        "readCode", 204, "data", new byte[0])));
             } else if (operation == 3) {
                 closeCalls.incrementAndGet();
                 closed.countDown();
@@ -260,7 +265,6 @@ class LocalProxyServerTest {
                 case "exception" -> throw new IOException("simulated RPC failure");
                 case "null" -> null;
                 case "malformed" -> Map.of("code", 200, "data", "not bytes");
-                case "partial" -> Map.of("code", 200, "bytesWritten", 1);
                 default -> Map.of("code", Integer.parseInt(failure));
             };
         }

@@ -2,6 +2,7 @@ package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.engine.proxy.ProxySessionResources;
+import org.leo.core.engine.proxy.ProxyBatchDispatcher;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  *   1. 通过 invokeComponent 在 agent 端开 ServerSocket 监听 remoteListenPort
  *   2. 启动 AcceptPollThread 周期性轮询 agent 端的新连接
  *   3. 每个新连接由 dialerExecutor 异步在 C2 侧拨号到 forwardHost:forwardPort，
- *      并启动 ReverseReadThread / ReverseWriteThread 双向中继
+ *      并通过单连接 IO 调度器启动双向中继
  *
  * 类似 ssh -R remoteListenPort:forwardHost:forwardPort，方向与 LocalForward 相反。
  */
@@ -37,8 +38,6 @@ public class ReverseTunnelServer {
     static final int OP_START_LISTEN = 0;
     static final int OP_STOP_LISTEN  = 1;
     static final int OP_ACCEPT       = 2;
-    static final int OP_READ         = 3;
-    static final int OP_WRITE        = 4;
     static final int OP_CLOSE        = 5;
     static final int OP_LIST_LISTENS = 6;
 
@@ -64,6 +63,7 @@ public class ReverseTunnelServer {
     private volatile boolean stopRequested;
     private volatile boolean starting;
     private volatile boolean running;
+    private ProxyBatchDispatcher batches;
     private Thread pollThread;
     private ThreadPoolExecutor dialerExecutor;
     private Runnable onDead;
@@ -226,6 +226,7 @@ public class ReverseTunnelServer {
                     dialerExecutor = resources == null
                             ? ProxySessionResources.newDialerExecutor(Math.min(DEFAULT_DIALER_THREADS, maxConns), maxConns)
                             : resources.dialers();
+                    batches = resources == null ? new ProxyBatchDispatcher() : resources.batches();
                     running = true;
                     pollThread = new Thread(new AcceptPollLoop(), "ReverseTunnel-Poll-" + remoteListenPort);
                     pollThread.setDaemon(true);
@@ -343,6 +344,7 @@ public class ReverseTunnelServer {
         if (executor != null && resources == null) {
             executor.shutdownNow();
         }
+        if (resources == null && batches != null) batches.close();
         if (statistics != null) {
             statistics.reset();
         }
@@ -351,6 +353,8 @@ public class ReverseTunnelServer {
     ComponentInvokeCapable getAgentNode() {
         return agentNode;
     }
+
+    ProxyBatchDispatcher batchDispatcher() { return batches; }
 
     ConcurrentHashMap<String, Socket> getLocalConns() {
         return localConns;

@@ -131,6 +131,10 @@ public class HttpCommunication implements Communication, java.io.Closeable {
                 SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
 
                 OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                        // Opaque RPC replay belongs to the operation/proxy policy, not HTTP follow-ups.
+                        .retryOnConnectionFailure(false)
+                        .followRedirects(false)
+                        .followSslRedirects(false)
                         .sslSocketFactory(sslSocketFactory, (X509TrustManager) trustAllCerts[0])
                         .hostnameVerifier(new HostnameVerifier() {
                             @Override
@@ -202,8 +206,13 @@ public class HttpCommunication implements Communication, java.io.Closeable {
         RequestBody body = null;
 
         if (!"GET".equalsIgnoreCase(method)) {
-            if (data == null) data = new byte[0];
-            body = RequestBody.create(data);
+            byte[] payload = data == null ? new byte[0] : data;
+            body = new RequestBody() {
+                public MediaType contentType() { return null; }
+                public long contentLength() { return payload.length; }
+                public boolean isOneShot() { return true; }
+                public void writeTo(okio.BufferedSink sink) throws IOException { sink.write(payload); }
+            };
         }
 
         HttpUrl requestUrl = HttpUrl.get(targetUrl);

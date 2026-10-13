@@ -140,8 +140,8 @@ public class ExecCommandComponent implements Runnable {
             readBatch();
             return;
         }
-        String processId = getUtf8Param("processId");
-        if (processId.length() > 128 || !processId.matches("[A-Za-z0-9._-]+")) {
+        String processId = getTextParam("processId");
+        if (processId == null || processId.length() > 128 || !processId.matches("[A-Za-z0-9._-]+")) {
             throw new IllegalArgumentException("invalid processId");
         }
         cleanupExpiredProcesses();
@@ -460,8 +460,8 @@ public class ExecCommandComponent implements Runnable {
     }
 
     private void readBatch() {
-        String value = getUtf8Param("processIds");
-        if (value.length() > MAX_BATCH_SIZE * 129) {
+        String value = getTextParam("processIds");
+        if (value == null || value.length() > MAX_BATCH_SIZE * 129) {
             throw new IllegalArgumentException("invalid processIds");
         }
         String[] ids = value.split("\n", -1);

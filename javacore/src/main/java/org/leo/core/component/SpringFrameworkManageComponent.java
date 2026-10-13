@@ -27,12 +27,13 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
     private Object context;
+    private Object handlerMapping;
 
     public void invoke() throws Exception {
-        Object methodObj = params.get("methodName");
+        Object methodObj = params.get("action");
         if (!(methodObj instanceof String)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "methodName required");
+            results.put("msg", "action required");
             return;
         }
         String methodName = (String) methodObj;
@@ -40,9 +41,10 @@ public class SpringFrameworkManageComponent implements Runnable {
                 && !"removeController".equals(methodName)
                 && !"removeInterceptor".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "未知 methodName: " + methodName);
+            results.put("msg", "未知 action: " + methodName);
             return;
         }
+        handlerMapping = null;
         context = getContext();
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
@@ -150,8 +152,11 @@ public class SpringFrameworkManageComponent implements Runnable {
 
 
     private Object getHandlerMapping() throws Exception {
-        return invokeMethod(context, "getBean", new Class[]{String.class},
-                new Object[]{"requestMappingHandlerMapping"});
+        if (handlerMapping == null) {
+            handlerMapping = invokeMethod(context, "getBean", new Class[]{String.class},
+                    new Object[]{"requestMappingHandlerMapping"});
+        }
+        return handlerMapping;
     }
 
     public ArrayList getAllMappedInterceptors() throws Exception {
@@ -327,12 +332,13 @@ public class SpringFrameworkManageComponent implements Runnable {
     private static Object getContextFromTomcatMbean(ClassLoader cl) throws Throwable {
         Class mfClass = Class.forName("java.lang.management.ManagementFactory");
         Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
+        Class mbsClass = Class.forName("javax.management.MBeanServer");
         Class onClass = Class.forName("javax.management.ObjectName");
         Object pattern = onClass.getConstructor(String.class).newInstance("Catalina:j2eeType=WebModule,*");
-        Method queryNames = mbs.getClass().getMethod("queryNames", onClass, Class.forName("javax.management.QueryExp"));
+        Method queryNames = mbsClass.getMethod("queryNames", onClass, Class.forName("javax.management.QueryExp"));
         Set names = (Set) queryNames.invoke(mbs, pattern, null);
         if (names == null || names.isEmpty()) return null;
-        Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
+        Method getAttribute = mbsClass.getMethod("getAttribute", onClass, String.class);
         HashSet ctxs = new HashSet();
         for (Object on : names) {
             try {

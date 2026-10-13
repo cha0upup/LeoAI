@@ -1,22 +1,14 @@
 package org.leo.core.payload;
 
-import org.leo.core.net.TransportLimits;
-
-import javax.crypto.Cipher;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 /**
  * Fixed Java payload pipeline:
@@ -27,13 +19,7 @@ import java.util.zip.GZIPOutputStream;
  * ciphertext.</p>
  */
 public final class PayloadCodec {
-    private static final int IV_BYTES = 16;
-    private static final int AES_BLOCK_BYTES = 16;
-    private static final int AES_KEY_BYTES = 16;
-    private static final int BUFFER_BYTES = 8192;
-    private static final SecureRandom RANDOM = new SecureRandom();
-
-    private final SecretKeySpec key;
+    private final PayloadFrameCodec frameCodec;
 
     public PayloadCodec(String userKey) {
         if (userKey == null || userKey.trim().isEmpty()) {
@@ -42,7 +28,7 @@ public final class PayloadCodec {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(userKey.getBytes(StandardCharsets.UTF_8));
-            this.key = new SecretKeySpec(Arrays.copyOf(digest, AES_KEY_BYTES), "AES");
+            this.frameCodec = new PayloadFrameCodec(Arrays.copyOf(digest, PayloadFrameCodec.KEY_BYTES), "PayloadCodec");
         } catch (Exception e) {
             throw new IllegalStateException("初始化 PayloadCodec 失败", e);
         }
@@ -50,42 +36,14 @@ public final class PayloadCodec {
 
     public byte[] encode(Map<String, Object> payload) throws Exception {
         if (payload == null) throw new IllegalArgumentException("payload 不能为空");
-        byte[] serialized = serialize(payload);
-        byte[] compressed = gzip(serialized);
-        TransportLimits.requireMessageSize(compressed);
-
-        byte[] iv = new byte[IV_BYTES];
-        RANDOM.nextBytes(iv);
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
-        byte[] encrypted = cipher.doFinal(compressed);
-
-        ByteArrayOutputStream output = new ByteArrayOutputStream(
-                iv.length + encrypted.length);
-        output.write(iv);
-        output.write(encrypted);
-        byte[] result = output.toByteArray();
-        TransportLimits.requireMessageSize(result);
-        return result;
+        return frameCodec.encode(serialize(payload));
     }
 
     public Map<String, Object> decode(byte[] encoded) throws Exception {
-        if (encoded == null || encoded.length < IV_BYTES + AES_BLOCK_BYTES
-                || (encoded.length - IV_BYTES) % AES_BLOCK_BYTES != 0) {
-            throw new IllegalArgumentException("PayloadCodec 数据长度无效");
+        Object value;
+        try (ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(frameCodec.decode(encoded)))) {
+            value = input.readObject();
         }
-        TransportLimits.requireMessageSize(encoded);
-
-        byte[] iv = Arrays.copyOfRange(encoded, 0, IV_BYTES);
-        byte[] encrypted = Arrays.copyOfRange(encoded, IV_BYTES, encoded.length);
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-        byte[] compressed = cipher.doFinal(encrypted);
-        byte[] serialized = gunzip(compressed);
-
-        ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(serialized));
-        Object value = input.readObject();
-        input.close();
         if (!(value instanceof Map<?, ?>)) {
             throw new IllegalArgumentException("PayloadCodec 根对象必须是 Map");
         }
@@ -98,32 +56,9 @@ public final class PayloadCodec {
 
     private byte[] serialize(Map<String, Object> payload) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        ObjectOutputStream stream = new ObjectOutputStream(output);
-        stream.writeObject(new HashMap<>(payload));
-        stream.close();
-        return output.toByteArray();
-    }
-
-    private byte[] gzip(byte[] value) throws Exception {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        GZIPOutputStream stream = new GZIPOutputStream(output);
-        stream.write(value);
-        stream.close();
-        return output.toByteArray();
-    }
-
-    private byte[] gunzip(byte[] value) throws Exception {
-        GZIPInputStream input = new GZIPInputStream(new ByteArrayInputStream(value));
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[BUFFER_BYTES];
-        int length;
-        while ((length = input.read(buffer)) != -1) {
-            if (length > TransportLimits.MAX_MESSAGE_BYTES - output.size()) {
-                throw new IllegalArgumentException("PayloadCodec 解压结果超过限制");
-            }
-            output.write(buffer, 0, length);
+        try (ObjectOutputStream stream = new ObjectOutputStream(output)) {
+            stream.writeObject(new HashMap<>(payload));
         }
-        input.close();
         return output.toByteArray();
     }
 }

@@ -10,9 +10,9 @@ import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.channels.Channel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -29,12 +29,9 @@ class NetworkComponentLifecycleTest {
     @AfterEach
     void clearComponentState() throws Exception {
         clearMap(ProxyForwardComponent.class, "connMap", true);
-        clearMap(ProxyForwardComponent.class, "connLastActivity", false);
         clearMap(ReverseTunnelComponent.class, "listenMap", true);
         clearMap(ReverseTunnelComponent.class, "listenInfoMap", false);
         clearMap(ReverseTunnelComponent.class, "connMap", true);
-        clearMap(ReverseTunnelComponent.class, "connToListen", false);
-        clearMap(ReverseTunnelComponent.class, "connLastActivity", false);
     }
 
     @Test
@@ -47,7 +44,7 @@ class NetworkComponentLifecycleTest {
 
         Map<String, Object> reverseWrite = invokeComponent(new ReverseTunnelComponent(),
                 params("op", 4, "connId", "missing", "data", "text"));
-        assertEquals(404, ((Number) reverseWrite.get("code")).intValue());
+        assertEquals(400, ((Number) reverseWrite.get("code")).intValue());
     }
 
     @Test
@@ -76,11 +73,11 @@ class NetworkComponentLifecycleTest {
                     "op", 0, "connId", connId, "targetHost", "127.0.0.1", "targetPort", 1));
             assertEquals(409, ((Number) duplicate.get("code")).intValue());
 
-            Map<String, Object> written = invokeComponent(new ProxyForwardComponent(),
-                    params("op", 1, "connId", connId, "data", "ping".getBytes(StandardCharsets.UTF_8)));
-            assertEquals(4, ((Number) written.get("bytesWritten")).intValue());
+            Map<String, Object> written = exchange(new ProxyForwardComponent(), 5, connId,
+                    "ping".getBytes(StandardCharsets.UTF_8), 0, 0);
+            assertEquals(4, ((Number) written.get("writeAck")).intValue());
 
-            Map<String, Object> read = pollRead(new ProxyForwardComponent(), connId, 2);
+            Map<String, Object> read = pollRead(new ProxyForwardComponent(), connId, 5, 4, written);
             assertEquals(200, ((Number) read.get("code")).intValue());
             assertArrayEquals("pong".getBytes(StandardCharsets.UTF_8), (byte[]) read.get("data"));
 
@@ -88,7 +85,6 @@ class NetworkComponentLifecycleTest {
                     params("op", 3, "connId", connId));
             assertEquals(200, ((Number) closed.get("code")).intValue());
             assertFalse(staticMap(ProxyForwardComponent.class, "connMap").containsKey(connId));
-            assertFalse(staticMap(ProxyForwardComponent.class, "connLastActivity").containsKey(connId));
         } finally {
             server.close();
             peer.join(2000L);
@@ -113,13 +109,13 @@ class NetworkComponentLifecycleTest {
             client.getOutputStream().write("from-client".getBytes(StandardCharsets.UTF_8));
             client.getOutputStream().flush();
 
-            Map<String, Object> read = pollRead(new ReverseTunnelComponent(), connId, 3);
+            Map<String, Object> read = pollRead(new ReverseTunnelComponent(), connId, 8, 0,
+                    exchange(new ReverseTunnelComponent(), 8, connId, new byte[0], 0, 0));
             assertArrayEquals("from-client".getBytes(StandardCharsets.UTF_8), (byte[]) read.get("data"));
 
-            Map<String, Object> written = invokeComponent(new ReverseTunnelComponent(), params(
-                    "op", 4, "connId", connId,
-                    "data", "to-client".getBytes(StandardCharsets.UTF_8)));
-            assertEquals(9, ((Number) written.get("bytesWritten")).intValue());
+            Map<String, Object> written = exchange(new ReverseTunnelComponent(), 8, connId,
+                    "to-client".getBytes(StandardCharsets.UTF_8), 0, 11);
+            assertEquals(9, ((Number) written.get("writeAck")).intValue());
             assertArrayEquals("to-client".getBytes(StandardCharsets.UTF_8),
                     readExactly(client.getInputStream(), 9));
 
@@ -129,8 +125,6 @@ class NetworkComponentLifecycleTest {
             assertEquals(1, ((Number) stopped.get("closedConns")).intValue());
             assertTrue(staticMap(ReverseTunnelComponent.class, "listenMap").isEmpty());
             assertTrue(staticMap(ReverseTunnelComponent.class, "connMap").isEmpty());
-            assertTrue(staticMap(ReverseTunnelComponent.class, "connToListen").isEmpty());
-            assertTrue(staticMap(ReverseTunnelComponent.class, "connLastActivity").isEmpty());
         } finally {
             client.close();
         }
@@ -150,16 +144,23 @@ class NetworkComponentLifecycleTest {
         throw new AssertionError("reverse tunnel did not accept the client");
     }
 
-    private Map<String, Object> pollRead(Object component, String connId, int operation) throws Exception {
+    private Map<String, Object> pollRead(Object component, String connId, int operation,
+                                         long writeOffset, Map<String, Object> response) throws Exception {
         long deadline = System.currentTimeMillis() + 2000L;
-        Map<String, Object> response;
-        do {
-            response = invokeComponent(component.getClass().getDeclaredConstructor().newInstance(),
-                    params("op", operation, "connId", connId));
-            if (((Number) response.get("code")).intValue() != 204) return response;
+        while (((byte[]) response.get("data")).length == 0 && System.currentTimeMillis() < deadline) {
             Thread.sleep(10L);
-        } while (System.currentTimeMillis() < deadline);
+            response = exchange(component, operation, connId, new byte[0], writeOffset, 0);
+        }
         return response;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> exchange(Object component, int operation, String connId,
+                                          byte[] data, long writeOffset, long readAck) throws Exception {
+        Map<String, Object> response = invokeComponent(component, params("op", operation, "frames", List.of(params(
+                "connId", connId, "data", data, "writeOffset", writeOffset, "readAck", readAck, "maxBytes", 65536))));
+        assertEquals(200, ((Number) response.get("code")).intValue());
+        return (Map<String, Object>) ((List<?>) response.get("frames")).get(0);
     }
 
     private byte[] readExactly(InputStream input, int expected) throws Exception {
@@ -176,8 +177,8 @@ class NetworkComponentLifecycleTest {
         Map<?, ?> map = staticMap(type, fieldName);
         if (closeValues) {
             for (Object value : map.values()) {
-                if (value instanceof Channel) ((Channel) value).close();
-                else if (value instanceof Closeable) ((Closeable) value).close();
+                if (value instanceof Object[] state) value = state[0];
+                if (value instanceof Closeable resource) resource.close();
             }
         }
         map.clear();

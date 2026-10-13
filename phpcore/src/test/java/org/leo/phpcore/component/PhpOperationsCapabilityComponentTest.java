@@ -219,8 +219,8 @@ class PhpOperationsCapabilityComponentTest {
                 Map<?, ?> evidence = (Map<?, ?>) observation.get("evidence");
                 assertEquals(3, evidence.get("bytes"));
                 assertEquals("ÿX", evidence.get("banner"));
-                assertEquals(200, code(invokeComponent("NetworkProbeComponent.php", "ackTask",
-                        "array('taskId'=>'" + taskId + "','cursor'=>1)")));
+                assertEquals(200, code(invokeComponent("NetworkProbeComponent.php", "queryTask",
+                        "array('taskId'=>'" + taskId + "','cursor'=>1,'ackCursor'=>1)")));
                 Map<String, Object> oldAck = invokeComponent("NetworkProbeComponent.php", "ackTask",
                         "array('taskId'=>'" + taskId + "','cursor'=>0)");
                 assertEquals(1, oldAck.get("cursor"));

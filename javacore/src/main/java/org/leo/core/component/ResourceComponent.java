@@ -5,9 +5,10 @@ import java.io.InputStream;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.nio.charset.Charset;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -28,7 +29,7 @@ import java.util.Set;
  * <p>{@code run()} 捕获所有目标运行时异常并始终回写结果。资源查找依次使用线程上下文、
  * 系统以及 Tomcat Webapp ClassLoader。
  *
- * <p>兼容 Java 1.5+，避免使用 lambda、try-with-resources、新集合 API。
+ * <p>兼容 Java 6+，仅使用 JDK 内置类。
  *
  * @author LeoSpring
  * @version 2.2
@@ -48,12 +49,8 @@ public class ResourceComponent implements Runnable {
             results = new HashMap();
             invoke();
         } catch (Throwable t) {
-            if (results == null) {
-                results = new HashMap();
-            }
-            results.put("code", Integer.valueOf(500));
-            String msg = t.getMessage();
-            results.put("msg", msg != null ? msg : t.getClass().getName());
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         // 无论成功失败都回写结构化结果。
         try {
@@ -66,8 +63,7 @@ public class ResourceComponent implements Runnable {
         resourceTooLarge = false;
         String resourcePath = getStringParam("resourcePath");
         if (resourcePath == null || resourcePath.trim().length() == 0) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "resourcePath 不能为空");
+            setResult(400, "resourcePath 不能为空");
             return;
         }
         resourcePath = resourcePath.trim().replace('\\', '/');
@@ -77,22 +73,16 @@ public class ResourceComponent implements Runnable {
         if (resourcePath.length() == 0 || "..".equals(resourcePath)
                 || resourcePath.startsWith("../") || resourcePath.endsWith("/..")
                 || resourcePath.indexOf("/../") >= 0) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "resourcePath 包含无效路径片段");
+            setResult(400, "resourcePath 包含无效路径片段");
             return;
         }
 
-        // 依次尝试所有可能持有该资源的 ClassLoader
         byte[] bytes = readResource(resourcePath);
         if (bytes == null) {
-            if (resourceTooLarge) {
-                results.put("code", Integer.valueOf(413));
-                results.put("msg", "资源超过 16MB 读取上限");
-                return;
-            }
-            results.put("code", Integer.valueOf(404));
-            results.put("msg", "找不到资源: " + resourcePath
-                    + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
+            setResult(resourceTooLarge ? 413 : 404, resourceTooLarge
+                    ? "资源超过 16MB 读取上限"
+                    : "找不到资源: " + resourcePath
+                        + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
             return;
         }
         results.put("code", Integer.valueOf(200));
@@ -103,23 +93,17 @@ public class ResourceComponent implements Runnable {
 
     /** 在多个 ClassLoader 中尝试加载 resourcePath，返回第一个成功读到的字节流。 */
     private byte[] readResource(String resourcePath) {
-        // 1. 当前线程 contextClassLoader
-        byte[] bytes = tryLoad(Thread.currentThread().getContextClassLoader(), resourcePath);
+        // 按实例去重；前一个加载器未命中时才查找后续候选。
+        Set<ClassLoader> visited = Collections.newSetFromMap(new IdentityHashMap<ClassLoader, Boolean>());
+        byte[] bytes = tryLoad(Thread.currentThread().getContextClassLoader(), resourcePath, visited);
         if (bytes != null) return bytes;
 
-        // 2. system ClassLoader
-        bytes = tryLoad(ClassLoader.getSystemClassLoader(), resourcePath);
+        bytes = tryLoad(ClassLoader.getSystemClassLoader(), resourcePath, visited);
         if (bytes != null) return bytes;
 
-        // 3. 遍历 Tomcat WebappClassLoader
-        //    用 PlatformMBeanServer + Catalina:j2eeType=WebModule,* 找到所有 StandardContext，
-        //    StandardContext.getLoader().getClassLoader() 就是 webapp CL。
         try {
-            HashSet webappLoaders = collectWebappClassLoaders();
-            Iterator iter = webappLoaders.iterator();
-            while (iter.hasNext()) {
-                ClassLoader cl = (ClassLoader) iter.next();
-                bytes = tryLoad(cl, resourcePath);
+            for (ClassLoader cl : collectWebappClassLoaders()) {
+                bytes = tryLoad(cl, resourcePath, visited);
                 if (bytes != null) return bytes;
             }
         } catch (Throwable ignored) {
@@ -128,8 +112,8 @@ public class ResourceComponent implements Runnable {
         return null;
     }
 
-    private byte[] tryLoad(ClassLoader cl, String resourcePath) {
-        if (cl == null) return null;
+    private byte[] tryLoad(ClassLoader cl, String resourcePath, Set<ClassLoader> visited) {
+        if (cl == null || !visited.add(cl)) return null;
         InputStream in = null;
         try {
             in = cl.getResourceAsStream(resourcePath);
@@ -141,12 +125,8 @@ public class ResourceComponent implements Runnable {
                 if (n == 0) {
                     int single = in.read();
                     if (single == -1) break;
-                    if (baos.size() >= MAX_RESOURCE_SIZE) {
-                        resourceTooLarge = true;
-                        throw new java.io.IOException("资源超过最大允许大小");
-                    }
-                    baos.write(single);
-                    continue;
+                    buffer[0] = (byte) single;
+                    n = 1;
                 }
                 if (baos.size() > MAX_RESOURCE_SIZE - n) {
                     resourceTooLarge = true;
@@ -168,22 +148,21 @@ public class ResourceComponent implements Runnable {
      * 通过 PlatformMBeanServer 查所有 Tomcat WebModule，提取每个 StandardContext 上挂的
      * Loader.getClassLoader() 作为候选。这条路径在 agent 注入到 Tomcat 全局 CL 时尤其关键。
      */
-    private HashSet collectWebappClassLoaders() throws Throwable {
-        HashSet result = new HashSet();
+    private Set<ClassLoader> collectWebappClassLoaders() throws Throwable {
+        Set<ClassLoader> result = new HashSet<ClassLoader>();
         Class mfClass = Class.forName("java.lang.management.ManagementFactory");
         Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
+        Class mbsClass = Class.forName("javax.management.MBeanServer");
         Class onClass = Class.forName("javax.management.ObjectName");
         Object pattern = onClass.getConstructor(String.class)
                 .newInstance("Catalina:j2eeType=WebModule,*");
-        Method queryNames = mbs.getClass().getMethod("queryNames", onClass,
+        Method queryNames = mbsClass.getMethod("queryNames", onClass,
                 Class.forName("javax.management.QueryExp"));
         Set names = (Set) queryNames.invoke(mbs, pattern, null);
         if (names == null || names.isEmpty()) return result;
-        Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
-        Iterator iter = names.iterator();
-        while (iter.hasNext()) {
+        Method getAttribute = mbsClass.getMethod("getAttribute", onClass, String.class);
+        for (Object on : names) {
             try {
-                Object on = iter.next();
                 Object ctx = getAttribute.invoke(mbs, on, "managedResource");
                 if (ctx == null) continue;
                 Method getLoader = ctx.getClass().getMethod("getLoader");
@@ -192,7 +171,7 @@ public class ResourceComponent implements Runnable {
                 Method getClassLoader = loader.getClass().getMethod("getClassLoader");
                 Object cl = getClassLoader.invoke(loader);
                 if (cl instanceof ClassLoader) {
-                    result.add(cl);
+                    result.add((ClassLoader) cl);
                 }
             } catch (Throwable ignored) {
                 // 单个 webapp 失败不影响其他
@@ -204,7 +183,6 @@ public class ResourceComponent implements Runnable {
     private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) return null;
-        if (value instanceof String) return (String) value;
         if (value instanceof byte[]) return new String((byte[]) value, Charset.forName("UTF-8"));
         return String.valueOf(value);
     }
@@ -212,14 +190,17 @@ public class ResourceComponent implements Runnable {
     private static HashMap copyStringObjectMap(Object value) {
         HashMap copy = new HashMap();
         if (!(value instanceof Map)) return copy;
-        Map source = (Map) value;
-        Iterator entries = source.entrySet().iterator();
-        while (entries.hasNext()) {
-            Map.Entry entry = (Map.Entry) entries.next();
+        for (Object item : ((Map) value).entrySet()) {
+            Map.Entry entry = (Map.Entry) item;
             if (entry.getKey() instanceof String) {
                 copy.put(entry.getKey(), entry.getValue());
             }
         }
         return copy;
+    }
+
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
     }
 }

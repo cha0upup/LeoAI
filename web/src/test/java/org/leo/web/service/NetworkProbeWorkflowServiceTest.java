@@ -277,6 +277,16 @@ class NetworkProbeWorkflowServiceTest {
                 new ExecutionConfig(4, 1000), null, stages == null ? List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE") : stages));
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> cursorPage(Map<String, Object> response, long cursor) {
+        if (!Integer.valueOf(200).equals(response.get("code"))) return response;
+        Map<String, Object> page = new LinkedHashMap<>((Map<String, Object>) response.get("result"));
+        page.put("cursor", cursor);
+        page.put("nextCursor", cursor + ((List<?>) page.get("observations")).size());
+        page.put("hasMore", false);
+        return Map.of("code", 200, "result", page);
+    }
+
     private static final class FingerprintControlledNode implements NetworkProbeCapable {
         @Override
         public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
@@ -290,8 +300,8 @@ class NetworkProbeWorkflowServiceTest {
             return ((List<?>) plan.get("stages")).contains("http-request")
                     ? control.startNetworkProbe(plan) : discovery.startNetworkProbe(plan);
         }
-        public Map<String, Object> queryNetworkProbe(String id, long cursor, int items, int bytes, boolean evidence) throws Exception {
-            return node(id).queryNetworkProbe(id, cursor, items, bytes, evidence);
+        public Map<String, Object> queryNetworkProbe(String id, long cursor, long ackCursor, int items, int bytes, boolean evidence) throws Exception {
+            return node(id).queryNetworkProbe(id, cursor, ackCursor, items, bytes, evidence);
         }
         public Map<String, Object> pauseNetworkProbe(String id) throws Exception { return node(id).pauseNetworkProbe(id); }
         public Map<String, Object> resumeNetworkProbe(String id) throws Exception { return node(id).resumeNetworkProbe(id); }
@@ -356,10 +366,10 @@ class NetworkProbeWorkflowServiceTest {
         }
 
         @Override
-        public synchronized Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public synchronized Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                                     int maxItems, int maxBytes,
                                                                     boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         @SuppressWarnings("unchecked")
@@ -443,10 +453,10 @@ class NetworkProbeWorkflowServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {
@@ -502,10 +512,10 @@ class NetworkProbeWorkflowServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {

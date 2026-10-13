@@ -23,7 +23,7 @@ final class TerminalRequests {
 
     static Map<String, Object> batchRead(List<String> processIds) {
         return Map.of("op", READ_BATCH,
-                "processIds", String.join("\n", processIds).getBytes(StandardCharsets.UTF_8));
+                "processIds", String.join("\n", processIds));
     }
 
     static Map<String, Object> create(String type, String command, String processId,
@@ -52,7 +52,7 @@ final class TerminalRequests {
             }
         }
         Map<String, Object> params = new HashMap<>();
-        params.put("processId", processId.getBytes(StandardCharsets.UTF_8));
+        params.put("processId", processId);
         params.put("op", operation);
         if (includeOutput) params.put("includeOutput", true);
         if (operation == READ) params.put("waitMs", parseReadWait(command));

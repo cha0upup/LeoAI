@@ -89,11 +89,11 @@ class PhpComponentArtifactRegistryTest {
         String proxy = new String(registry.getRequired("ProxyForwardComponent").getContent(), StandardCharsets.UTF_8);
         assertFalse(proxy.contains("time() % 5"));
         assertTrue(proxy.contains("time() - $lastStatusWrite >= 5"));
-        assertTrue(proxy.contains("$limit = 8388608"));
+        assertTrue(proxy.contains("$limit = 1048576"));
         assertTrue(proxy.contains("count($entries) >= 128"));
 
         String reverse = new String(registry.getRequired("ReverseTunnelComponent").getContent(), StandardCharsets.UTF_8);
-        assertTrue(reverse.contains("$limit = 8388608"));
+        assertTrue(reverse.contains("$limit = 1048576"));
         assertTrue(reverse.contains("count($clients) >= 256"));
         assertTrue(reverse.contains("count($entries) >= 32"));
 

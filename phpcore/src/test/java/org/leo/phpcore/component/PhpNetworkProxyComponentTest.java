@@ -87,12 +87,11 @@ class PhpNetworkProxyComponentTest {
             assertEquals(200, code(opened), String.valueOf(opened));
 
             byte[] payload = "proxy-worker".getBytes(StandardCharsets.UTF_8);
-            Map<String, Object> written = invoke(forwardComponent, Map.of(
-                    "op", 1, "connId", forwardConnId, "data", payload));
-            assertEquals(payload.length, ((Number) written.get("bytesWritten")).intValue());
+            Map<String, Object> written = exchange(forwardComponent, forwardConnId, payload, 0, 0);
+            assertEquals(payload.length, ((Number) written.get("writeAck")).intValue());
 
-            byte[] response = readUntil(forwardComponent,
-                    Map.of("op", 2, "connId", forwardConnId), "echo:proxy-worker".length());
+            byte[] response = readUntil(forwardComponent, forwardConnId, payload.length,
+                    (byte[]) written.get("data"), "echo:proxy-worker".length());
             assertArrayEquals("echo:proxy-worker".getBytes(StandardCharsets.UTF_8), response);
             echo.get(5, TimeUnit.SECONDS);
         }
@@ -115,11 +114,10 @@ class PhpNetworkProxyComponentTest {
             client.getOutputStream().write("from-client".getBytes(StandardCharsets.UTF_8));
             client.getOutputStream().flush();
             assertArrayEquals("from-client".getBytes(StandardCharsets.UTF_8), readUntil(reverseComponent,
-                    Map.of("op", 3, "connId", reverseConnId), "from-client".length()));
+                    reverseConnId, 0, new byte[0], "from-client".length()));
 
-            Map<String, Object> written = invoke(reverseComponent, Map.of(
-                    "op", 4, "connId", reverseConnId,
-                    "data", "from-platform".getBytes(StandardCharsets.UTF_8)));
+            Map<String, Object> written = exchange(reverseComponent, reverseConnId,
+                    "from-platform".getBytes(StandardCharsets.UTF_8), 0, "from-client".length());
             assertEquals(200, code(written), String.valueOf(written));
             assertArrayEquals("from-platform".getBytes(StandardCharsets.UTF_8),
                     client.getInputStream().readNBytes("from-platform".length()));
@@ -138,9 +136,14 @@ class PhpNetworkProxyComponentTest {
                     "targetPort", target.getLocalPort(), "connectTimeout", 3000))));
             try (Socket peer = target.accept()) {
                 // Keep the receiver open without reading, so the worker encounters backpressure.
-                String enqueue = "$component=require $argv[1];"
-                        + "echo json_encode(call_user_func($component['handle'],'',array("
-                        + "'op'=>1,'connId'=>$argv[2],'data'=>str_repeat('x',8388608))));";
+                String enqueue = "function leo_binary($v){return array('$leoBinary'=>base64_encode($v));}"
+                        + "$component=require $argv[1];$offset=0;$progress=microtime(true);$deadline=$progress+4;"
+                        + "do{$r=call_user_func($component['handle'],'',array('op'=>5,'frames'=>array(array("
+                        + "'connId'=>$argv[2],'data'=>str_repeat('x',262144),'writeOffset'=>$offset,"
+                        + "'readAck'=>0,'maxBytes'=>1))));$ack=$r['frames'][0]['writeAck'];"
+                        + "if($ack>$offset){$progress=microtime(true);$offset=$ack;}else{usleep(10000);}"
+                        + "}while(microtime(true)<$deadline&&microtime(true)-$progress<0.7);"
+                        + "echo json_encode(array('code'=>200));";
                 assertEquals(200, code(runJson(15, "php", "-r", enqueue,
                         forwardComponent.toString(), forwardConnId)));
 
@@ -152,7 +155,7 @@ class PhpNetworkProxyComponentTest {
                     Map<String, Object> status = forwardWorkerStatus();
                     long pending = ((Number) status.get("pendingBytes")).longValue();
                     if (pending != previous) lastProgress = System.nanoTime();
-                    if (pending > 0 && pending < 8388608
+                    if (pending > 0 && pending <= 1048576
                             && System.nanoTime() - lastProgress >= TimeUnit.MILLISECONDS.toNanos(700)) {
                         stalled = true;
                         break;
@@ -181,7 +184,7 @@ class PhpNetworkProxyComponentTest {
     private Map<String, Object> forwardWorkerStatus() throws Exception {
         String script = "$component=require $argv[1];$directory=$pfPath($argv[2]);"
                 + "$status=$pfReadJson($directory.DIRECTORY_SEPARATOR.$pfName('status'));"
-                + "$status['pendingBytes']=(int)@filesize($directory.DIRECTORY_SEPARATOR.$pfName('output'));"
+                + "$status['pendingBytes']=1048576-$pfQueue($directory.DIRECTORY_SEPARATOR.$pfName('output'),'room',0);"
                 + "echo json_encode($status);";
         return runJson(15, "php", "-r", script, forwardComponent.toString(), forwardConnId);
     }
@@ -197,21 +200,33 @@ class PhpNetworkProxyComponentTest {
         throw new AssertionError("reverse listener did not report the accepted connection");
     }
 
-    private byte[] readUntil(Path component, Map<String, Object> request, int expectedBytes) throws Exception {
-        byte[] result = new byte[0];
+    private byte[] readUntil(Path component, String connId, long writeOffset,
+                             byte[] result, int expectedBytes) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        do {
-            Map<String, Object> response = invoke(component, request);
+        while (result.length < expectedBytes && System.nanoTime() < deadline) {
+            Map<String, Object> response = exchange(component, connId, new byte[0], writeOffset, result.length);
             if (code(response) == 200 && response.get("data") instanceof byte[] chunk) {
                 byte[] merged = new byte[result.length + chunk.length];
                 System.arraycopy(result, 0, merged, 0, result.length);
                 System.arraycopy(chunk, 0, merged, result.length, chunk.length);
                 result = merged;
             }
-            if (result.length >= expectedBytes) return result;
-            Thread.sleep(40);
-        } while (System.nanoTime() < deadline);
+            if (result.length < expectedBytes) Thread.sleep(40);
+        }
+        if (result.length >= expectedBytes) return result;
         throw new AssertionError("timed out waiting for proxy data: " + result.length + "/" + expectedBytes);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> exchange(Path component, String connId, byte[] data,
+                                          long writeOffset, long readAck) throws Exception {
+        Map<String, Object> response = invoke(component, Map.of("op", component.equals(forwardComponent) ? 5 : 8,
+                "frames", List.of(Map.of("connId", connId, "data", data, "writeOffset", writeOffset,
+                        "readAck", readAck, "maxBytes", 65536))));
+        assertEquals(200, code(response), String.valueOf(response));
+        Map<String, Object> frame = (Map<String, Object>) ((List<?>) response.get("frames")).get(0);
+        assertEquals(200, code(frame), String.valueOf(frame));
+        return frame;
     }
 
     private Map<String, Object> invoke(Path component, Map<String, Object> params) throws Exception {

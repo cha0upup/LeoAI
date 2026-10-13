@@ -55,16 +55,6 @@ $rtAppend = static function ($path, $data) {
     if ($written === false || $written !== $length) throw new RuntimeException('reverse queue write failed');
     return $written;
 };
-$rtTake = static function ($path, $limit) {
-    $stream = @fopen($path, 'c+b');
-    if ($stream === false) return '';
-    if (!@flock($stream, LOCK_EX)) { fclose($stream); return ''; }
-    $data = stream_get_contents($stream); if (!is_string($data)) $data = '';
-    $chunk = substr($data, 0, $limit); $rest = (string)substr($data, strlen($chunk));
-    ftruncate($stream, 0); rewind($stream); if ($rest !== '') fwrite($stream, $rest);
-    fflush($stream); flock($stream, LOCK_UN); fclose($stream);
-    return $chunk;
-};
 $rtTakeLines = static function ($path, $limit) {
     $raw = '';
     $stream = @fopen($path, 'c+b');
@@ -140,6 +130,115 @@ $rtLaunch = static function ($directory) use ($rtAvailable, $rtWorkerToken) {
     }
     return false;
 };
+
+/* Atomic queue records keep the ACK and its bytes in the same commit. The stable lock survives rename. */
+$rtQueue = static function ($path, $operation, $argument, $offset = null) {
+    $lock = @fopen($path . '.lock', 'c+b');
+    if ($lock === false || !@flock($lock, LOCK_EX)) {
+        if ($lock !== false) fclose($lock);
+        throw new RuntimeException('proxy queue lock failed');
+    }
+    try {
+        $raw = (string)@file_get_contents($path);
+        $end = 0; $base = 0; $retained = ''; $pending = '';
+        if ($raw !== '') {
+            if (substr($raw, 0, 6) !== "LEOQ2\n") throw new RuntimeException('proxy queue record invalid');
+            $parts = explode("\n", $raw, 5);
+            if (count($parts) !== 5 || !preg_match('/^[0-9]+$/D', $parts[1]) || !preg_match('/^[0-9]+$/D', $parts[2]) || !preg_match('/^[0-9]+$/D', $parts[3])
+                || (int)$parts[3] > strlen($parts[4])) throw new RuntimeException('proxy queue record invalid');
+            $end = $parts[1] + 0; $base = $parts[2] + 0;
+            $retained = substr($parts[4], 0, (int)$parts[3]); $pending = (string)substr($parts[4], (int)$parts[3]);
+        }
+        $limit = 1048576;
+        $room = max(0, $limit - strlen($pending) - strlen($retained));
+        if ($operation === 'room') return $room;
+        if ($operation === 'state') return ['end' => $end, 'base' => $base, 'retained' => strlen($retained)];
+        if ($operation === 'append') {
+            $skip = 0;
+            if ($offset !== null) {
+                if ($offset > $end) throw new RuntimeException('proxy write offset gap');
+                $skip = (int)min(strlen($argument), $end - $offset);
+            }
+            $length = strlen($argument) - $skip;
+            if ($offset === null && $length > $room) throw new RuntimeException('proxy queue limit exceeded');
+            $length = min($length, $room);
+            $pending .= substr($argument, $skip, $length); $end += $length;
+            $result = $offset === null ? $length : $end;
+        } elseif ($offset === null) {
+            $result = substr($pending, 0, $argument);
+            $pending = (string)substr($pending, strlen($result)); $base += strlen($result);
+        } else {
+            if ($offset > $base + strlen($retained)) throw new RuntimeException('proxy read ACK out of range');
+            $drop = (int)max(0, $offset - $base);
+            $retained = (string)substr($retained, $drop); $base += $drop;
+            $chunk = substr($pending, 0, max(0, $argument - strlen($retained)));
+            $retained .= $chunk; $pending = (string)substr($pending, strlen($chunk));
+            $result = ['readOffset' => $base, 'data' => substr($retained, 0, $argument)];
+        }
+        $encoded = "LEOQ2\n" . sprintf('%.0f', $end) . "\n" . sprintf('%.0f', $base) . "\n"
+            . strlen($retained) . "\n" . $retained . $pending;
+        if ($encoded !== $raw) {
+            $temporary = $path . '.' . getmypid() . '.tmp';
+            if (@file_put_contents($temporary, $encoded) !== strlen($encoded) || !@rename($temporary, $path)) {
+                @unlink($temporary); throw new RuntimeException('proxy queue commit failed');
+            }
+            @chmod($path, 0600);
+        }
+        return $result;
+    } finally { flock($lock, LOCK_UN); fclose($lock); }
+};
+$rtDataAppend = static function ($path, $data) use ($rtQueue) { return $rtQueue($path, 'append', $data); };
+$rtDataTake = static function ($path, $limit) use ($rtQueue) { return $rtQueue($path, 'take', $limit); };
+
+$rtBatch = static function ($frames) use ($rtQueue, $rtGet, $rtName, $rtReadJson, $rtBase) {
+    if (!is_array($frames) || count($frames) < 1 || count($frames) > 16) return ['code' => 400, 'msg' => 'BATCH requires 1..16 frames'];
+    $ids = []; $bytes = 0;
+    foreach ($frames as $frame) {
+        if (!is_array($frame)) return ['code' => 400, 'msg' => 'invalid BATCH frame'];
+        $id = $rtGet($frame, 'connId'); $data = $rtGet($frame, 'data');
+        $limit = $rtGet($frame, 'maxBytes'); $writeOffset = $rtGet($frame, 'writeOffset'); $readAck = $rtGet($frame, 'readAck');
+        foreach ([$writeOffset, $readAck] as $offset) {
+            if ((!is_int($offset) && !is_float($offset)) || $offset < 0 || $offset > 9007199254740991
+                || floor($offset) != $offset) return ['code' => 400, 'msg' => 'invalid offset'];
+        }
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $id) || isset($ids[$id])
+            || !is_string($data) || strlen($data) > 262144 || $writeOffset > 9007199254740991 - strlen($data)
+            || !is_int($limit) || $limit < 1 || $limit > 262144) return ['code' => 400, 'msg' => 'invalid BATCH frame'];
+        $ids[$id] = true; $bytes += strlen($data) + $limit;
+    }
+    if ($bytes > 1048576) return ['code' => 400, 'msg' => 'BATCH exceeds byte limit'];
+    $replies = [];
+    foreach ($frames as $frame) {
+        $id = $frame['connId']; $reply = ['connId' => $id];
+        $lock = null;
+        try {
+            $matches = (array)glob($rtBase . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . $rtName('connections')
+                . DIRECTORY_SEPARATOR . hash('sha256', $id));
+            $directory = count($matches) > 0 ? $matches[0] : '';
+            if (!is_dir($directory)) { $reply['code'] = 404; $replies[] = $reply; continue; }
+            $lock = @fopen($directory . DIRECTORY_SEPARATOR . $rtName('batch-lock'), 'c+b');
+            if ($lock === false || !@flock($lock, LOCK_EX)) throw new RuntimeException('proxy batch lock failed');
+            $out = $directory . DIRECTORY_SEPARATOR . $rtName('output');
+            $input = $directory . DIRECTORY_SEPARATOR . $rtName('input');
+            $writeState = $rtQueue($out, 'state', 0); $readState = $rtQueue($input, 'state', 0);
+            if ($frame['writeOffset'] > $writeState['end'] || $frame['readAck'] > $readState['base'] + $readState['retained']) {
+                $reply['code'] = 409; $replies[] = $reply; continue;
+            }
+            @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
+            $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
+            $open = is_array($status) && $status['state'] === 'open' && !is_file($directory . DIRECTORY_SEPARATOR . $rtName('stop'));
+            // Closed peers can still replay their last write ACK and unread tail, but accept no new bytes.
+            $writeAck = $rtQueue($out, 'append', $open ? $frame['data'] : '', $frame['writeOffset']);
+            $read = $rtQueue($directory . DIRECTORY_SEPARATOR . $rtName('input'), 'take', $frame['maxBytes'], $frame['readAck']);
+            $reply += ['code' => 200, 'writeAck' => $writeAck, 'readOffset' => $read['readOffset'],
+                'readCode' => $read['data'] !== '' ? 200 : ($open ? 204 : 404), 'data' => leo_binary($read['data'])];
+        } catch (Exception $error) { $reply['code'] = 500; $reply['msg'] = $error->getMessage(); }
+        finally { if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); } }
+        $replies[] = $reply;
+    }
+    return ['code' => 200, 'frames' => $replies];
+};
+
 $rtCloseClient = static function ($connId, &$clients, $paths, $rtWriteJson, $rtName) {
     if (isset($clients[$connId]) && is_resource($clients[$connId])) @fclose($clients[$connId]);
     unset($clients[$connId]);
@@ -150,7 +249,7 @@ $rtCloseClient = static function ($connId, &$clients, $paths, $rtWriteJson, $rtN
     }
 };
 $rtWorker = static function ($directory) use (
-    $rtName, $rtReadJson, $rtWriteJson, $rtAppend, $rtTake, $rtCloseClient, $rtCancelPath
+    $rtName, $rtReadJson, $rtWriteJson, $rtAppend, $rtDataAppend, $rtDataTake, $rtQueue, $rtCloseClient, $rtCancelPath
 ) {
     $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('config'));
     if (!is_array($config)) return 2;
@@ -175,7 +274,7 @@ $rtWorker = static function ($directory) use (
     $actualPort = $colon === false ? $port : (int)substr($name, $colon + 1);
     $rtWriteJson($statusPath, ['state' => 'open', 'pid' => getmypid(), 'listenPort' => $actualPort,
         'bindAddr' => $bindAddr, 'updatedAt' => time()]);
-    $clients = []; $paths = []; $lastActivity = time();
+    $clients = []; $paths = []; $outgoing = []; $offsets = []; $deadlines = []; $lastActivity = time();
     $stop = $directory . DIRECTORY_SEPARATOR . $rtName('stop');
     $heartbeat = $directory . DIRECTORY_SEPARATOR . $rtName('heartbeat');
     $failureMessage = null;
@@ -184,8 +283,23 @@ $rtWorker = static function ($directory) use (
             clearstatcache(true, $heartbeat);
             $heartbeatAt = is_file($heartbeat) ? (int)@filemtime($heartbeat) : 0;
             if (time() - max($lastActivity, $heartbeatAt) >= 600) break;
-            $read = [$server]; foreach ($clients as $socket) $read[] = $socket;
-            $write = []; $except = []; $selected = @stream_select($read, $write, $except, 0, 100000);
+            $read = [$server]; $write = [];
+            foreach ($clients as $connId => $socket) {
+                $connDirectory = $paths[$connId];
+                if (is_file($connDirectory . DIRECTORY_SEPARATOR . $rtName('stop'))) {
+                    $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); continue;
+                }
+                if (!isset($outgoing[$connId]) || $outgoing[$connId] === '') {
+                    $outgoing[$connId] = $rtDataTake($connDirectory . DIRECTORY_SEPARATOR . $rtName('output'), 65536);
+                    $offsets[$connId] = 0; $deadlines[$connId] = microtime(true) + 5.0;
+                }
+                if ($outgoing[$connId] !== '') $write[] = $socket;
+                if ($rtQueue($connDirectory . DIRECTORY_SEPARATOR . $rtName('input'), 'room', 0) > 0) $read[] = $socket;
+            }
+            foreach (array_keys($outgoing) as $connId) {
+                if (!isset($clients[$connId])) unset($outgoing[$connId], $offsets[$connId], $deadlines[$connId]);
+            }
+            $except = []; $selected = @stream_select($read, $write, $except, 0, 100000);
             if ($selected === false) throw new RuntimeException('listener select failed');
             foreach ($read as $ready) {
                 if ($ready === $server) {
@@ -212,11 +326,13 @@ $rtWorker = static function ($directory) use (
                 }
                 foreach ($clients as $connId => $socket) {
                     if ($socket !== $ready) continue;
-                    $data = @fread($socket, 65536);
+                    $room = min(65536, $rtQueue($paths[$connId] . DIRECTORY_SEPARATOR . $rtName('input'), 'room', 0));
+                    if ($room === 0) break;
+                    $data = @fread($socket, $room);
                     if ($data === false || ($data === '' && feof($socket))) {
                         $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName);
                     } elseif ($data !== '') {
-                        $rtAppend($paths[$connId] . DIRECTORY_SEPARATOR . $rtName('input'), $data); $lastActivity = time();
+                        $rtDataAppend($paths[$connId] . DIRECTORY_SEPARATOR . $rtName('input'), $data); $lastActivity = time();
                     }
                     break;
                 }
@@ -226,15 +342,13 @@ $rtWorker = static function ($directory) use (
                 if (is_file($connDirectory . DIRECTORY_SEPARATOR . $rtName('stop'))) {
                     $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); continue;
                 }
-                $data = $rtTake($connDirectory . DIRECTORY_SEPARATOR . $rtName('output'), 65536);
-                if ($data === '') continue;
-                $offset = 0; $length = strlen($data);
-                while ($offset < $length && isset($clients[$connId])) {
-                    $written = @fwrite($clients[$connId], substr($data, $offset));
-                    if ($written === false) { $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); break; }
-                    if ($written === 0) { usleep(10000); continue; }
-                    $offset += $written; $lastActivity = time();
+                if (!isset($outgoing[$connId]) || $outgoing[$connId] === '') continue;
+                $written = @fwrite($clients[$connId], substr($outgoing[$connId], $offsets[$connId]));
+                if ($written === false || ($written === 0 && microtime(true) >= $deadlines[$connId])) {
+                    $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); continue;
                 }
+                if ($written > 0) { $offsets[$connId] += $written; $deadlines[$connId] = microtime(true) + 5.0; $lastActivity = time(); }
+                if ($offsets[$connId] === strlen($outgoing[$connId])) $outgoing[$connId] = '';
             }
         }
     } catch (Exception $failure) {
@@ -260,10 +374,12 @@ return [
     'id' => 'ReverseTunnelComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use (
         $rtGet, $rtBase, $rtListenPath, $rtConnPath, $rtName, $rtReadJson, $rtWriteJson,
-        $rtAppend, $rtTake, $rtTakeLines, $rtRemoveTree, $rtCleanup, $rtLaunch, $rtCancelPath
+        $rtBatch, $rtTakeLines, $rtRemoveTree, $rtCleanup, $rtLaunch, $rtCancelPath
     ) {
         $rtCleanup();
-        $op = (int)$rtGet($params, 'op', -1);
+        $op = $rtGet($params, 'op', -1);
+        if (!is_int($op) || !in_array($op, [0, 1, 2, 5, 6, 8], true)) return ['code' => 400, 'msg' => 'unknown op'];
+        if ($op === 8) return $rtBatch($rtGet($params, 'frames'));
         if ($op === 0) {
             $listenId = (string)$rtGet($params, 'listenId', ''); $directory = $rtListenPath($listenId);
             if (is_file($rtCancelPath($listenId))) return ['code' => 409, 'msg' => 'listener start cancelled'];
@@ -317,25 +433,12 @@ return [
             @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
             return ['code' => 200, 'newConns' => $rtTakeLines($directory . DIRECTORY_SEPARATOR . $rtName('accept'), 256)];
         }
-        if ($op >= 3 && $op <= 5) {
+        if ($op === 5) {
             $connId = (string)$rtGet($params, 'connId', '');
             $matches = (array)glob($rtBase . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . $rtName('connections')
                 . DIRECTORY_SEPARATOR . hash('sha256', $connId));
             if (count($matches) === 0) return ['code' => 404, 'msg' => 'connId not found'];
-            $directory = $matches[0]; $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
-            if ($op === 3) {
-                $data = $rtTake($directory . DIRECTORY_SEPARATOR . $rtName('input'), 65536);
-                if ($data !== '') return ['code' => 200, 'bytesRead' => strlen($data), 'data' => leo_binary($data)];
-                return is_array($status) && $status['state'] === 'open'
-                    ? ['code' => 204, 'bytesRead' => 0, 'data' => leo_binary('')]
-                    : ['code' => 404, 'msg' => 'peer closed'];
-            }
-            if ($op === 4) {
-                if (!is_array($status) || $status['state'] !== 'open') return ['code' => 404, 'msg' => 'peer closed'];
-                $data = $rtGet($params, 'data', ''); if (!is_string($data)) return ['code' => 400, 'msg' => 'data must be binary'];
-                return ['code' => 200, 'bytesWritten' => $rtAppend($directory . DIRECTORY_SEPARATOR . $rtName('output'), $data)];
-            }
-            @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX);
+            @file_put_contents($matches[0] . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX);
             return ['code' => 200, 'msg' => 'closed'];
         }
         if ($op === 6) {

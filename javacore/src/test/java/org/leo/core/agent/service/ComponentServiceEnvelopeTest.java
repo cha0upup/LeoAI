@@ -2,6 +2,8 @@ package org.leo.core.agent.service;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Disguise;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
@@ -156,13 +158,16 @@ class ComponentServiceEnvelopeTest {
             Map<String, Object> request = WireCodec.decode(data);
             return WireCodec.encode(Map.of(
                     "requestId", request.get("requestId"), "code", 500,
-                    "message", "temporary"));
+                    "error", Map.of("message", "temporary")));
         };
         TestService service = service(communication, disguise);
         service.setLoadedComponentCacheClock(() -> now[0]);
         service.setComponentLoadFailurePolicy(2, 100L);
 
-        assertEquals(500, service.loadComponent("BasicInfoComponent").get("code"));
+        Map<String, Object> failed = service.loadComponent("BasicInfoComponent");
+        assertEquals(500, failed.get("code"));
+        assertEquals("temporary", failed.get("msg"));
+        assertFalse("RPC_RESULT_UNKNOWN".equals(failed.get("errorCode")));
         assertEquals(500, service.loadComponent("BasicInfoComponent").get("code"));
         Map<String, Object> cooling = service.loadComponent("BasicInfoComponent");
         assertEquals(503, cooling.get("code"));
@@ -392,6 +397,71 @@ class ComponentServiceEnvelopeTest {
         assertEquals(1, recoveries.get());
     }
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void routingRejectionsDoNotConsumeReplayBudgetOrMaskLostResponses(boolean replayable) {
+        AtomicInteger attempts = new AtomicInteger(), recoveries = new AtomicInteger();
+        List<String> ids = new ArrayList<>();
+        TestService service = service(data -> {
+            Map<String, Object> request = WireCodec.decode(data);
+            ids.add((String) request.get("requestId"));
+            int attempt = attempts.incrementAndGet();
+            if (attempt <= 6) return WireCodec.encode(Map.of("requestId", request.get("requestId"),
+                    "code", 409, "error", Map.of("errorCode", "HOST_ID_MISMATCH")));
+            if (attempt == 7) throw new java.io.IOException("lost response");
+            return WireCodec.encode(Map.of("requestId", request.get("requestId"), "code", 200, "data", Map.of()));
+        }, new PortableDisguise());
+        service.setMaxReqCount(3);
+        service.setRetryBackoff(0, 0);
+        service.setHostIdMismatchRecovery(id -> { recoveries.incrementAndGet(); return Map.of("code", 409); });
+        Map<String, Object> result = service.execute(AgentOperation.COMPONENT_INVOKE,
+                replayable ? "BasicInfoComponent" : "FileComponent", replayable ? "basic" : "delete", Map.of());
+        assertEquals(replayable ? 200 : 500, result.get("code"));
+        assertEquals(replayable ? 8 : 7, attempts.get());
+        assertEquals(0, recoveries.get());
+        assertEquals(1, ids.stream().distinct().count());
+        if (!replayable) {
+            assertEquals("RPC_RESULT_UNKNOWN", result.get("errorCode"));
+            assertEquals(ids.get(0), result.get("requestId"));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void interruptionBeforeOrDuringEncodingDoesNotSend(boolean duringEncoding) {
+        AtomicInteger attempts = new AtomicInteger();
+        TestService service = service(data -> { attempts.incrementAndGet(); return new byte[0]; },
+                new PortableDisguise() {
+                    @Override public byte[] encodeTraffic(byte[] payload) {
+                        if (duringEncoding) Thread.currentThread().interrupt();
+                        return payload;
+                    }
+                });
+        if (!duringEncoding) Thread.currentThread().interrupt();
+        try {
+            Map<String, Object> result = service.execute(AgentOperation.PING, null, null, Map.of());
+            assertEquals(500, result.get("code"));
+            assertEquals(0, attempts.get());
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertFalse(result.containsKey("errorCode"));
+        } finally { Thread.interrupted(); }
+    }
+
+    @Test
+    void interruptionOnFinalRoutingRejectionDoesNotStartRecovery() {
+        AtomicInteger attempts = new AtomicInteger(), recoveries = new AtomicInteger();
+        TestService service = service(data -> {
+            Map<String, Object> request = WireCodec.decode(data);
+            if (attempts.incrementAndGet() == 8) Thread.currentThread().interrupt();
+            return WireCodec.encode(Map.of("requestId", request.get("requestId"),
+                    "code", 409, "error", Map.of("errorCode", "HOST_ID_MISMATCH")));
+        }, new PortableDisguise());
+        service.setHostIdMismatchRecovery(id -> { recoveries.incrementAndGet(); return Map.of("code", 409); });
+        try {
+            assertEquals(500, service.execute(AgentOperation.PING, null, null, Map.of()).get("code"));
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertEquals(0, recoveries.get());
+        } finally { Thread.interrupted(); }
+    }
+
     @Test
     void usesBucketPaddingWithDerivedFieldName() {
         PortableDisguise disguise = new PortableDisguise();
@@ -495,7 +565,7 @@ class ComponentServiceEnvelopeTest {
         }
     }
 
-    private static final class PortableDisguise extends Disguise {
+    private static class PortableDisguise extends Disguise {
         private PortableDisguise() {
             setTrafficEncodeBody("public byte[] encodeTraffic(byte[] data){return data;}");
             setTrafficDecodeBody("public byte[] decodeTraffic(byte[] data){return data;}");

@@ -87,8 +87,11 @@ class ReverseTunnelServerTest {
                 forwardAccepted.await(1, TimeUnit.SECONDS);
                 return Map.of("code", 404);
             }
-            if (op == ReverseTunnelServer.OP_READ) {
-                return Map.of("code", 204);
+            if (op == 8) {
+                Map<?, ?> frame = (Map<?, ?>) ((List<?>) params.get("frames")).get(0);
+                return Map.of("code", 200, "frames", List.of(Map.of(
+                        "connId", frame.get("connId"), "code", 200, "writeAck", frame.get("writeOffset"),
+                        "readOffset", frame.get("readAck"), "readCode", 204, "data", new byte[0])));
             }
             return Map.of("code", 200);
         }

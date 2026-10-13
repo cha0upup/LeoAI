@@ -284,12 +284,13 @@ public final class PhpAgentNode extends AbstractAgentNode implements
     }
 
     @Override
-    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                   int maxItems, int maxBytes,
                                                   boolean includeEvidence) throws Exception {
         return invoke("NetworkProbeComponent", "queryTask", Map.of(
                 "taskId", taskId,
                 "cursor", Long.valueOf(cursor),
+                "ackCursor", Long.valueOf(ackCursor),
                 "maxItems", Integer.valueOf(maxItems),
                 "maxBytes", Integer.valueOf(maxBytes),
                 "includeEvidence", Boolean.valueOf(includeEvidence)));

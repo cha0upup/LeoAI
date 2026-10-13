@@ -16,13 +16,15 @@ public interface NetworkProbeCapable {
      * Reads a bounded, incremental result page from a node-side task.
      *
      * <p>The cursor is a monotonically increasing observation cursor. Nodes
-     * must not return the complete task history from this method.</p>
+     * must not return the complete task history from this method. The ackCursor
+     * confirms the previously accepted page before selecting the next one;
+     * it must not exceed cursor.</p>
      */
-    Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+    Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                           int maxItems, int maxBytes,
                                           boolean includeEvidence) throws Exception;
 
-    /** Acknowledge that the service has durably accepted observations through cursor. */
+    /** Confirm the final accepted page when there will be no further query. */
     Map<String, Object> ackNetworkProbe(String taskId, long cursor) throws Exception;
 
     Map<String, Object> pauseNetworkProbe(String taskId) throws Exception;

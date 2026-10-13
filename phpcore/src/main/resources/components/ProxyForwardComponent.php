@@ -31,34 +31,6 @@ $pfWriteJson = static function ($path, $value) {
     @chmod($temporary, 0600);
     return @rename($temporary, $path);
 };
-$pfAppend = static function ($path, $data) {
-    if ($data === '') return 0;
-    $limit = 8388608; $length = strlen($data);
-    $stream = @fopen($path, 'c+b');
-    if ($stream === false || !@flock($stream, LOCK_EX)) {
-        if ($stream !== false) fclose($stream); throw new RuntimeException('proxy queue write failed');
-    }
-    fseek($stream, 0, SEEK_END); $current = (int)ftell($stream);
-    if ($length > $limit || $current > $limit - $length) {
-        flock($stream, LOCK_UN); fclose($stream); throw new RuntimeException('proxy queue limit exceeded');
-    }
-    $written = @fwrite($stream, $data); fflush($stream); flock($stream, LOCK_UN); fclose($stream);
-    if ($written === false || $written !== $length) throw new RuntimeException('proxy queue write failed');
-    return $written;
-};
-$pfTake = static function ($path, $limit) {
-    $stream = @fopen($path, 'c+b');
-    if ($stream === false) return '';
-    if (!@flock($stream, LOCK_EX)) { fclose($stream); return ''; }
-    $data = stream_get_contents($stream);
-    if (!is_string($data)) $data = '';
-    $chunk = substr($data, 0, $limit);
-    $rest = (string)substr($data, strlen($chunk));
-    ftruncate($stream, 0); rewind($stream);
-    if ($rest !== '') fwrite($stream, $rest);
-    fflush($stream); flock($stream, LOCK_UN); fclose($stream);
-    return $chunk;
-};
 $pfRemove = static function ($directory) {
     if (!is_dir($directory)) return;
     foreach ((array)glob($directory . DIRECTORY_SEPARATOR . '*') as $path) @unlink($path);
@@ -102,7 +74,114 @@ $pfLaunch = static function ($directory) use ($pfAvailable, $pfWorkerToken) {
     return false;
 };
 
-$pfWorker = static function ($directory) use ($pfName, $pfReadJson, $pfWriteJson, $pfAppend, $pfTake) {
+
+/* Atomic queue records keep the ACK and its bytes in the same commit. The stable lock survives rename. */
+$pfQueue = static function ($path, $operation, $argument, $offset = null) {
+    $lock = @fopen($path . '.lock', 'c+b');
+    if ($lock === false || !@flock($lock, LOCK_EX)) {
+        if ($lock !== false) fclose($lock);
+        throw new RuntimeException('proxy queue lock failed');
+    }
+    try {
+        $raw = (string)@file_get_contents($path);
+        $end = 0; $base = 0; $retained = ''; $pending = '';
+        if ($raw !== '') {
+            if (substr($raw, 0, 6) !== "LEOQ2\n") throw new RuntimeException('proxy queue record invalid');
+            $parts = explode("\n", $raw, 5);
+            if (count($parts) !== 5 || !preg_match('/^[0-9]+$/D', $parts[1]) || !preg_match('/^[0-9]+$/D', $parts[2]) || !preg_match('/^[0-9]+$/D', $parts[3])
+                || (int)$parts[3] > strlen($parts[4])) throw new RuntimeException('proxy queue record invalid');
+            $end = $parts[1] + 0; $base = $parts[2] + 0;
+            $retained = substr($parts[4], 0, (int)$parts[3]); $pending = (string)substr($parts[4], (int)$parts[3]);
+        }
+        $limit = 1048576;
+        $room = max(0, $limit - strlen($pending) - strlen($retained));
+        if ($operation === 'room') return $room;
+        if ($operation === 'state') return ['end' => $end, 'base' => $base, 'retained' => strlen($retained)];
+        if ($operation === 'append') {
+            $skip = 0;
+            if ($offset !== null) {
+                if ($offset > $end) throw new RuntimeException('proxy write offset gap');
+                $skip = (int)min(strlen($argument), $end - $offset);
+            }
+            $length = strlen($argument) - $skip;
+            if ($offset === null && $length > $room) throw new RuntimeException('proxy queue limit exceeded');
+            $length = min($length, $room);
+            $pending .= substr($argument, $skip, $length); $end += $length;
+            $result = $offset === null ? $length : $end;
+        } elseif ($offset === null) {
+            $result = substr($pending, 0, $argument);
+            $pending = (string)substr($pending, strlen($result)); $base += strlen($result);
+        } else {
+            if ($offset > $base + strlen($retained)) throw new RuntimeException('proxy read ACK out of range');
+            $drop = (int)max(0, $offset - $base);
+            $retained = (string)substr($retained, $drop); $base += $drop;
+            $chunk = substr($pending, 0, max(0, $argument - strlen($retained)));
+            $retained .= $chunk; $pending = (string)substr($pending, strlen($chunk));
+            $result = ['readOffset' => $base, 'data' => substr($retained, 0, $argument)];
+        }
+        $encoded = "LEOQ2\n" . sprintf('%.0f', $end) . "\n" . sprintf('%.0f', $base) . "\n"
+            . strlen($retained) . "\n" . $retained . $pending;
+        if ($encoded !== $raw) {
+            $temporary = $path . '.' . getmypid() . '.tmp';
+            if (@file_put_contents($temporary, $encoded) !== strlen($encoded) || !@rename($temporary, $path)) {
+                @unlink($temporary); throw new RuntimeException('proxy queue commit failed');
+            }
+            @chmod($path, 0600);
+        }
+        return $result;
+    } finally { flock($lock, LOCK_UN); fclose($lock); }
+};
+$pfDataAppend = static function ($path, $data) use ($pfQueue) { return $pfQueue($path, 'append', $data); };
+$pfDataTake = static function ($path, $limit) use ($pfQueue) { return $pfQueue($path, 'take', $limit); };
+
+$pfBatch = static function ($frames) use ($pfQueue, $pfGet, $pfName, $pfReadJson, $pfPath) {
+    if (!is_array($frames) || count($frames) < 1 || count($frames) > 16) return ['code' => 400, 'msg' => 'BATCH requires 1..16 frames'];
+    $ids = []; $bytes = 0;
+    foreach ($frames as $frame) {
+        if (!is_array($frame)) return ['code' => 400, 'msg' => 'invalid BATCH frame'];
+        $id = $pfGet($frame, 'connId'); $data = $pfGet($frame, 'data');
+        $limit = $pfGet($frame, 'maxBytes'); $writeOffset = $pfGet($frame, 'writeOffset'); $readAck = $pfGet($frame, 'readAck');
+        foreach ([$writeOffset, $readAck] as $offset) {
+            if ((!is_int($offset) && !is_float($offset)) || $offset < 0 || $offset > 9007199254740991
+                || floor($offset) != $offset) return ['code' => 400, 'msg' => 'invalid offset'];
+        }
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $id) || isset($ids[$id])
+            || !is_string($data) || strlen($data) > 262144 || $writeOffset > 9007199254740991 - strlen($data)
+            || !is_int($limit) || $limit < 1 || $limit > 262144) return ['code' => 400, 'msg' => 'invalid BATCH frame'];
+        $ids[$id] = true; $bytes += strlen($data) + $limit;
+    }
+    if ($bytes > 1048576) return ['code' => 400, 'msg' => 'BATCH exceeds byte limit'];
+    $replies = [];
+    foreach ($frames as $frame) {
+        $id = $frame['connId']; $reply = ['connId' => $id];
+        $lock = null;
+        try {
+            $directory = $pfPath($id);
+            if (!is_dir($directory)) { $reply['code'] = 404; $replies[] = $reply; continue; }
+            $lock = @fopen($directory . DIRECTORY_SEPARATOR . $pfName('batch-lock'), 'c+b');
+            if ($lock === false || !@flock($lock, LOCK_EX)) throw new RuntimeException('proxy batch lock failed');
+            $out = $directory . DIRECTORY_SEPARATOR . $pfName('output');
+            $input = $directory . DIRECTORY_SEPARATOR . $pfName('input');
+            $writeState = $pfQueue($out, 'state', 0); $readState = $pfQueue($input, 'state', 0);
+            if ($frame['writeOffset'] > $writeState['end'] || $frame['readAck'] > $readState['base'] + $readState['retained']) {
+                $reply['code'] = 409; $replies[] = $reply; continue;
+            }
+            @touch($directory . DIRECTORY_SEPARATOR . $pfName('heartbeat'));
+            $status = $pfReadJson($directory . DIRECTORY_SEPARATOR . $pfName('status'));
+            $open = is_array($status) && $status['state'] === 'open' && !is_file($directory . DIRECTORY_SEPARATOR . $pfName('stop'));
+            // Closed peers can still replay their last write ACK and unread tail, but accept no new bytes.
+            $writeAck = $pfQueue($out, 'append', $open ? $frame['data'] : '', $frame['writeOffset']);
+            $read = $pfQueue($directory . DIRECTORY_SEPARATOR . $pfName('input'), 'take', $frame['maxBytes'], $frame['readAck']);
+            $reply += ['code' => 200, 'writeAck' => $writeAck, 'readOffset' => $read['readOffset'],
+                'readCode' => $read['data'] !== '' ? 200 : ($open ? 204 : 404), 'data' => leo_binary($read['data'])];
+        } catch (Exception $error) { $reply['code'] = 500; $reply['msg'] = $error->getMessage(); }
+        finally { if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); } }
+        $replies[] = $reply;
+    }
+    return ['code' => 200, 'frames' => $replies];
+};
+
+$pfWorker = static function ($directory) use ($pfName, $pfReadJson, $pfWriteJson, $pfDataAppend, $pfDataTake, $pfQueue) {
     $config = $pfReadJson($directory . DIRECTORY_SEPARATOR . $pfName('config'));
     if (!is_array($config)) return 2;
     $statusPath = $directory . DIRECTORY_SEPARATOR . $pfName('status');
@@ -121,6 +200,7 @@ $pfWorker = static function ($directory) use ($pfName, $pfReadJson, $pfWriteJson
     $input = $directory . DIRECTORY_SEPARATOR . $pfName('input');
     $output = $directory . DIRECTORY_SEPARATOR . $pfName('output');
     $heartbeat = $directory . DIRECTORY_SEPARATOR . $pfName('heartbeat');
+    $outgoing = ''; $offset = 0; $writeDeadline = 0;
     try {
         while (!feof($socket)) {
             clearstatcache(true, $stop);
@@ -128,28 +208,27 @@ $pfWorker = static function ($directory) use ($pfName, $pfReadJson, $pfWriteJson
             clearstatcache(true, $heartbeat);
             $heartbeatAt = is_file($heartbeat) ? (int)@filemtime($heartbeat) : 0;
             if (time() - max($lastActivity, $heartbeatAt) >= 600) break;
-            $outgoing = $pfTake($output, 65536);
-            if ($outgoing !== '') {
-                $offset = 0; $length = strlen($outgoing);
+            if ($outgoing === '') {
+                $outgoing = $pfDataTake($output, 65536); $offset = 0;
                 $writeDeadline = microtime(true) + 5.0;
-                while ($offset < $length) {
-                    clearstatcache(true, $stop);
-                    if (is_file($stop)) break 2;
-                    if (microtime(true) >= $writeDeadline) throw new RuntimeException('socket write timeout');
-                    $written = @fwrite($socket, substr($outgoing, $offset));
-                    if ($written === false) throw new RuntimeException('socket write failed');
-                    if ($written === 0) { usleep(10000); continue; }
-                    $offset += $written;
-                }
-                $lastActivity = time();
             }
-            $read = [$socket]; $write = []; $except = [];
-            $selected = @stream_select($read, $write, $except, 0, 100000);
+            if ($outgoing !== '') {
+                $written = @fwrite($socket, substr($outgoing, $offset));
+                if ($written === false) throw new RuntimeException('socket write failed');
+                if ($written > 0) { $offset += $written; $writeDeadline = microtime(true) + 5.0; $lastActivity = time(); }
+                elseif (microtime(true) >= $writeDeadline) throw new RuntimeException('socket write timeout');
+                if ($offset === strlen($outgoing)) $outgoing = '';
+            }
+            $room = min(65536, $pfQueue($input, 'room', 0));
+            $read = $room > 0 ? [$socket] : []; $write = $outgoing !== '' ? [$socket] : []; $except = [];
+            $selected = 0;
+            if ($read || $write) $selected = @stream_select($read, $write, $except, 0, 100000);
+            else usleep(10000);
             if ($selected === false) throw new RuntimeException('socket select failed');
-            if ($selected > 0) {
-                $incoming = @fread($socket, 65536);
+            if ($read) {
+                $incoming = @fread($socket, $room);
                 if ($incoming === false) throw new RuntimeException('socket read failed');
-                if ($incoming !== '') { $pfAppend($input, $incoming); $lastActivity = time(); }
+                if ($incoming !== '') { $pfDataAppend($input, $incoming); $lastActivity = time(); }
                 elseif (feof($socket)) break;
             }
             if (time() - $lastStatusWrite >= 5) {
@@ -173,11 +252,13 @@ if (PHP_SAPI === 'cli' && isset($argv[1]) && hash_equals($pfWorkerToken, (string
 return [
     'id' => 'ProxyForwardComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use (
-        $pfGet, $pfBase, $pfPath, $pfName, $pfReadJson, $pfWriteJson, $pfAppend, $pfTake,
-        $pfRemove, $pfCleanup, $pfLaunch
+        $pfGet, $pfBase, $pfPath, $pfName, $pfReadJson, $pfWriteJson,
+        $pfRemove, $pfCleanup, $pfLaunch, $pfBatch
     ) {
         $pfCleanup();
-        $op = (int)$pfGet($params, 'op', -1);
+        $op = $pfGet($params, 'op', -1);
+        if (!is_int($op) || !in_array($op, [0, 3, 5], true)) return ['code' => 400, 'msg' => 'unknown op'];
+        if ($op === 5) return $pfBatch($pfGet($params, 'frames'));
         $connId = (string)$pfGet($params, 'connId', '');
         $directory = $pfPath($connId);
         $statusPath = $directory . DIRECTORY_SEPARATOR . $pfName('status');
@@ -219,22 +300,6 @@ return [
             } while (microtime(true) < $deadline);
             @file_put_contents($directory . DIRECTORY_SEPARATOR . $pfName('stop'), '1', LOCK_EX);
             return ['code' => 504, 'msg' => 'connect timeout'];
-        }
-        if ($op === 1) {
-            $status = $pfReadJson($statusPath);
-            if (!is_array($status) || $status['state'] !== 'open') return ['code' => 404, 'msg' => 'connId not found'];
-            $data = $pfGet($params, 'data', '');
-            if (!is_string($data)) return ['code' => 400, 'msg' => 'data must be binary'];
-            return ['code' => 200, 'bytesWritten' => $pfAppend($directory . DIRECTORY_SEPARATOR . $pfName('output'), $data)];
-        }
-        if ($op === 2) {
-            if (is_dir($directory)) @touch($directory . DIRECTORY_SEPARATOR . $pfName('heartbeat'));
-            $data = $pfTake($directory . DIRECTORY_SEPARATOR . $pfName('input'), 65536);
-            if ($data !== '') return ['code' => 200, 'bytesRead' => strlen($data), 'data' => leo_binary($data)];
-            $status = $pfReadJson($statusPath);
-            return is_array($status) && in_array($status['state'], ['starting', 'open'], true)
-                ? ['code' => 204, 'bytesRead' => 0, 'data' => leo_binary('')]
-                : ['code' => 404, 'msg' => 'peer closed'];
         }
         if ($op === 3) {
             if (is_dir($directory)) @file_put_contents($directory . DIRECTORY_SEPARATOR . $pfName('stop'), '1', LOCK_EX);

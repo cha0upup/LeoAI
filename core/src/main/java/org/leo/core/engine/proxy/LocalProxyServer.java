@@ -21,6 +21,7 @@ public abstract class LocalProxyServer {
     private final int handshakeTimeout;
     private final int maxConnections;
     private final ProxySessionResources resources;
+    private ProxyBatchDispatcher batches;
     private final Socks5ProxyStatistics statistics;
     private final Set<ProxyConnection> connections = new HashSet<>();
     private volatile boolean running;
@@ -62,6 +63,7 @@ public abstract class LocalProxyServer {
             listener.setReuseAddress(true);
             listener.bind(new InetSocketAddress(bindAddr, port));
             serverSocket = listener;
+            batches = resources == null ? new ProxyBatchDispatcher() : resources.batches();
             running = true;
             Thread accept = new Thread(() -> acceptLoop(listener), getClass().getSimpleName() + "-" + getListenPort());
             accept.setDaemon(true);
@@ -69,6 +71,7 @@ public abstract class LocalProxyServer {
         } catch (IOException | RuntimeException error) {
             running = false;
             listener.close();
+            if (resources == null && batches != null) batches.close();
             throw error;
         }
         log.info("{} 已启动: {}", getClass().getSimpleName(), listener.getLocalSocketAddress());
@@ -79,6 +82,7 @@ public abstract class LocalProxyServer {
         try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) { }
         // Keep reservations until their handlers finish, including any in-flight OPEN RPC.
         for (ProxyConnection connection : connections) connection.closeLocal();
+        if (resources == null && batches != null) batches.close();
         statistics.reset();
     }
 
@@ -120,7 +124,7 @@ public abstract class LocalProxyServer {
                         client.close();
                         continue;
                     }
-                    connection = new ProxyConnection(client, node, statistics, permit);
+                    connection = new ProxyConnection(client, node, statistics, permit, batches);
                     connections.add(connection);
                 }
                 try {

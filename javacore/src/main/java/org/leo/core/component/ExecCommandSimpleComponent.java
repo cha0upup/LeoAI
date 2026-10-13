@@ -2,7 +2,7 @@ package org.leo.core.component;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -39,6 +39,7 @@ public class ExecCommandSimpleComponent implements Runnable {
     private static final long DEFAULT_TIMEOUT_MS = 30000L;           // 30s
     private static final long MAX_TIMEOUT_MS     = 300000L;          // 5min 上限，防止入参滥用
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
+    private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
@@ -70,11 +71,11 @@ public class ExecCommandSimpleComponent implements Runnable {
         java.lang.reflect.InvocationHandler h =
                 (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params  = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = (HashMap<String, Object>) h.invoke(null, null, null);
+            results = new HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
@@ -86,28 +87,21 @@ public class ExecCommandSimpleComponent implements Runnable {
     // ── Worker 线程：在独立线程中执行系统命令，防止阻塞 HTTP 请求线程 ──────────
 
     private void execInWorker() {
+        Process process = null;
         try {
             if (workerCancelled) return;
 
-            String[] command;
-            if (isWindows()) {
-                command = new String[]{"cmd.exe", "/c", execCmd};
-            } else {
-                command = new String[]{"/bin/sh", "-c", execCmd};
-            }
+            String[] command = isWindows() ? new String[]{"cmd.exe", "/c", execCmd}
+                    : new String[]{"/bin/sh", "-c", execCmd};
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true); // stderr 合并到 stdout
 
-            Process process = pb.start();
+            process = pb.start();
             workerProcess = process; // 让主线程在超时后能 destroy
 
             // 超时可能发生在 pb.start() 之前；进程创建后再次检查，避免漏杀。
-            if (workerCancelled) {
-                try { process.destroy(); } catch (Exception ignored) {}
-                try { process.getInputStream().close(); } catch (Exception ignored) {}
-                return;
-            }
+            if (workerCancelled) return;
 
             // 关闭子进程 stdin，防止某些 shell 等待输入而阻塞
             try { process.getOutputStream().close(); } catch (Exception ignored) {}
@@ -116,29 +110,17 @@ public class ExecCommandSimpleComponent implements Runnable {
             InputStream is = process.getInputStream();
             byte[] buffer = new byte[BUFFER_SIZE];
             int read;
-            int total = 0;
-            try {
-                while ((read = is.read(buffer)) != -1) {
-                    int remaining = MAX_OUTPUT_BYTES - total;
-                    if (remaining <= 0) {
-                        workerTruncated = true;
-                        continue; // 继续排空管道，避免子进程阻塞
-                    }
-                    int toWrite = read <= remaining ? read : remaining;
-                    output.write(buffer, 0, toWrite);
-                    total += toWrite;
-                    if (toWrite < read) workerTruncated = true;
-                }
-            } finally {
-                try { is.close(); } catch (Exception ignored) {}
+            while ((read = is.read(buffer)) != -1) {
+                int toWrite = Math.min(read, MAX_OUTPUT_BYTES - output.size());
+                if (toWrite > 0) output.write(buffer, 0, toWrite);
+                if (toWrite < read) workerTruncated = true;
+                // 达到上限后继续排空管道，避免子进程阻塞。
             }
 
             try {
                 workerExitCode = process.waitFor();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-            } finally {
-                process.destroy();
             }
 
             workerOutput = output.toByteArray();
@@ -146,6 +128,7 @@ public class ExecCommandSimpleComponent implements Runnable {
         } catch (Throwable t) {
             workerError = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
         } finally {
+            stopProcess(process);
             workerMode = false;
             workerDone = true;
         }
@@ -178,32 +161,15 @@ public class ExecCommandSimpleComponent implements Runnable {
         worker.setDaemon(true);
         worker.start();
 
-        // 等待 worker 完成，最多 timeoutMs
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (!workerDone && System.currentTimeMillis() < deadline) {
-            try { Thread.sleep(50L); } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
+        waitForWorker(worker, timeoutMs);
 
         boolean timedOut = !workerDone;
         if (timedOut) {
             // 强制终止子进程；worker 的 read/waitFor 会因 EOF/InterruptedException 退出，
             // 然后给它一小段时间把已经读到的输出写回 workerOutput。
             workerCancelled = true;
-            Process p = workerProcess;
-            if (p != null) {
-                try { p.destroy(); } catch (Exception ignored) {}
-                try { p.getInputStream().close(); } catch (Exception ignored) {}
-            }
-            long graceDeadline = System.currentTimeMillis() + 500L;
-            while (!workerDone && System.currentTimeMillis() < graceDeadline) {
-                try { Thread.sleep(20L); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
+            stopProcess(workerProcess);
+            waitForWorker(worker, 500L);
             if (!workerDone) worker.interrupt();
         }
 
@@ -220,6 +186,19 @@ public class ExecCommandSimpleComponent implements Runnable {
         }
 
         putExecutionResult(workerExitCode, false);
+    }
+
+    private void waitForWorker(Thread worker, long timeoutMs) {
+        try { worker.join(timeoutMs); }
+        catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+    }
+
+    private void stopProcess(Process process) {
+        if (process == null) return;
+        try { process.destroy(); } catch (Throwable ignored) {}
+        try { process.getInputStream().close(); } catch (Throwable ignored) {}
+        try { process.getOutputStream().close(); } catch (Throwable ignored) {}
+        try { process.getErrorStream().close(); } catch (Throwable ignored) {}
     }
 
     private void putExecutionResult(int exitCode, boolean timedOut) {
@@ -262,14 +241,7 @@ public class ExecCommandSimpleComponent implements Runnable {
         if (key == null) return null;
         Object value = params.get(key);
         if (value == null) return null;
-        if (value instanceof String) return (String) value;
-        if (value instanceof byte[]) {
-            try {
-                return new String((byte[]) value, "UTF-8");
-            } catch (UnsupportedEncodingException e) {
-                return new String((byte[]) value);
-            }
-        }
+        if (value instanceof byte[]) return new String((byte[]) value, UTF8);
         return String.valueOf(value);
     }
 }

@@ -38,12 +38,25 @@ $statusUpdate = static function ($file, $callback) use ($read, $write) {
     try {
         if (!@flock($lock, LOCK_EX)) return false;
         $status = $read($file);
+        $previous = $status;
         $result = is_array($status) ? $callback($status) : false;
-        return $result !== false && $write($file, $status) ? $result : false;
+        return $result !== false && ($status === $previous || $write($file, $status)) ? $result : false;
     } finally {
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+};
+// Used under the same status lock as query selection; replayed ACKs never rewind it.
+$acknowledge = static function (&$status, $cursor) use ($now) {
+    $base = max(0, (int)($status['observationOffset'] ?? 0));
+    $observations = is_array($status['observations'] ?? null) ? $status['observations'] : [];
+    $accepted = max($base, min($cursor, $base + count($observations)));
+    if ($accepted > $base) {
+        $status['observations'] = array_slice($observations, $accepted - $base);
+        $status['observationOffset'] = $accepted;
+        $status['updatedAt'] = $now();
+    }
+    return $accepted;
 };
 $releaseState = static function ($directory, $requireStopped = true) use ($read, $stateName) {
     $statusFile = $directory . DIRECTORY_SEPARATOR . $stateName('status');
@@ -324,10 +337,12 @@ $cleanup = static function () use ($base, $read, $stateName, $releaseState, $now
 // Action dispatch owns task creation, control, acknowledgement and release.
 return [
     'id' => 'NetworkProbeComponent', 'version' => '1.0.0',
-    'handle' => static function ($action, $params) use ($get, $base, $path, $stateName, $read, $write, $launch, $cleanup, $now, $statusUpdate, $releaseState, $bounded) {
+    'handle' => static function ($action, $params) use ($get, $base, $path, $stateName, $read, $write, $launch, $cleanup, $now, $statusUpdate, $releaseState, $bounded, $acknowledge) {
         $cleanup();
         if ($action === 'startTask') {
-            $plan = $get($params, 'plan', $params); $targets = $get($plan, 'targets', []);
+            $plan = $get($params, 'plan');
+            if (!is_array($plan)) return ['code' => 400, 'msg' => 'plan must be a map'];
+            $targets = $get($plan, 'targets', []);
             if (!is_array($targets)) return ['code' => 400, 'msg' => 'targets must be a list'];
             foreach ($targets as $target) {
                 if (!is_array($target) || empty($target['host']) || (int)($target['port'] ?? 0) < 1 || (int)$target['port'] > 65535) {
@@ -370,55 +385,56 @@ return [
         $taskId = (string)$get($params, 'taskId', ''); $directory = $path($taskId); $statusFile = $directory . DIRECTORY_SEPARATOR . $stateName('status');
         $status = $read($statusFile); if (!is_array($status)) return ['code' => 404, 'msg' => 'task not found'];
         if ($action === 'queryTask') {
-            $cursor = max(0, (int)$get($params, 'cursor', 0));
+            $cursor = $get($params, 'cursor', 0); $ackCursor = $get($params, 'ackCursor', 0);
+            if (!is_int($cursor) || !is_int($ackCursor) || $cursor < 0 || $ackCursor < 0 || $ackCursor > $cursor) {
+                return ['code' => 400, 'msg' => 'require integer 0 <= ackCursor <= cursor'];
+            }
             $maxItems = max(1, min(512, (int)$get($params, 'maxItems', 128)));
             $maxBytes = max(4096, min(1048576, (int)$get($params, 'maxBytes', 524288)));
             $includeEvidence = $get($params, 'includeEvidence', true) !== false;
-            $base = max(0, (int)($status['observationOffset'] ?? 0));
-            $observations = is_array($status['observations'] ?? null) ? $status['observations'] : [];
-            $requested = max($cursor, $base);
-            $start = max(0, min(count($observations), $requested - $base));
-            $page = []; $bytes = 0; $index = $start;
-            while ($index < count($observations) && count($page) < $maxItems) {
-                $item = is_array($observations[$index]) ? $observations[$index] : [];
-                if (!$includeEvidence) unset($item['evidence']);
-                $estimate = strlen((string)json_encode($item));
-                if ($page && $bytes + $estimate > $maxBytes) break;
-                $page[] = $item; $bytes += $estimate; $index++;
-            }
-            $snapshot = [
-                'taskId' => $status['taskId'] ?? $taskId,
-                'scanKind' => $status['scanKind'] ?? 'network-probe',
-                'status' => $status['status'] ?? 'RUNNING',
-                'outcome' => $status['outcome'] ?? 'RUNNING',
-                'total' => (int)($status['total'] ?? 0),
-                'completed' => (int)($status['completed'] ?? 0),
-                'progress' => (int)($status['total'] ?? 0) > 0
-                    ? min(100, (int)($status['completed'] ?? 0) * 100 / (int)$status['total']) : 0,
-                'cursor' => $cursor,
-                'nextCursor' => $base + $index,
-                'hasMore' => $index < count($observations),
-                'incremental' => true,
-                'observations' => $page,
-                'errors' => array_slice(is_array($status['errors'] ?? null) ? $status['errors'] : [], 0, $maxItems),
-                'createdAt' => $status['createdAt'] ?? null,
-                'finishedAt' => $status['finishedAt'] ?? null
-            ];
-            return ['code' => 200, 'result' => $snapshot];
+            $result = $statusUpdate($statusFile, static function (&$status) use ($cursor, $ackCursor, $maxItems, $maxBytes, $includeEvidence, $taskId, $acknowledge) {
+                $end = (int)($status['observationOffset'] ?? 0) + count($status['observations'] ?? []);
+                if ($ackCursor > $end) return ['code' => 400, 'msg' => 'ackCursor exceeds available observations'];
+                $acknowledge($status, $ackCursor);
+                $base = max(0, (int)($status['observationOffset'] ?? 0));
+                $observations = is_array($status['observations'] ?? null) ? $status['observations'] : [];
+                $requested = max($cursor, $base);
+                $start = max(0, min(count($observations), $requested - $base));
+                $page = []; $bytes = 0; $index = $start;
+                while ($index < count($observations) && count($page) < $maxItems) {
+                    $item = is_array($observations[$index]) ? $observations[$index] : [];
+                    if (!$includeEvidence) unset($item['evidence']);
+                    $estimate = strlen((string)json_encode($item));
+                    if ($page && $bytes + $estimate > $maxBytes) break;
+                    $page[] = $item; $bytes += $estimate; $index++;
+                }
+                $snapshot = [
+                    'taskId' => $status['taskId'] ?? $taskId,
+                    'scanKind' => $status['scanKind'] ?? 'network-probe',
+                    'status' => $status['status'] ?? 'RUNNING',
+                    'outcome' => $status['outcome'] ?? 'RUNNING',
+                    'total' => (int)($status['total'] ?? 0),
+                    'completed' => (int)($status['completed'] ?? 0),
+                    'progress' => (int)($status['total'] ?? 0) > 0
+                        ? min(100, (int)($status['completed'] ?? 0) * 100 / (int)$status['total']) : 0,
+                    'cursor' => $cursor,
+                    'ackCursor' => $base,
+                    'nextCursor' => $base + $index,
+                    'hasMore' => $index < count($observations),
+                    'incremental' => true,
+                    'observations' => $page,
+                    'errors' => array_slice(is_array($status['errors'] ?? null) ? $status['errors'] : [], 0, $maxItems),
+                    'createdAt' => $status['createdAt'] ?? null,
+                    'finishedAt' => $status['finishedAt'] ?? null
+                ];
+                return ['code' => 200, 'result' => $snapshot];
+            });
+            return $result === false ? ['code' => 500, 'msg' => 'task query failed'] : $result;
         }
         if ($action === 'ackTask') {
             $cursor = max(0, (int)$get($params, 'cursor', 0));
-            $result = $statusUpdate($statusFile, static function (&$latest) use ($cursor, $now) {
-                $base = max(0, (int)($latest['observationOffset'] ?? 0));
-                $observations = is_array($latest['observations'] ?? null) ? $latest['observations'] : [];
-                $bounded = max($base, min($cursor, $base + count($observations)));
-                $remove = max(0, $bounded - $base);
-                if ($remove > 0) {
-                    $latest['observations'] = array_slice($observations, $remove);
-                    $latest['observationOffset'] = $bounded;
-                    $latest['updatedAt'] = $now();
-                }
-                return ['code' => 200, 'cursor' => $bounded];
+            $result = $statusUpdate($statusFile, static function (&$latest) use ($cursor, $acknowledge) {
+                return ['code' => 200, 'cursor' => $acknowledge($latest, $cursor)];
             });
             return $result === false ? ['code' => 500, 'msg' => 'task acknowledgement failed'] : $result;
         }

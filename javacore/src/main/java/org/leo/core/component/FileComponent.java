@@ -26,18 +26,17 @@ public class FileComponent implements Runnable {
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new HashMap();
             setResult(500, t.getMessage());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
-
 
     /**
      * 文件操作处理
@@ -62,8 +61,8 @@ public class FileComponent implements Runnable {
         List roots = new ArrayList();
         File[] rootFiles = File.listRoots();
         if (rootFiles != null) {
-            for (int i = 0; i < rootFiles.length; i++) {
-                roots.add(rootFiles[i].getPath());
+            for (File root : rootFiles) {
+                roots.add(root.getPath());
             }
         }
         Map capabilities = new HashMap();
@@ -112,9 +111,8 @@ public class FileComponent implements Runnable {
         File[] files = directory.listFiles();
 
         if (files != null) {
-            for (int i = 0; i < files.length; i++) {
-                Map fileInfo = getFileInfoMap(files[i]);
-                fileList.add(fileInfo);
+            for (File file : files) {
+                fileList.add(getFileInfoMap(file));
             }
         }
 
@@ -258,22 +256,7 @@ public class FileComponent implements Runnable {
             return;
         }
 
-        try {
-            long totalBytes = copyFileContent(sourceFile, destFile);
-            destFile.setLastModified(sourceFile.lastModified());
-            if (!sourceFile.delete()) {
-                restoreBackup(destFile, backupFile);
-                setResult(500, "move rollback: source delete failed: " + sourcePath);
-                return;
-            }
-            deleteBackup(backupFile);
-            setResult(200, "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
-            results.put("newPath", destFile.getAbsolutePath());
-            results.put("size", Long.valueOf(totalBytes));
-        } catch (Exception error) {
-            restoreBackup(destFile, backupFile);
-            throw error;
-        }
+        copyAndCommit(sourceFile, destFile, backupFile, sourcePath, true);
     }
 
     /** 返回 null 表示无需备份；失败时目标文件保持不变。 */
@@ -404,11 +387,23 @@ public class FileComponent implements Runnable {
             return;
         }
 
+        copyAndCommit(sourceFile, destFile, backupFile, sourcePath, false);
+    }
+
+    /** 复制或跨文件系统移动共用提交、时间戳保留及失败回滚。 */
+    private void copyAndCommit(File sourceFile, File destFile, File backupFile,
+                               String sourcePath, boolean move) throws Exception {
         try {
             long totalBytes = copyFileContent(sourceFile, destFile);
             destFile.setLastModified(sourceFile.lastModified());
+            if (move && !sourceFile.delete()) {
+                restoreBackup(destFile, backupFile);
+                setResult(500, "move rollback: source delete failed: " + sourcePath);
+                return;
+            }
             deleteBackup(backupFile);
-            setResult(200, "copied: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            setResult(200, (move ? "moved: " : "copied: ")
+                    + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             results.put("size", Long.valueOf(totalBytes));
         } catch (Exception error) {
@@ -523,7 +518,7 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 获取字符串参数。传输层中的文本字段以 UTF-8 byte[] 到达远端组件。
+     * 读取文本参数；二进制文本按 UTF-8 解码。
      */
     private String getStringParam(String key) {
         Object value = params.get(key);
@@ -652,16 +647,12 @@ public class FileComponent implements Runnable {
 
         File[] files = directory.listFiles();
         if (files != null) {
-            for (int i = 0; i < files.length; i++) {
-                File child = files[i];
-
+            for (File child : files) {
                 // 子项为符号链接时仅删除链接本身。
                 if (child.isDirectory() && !isSymbolicLink(child)) {
                     deleteDirectory(child, depth + 1, failedFiles);
-                } else {
-                    if (!child.delete()) {
-                        failedFiles.add(child.getAbsolutePath());
-                    }
+                } else if (!child.delete()) {
+                    failedFiles.add(child.getAbsolutePath());
                 }
             }
         }
@@ -690,10 +681,10 @@ public class FileComponent implements Runnable {
             }
 
             byte[] digest = md.digest();
-            StringBuilder hexString = new StringBuilder();
+            StringBuilder hexString = new StringBuilder(32);
 
-            for (int i = 0; i < digest.length; i++) {
-                String hex = Integer.toHexString(0xff & digest[i]);
+            for (byte value : digest) {
+                String hex = Integer.toHexString(0xff & value);
                 if (hex.length() == 1) {
                     hexString.append('0');
                 }
@@ -706,15 +697,8 @@ public class FileComponent implements Runnable {
         }
     }
 
-    /**
-     * 安全关闭资源
-     */
     private void closeResource(java.io.Closeable resource) {
-        if (resource != null) {
-            try {
-                resource.close();
-            } catch (Exception ignored) {
-            }
-        }
+        if (resource == null) return;
+        try { resource.close(); } catch (Exception ignored) {}
     }
 }

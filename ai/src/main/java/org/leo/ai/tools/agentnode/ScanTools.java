@@ -22,12 +22,12 @@ public class ScanTools {
         return node().startNetworkProbe(plan);
     }
 
-    @Tool("分页查询统一网络探测任务的增量 observations。cursor 为上次确认位置；服务端已持久化后可调用 ackNetworkProbe。")
+    @Tool("分页查询统一网络探测任务的增量 observations。cursor 为下一页起始位置；本工具只读取，结果已接收后可调用 ackNetworkProbe 确认。")
     @AiToolPolicy(kind = AiToolKind.QUERY, operation = AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
                                                  int maxItems, int maxBytes,
                                                  boolean includeEvidence) throws Exception {
-        return node().queryNetworkProbe(taskId, cursor, maxItems, maxBytes, includeEvidence);
+        return node().queryNetworkProbe(taskId, cursor, 0L, maxItems, maxBytes, includeEvidence);
     }
 
     @Tool("确认统一网络探测任务已持久化到指定游标。")

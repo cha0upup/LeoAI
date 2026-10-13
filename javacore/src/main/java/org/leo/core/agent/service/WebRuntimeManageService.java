@@ -281,7 +281,7 @@ public class WebRuntimeManageService extends ComponentService {
 
     private HashMap<String, Object> params(String method) {
         HashMap<String, Object> value = new HashMap<>();
-        value.put("methodName", method);
+        value.put("action", method);
         return value;
     }
 

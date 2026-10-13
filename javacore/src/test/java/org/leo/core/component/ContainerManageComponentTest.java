@@ -42,11 +42,11 @@ class ContainerManageComponentTest {
 
     @Test
     void unknownOperationsReturnBadRequest() throws Exception {
-        assertEquals(400, code(invokeComponent(new SpringFrameworkManageComponent(), params("methodName", "unknown"))));
-        assertEquals(400, code(invokeComponent(new TomcatContainerManageComponent(), params("methodName", "unknown"))));
-        assertEquals(400, code(invokeComponent(new WeblogicContainerManageComponent(), params("methodName", "unknown"))));
-        assertEquals(400, code(invokeComponent(new GenericServletContainerManageComponent(), params("methodName", "unknown"))));
-        assertEquals(400, code(invokeComponent(new JavaWebFrameworkManageComponent(), params("methodName", "unknown"))));
+        assertEquals(400, code(invokeComponent(new SpringFrameworkManageComponent(), params("action", "unknown"))));
+        assertEquals(400, code(invokeComponent(new TomcatContainerManageComponent(), params("action", "unknown"))));
+        assertEquals(400, code(invokeComponent(new WeblogicContainerManageComponent(), params("action", "unknown"))));
+        assertEquals(400, code(invokeComponent(new GenericServletContainerManageComponent(), params("action", "unknown"))));
+        assertEquals(400, code(invokeComponent(new JavaWebFrameworkManageComponent(), params("action", "unknown"))));
     }
 
     @Test
@@ -91,7 +91,7 @@ class ContainerManageComponentTest {
 
     @Test
     void genericServletAdapterOnlyExposesInspection() throws Exception {
-        Map<String, Object> response = invokeComponent(new GenericServletContainerManageComponent(), params("methodName", "removeFilter"));
+        Map<String, Object> response = invokeComponent(new GenericServletContainerManageComponent(), params("action", "removeFilter"));
         assertEquals(400, code(response));
     }
 
@@ -139,7 +139,7 @@ class ContainerManageComponentTest {
 
     @Test
     void frameworkMutationUsesV2OperationShape() throws Exception {
-        Map<String, Object> response = invokeComponent(new JavaWebFrameworkManageComponent(), params("methodName", "removeController"));
+        Map<String, Object> response = invokeComponent(new JavaWebFrameworkManageComponent(), params("action", "removeController"));
         assertEquals("NOT_FOUND", response.get("status"));
         assertEquals(0, response.get("matched"));
         assertEquals(0, response.get("changed"));

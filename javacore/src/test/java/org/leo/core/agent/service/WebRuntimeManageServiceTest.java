@@ -69,8 +69,8 @@ class WebRuntimeManageServiceTest {
 
         @Override
         public Map<String, Object> invokeComponent(String componentName, Map<String, Object> params) {
-            if ("inspectRuntime".equals(params.get("methodName"))) return container;
-            if ("getFrameworkInfo".equals(params.get("methodName"))) return framework;
+            if ("inspectRuntime".equals(params.get("action"))) return container;
+            if ("getFrameworkInfo".equals(params.get("action"))) return framework;
             mutations.add(params);
             return Map.of("status", "CHANGED", "matched", 1, "changed", 1, "verified", true);
         }

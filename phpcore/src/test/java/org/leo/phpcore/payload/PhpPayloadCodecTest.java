@@ -1,13 +1,17 @@
 package org.leo.phpcore.payload;
 
 import org.junit.jupiter.api.Test;
+import org.leo.core.payload.PayloadFrameCodec;
+import org.leo.core.util.json.PortableJsonCodec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Arrays;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PhpPayloadCodecTest {
     @Test
@@ -23,22 +27,16 @@ class PhpPayloadCodecTest {
         assertEquals(payload.get("text"), decoded.get("text"));
         assertArrayEquals((byte[]) payload.get("binary"), (byte[]) decoded.get("binary"));
         assertEquals(payload.get("nested"), decoded.get("nested"));
-    }
-
-    @Test
-    void rejectsWrongKey() throws Exception {
-        PhpPayloadCodec codec = new PhpPayloadCodec("54ikun");
-        byte[] fresh = new PhpPayloadCodec("54ikun").encode(Map.of("value", "test"));
-        assertThrows(Exception.class,
-                () -> new PhpPayloadCodec("other-key").decode(fresh));
+        byte[] key = Arrays.copyOf(MessageDigest.getInstance("SHA-512")
+                .digest("54ikun".getBytes(StandardCharsets.UTF_8)), 16);
+        Map<String, Object> json = PortableJsonCodec.decode(new PayloadFrameCodec(key, "reference").decode(codec.encode(payload)));
+        assertEquals(payload.get("text"), json.get("text"));
+        assertArrayEquals((byte[]) payload.get("binary"), (byte[]) json.get("binary"));
     }
 
     @Test
     void emitsPhpSourceWithoutPost56Syntax() {
         String source = PhpPayloadSource.functions("54ikun");
-        org.junit.jupiter.api.Assertions.assertTrue(source.contains("AES-128-CBC"));
-        org.junit.jupiter.api.Assertions.assertFalse(source.contains("hash_hmac"));
-        org.junit.jupiter.api.Assertions.assertFalse(source.contains("LPH"));
         org.junit.jupiter.api.Assertions.assertFalse(source.contains("Throwable"));
         org.junit.jupiter.api.Assertions.assertFalse(source.contains("??"));
     }

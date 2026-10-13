@@ -10,17 +10,11 @@ public class TomcatContainerManageComponent implements Runnable {
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
-    private static HashSet getContexts() {
-        return getContext();
-    }
-
     public static HashSet getContext() {
         HashSet contexts = new HashSet();
         try {
-            Thread[] threads = (Thread[]) invokeMethod(Thread.class, "getThreads");
             Object context = null;
-            for (Thread thread : threads) {
-                if (thread == null) continue;
+            for (Thread thread : Thread.getAllStackTraces().keySet()) {
                 String threadName = thread.getName();
                 ClassLoader ctxCl = thread.getContextClassLoader();
                 String clName = ctxCl == null ? "" : ctxCl.getClass().getName();
@@ -91,25 +85,26 @@ public class TomcatContainerManageComponent implements Runnable {
     private static void addContextsFromJmx(HashSet contexts) throws Exception {
         Class managementFactory = Class.forName("java.lang.management.ManagementFactory");
         Object mbs = managementFactory.getMethod("getPlatformMBeanServer").invoke(null);
+        Class mbsClass = Class.forName("javax.management.MBeanServer");
 
         Class objectNameClass = Class.forName("javax.management.ObjectName");
         Object pattern = objectNameClass.getConstructor(String.class)
                 .newInstance("Catalina:j2eeType=WebModule,*");
 
-        Method queryNames = mbs.getClass().getMethod("queryNames", objectNameClass,
+        Method queryNames = mbsClass.getMethod("queryNames", objectNameClass,
                 Class.forName("javax.management.QueryExp"));
         Set names = (Set) queryNames.invoke(mbs, pattern, null);
         if (names == null) return;
 
-        Method getAttribute = mbs.getClass().getMethod("getAttribute", objectNameClass, String.class);
+        Method getAttribute = mbsClass.getMethod("getAttribute", objectNameClass, String.class);
+        Method getObjectInstance = mbsClass.getMethod("getObjectInstance", objectNameClass);
         for (Object on : names) {
             Object ctx = null;
             try {
                 ctx = getAttribute.invoke(mbs, on, "managedResource");
             } catch (Throwable t1) {
                 try {
-                    Object instance = mbs.getClass().getMethod("getObjectInstance", objectNameClass)
-                            .invoke(mbs, on);
+                    Object instance = getObjectInstance.invoke(mbs, on);
                     // ObjectInstance 自身不持有 StandardContext，需要从 MBean Server 的 repository 拿
                     // 部分版本通过 ResourceRef 暴露容器对象。
                     ctx = getFV(instance, "context");
@@ -216,25 +211,26 @@ public class TomcatContainerManageComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        Object methodObj = params.get("methodName");
+        Object methodObj = params.get("action");
         if (!(methodObj instanceof String)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "methodName required");
+            results.put("msg", "action required");
             return;
         }
         String methodName = (String) methodObj;
         if ("inspectRuntime".equals(methodName)) {
-            results.put("contexts", inspectRuntime());
-            results.put("features", inspectRuntimeFeatures());
+            HashSet contexts = getContext();
+            results.put("contexts", inspectRuntime(contexts));
+            results.put("features", inspectRuntimeFeatures(contexts));
             results.put("code", Integer.valueOf(200));
             return;
         }
         if (!"removeFilter".equals(methodName) && !"removeServlet".equals(methodName) && !"removeListener".equals(methodName) && !"removeValve".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "未知 methodName: " + methodName);
+            results.put("msg", "未知 action: " + methodName);
             return;
         }
-        Object context = findContext(getContexts(), (String) params.get("contextId"));
+        Object context = findContext(getContext(), (String) params.get("contextId"));
         if (context == null) {
             putOperationResult(Boolean.FALSE);
             return;
@@ -290,8 +286,12 @@ public class TomcatContainerManageComponent implements Runnable {
     }
 
     public ArrayList inspectRuntime() {
+        return inspectRuntime(getContext());
+    }
+
+    private ArrayList inspectRuntime(Collection contexts) {
         ArrayList runtimeContexts = new ArrayList();
-        for (Object context : getContexts()) {
+        for (Object context : contexts) {
             try {
                 HashMap contextInfo = new HashMap();
                 contextInfo.put("contextId", contextId(context));
@@ -314,8 +314,12 @@ public class TomcatContainerManageComponent implements Runnable {
     }
 
     public HashMap inspectRuntimeFeatures() {
+        return inspectRuntimeFeatures(getContext());
+    }
+
+    private HashMap inspectRuntimeFeatures(Collection contexts) {
         HashMap features = new HashMap();
-        Iterator iterator = getContexts().iterator();
+        Iterator iterator = contexts.iterator();
         if (!iterator.hasNext()) return features;
         Object context = iterator.next();
         ClassLoader loader = context.getClass().getClassLoader();

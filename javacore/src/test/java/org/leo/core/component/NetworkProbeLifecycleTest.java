@@ -96,7 +96,7 @@ class NetworkProbeLifecycleTest {
     private void invoke(NetworkProbeComponent component, String method, String taskId) throws Exception {
         Field params = NetworkProbeComponent.class.getDeclaredField("params"); params.setAccessible(true);
         Field results = NetworkProbeComponent.class.getDeclaredField("results"); results.setAccessible(true);
-        params.set(component, new HashMap<>(Map.of("methodName", method, "taskId", taskId)));
+        params.set(component, new HashMap<>(Map.of("action", method, "taskId", taskId)));
         results.set(component, new HashMap<>());
         component.invoke();
     }

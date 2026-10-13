@@ -142,7 +142,7 @@ class PhpAgentNodeTest {
         node.networkConnectionSummary();
         node.startNetworkProbe(Map.of("targets", List.of(Map.of("host", "127.0.0.1", "port", 80)),
                 "stages", List.of("tcp-connect")));
-        node.queryNetworkProbe("scan-task", 0L, 50, 524288, true);
+        node.queryNetworkProbe("scan-task", 0L, 0L, 50, 524288, true);
         node.releaseNetworkProbe("scan-task");
         node.listServices();
         node.createService("demo", "/opt/demo", "Demo", "auto");

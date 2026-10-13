@@ -67,7 +67,7 @@ public class ArchiveFailureBoundaryTest {
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void invalidGzipHeaderClosesUnderlyingInput(boolean payload) throws Exception {
         Path source = Files.writeString(directory.resolve("bad.gz"), "invalid gzip header");
-        Path destination = directory.resolve("result.txt");
+        Path destination = Files.writeString(directory.resolve("result.txt"), "original");
         Object component = instrumented(payload, true);
         Map<String, Object> result = prepare(component, Map.of("src", source.toString(),
                 "des", destination.toString(), "format", "gzip"));
@@ -75,9 +75,9 @@ public class ArchiveFailureBoundaryTest {
         assertEquals(500, result.get("code"));
         assertEquals(1, inputs.size());
         assertTrue(inputs.get(0).closed, "GZIP constructor failure must close the raw file stream");
-        assertFalse(Files.exists(destination));
+        assertEquals("original", Files.readString(destination));
         try (var files = Files.list(directory)) {
-            assertEquals(List.of(source), files.toList());
+            assertEquals(List.of(source, destination), files.sorted().toList());
         }
     }
 

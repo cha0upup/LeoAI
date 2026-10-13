@@ -116,7 +116,7 @@ class ExecutionAndDatabaseComponentTest {
     @Test
     void databaseReportsAvailableRuntimeDriversBeforeConnecting() throws Exception {
         Map<String, Object> response = invokeComponent(new DatabaseComponent(), params(
-                "operation", "capabilities",
+                "action", "capabilities",
                 "requestedDriver", "org.sqlite.JDBC"));
 
         assertEquals(200, code(response));

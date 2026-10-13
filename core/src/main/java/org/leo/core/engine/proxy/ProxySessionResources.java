@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ProxySessionResources implements AutoCloseable {
     private final Semaphore connections;
     private final ThreadPoolExecutor dialers;
+    private final ProxyBatchDispatcher batches = new ProxyBatchDispatcher();
     private volatile boolean closed;
 
     public ProxySessionResources(int maxConnections, int maxDialers) {
@@ -33,6 +34,8 @@ public final class ProxySessionResources implements AutoCloseable {
     public ThreadPoolExecutor dialers() {
         return dialers;
     }
+
+    public ProxyBatchDispatcher batches() { return batches; }
 
     public boolean isClosed() {
         return closed;
@@ -58,6 +61,7 @@ public final class ProxySessionResources implements AutoCloseable {
     public void close() {
         closed = true;
         dialers.shutdownNow();
+        batches.close();
     }
 
     /** Keep the slot until every relay and in-flight RPC has finished, not just socket close. */

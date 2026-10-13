@@ -104,7 +104,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     public void invoke() throws Exception {
-        String method = stringValue(params.get("methodName"));
+        String method = stringValue(params.get("action"));
         if ("cleanup".equals(method)) {
             results.put("removed", Integer.valueOf(cleanupExpiredTasks()));
             results.put("code", Integer.valueOf(200));
@@ -137,7 +137,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
 
     private String startTask(Map input) {
         Map sourcePlan = asMap(input.get("plan"));
-        if (sourcePlan == null) sourcePlan = input;
+        if (sourcePlan == null) throw new IllegalArgumentException("plan must be a map");
         List rawTargets = asList(sourcePlan.get("targets"));
         if (rawTargets == null) throw new IllegalArgumentException("targets must be a list");
         if (rawTargets.size() > MAX_TARGETS) {
@@ -602,10 +602,11 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private void addObservation(Map task, Map observation) {
+        long[] size = observationSize(observation);
         synchronized (task) {
             if ("STOPPED".equals(task.get("status"))) return;
             List observations = (List) task.get("observations");
-            long retained = longValue(task.get("retainedChars"), 0L) + estimateChars(observation, 0);
+            long retained = longValue(task.get("retainedChars"), 0L) + size[0];
             if (observations.size() >= MAX_PENDING_OBSERVATIONS || retained > MAX_RESULT_CHARS) {
                 task.put("truncated", Boolean.TRUE);
                 task.put("truncateReason", "pending results exceed retention limit");
@@ -613,6 +614,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 return;
             }
             observations.add(observation);
+            List sizes = (List) task.get("observationSizes");
+            if (sizes == null) {
+                sizes = new ArrayList();
+                task.put("observationSizes", sizes);
+            }
+            sizes.add(size);
             task.put("retainedChars", Long.valueOf(retained));
             if ("error".equals(observation.get("state"))) {
                 addError(task, stringValue(observation.get("target")),
@@ -654,31 +661,39 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private void queryTask(Map input) {
         Map task = findTask(stringValue(input.get("taskId")));
         if (task == null) return;
-        long cursor = Math.max(0L, longValue(input.get("cursor"), 0L));
+        long cursor = integerParam(input, "cursor", 0L);
+        long ackCursor = integerParam(input, "ackCursor", 0L);
+        if (cursor < 0L || ackCursor < 0L || ackCursor > cursor) {
+            throw new IllegalArgumentException("require 0 <= ackCursor <= cursor");
+        }
         int maxItems = boundedInt(input.get("maxItems"), 128, 1, 512);
         int maxBytes = boundedInt(input.get("maxBytes"), 524288, 4096, 1048576);
         boolean includeEvidence = !Boolean.FALSE.equals(input.get("includeEvidence"));
         HashMap snapshot;
+        ArrayList page = new ArrayList();
         synchronized (task) {
+            long end = (long) intValue(task.get("observationOffset"), 0)
+                    + ((List) task.get("observations")).size();
+            if (ackCursor > end) throw new IllegalArgumentException("ackCursor exceeds available observations");
+            acknowledge(task, ackCursor);
             snapshot = baseSnapshot(task);
             List observations = (List) task.get("observations");
+            List sizes = (List) task.get("observationSizes");
             int base = intValue(task.get("observationOffset"), 0);
             int index = (int) Math.max(0L, Math.min(cursor - base, (long) observations.size()));
-            ArrayList page = new ArrayList();
-            int bytes = 0;
+            long bytes = 0L;
             while (index < observations.size() && page.size() < maxItems) {
-                HashMap copy = new HashMap((Map) observations.get(index));
-                if (!includeEvidence) copy.remove("evidence");
-                int estimate = String.valueOf(copy).length();
+                long estimate = ((long[]) sizes.get(index))[includeEvidence ? 1 : 2];
+                // 至少返回一项，保证单项超过预算时游标仍能推进。
                 if (!page.isEmpty() && bytes + estimate > maxBytes) break;
-                page.add(copy);
+                page.add(observations.get(index));
                 bytes += estimate;
                 index++;
             }
             snapshot.put("cursor", Long.valueOf(cursor));
+            snapshot.put("ackCursor", task.get("observationOffset"));
             snapshot.put("nextCursor", Long.valueOf((long) base + index));
             snapshot.put("hasMore", Boolean.valueOf(index < observations.size()));
-            snapshot.put("observations", page);
             List errors;
             if (Boolean.TRUE.equals(task.get("truncated"))) {
                 errors = copyListLimited(task.get("errors"), maxItems - 1);
@@ -693,6 +708,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             }
             snapshot.put("errors", errors);
         }
+        // 已发布的 observation 不再修改；锁内仅选页，锁外复制响应。
+        for (int i = 0; i < page.size(); i++) {
+            HashMap copy = new HashMap((Map) page.get(i));
+            if (!includeEvidence) copy.remove("evidence");
+            page.set(i, copy);
+        }
+        snapshot.put("observations", page);
         snapshot.put("incremental", Boolean.TRUE);
         results.put("code", Integer.valueOf(200));
         results.put("result", snapshot);
@@ -724,20 +746,36 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         Map task = findTask(id);
         if (task == null) return;
         synchronized (task) {
-            List observations = (List) task.get("observations");
-            int base = intValue(task.get("observationOffset"), 0);
-            long bounded = Math.max((long) base, Math.min(cursor, (long) base + observations.size()));
-            int remove = (int) (bounded - base);
-            if (remove > 0) {
-                long retained = longValue(task.get("retainedChars"), 0L);
-                for (int i = 0; i < remove; i++) retained -= estimateChars(observations.get(i), 0);
-                task.put("retainedChars", Long.valueOf(Math.max(0L, retained)));
-                observations.subList(0, remove).clear();
-                task.put("observationOffset", Integer.valueOf((int) bounded));
-            }
-            results.put("cursor", Long.valueOf(bounded));
+            results.put("cursor", Long.valueOf(acknowledge(task, cursor)));
         }
         results.put("code", Integer.valueOf(200));
+    }
+
+    /** Caller holds the task lock, including when ACK and page selection share a request. */
+    private long acknowledge(Map task, long cursor) {
+        List observations = (List) task.get("observations");
+        int base = intValue(task.get("observationOffset"), 0);
+        long bounded = Math.max((long) base, Math.min(cursor, (long) base + observations.size()));
+        int remove = (int) (bounded - base);
+        if (remove > 0) {
+            List sizes = (List) task.get("observationSizes");
+            long retained = longValue(task.get("retainedChars"), 0L);
+            for (int i = 0; i < remove; i++) retained -= ((long[]) sizes.get(i))[0];
+            task.put("retainedChars", Long.valueOf(Math.max(0L, retained)));
+            observations.subList(0, remove).clear();
+            sizes.subList(0, remove).clear();
+            task.put("observationOffset", Integer.valueOf((int) bounded));
+        }
+        return bounded;
+    }
+
+    private static long integerParam(Map input, String key, long fallback) {
+        Object value = input.get(key);
+        if (value == null) return fallback;
+        if (!(value instanceof Integer) && !(value instanceof Long)) {
+            throw new IllegalArgumentException(key + " must be an integer");
+        }
+        return ((Number) value).longValue();
     }
 
     private void updateTaskState(String id, String state) {
@@ -816,30 +854,61 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return removed;
     }
 
-    // 限制保留文本与容器开销的估算值；同时限制条目数，避免大量小对象绕过预算。
+    // 分别缓存保留量、完整结果和去掉 evidence 后的字节预算，随 ACK 同步释放。
+    private static long[] observationSize(Map observation) {
+        long bytes = 32L;
+        long summaryBytes = 32L;
+        for (Object value : observation.entrySet()) {
+            Map.Entry entry = (Map.Entry) value;
+            long size = 32L + estimateSize(entry.getKey(), 1, true) + estimateSize(entry.getValue(), 1, true);
+            bytes += size;
+            if (!"evidence".equals(entry.getKey())) summaryBytes += size;
+        }
+        return new long[]{estimateChars(observation, 0), bytes, summaryBytes};
+    }
+
+    // 保留量维持原有口径；分页按编码后的字符串字节数加容器开销估算。
     private static long estimateChars(Object value, int depth) {
+        return estimateSize(value, depth, false);
+    }
+
+    private static long estimateSize(Object value, int depth, boolean encoded) {
         if (value == null) return 4L;
         if (depth > 8) return MAX_RESULT_CHARS + 1L;
-        if (value instanceof String) return 16L + ((String) value).length();
+        if (value instanceof String) {
+            return 16L + (encoded ? encodedStringSize((String) value) : ((String) value).length());
+        }
         if (value instanceof byte[]) return 16L + ((byte[]) value).length;
         long size = 32L;
         if (value instanceof Map) {
             Iterator entries = ((Map) value).entrySet().iterator();
             while (entries.hasNext()) {
                 Map.Entry entry = (Map.Entry) entries.next();
-                size += 32L + estimateChars(entry.getKey(), depth + 1) + estimateChars(entry.getValue(), depth + 1);
-                if (size > MAX_RESULT_CHARS) break;
+                size += 32L + estimateSize(entry.getKey(), depth + 1, encoded)
+                        + estimateSize(entry.getValue(), depth + 1, encoded);
+                if (!encoded && size > MAX_RESULT_CHARS) break;
             }
         } else if (value instanceof List) {
             List values = (List) value;
             for (int i = 0; i < values.size(); i++) {
-                size += 8L + estimateChars(values.get(i), depth + 1);
-                if (size > MAX_RESULT_CHARS) break;
+                size += 8L + estimateSize(values.get(i), depth + 1, encoded);
+                if (!encoded && size > MAX_RESULT_CHARS) break;
             }
         } else {
-            size += String.valueOf(value).length();
+            String text = String.valueOf(value);
+            size += encoded ? encodedStringSize(text) : text.length();
         }
         return size;
+    }
+
+    // Java 序列化字符串使用 modified UTF-8；逐字符计数避免创建编码数组。
+    private static long encodedStringSize(String value) {
+        long bytes = 0L;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            bytes += c > 0 && c < 128 ? 1 : c < 2048 ? 2 : 3;
+        }
+        return bytes;
     }
 
     private static void addHeader(Map evidence, String key, String value, int maxRead) {

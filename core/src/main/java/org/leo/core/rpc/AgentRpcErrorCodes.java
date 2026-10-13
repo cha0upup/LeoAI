@@ -6,6 +6,7 @@ public final class AgentRpcErrorCodes {
     public static final String HOST_ID_MISMATCH = "HOST_ID_MISMATCH";
     public static final String HOST_ID_REBOUND = "HOST_ID_REBOUND";
     public static final String HOST_ID_UNAVAILABLE = "HOST_ID_UNAVAILABLE";
+    public static final String RPC_RESULT_UNKNOWN = "RPC_RESULT_UNKNOWN";
 
     private AgentRpcErrorCodes() {
     }

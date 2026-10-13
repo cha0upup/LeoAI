@@ -36,7 +36,7 @@ class ExecCommandComponentTest {
         try {
             assertThrows(IllegalStateException.class, () -> invoke(processId, 4, "echo missing\n"));
             assertThrows(IllegalStateException.class, () -> invoke(new HashMap<>(Map.of(
-                    "processId", processId.getBytes(StandardCharsets.UTF_8), "op", 4,
+                    "processId", processId, "op", 4,
                     "cmd", "echo missing\n".getBytes(StandardCharsets.UTF_8), "includeOutput", true))));
             assertEquals(Boolean.TRUE, invoke(processId, 1, "").get("missing"));
             Map<String, Object> initialized = invoke(processId, 6, "");
@@ -62,11 +62,11 @@ class ExecCommandComponentTest {
         String processId = "payload-" + UUID.randomUUID();
         try {
             Map<String, Object> started = invokePayload(transformed, Map.of(
-                    "processId", processId.getBytes(StandardCharsets.UTF_8), "op", 6, "cmd", "".getBytes(StandardCharsets.UTF_8), "includeOutput", true));
+                    "processId", processId, "op", 6, "cmd", "".getBytes(StandardCharsets.UTF_8), "includeOutput", true));
             assertEquals(1L, ((Map<?, ?>) started.get("output")).get("outputSequence"));
             assertEquals(Boolean.TRUE, started.get("lineInput"));
             assertEquals(Boolean.TRUE, started.get("batchRead"));
-            Map<String, Object> written = invokePayload(transformed, Map.of("processId", processId.getBytes(StandardCharsets.UTF_8), "op", 4,
+            Map<String, Object> written = invokePayload(transformed, Map.of("processId", processId, "op", 4,
                     "cmd", "PAYLOAD_VALUE=payload-worker; echo ${PAYLOAD_VALUE}-ok\n".getBytes(StandardCharsets.UTF_8), "includeOutput", true));
             assertEquals(200, written.get("code"), written.toString());
             assertEquals(200, started.get("code"), started.toString());
@@ -77,7 +77,7 @@ class ExecCommandComponentTest {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             while (System.nanoTime() < deadline && output.indexOf("payload-worker-ok") < 0) {
                 Map<String, Object> batch = invokePayload(transformed, Map.of(
-                        "op", 5, "processIds", (processId + "\nmissing-terminal").getBytes(StandardCharsets.UTF_8)));
+                        "op", 5, "processIds", processId + "\nmissing-terminal"));
                 Map<?, ?> terminals = (Map<?, ?>) batch.get("terminals");
                 assertEquals(Boolean.TRUE, ((Map<?, ?>) terminals.get("missing-terminal")).get("missing"));
                 Map<?, ?> response = (Map<?, ?>) terminals.get(processId);
@@ -110,7 +110,7 @@ class ExecCommandComponentTest {
             byte[] expected = "中".repeat(30000).getBytes(StandardCharsets.UTF_8);
             synchronized (buffer) { buffer.write(expected); }
             Future<Map<String, Object>> write = executor.submit(() -> invoke(new HashMap<>(Map.of(
-                    "processId", id.getBytes(StandardCharsets.UTF_8), "op", 4, "cmd", ":\n".getBytes(StandardCharsets.UTF_8), "includeOutput", true))));
+                    "processId", id, "op", 4, "cmd", ":\n".getBytes(StandardCharsets.UTF_8), "includeOutput", true))));
             Future<Map<String, Object>> read = executor.submit(() -> invoke(id, 1, ""));
             Map<String, Object> acknowledgement = write.get(3, TimeUnit.SECONDS);
             assertEquals(200, acknowledgement.get("code"));
@@ -147,11 +147,11 @@ class ExecCommandComponentTest {
             for (String invalid : new String[]{"", id + "\n../invalid", id + "\n" + id,
                     java.util.stream.IntStream.range(0, 17).mapToObj(i -> "p" + i).collect(java.util.stream.Collectors.joining("\n"))}) {
                 assertThrows(IllegalArgumentException.class,
-                        () -> invoke(new HashMap<>(Map.of("op", 5, "processIds", invalid.getBytes(StandardCharsets.UTF_8)))));
+                        () -> invoke(new HashMap<>(Map.of("op", 5, "processIds", invalid))));
                 assertEquals(expected.length, output.size());
             }
             Map<String, Object> params = Map.of("op", 5, "processIds",
-                    (id + "\n" + id + "-broken\nmissing-batch").getBytes(StandardCharsets.UTF_8));
+                    id + "\n" + id + "-broken\nmissing-batch");
             Map<?, ?> terminals = (Map<?, ?>) invoke(new HashMap<>(params)).get("terminals");
             Map<?, ?> first = (Map<?, ?>) terminals.get(id);
             assertEquals(65536, ((byte[]) first.get("data")).length);
@@ -443,7 +443,7 @@ class ExecCommandComponentTest {
                 bytes -> new byte[0], java.util.List.of(), java.util.List.of()) {
             @Override
             public Map<String, Object> invokeComponent(String name, Map<String, Object> params) throws Exception {
-                processId[0] = new String((byte[]) params.get("processId"), StandardCharsets.UTF_8);
+                processId[0] = (String) params.get("processId");
                 if (Integer.valueOf(4).equals(params.get("op"))) {
                     return Map.of("code", 500, "msg", "terminal input failed");
                 }
@@ -485,12 +485,12 @@ class ExecCommandComponentTest {
     @SuppressWarnings("unchecked")
     void rejectsInvalidWireTypesBeforeCreatingOrConsumingAProcess() throws Exception {
         String id = "invalid-params-" + UUID.randomUUID();
-        byte[] processId = id.getBytes(StandardCharsets.UTF_8);
+        String processId = id;
         for (Map<String, Object> params : java.util.List.<Map<String, Object>>of(
                 Map.of("op", "6", "processId", processId),
                 Map.of("op", 6.5, "processId", processId),
                 Map.of("op", 4294967302L, "processId", processId),
-                Map.of("op", 6, "processId", id),
+                Map.of("op", 6, "processId", id.getBytes(StandardCharsets.UTF_8)),
                 Map.of("op", 6, "processId", processId, "includeOutput", "true"),
                 Map.of("op", 6, "processId", processId, "cmd", "init".getBytes(StandardCharsets.UTF_8)),
                 Map.of("op", 6, "processId", processId, "terminalMode", new byte[]{1}))) {
@@ -801,7 +801,7 @@ class ExecCommandComponentTest {
 
     private Map<String, Object> invoke(String processId, int operation, String command, String mode, String source, int waitMillis) throws Exception {
         HashMap<String, Object> params = new HashMap<>();
-        params.put("processId", processId.getBytes(StandardCharsets.UTF_8));
+        params.put("processId", processId);
         params.put("op", operation);
         params.put("cmd", command.getBytes(StandardCharsets.UTF_8));
         if (operation == 1) params.put("waitMs", waitMillis);
@@ -841,7 +841,7 @@ class ExecCommandComponentTest {
     }
 
     private Map<String, Object> invokePayload(Class<?> type, String processId, int op, String cmd) throws Exception {
-        return invokePayload(type, Map.of("processId", processId.getBytes(StandardCharsets.UTF_8), "op", op, "cmd", cmd.getBytes(StandardCharsets.UTF_8)));
+        return invokePayload(type, Map.of("processId", processId, "op", op, "cmd", cmd.getBytes(StandardCharsets.UTF_8)));
     }
 
     private Map<String, Object> invokePayload(Class<?> type, Map<String, Object> params) throws Exception {

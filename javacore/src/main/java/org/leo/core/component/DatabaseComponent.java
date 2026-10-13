@@ -20,11 +20,11 @@ import java.sql.SQLTimeoutException;
 import java.sql.SQLXML;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -38,6 +38,7 @@ import java.util.Set;
  */
 public class DatabaseComponent implements Runnable {
 
+    private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final String[] KNOWN_DRIVER_CLASSES = new String[]{
             "com.mysql.cj.jdbc.Driver",
             "com.mysql.jdbc.Driver",
@@ -90,11 +91,16 @@ public class DatabaseComponent implements Runnable {
 
     public void invoke() {
         if (results == null) results = new HashMap<String, Object>();
-        if ("capabilities".equalsIgnoreCase(getStringParam("operation"))) {
+        String action = getStringParam("action");
+        if ("capabilities".equals(action)) {
             inspectRuntimeCapabilities();
             return;
         }
         putEmptyResults();
+        if (!isBlank(action) && !"execute".equals(action)) {
+            putError(400, "INVALID_ACTION", "Unknown database action: " + action, null, false);
+            return;
+        }
 
         String provider = getStringParam("provider");
         String url = getStringParam("jdbcUrl");
@@ -189,6 +195,12 @@ public class DatabaseComponent implements Runnable {
     private void readResultSet(ResultSet resultSet, int maxRows, int maxResultBytes,
                                int maxCellBytes) throws Exception {
         ArrayList<HashMap<String, Object>> columns = readColumns(resultSet.getMetaData());
+        String[] columnKeys = new String[columns.size()];
+        long columnKeyBytes = 0L;
+        for (int index = 0; index < columnKeys.length; index++) {
+            columnKeys[index] = (String) columns.get(index).get("name");
+            columnKeyBytes += utf8Length(columnKeys[index]);
+        }
         ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
         String truncationReason = null;
         int resultBytes = 0;
@@ -198,14 +210,13 @@ public class DatabaseComponent implements Runnable {
                 break;
             }
             HashMap<String, Object> row = new HashMap<String, Object>();
-            long rowBytes = 0L;
+            long rowBytes = columnKeyBytes;
             boolean rowCellTruncated = false;
-            for (int index = 0; index < columns.size(); index++) {
+            for (int index = 0; index < columnKeys.length; index++) {
                 cellValueTruncated = false;
                 Object value = normalizeJdbcValue(resultSet.getObject(index + 1), maxCellBytes);
-                String key = (String) columns.get(index).get("name");
-                row.put(key, value);
-                rowBytes += utf8Length(key) + estimateValueBytes(value);
+                row.put(columnKeys[index], value);
+                rowBytes += estimateValueBytes(value);
                 if (cellValueTruncated) rowCellTruncated = true;
             }
             if (((long) resultBytes) + rowBytes > maxResultBytes) {
@@ -253,10 +264,7 @@ public class DatabaseComponent implements Runnable {
 
         HashSet<String> candidates = new HashSet<String>();
         candidates.addAll(registeredNames);
-        int index;
-        for (index = 0; index < KNOWN_DRIVER_CLASSES.length; index++) {
-            candidates.add(KNOWN_DRIVER_CLASSES[index]);
-        }
+        candidates.addAll(Arrays.asList(KNOWN_DRIVER_CLASSES));
         String requested = getStringParam("requestedDriver");
         requested = isBlank(requested) ? "" : requested.trim();
         if (requested.length() > 0) candidates.add(requested);
@@ -265,8 +273,7 @@ public class DatabaseComponent implements Runnable {
         boolean requestedAvailable = requested.length() == 0;
         ArrayList<String> candidateNames = new ArrayList<String>(candidates);
         Collections.sort(candidateNames);
-        for (index = 0; index < candidateNames.size(); index++) {
-            String className = candidateNames.get(index);
+        for (String className : candidateNames) {
             boolean available = registeredNames.contains(className) || canLoadDriverClass(className, loaders);
             if (className.equals(requested)) requestedAvailable = available;
             if (available || className.equals(requested)) {
@@ -357,8 +364,7 @@ public class DatabaseComponent implements Runnable {
             throw new IllegalArgumentException("parameters 必须是数组");
         }
         List parameters = (List) value;
-        int index;
-        for (index = 0; index < parameters.size(); index++) {
+        for (int index = 0; index < parameters.size(); index++) {
             Object parameter = parameters.get(index);
             if (parameter instanceof byte[]) {
                 statement.setBytes(index + 1, (byte[]) parameter);
@@ -409,10 +415,7 @@ public class DatabaseComponent implements Runnable {
         if (!(value instanceof Map)) {
             throw new IllegalArgumentException("connectionProperties 必须是对象");
         }
-        Map source = (Map) value;
-        Iterator iterator = source.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry entry = (Map.Entry) iterator.next();
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
             if (entry.getKey() != null && entry.getValue() != null) {
                 properties.setProperty(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
             }
@@ -479,16 +482,13 @@ public class DatabaseComponent implements Runnable {
         addLoader(result, seen, getClass().getClassLoader());
         addLoader(result, seen, ClassLoader.getSystemClassLoader());
         try {
-            Iterator threads = Thread.getAllStackTraces().keySet().iterator();
-            while (threads.hasNext()) {
-                Thread thread = (Thread) threads.next();
+            for (Thread thread : Thread.getAllStackTraces().keySet()) {
                 addLoader(result, seen, thread.getContextClassLoader());
             }
         } catch (Throwable ignored) {
         }
         try {
-            Iterator loaders = collectWebappClassLoaders().iterator();
-            while (loaders.hasNext()) addLoader(result, seen, (ClassLoader) loaders.next());
+            for (ClassLoader loader : collectWebappClassLoaders()) addLoader(result, seen, loader);
         } catch (Throwable ignored) {
         }
         return result;
@@ -496,8 +496,7 @@ public class DatabaseComponent implements Runnable {
 
     private void addLoader(ArrayList<ClassLoader> result, HashSet<ClassLoader> seen, ClassLoader loader) {
         ClassLoader current = loader;
-        while (current != null && !seen.contains(current)) {
-            seen.add(current);
+        while (current != null && seen.add(current)) {
             result.add(current);
             current = current.getParent();
         }
@@ -505,28 +504,23 @@ public class DatabaseComponent implements Runnable {
 
     private HashSet<ClassLoader> collectWebappClassLoaders() throws Throwable {
         HashSet<ClassLoader> result = new HashSet<ClassLoader>();
-        Class mfClass = Class.forName("java.lang.management.ManagementFactory");
-        Object mbs = mfClass.getMethod("getPlatformMBeanServer", new Class[0]).invoke(null, new Object[0]);
-        Class onClass = Class.forName("javax.management.ObjectName");
-        Object pattern = onClass.getConstructor(new Class[]{String.class})
-                .newInstance(new Object[]{"Catalina:j2eeType=WebModule,*"});
-        Method queryNames = mbs.getClass().getMethod("queryNames", new Class[]{onClass,
-                Class.forName("javax.management.QueryExp")});
-        Object queriedNames = queryNames.invoke(mbs, new Object[]{pattern, null});
+        Class<?> mfClass = Class.forName("java.lang.management.ManagementFactory");
+        Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
+        Class<?> mbsClass = Class.forName("javax.management.MBeanServer");
+        Class<?> onClass = Class.forName("javax.management.ObjectName");
+        Object pattern = onClass.getConstructor(String.class).newInstance("Catalina:j2eeType=WebModule,*");
+        Method queryNames = mbsClass.getMethod("queryNames", onClass,
+                Class.forName("javax.management.QueryExp"));
+        Object queriedNames = queryNames.invoke(mbs, pattern, null);
         if (!(queriedNames instanceof Set)) return result;
-        Set names = (Set) queriedNames;
-        Method getAttribute = mbs.getClass().getMethod("getAttribute", new Class[]{onClass, String.class});
-        Iterator iterator = names.iterator();
-        while (iterator.hasNext()) {
+        Method getAttribute = mbsClass.getMethod("getAttribute", onClass, String.class);
+        for (Object objectName : (Set<?>) queriedNames) {
             try {
-                Object objectName = iterator.next();
-                Object context = getAttribute.invoke(mbs, new Object[]{objectName, "managedResource"});
+                Object context = getAttribute.invoke(mbs, objectName, "managedResource");
                 if (context == null) continue;
-                Object loader = context.getClass().getMethod("getLoader", new Class[0])
-                        .invoke(context, new Object[0]);
+                Object loader = context.getClass().getMethod("getLoader").invoke(context);
                 if (loader == null) continue;
-                Object classLoader = loader.getClass().getMethod("getClassLoader", new Class[0])
-                        .invoke(loader, new Object[0]);
+                Object classLoader = loader.getClass().getMethod("getClassLoader").invoke(loader);
                 if (classLoader instanceof ClassLoader) result.add((ClassLoader) classLoader);
             } catch (Throwable ignored) {
             }
@@ -540,9 +534,7 @@ public class DatabaseComponent implements Runnable {
         if (value instanceof Blob) return readBytes(((Blob) value).getBinaryStream(), maxCellBytes);
         if (value instanceof Clob) return readText(((Clob) value).getCharacterStream(), maxCellBytes);
         if (value instanceof SQLXML) return readText(((SQLXML) value).getCharacterStream(), maxCellBytes);
-        if (value instanceof BigDecimal || value instanceof BigInteger) return String.valueOf(value);
-        if (value instanceof java.sql.Date || value instanceof java.sql.Time
-                || value instanceof java.sql.Timestamp || value instanceof java.util.Date) {
+        if (value instanceof BigDecimal || value instanceof BigInteger || value instanceof java.util.Date) {
             return String.valueOf(value);
         }
         if (value instanceof Boolean || value instanceof Byte
@@ -595,8 +587,7 @@ public class DatabaseComponent implements Runnable {
 
     private byte[] capBytes(byte[] value, int maxBytes) {
         if (value.length <= maxBytes) return value;
-        byte[] truncated = new byte[maxBytes];
-        System.arraycopy(value, 0, truncated, 0, maxBytes);
+        byte[] truncated = Arrays.copyOf(value, maxBytes);
         cellValueTruncated = true;
         return truncated;
     }
@@ -625,11 +616,7 @@ public class DatabaseComponent implements Runnable {
     private String uniqueColumnKey(String base, HashSet<String> used) {
         String candidate = base;
         int suffix = 2;
-        while (used.contains(candidate)) {
-            candidate = base + "_" + suffix;
-            suffix++;
-        }
-        used.add(candidate);
+        while (!used.add(candidate)) candidate = base + "_" + suffix++;
         return candidate;
     }
 
@@ -688,12 +675,9 @@ public class DatabaseComponent implements Runnable {
     private int getBoundedIntParam(String key, int defaultValue, int minimum, int maximum) {
         Object value = params.get(key);
         if (value == null) return defaultValue;
-        String text;
         if (value instanceof Number) return bounded(key, ((Number) value).intValue(), minimum, maximum);
-        if (value instanceof byte[]) text = decode((byte[]) value);
-        else text = String.valueOf(value);
         try {
-            return bounded(key, Integer.parseInt(text.trim()), minimum, maximum);
+            return bounded(key, Integer.parseInt(getStringParam(key).trim()), minimum, maximum);
         } catch (NumberFormatException error) {
             throw new IllegalArgumentException(key + " 必须是整数");
         }
@@ -739,7 +723,8 @@ public class DatabaseComponent implements Runnable {
 
     private String safeMessage(Throwable error) {
         if (error == null) return "未知错误";
-        return error.getMessage() == null ? error.getClass().getName() : error.getMessage();
+        String message = error.getMessage();
+        return message == null ? error.getClass().getName() : message;
     }
 
     private boolean isBlank(String value) {
@@ -748,16 +733,13 @@ public class DatabaseComponent implements Runnable {
 
     private int utf8Length(String value) {
         if (value == null) return 0;
-        return value.getBytes(Charset.forName("UTF-8")).length;
+        return value.getBytes(UTF8).length;
     }
 
     private static HashMap<String, Object> copyStringObjectMap(Object value) {
         HashMap<String, Object> copy = new HashMap<String, Object>();
         if (!(value instanceof Map)) return copy;
-        Map source = (Map) value;
-        Iterator iterator = source.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry entry = (Map.Entry) iterator.next();
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
             if (entry.getKey() instanceof String) copy.put((String) entry.getKey(), entry.getValue());
         }
         return copy;
@@ -766,11 +748,7 @@ public class DatabaseComponent implements Runnable {
     private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) return null;
-        if (value instanceof byte[]) return decode((byte[]) value);
+        if (value instanceof byte[]) return new String((byte[]) value, UTF8);
         return String.valueOf(value);
-    }
-
-    private String decode(byte[] value) {
-        return new String(value, Charset.forName("UTF-8"));
     }
 }

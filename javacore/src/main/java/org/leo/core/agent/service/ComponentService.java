@@ -1,5 +1,8 @@
 package org.leo.core.agent.service;
 
+import org.leo.core.rpc.AgentRpcRetryPolicy;
+import org.leo.core.rpc.AgentRpcErrorCodes;
+
 import org.leo.core.entity.Agent;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
@@ -47,7 +50,7 @@ public class ComponentService {
 
     protected String hostId;
 
-    /** 最大请求总数，包含首次请求。 */
+    /** 可重放请求的通信尝试上限，包含首次；HostId 路由拒绝单独计数。 */
     private int maxReqCount = Agent.DEFAULT_MAX_REQUEST_COUNT;
 
     /** per-agent URL 随机化策略 */
@@ -345,14 +348,18 @@ public class ComponentService {
             applyHeaders((HttpCommunication) communication);
         }
 
-        int requestAttempts = maxReqCount;
+        boolean replayable = AgentRpcRetryPolicy.isReplayable(envelope);
+        int requestAttempts = replayable ? maxReqCount : 1;
+        int failures = 0;
+        boolean requestSent = false;
         int maxAttempts = envelope.hostId() == null
                 ? requestAttempts : Math.max(requestAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
         String lastError = null;
-        AgentRpcResponse hostMismatchResponse = null;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            requestSent = false;
             try {
+                checkInterrupted();
                 HttpCommunication http = communication instanceof HttpCommunication
                         ? (HttpCommunication) communication : null;
                 if (http != null) {
@@ -375,11 +382,14 @@ public class ComponentService {
                 PaddingUtil.pad(wirePayload, paddingStrategy, estimateBytes(wirePayload),
                         requestId + "|0|" + transportSeed());
                 EncodedPayload encoded = encode(wirePayload, requestId);
+                checkInterrupted();
+                requestSent = true;
                 byte[] resp = communication.sendRequest(encoded.data());
                 AgentRpcResponse response = AgentRpcEnvelopeMapper.responseFromMap(
                         decode(resp, encoded.requestIds()));
                 if (isHostIdMismatch(response)) {
-                    hostMismatchResponse = response;
+                    requestSent = false; // Correlated routing rejection occurs before component execution.
+                    checkInterrupted();
                     if (attempt < maxAttempts) {
                         resetTransportAffinity();
                         continue;
@@ -388,6 +398,8 @@ public class ComponentService {
                 }
                 return AgentRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
+                failures++;
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                 // e.getMessage() 对 NPE 等是 null，用类名兜底
                 String msg = e.getMessage();
                 lastError = msg != null ? msg : e.getClass().getName() + " (no message)";
@@ -401,16 +413,22 @@ public class ComponentService {
                         operation, component, attempt, e);
             }
 
-            if (attempt >= requestAttempts) break;
-            sleepBeforeRetry(requestId, attempt);
-        }
-        if (hostMismatchResponse != null) {
-            return recoverHostAffinity(envelope.hostId(), hostMismatchResponse);
+            if (failures >= requestAttempts || attempt >= maxAttempts || Thread.currentThread().isInterrupted()) break;
+            sleepBeforeRetry(requestId, failures);
         }
         String finalMsg = lastError != null ? lastError : "通信失败，请检查 Agent 连接";
         log.warn("[ComponentService] 重试结束 component={} operation={} message={}",
                 component, operation, finalMsg);
-        return new HashMap<>(Map.of("code", Integer.valueOf(500), "msg", finalMsg));
+        Map<String, Object> result = new HashMap<>(Map.of("code", 500, "msg", finalMsg, "requestId", requestId));
+        if (!replayable && requestSent) {
+            result.put("errorCode", AgentRpcErrorCodes.RPC_RESULT_UNKNOWN);
+            result.put("msg", finalMsg + "；请求可能已执行，结果待确认");
+        }
+        return result;
+    }
+
+    private void checkInterrupted() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Java Agent 请求已中断");
     }
 
     private Map<String, Object> recoverHostAffinity(
@@ -570,16 +588,8 @@ public class ComponentService {
     }
 
     private void sleepBeforeRetry(String requestId, int attempt) {
-        if (retryBaseDelayMillis <= 0L) return;
-        int shift = Math.min(20, Math.max(0, attempt - 1));
-        long exponential = retryBaseDelayMillis > Long.MAX_VALUE >> shift
-                ? Long.MAX_VALUE : retryBaseDelayMillis << shift;
-        long capped = Math.min(retryMaxDelayMillis, exponential);
-        long hash = 1125899906842597L;
-        String material = requestId + '|' + attempt;
-        for (int index = 0; index < material.length(); index++) hash = 31L * hash + material.charAt(index);
-        double factor = 0.75d + (Math.floorMod(hash, 501L) / 1000.0d);
-        long delay = Math.max(1L, Math.min(retryMaxDelayMillis, Math.round(capped * factor)));
+        long delay = AgentRpcRetryPolicy.delayMillis(requestId, attempt, retryBaseDelayMillis, retryMaxDelayMillis);
+        if (delay <= 0L) return;
         try {
             retrySleeper.sleep(delay);
         } catch (InterruptedException interrupted) {

@@ -92,7 +92,7 @@ class FileSafetyTest {
         Path source = Files.createDirectory(directory.resolve("source"));
         Path archivePath = directory.resolve("empty.zip");
         assertEquals(200, invokeComponent(component("CompressComponent", payload), Map.of(
-                "src", utf8(source), "des", utf8(archivePath))).get("code"));
+                "src", source.toString(), "des", archivePath.toString())).get("code"));
         try (ZipFile archive = new ZipFile(archivePath.toFile())) {
             assertEquals(1, archive.size());
             assertTrue(archive.getEntry("source/").isDirectory());
@@ -101,7 +101,7 @@ class FileSafetyTest {
         Files.createDirectory(source.resolve("excluded"));
         Files.writeString(source.resolve("one.txt"), "one");
         assertEquals(200, invokeComponent(component("CompressComponent", payload), Map.of(
-                "src", utf8(source), "des", utf8(archivePath), "exclude", "excluded")).get("code"));
+                "src", source.toString(), "des", archivePath.toString(), "exclude", "excluded")).get("code"));
         try (ZipFile archive = new ZipFile(archivePath.toFile())) {
             assertEquals(4, archive.size());
             assertTrue(archive.getEntry("source/nested/empty/").isDirectory());

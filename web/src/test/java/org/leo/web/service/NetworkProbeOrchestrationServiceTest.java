@@ -121,8 +121,11 @@ class NetworkProbeOrchestrationServiceTest {
 
     @Test
     void acknowledgesIncrementalPagesWithoutRepeatingThemToTheWorkflow() throws Exception {
-        String taskId = startSingleTarget(new IncrementalNode());
+        IncrementalNode node = new IncrementalNode();
+        String taskId = startSingleTarget(node);
         awaitTerminal(taskId);
+        assertEquals(List.of(0L, 1L), node.queryAcks);
+        assertEquals(List.of(2L), node.finalAcks);
 
         Map<String, Object> firstPage = result(service.querySince("session-1", taskId, 0L, 0L));
         assertEquals(2, ((List<?>) firstPage.get("observations")).size());
@@ -157,6 +160,16 @@ class NetworkProbeOrchestrationServiceTest {
         throw new AssertionError("logical task did not stop: " + snapshot);
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> cursorPage(Map<String, Object> response, long cursor) {
+        if (!Integer.valueOf(200).equals(response.get("code"))) return response;
+        Map<String, Object> page = new LinkedHashMap<>((Map<String, Object>) response.get("result"));
+        page.put("cursor", cursor);
+        page.put("nextCursor", cursor + ((List<?>) page.get("observations")).size());
+        page.put("hasMore", false);
+        return Map.of("code", 200, "result", page);
+    }
+
     private static final class ImmediateNode implements NetworkProbeCapable {
         @Override
         public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
@@ -180,10 +193,10 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public synchronized Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public synchronized Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                                     int maxItems, int maxBytes,
                                                                     boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public synchronized Map<String, Object> queryNetworkProbe(String taskId) {
@@ -244,10 +257,10 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {
@@ -298,10 +311,10 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {
@@ -343,10 +356,10 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return queryNetworkProbe(taskId);
+            return cursorPage(queryNetworkProbe(taskId), cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {
@@ -362,8 +375,12 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class IncrementalNode implements NetworkProbeCapable {
+        private final List<Long> queryAcks = new ArrayList<>();
+        private final List<Long> finalAcks = new ArrayList<>();
+
         @Override
         public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
+            finalAcks.add(cursor);
             return Map.of("code", 200, "cursor", cursor);
         }
 
@@ -373,16 +390,17 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+        public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
+            queryAcks.add(ackCursor);
             List<Map<String, Object>> observations = List.of(
                     Map.of("host", "127.0.0.1", "port", 80, "stage", "tcp-connect", "state", "open"),
                     Map.of("host", "127.0.0.1", "port", 443, "stage", "tcp-connect", "state", "open"));
             return Map.of("code", 200, "result", Map.of(
                     "status", "STOPPED", "outcome", "COMPLETED", "completed", 2,
-                    "cursor", cursor, "nextCursor", 2L, "hasMore", false,
-                    "incremental", true, "observations", cursor == 0L ? observations : List.of(),
+                    "cursor", cursor, "nextCursor", cursor + 1L, "hasMore", cursor == 0L,
+                    "incremental", true, "observations", observations.subList((int) cursor, (int) cursor + 1),
                     "errors", List.of()));
         }
 

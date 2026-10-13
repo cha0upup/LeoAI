@@ -199,6 +199,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
                 if (childTaskId.isEmpty()) throw new IllegalStateException("节点未返回网络探测子任务 ID");
                 synchronized (task.monitor) {
                     task.childTaskId = childTaskId;
+                    task.childCursor = 0L;
                     task.batchIndex++;
                 }
                 if (task.cancelRequested) controlChild(task, childTaskId, ChildControl.STOP);
@@ -245,52 +246,49 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     }
 
     private Map<String, Object> pollChild(LogicalTask task, String childTaskId) throws Exception {
-        Map<String, Object> latest = Map.of();
-        long cursor = 0L;
-        long deliveredCursor = 0L;
+        long cursor;
+        synchronized (task.monitor) {
+            cursor = task.childCursor;
+        }
+        long idleDelay = Math.min(100L, pollIntervalMs);
         while (true) {
             if (task.cancelRequested) controlChild(task, childTaskId, ChildControl.STOP);
             final long requestedCursor = cursor;
             Map<String, Object> queried = invoke(task, () -> task.node.queryNetworkProbe(
-                    childTaskId, requestedCursor, RESULT_PAGE_ITEMS, RESULT_PAGE_BYTES, true));
-            latest = copyMapOrEmpty(queried.get("result"));
+                    childTaskId, requestedCursor, requestedCursor, RESULT_PAGE_ITEMS, RESULT_PAGE_BYTES, true));
+            Map<String, Object> latest = copyMapOrEmpty(queried.get("result"));
             if (latest.isEmpty()) throw new IllegalStateException("节点网络探测子任务结果为空");
-            boolean incremental = Boolean.TRUE.equals(latest.get("incremental"));
-            synchronized (task.monitor) {
-                if (childTaskId.equals(task.childTaskId)) {
-                    if (incremental) {
-                        long pageCursor = Math.max(0L, longValue(latest.get("cursor"), requestedCursor));
-                        long pageNextCursor = Math.max(pageCursor,
-                                longValue(latest.get("nextCursor"), pageCursor));
-                        // A lost ack causes the node to replay the same cursor page. Keep
-                        // the page visible to the caller, but append it only once.
-                        if (pageNextCursor > deliveredCursor) {
-                            task.observations.addAll(mapListOrEmpty(latest.get("observations")));
-                            deliveredCursor = pageNextCursor;
-                        }
-                        appendUnique(task.errors, mapListOrEmpty(latest.get("errors")));
-                        Map<String, Object> metadata = new LinkedHashMap<>(latest);
-                        metadata.remove("observations");
-                        metadata.remove("errors");
-                        task.activeSnapshot = metadata;
-                    } else {
-                        task.activeSnapshot = latest;
-                    }
-                }
+            List<Map<String, Object>> page = mapListOrEmpty(latest.get("observations"));
+            long nextCursor = longValue(latest.get("nextCursor"), -1L);
+            boolean hasMore = Boolean.TRUE.equals(latest.get("hasMore"));
+            if (longValue(latest.get("cursor"), -1L) != cursor || nextCursor < cursor
+                    || nextCursor - cursor != page.size() || (hasMore && page.isEmpty())) {
+                throw new IllegalStateException("节点网络探测分页游标无效");
             }
-            if (incremental) {
-                long nextCursor = Math.max(cursor, longValue(latest.get("nextCursor"), cursor));
-                if (nextCursor > cursor) {
-                    final long acknowledgedCursor = nextCursor;
-                    invoke(task, () -> task.node.ackNetworkProbe(childTaskId, acknowledgedCursor));
-                    cursor = nextCursor;
+            synchronized (task.monitor) {
+                if (!childTaskId.equals(task.childTaskId)) {
+                    throw new IllegalStateException("节点网络探测子任务已切换");
                 }
-                if ("STOPPED".equalsIgnoreCase(text(latest.get("status")))
-                        && !Boolean.TRUE.equals(latest.get("hasMore"))) return latest;
-            } else if ("STOPPED".equalsIgnoreCase(text(latest.get("status")))) {
+                task.observations.addAll(page);
+                appendUnique(task.errors, mapListOrEmpty(latest.get("errors")));
+                Map<String, Object> metadata = new LinkedHashMap<>(latest);
+                metadata.remove("observations");
+                metadata.remove("errors");
+                task.activeSnapshot = metadata;
+                // Advance only after accepting this page. The next query confirms it.
+                task.childCursor = cursor = nextCursor;
+            }
+            if ("STOPPED".equalsIgnoreCase(text(latest.get("status"))) && !hasMore) {
+                if (cursor > 0L) {
+                    final long acceptedCursor = cursor;
+                    invoke(task, () -> task.node.ackNetworkProbe(childTaskId, acceptedCursor));
+                }
                 return latest;
             }
-            Thread.sleep(pollIntervalMs);
+            if (hasMore) continue;
+            idleDelay = page.isEmpty() ? Math.min(pollIntervalMs, idleDelay * 2L)
+                    : Math.min(100L, pollIntervalMs);
+            Thread.sleep(idleDelay);
         }
     }
 
@@ -307,10 +305,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         synchronized (task.monitor) {
             if (!childTaskId.equals(task.childTaskId)) return;
             task.completedTargets += integer(childSnapshot.get("completed"), 0);
-            if (!Boolean.TRUE.equals(childSnapshot.get("incremental"))) {
-                task.observations.addAll(mapListOrEmpty(childSnapshot.get("observations")));
-                appendUnique(task.errors, mapListOrEmpty(childSnapshot.get("errors")));
-            }
             task.activeSnapshot = Map.of();
             task.childTaskId = null;
         }
@@ -658,6 +652,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         private volatile String outcome = "RUNNING";
         private volatile boolean cancelRequested;
         private volatile String childTaskId;
+        private long childCursor;
         private volatile Map<String, Object> activeSnapshot = Map.of();
         private volatile java.util.concurrent.Future<?> future;
         private int completedTargets;

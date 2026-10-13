@@ -2,6 +2,8 @@ package org.leo.core.component;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -10,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
@@ -25,28 +26,11 @@ import static org.leo.core.component.ComponentTestSupport.code;
 import static org.leo.core.component.ComponentTestSupport.assertWireValue;
 import static org.leo.core.component.ComponentTestSupport.invokeComponent;
 import static org.leo.core.component.ComponentTestSupport.params;
-import static org.leo.core.component.ComponentTestSupport.setField;
 
 class InformationAndFileEnhanceComponentTest {
 
     @TempDir
     Path temporaryDirectory;
-
-    @Test
-    void basicInfoCollectsStableResponseWithoutKeepingRequestState() throws Exception {
-        BasicInfoComponent component = new BasicInfoComponent();
-        HashMap<String, Object> results = new HashMap<>();
-        setField(component, "results", results);
-
-        component.invoke();
-
-        assertEquals(200, ((Number) results.get("code")).intValue());
-        Map<?, ?> basicInfo = (Map<?, ?>) results.get("BasicInfo");
-        assertNotNull(basicInfo);
-        assertTrue(basicInfo.containsKey("OSInfo"));
-        assertTrue(basicInfo.containsKey("JavaRuntimeInfo"));
-        assertTrue(basicInfo.containsKey("NetworkInfo"));
-    }
 
     @Test
     void basicInfoProvidesJavaFirstSystemSnapshots() throws Exception {
@@ -94,6 +78,20 @@ class InformationAndFileEnhanceComponentTest {
             assertEquals(400, code(invalid));
         } finally {
             if (previous == null) System.clearProperty(key); else System.setProperty(key, previous);
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void grepPreservesLiteralGlobCharactersAndBinaryFiltering(boolean payload) throws Exception {
+        for (String name : List.of("a[1].txt", "a+b.java", "other.txt", "ignore.bin")) {
+            Files.writeString(temporaryDirectory.resolve(name), "needle");
+        }
+        Object component = ComponentTestSupport.component("FileEnhanceComponent", payload);
+        for (Object[] row : new Object[][]{{"*.txt", 2}, {"a[1].txt", 1}, {"a+b.java", 1}, {"*.bin", 0}}) {
+            Map<String, Object> result = invokeComponent(component, params("action", 1,
+                    "path", temporaryDirectory.toString(), "keyword", "needle", "include", row[0]));
+            assertEquals(200, code(result));
+            assertEquals(row[1], result.get("matchCount"), (String) row[0]);
         }
     }
 

@@ -1,8 +1,6 @@
 package org.leo.core.engine.proxy;
 
-import org.leo.core.engine.socks5.ReadDataThread;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.engine.socks5.WriteDataThread;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,21 +19,20 @@ public final class ProxyConnection implements AutoCloseable {
     private final Socks5ProxyStatistics statistics;
     private final ProxySessionResources.ConnectionPermit permit;
     private final String connId = UUID.randomUUID().toString();
+    private final ProxyDuplexIo io;
     private boolean closed;
     private boolean opening;
     private boolean openAttempted;
     private boolean remoteCloseSent;
 
-    public ProxyConnection(Socket client, ComponentInvokeCapable node, Socks5ProxyStatistics statistics) {
-        this(client, node, statistics, null);
-    }
-
     ProxyConnection(Socket client, ComponentInvokeCapable node, Socks5ProxyStatistics statistics,
-                    ProxySessionResources.ConnectionPermit permit) {
+                    ProxySessionResources.ConnectionPermit permit, ProxyBatchDispatcher batches) {
         this.permit = permit;
         this.client = client;
         this.node = node;
         this.statistics = statistics;
+        io = new ProxyDuplexIo(node, "ProxyForwardComponent", connId, client, batches, permit,
+                () -> !isClosed(), this::recordUpload, this::recordDownload);
     }
 
     public Socket socket() {
@@ -53,14 +50,13 @@ public final class ProxyConnection implements AutoCloseable {
             openAttempted = true;
             opening = true;
         }
-        boolean opened = false;
         try {
-            Map<String, Object> params = params(0);
+            Map<String, Object> params = new HashMap<>(Map.of("op", 0, "connId", connId));
             params.put("targetHost", host);
             params.put("targetPort", port);
-            opened = code(node.invokeComponent("ProxyForwardComponent", params)) == 200;
+            Map<String, Object> response = node.invokeComponent("ProxyForwardComponent", params);
             synchronized (this) {
-                if (!opened || isClosed()) return false;
+                if (code(response) != 200 || isClosed()) return false;
                 if (statistics != null) {
                     statistics.addConnection(connId, host, port, client.getInetAddress().getHostAddress());
                 }
@@ -75,32 +71,15 @@ public final class ProxyConnection implements AutoCloseable {
         }
     }
 
-    /** null means no data yet; all other unsuccessful replies end the connection. */
-    public byte[] read() throws Exception {
-        Map<String, Object> response = node.invokeComponent("ProxyForwardComponent", params(2));
-        int code = code(response);
-        if (code == 204) return null;
-        if (code != 200 || !(response.get("data") instanceof byte[] data)) {
-            throw new IOException("proxy read failed: " + code);
-        }
-        return data;
-    }
-
     public void write(byte[] data) throws Exception {
-        if (isClosed()) throw new IOException("proxy connection closed");
-        Map<String, Object> params = params(1);
-        params.put("data", data);
-        Map<String, Object> response = node.invokeComponent("ProxyForwardComponent", params);
-        if (code(response) != 200
-                || (response.get("bytesWritten") instanceof Number written && written.longValue() != data.length)) {
-            throw new IOException("proxy write failed: " + code(response));
-        }
-        synchronized (this) {
-            if (!isClosed() && statistics != null) statistics.addUploadBytes(connId, data.length);
-        }
+        io.write(data);
     }
 
-    public synchronized void recordDownload(int bytes) {
+    private synchronized void recordUpload(int bytes) {
+        if (!isClosed() && statistics != null) statistics.addUploadBytes(connId, bytes);
+    }
+
+    private synchronized void recordDownload(int bytes) {
         if (!isClosed() && statistics != null) statistics.addDownloadBytes(connId, bytes);
     }
 
@@ -111,7 +90,7 @@ public final class ProxyConnection implements AutoCloseable {
         ProxySessionResources.ConnectionPermit readerPermit = permit == null ? null : permit.retain();
         Thread reader = new Thread(() -> {
             try {
-                new ReadDataThread(this).run();
+                io.readLoop();
             } finally {
                 if (readerPermit != null) readerPermit.close();
             }
@@ -124,7 +103,7 @@ public final class ProxyConnection implements AutoCloseable {
             throw error;
         }
         try {
-            new WriteDataThread(this).run();
+            io.writeLoop();
         } finally {
             closeLocal();
             reader.interrupt();
@@ -148,7 +127,7 @@ public final class ProxyConnection implements AutoCloseable {
             remoteCloseSent = true;
         }
         try {
-            node.invokeComponent("ProxyForwardComponent", params(3));
+            node.invokeComponent("ProxyForwardComponent", Map.of("op", 3, "connId", connId));
         } catch (Exception error) {
             log.debug("关闭远程代理连接失败: connId={}", connId, error);
         }
@@ -156,13 +135,6 @@ public final class ProxyConnection implements AutoCloseable {
 
     void releaseReservation() {
         if (permit != null) permit.close();
-    }
-
-    private Map<String, Object> params(int operation) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("op", operation);
-        params.put("connId", connId);
-        return params;
     }
 
     private static int code(Map<String, Object> response) {

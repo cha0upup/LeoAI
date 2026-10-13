@@ -221,7 +221,7 @@ class NetworkProbeFingerprintIntegrationTest {
         private Map<String, Object> invoke(String action, Map<String, Object> arguments) throws Exception {
             NetworkProbeComponent component = new NetworkProbeComponent();
             HashMap<String, Object> params = new HashMap<>(arguments);
-            params.put("methodName", action);
+            params.put("action", action);
             var parameterField = NetworkProbeComponent.class.getDeclaredField("params");
             parameterField.setAccessible(true); parameterField.set(component, params);
             var resultField = NetworkProbeComponent.class.getDeclaredField("results");
@@ -230,8 +230,8 @@ class NetworkProbeFingerprintIntegrationTest {
             return (Map<String, Object>) resultField.get(component);
         }
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception { stages.add(plan.get("stages")); return invoke("startTask", Map.of("plan", plan)); }
-        public Map<String, Object> queryNetworkProbe(String id, long cursor, int items, int bytes, boolean evidence) throws Exception {
-            return invoke("queryTask", Map.of("taskId", id, "cursor", cursor, "maxItems", items, "maxBytes", bytes, "includeEvidence", evidence));
+        public Map<String, Object> queryNetworkProbe(String id, long cursor, long ackCursor, int items, int bytes, boolean evidence) throws Exception {
+            return invoke("queryTask", Map.of("taskId", id, "cursor", cursor, "ackCursor", ackCursor, "maxItems", items, "maxBytes", bytes, "includeEvidence", evidence));
         }
         public Map<String, Object> ackNetworkProbe(String id, long cursor) throws Exception { return invoke("ackTask", Map.of("taskId", id, "cursor", cursor)); }
         public Map<String, Object> pauseNetworkProbe(String id) throws Exception { return invoke("pauseTask", Map.of("taskId", id)); }

@@ -1,5 +1,6 @@
 package org.leo.core.component;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -7,36 +8,40 @@ import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 代理转发组件
- * 在被管理端发起到目标内网服务的 TCP 连接，并提供 open/write/read/close 操作
+ * 在被管理端发起到目标内网服务的 TCP 连接，并提供 open/batch/close 操作
  */
 public class ProxyForwardComponent implements Runnable {
 
     // 操作类型常量
     private static final int OP_OPEN = 0;
-    private static final int OP_WRITE = 1;
-    private static final int OP_READ = 2;
     private static final int OP_CLOSE = 3;
+
+    private static final int OP_BATCH = 5;
 
     // 缓冲区大小
     private static final int BUFFER_SIZE = 65536;
+    private static final int MAX_FRAME_BYTES = 262144;
+    private static final long IO_BUDGET_NANOS = 2000000L;
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10000;
     private static final int MAX_CONNECT_TIMEOUT_MS = 300000;
     private static final int MAX_CONNECTIONS = 512;
+    private static final long MAX_OFFSET = 9007199254740991L;
+    private static final byte[] EMPTY = new byte[0];
+    private static final int CHANNEL = 0, WRITE_ACK = 1, READ_BASE = 2, PENDING = 3,
+            TERMINAL = 4, LAST_ACTIVITY = 5;
     // idle 超时（10 分钟）
     private static final long IDLE_TIMEOUT_MS = 10L * 60L * 1000L;
 
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
-    private static Map connMap = new ConcurrentHashMap();
-    // connId -> lastActivityMillis
-    private static Map connLastActivity = new ConcurrentHashMap();
-   
+    // connId -> channel, write ACK, read base, retained bytes, terminal code, last activity
+    private static final Map<String, Object[]> connMap = new ConcurrentHashMap<String, Object[]>();
 
     @Override
-
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
@@ -45,78 +50,54 @@ public class ProxyForwardComponent implements Runnable {
             invoke();
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            status(results, 500, t.getMessage());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
 
-
- 
-    public void invoke() throws IOException, NoSuchFieldException, IllegalAccessException {
+    public void invoke() {
         sweepIdleConns();
-        Object opObj = params.get("op");
-        if (!(opObj instanceof Number)) {
-            results.put("code", 400);
-            results.put("msg", "op must be a number");
+        Object value = params.get("op");
+        if (!(value instanceof Number)) {
+            status(results, 400, "op must be a number");
             return;
         }
-        int op = ((Number) opObj).intValue();
-        Object connIdObj = params.get("connId");
-        if (!(connIdObj instanceof String) || ((String) connIdObj).length() == 0) {
-            results.put("code", 400);
-            results.put("msg", "connId required");
+        int op = ((Number) value).intValue();
+        if (((Number) value).doubleValue() != op || (op != OP_OPEN && op != OP_CLOSE && op != OP_BATCH)) {
+            status(results, 400, "unknown op");
             return;
         }
-        String connId = (String) connIdObj;
-        
-        if (op == OP_OPEN) {
-            handleOpen(connId);
-            return;
-        }
-        SocketChannel socketChannel = (SocketChannel) connMap.get(connId);
-        if (socketChannel == null) {
-            results.put("code", 404);
-            results.put("msg", "connection not found");
-            return;
-        }
-
-        if (op == OP_WRITE) {
-            handleWrite(socketChannel, connId);
-        } else if (op == OP_READ) {
-            handleRead(socketChannel, connId);
-        } else if (op == OP_CLOSE) {
-            handleClose(socketChannel, connId);
-        } else {
-            results.put("code", 400);
-            results.put("msg", "unknown op: " + op);
+        if (op == OP_BATCH) { handleBatch(); return; }
+        String connId = getRequiredString("connId");
+        if (connId == null) return;
+        if (op == OP_OPEN) handleOpen(connId);
+        else {
+            closeConnection(connId, connMap.get(connId));
+            results.put("code", Integer.valueOf(200));
         }
     }
 
     /**
      * 处理打开连接操作
      */
-    private void handleOpen(String connId)  {
+    private void handleOpen(String connId) {
         Object targetHostObj = params.get("targetHost");
         Object portObj = params.get("targetPort");
         if (!(targetHostObj instanceof String) || ((String) targetHostObj).length() == 0
                 || !(portObj instanceof Number)) {
-            results.put("code", 400);
-            results.put("msg", "targetHost and targetPort required");
+            status(results, 400, "targetHost and targetPort required");
             return;
         }
         String targetHost = (String) targetHostObj;
         int targetPort = ((Number) portObj).intValue();
         if (targetPort < 1 || targetPort > 65535) {
-            results.put("code", 400);
-            results.put("msg", "targetPort out of range");
+            status(results, 400, "targetPort out of range");
             return;
         }
         if (connMap.containsKey(connId)) {
-            results.put("code", 409);
-            results.put("msg", "connId already exists");
+            status(results, 409, "connId already exists");
             return;
         }
         int timeout = DEFAULT_CONNECT_TIMEOUT_MS;
@@ -131,112 +112,127 @@ public class ProxyForwardComponent implements Runnable {
             socketChannel.configureBlocking(false);
             int registration = registerConnection(connId, socketChannel);
             if (registration != 0) {
-                socketChannel.close();
-                results.put("code", registration == 2 ? 429 : 409);
-                results.put("msg", registration == 2 ? "connection limit reached" : "connId already exists");
+                closeQuietly(socketChannel);
+                status(results, registration == 2 ? 429 : 409,
+                        registration == 2 ? "connection limit reached" : "connId already exists");
                 return;
             }
-            results.put("code", 200);
-            results.put("msg", "opened");
+            status(results, 200, "opened");
         } catch (IOException e) {
-            if (socketChannel != null) {
-                try { socketChannel.close(); } catch (IOException ignored) {}
-            }
-            results.put("code", 404);
-            results.put("msg", "建立连接失败: " + e.getMessage());
+            closeQuietly(socketChannel);
+            status(results, 404, "建立连接失败: " + e.getMessage());
         }
     }
 
-    /**
-     * 处理写入数据操作。
-     * 非阻塞 channel 单次 write 可能写不完，必须循环；
-     * 加总超时保护，防止对端慢/卡死时占用 agent 请求处理线程。
-     */
-    private void handleWrite(SocketChannel socketChannel, String connId) throws IOException {
-        Object dataObj = params.get("data");
-        if (dataObj != null && !(dataObj instanceof byte[])) {
-            results.put("code", 400);
-            results.put("msg", "data must be bytes");
+    /** Validate the whole envelope before any socket is touched. Each frame owns one bounded window. */
+    private void handleBatch() {
+        Object value = params.get("frames");
+        if (!(value instanceof java.util.List) || ((java.util.List) value).size() < 1
+                || ((java.util.List) value).size() > 16) {
+            status(results, 400, "BATCH requires 1..16 frames");
             return;
         }
-        byte[] data = dataObj == null ? new byte[0] : (byte[]) dataObj;
-        ByteBuffer buf = ByteBuffer.wrap(data);
-        long deadline = System.currentTimeMillis() + 5000L;
-        int written = 0;
-        int backoffMillis = 2;
-        while (buf.hasRemaining()) {
-            int n;
+        java.util.List frames = (java.util.List) value;
+        Map ids = new HashMap();
+        long bytes = 0;
+        for (int i = 0; i < frames.size(); i++) {
+            if (!(frames.get(i) instanceof Map)) { results.put("code", Integer.valueOf(400)); return; }
+            Map frame = (Map) frames.get(i);
+            Object id = frame.get("connId");
+            Object data = frame.get("data");
+            long limit = batchOffset(frame.get("maxBytes"));
+            long writeOffset = batchOffset(frame.get("writeOffset"));
+            if (!(id instanceof String) || ((String) id).length() == 0 || ids.put(id, Boolean.TRUE) != null
+                    || !(data instanceof byte[]) || ((byte[]) data).length > MAX_FRAME_BYTES
+                    || limit < 1 || limit > MAX_FRAME_BYTES || writeOffset < 0
+                    || writeOffset > MAX_OFFSET - ((byte[]) data).length
+                    || batchOffset(frame.get("readAck")) < 0) {
+                status(results, 400, "invalid BATCH frame");
+                return;
+            }
+            bytes += ((byte[]) data).length + limit;
+        }
+        if (bytes > 1048576L) { results.put("code", Integer.valueOf(400)); return; }
+        java.util.List replies = new java.util.ArrayList();
+        for (int i = 0; i < frames.size(); i++) replies.add(exchangeFrame((Map) frames.get(i)));
+        results.put("code", Integer.valueOf(200));
+        results.put("frames", replies);
+    }
+
+    private static long batchOffset(Object value) {
+        if (!(value instanceof Number)) return -1;
+        Number number = (Number) value;
+        long offset = number.longValue();
+        return offset >= 0 && offset <= MAX_OFFSET && number.doubleValue() == offset ? offset : -1;
+    }
+
+    private Map exchangeFrame(Map frame) {
+        String connId = (String) frame.get("connId");
+        HashMap reply = new HashMap();
+        reply.put("connId", connId);
+        Object[] state = connMap.get(connId);
+        if (state == null) { reply.put("code", Integer.valueOf(404)); return reply; }
+        SocketChannel sc = (SocketChannel) state[CHANNEL];
+        synchronized (state) {
+            if (connMap.get(connId) != state) { reply.put("code", Integer.valueOf(404)); return reply; }
+            long writeAck = ((Long) state[WRITE_ACK]).longValue();
+            long readBase = ((Long) state[READ_BASE]).longValue();
+            byte[] pending = (byte[]) state[PENDING];
+            long writeOffset = batchOffset(frame.get("writeOffset"));
+            long readAck = batchOffset(frame.get("readAck"));
+            byte[] data = (byte[]) frame.get("data");
+            if (writeOffset > writeAck || readAck > readBase + pending.length) {
+                status(reply, 409, "offset gap or invalid read ACK");
+                return reply;
+            }
+            // Stale retries never rewind an ACK. A lost response retains its read bytes here.
+            int acknowledged = (int) Math.max(0L, readAck - readBase);
+            if (acknowledged > 0) {
+                byte[] rest = acknowledged == pending.length ? EMPTY : new byte[pending.length - acknowledged];
+                System.arraycopy(pending, acknowledged, rest, 0, rest.length);
+                pending = rest;
+                readBase += acknowledged;
+                state[READ_BASE] = Long.valueOf(readBase);
+                state[PENDING] = pending;
+            }
+            int skip = (int) Math.min((long) data.length, writeAck - writeOffset);
+            ByteBuffer outgoing = ByteBuffer.wrap(data, skip, data.length - skip);
+            int limit = (int) batchOffset(frame.get("maxBytes"));
+            ByteBuffer incoming = ByteBuffer.allocate(Math.max(pending.length, Math.min(BUFFER_SIZE, limit)));
+            incoming.put(pending);
+            int terminal = ((Integer) state[TERMINAL]).intValue();
+            long deadline = System.nanoTime() + IO_BUDGET_NANOS;
             try {
-                n = socketChannel.write(buf);
-            } catch (IOException error) {
-                closeConnection(connId, socketChannel);
-                throw error;
-            }
-            if (n > 0) {
-                written += n;
-                touchConnection(connId, socketChannel);
-                backoffMillis = 2;
-                continue;
-            }
-            if (System.currentTimeMillis() > deadline) {
-                closeConnection(connId, socketChannel);
-                results.put("code", 500);
-                results.put("msg", "write timeout");
-                results.put("bytesWritten", written);
-                return;
-            }
-            try { Thread.sleep(backoffMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            if (backoffMillis < 32) backoffMillis *= 2;
-            if (Thread.currentThread().isInterrupted()) {
-                closeConnection(connId, socketChannel);
-                results.put("code", 500);
-                results.put("msg", "write interrupted");
-                results.put("bytesWritten", written);
-                return;
-            }
+                while (terminal == 0) {
+                    if (!incoming.hasRemaining() && incoming.position() < limit) {
+                        ByteBuffer larger = ByteBuffer.allocate(Math.min(limit, incoming.capacity() * 2));
+                        incoming.flip(); larger.put(incoming); incoming = larger;
+                    }
+                    int written = outgoing.hasRemaining() ? sc.write(outgoing) : 0;
+                    if (written > 0) { writeAck += written; state[WRITE_ACK] = Long.valueOf(writeAck); }
+                    int read = incoming.position() < limit ? sc.read(incoming) : 0;
+                    if (read < 0) { terminal = 404; break; }
+                    if ((written == 0 && read == 0) || System.nanoTime() >= deadline
+                            || (!outgoing.hasRemaining() && incoming.position() >= limit)) break;
+                }
+            } catch (IOException error) { terminal = 500; }
+            pending = incoming.position() == 0 ? EMPTY : new byte[incoming.position()];
+            incoming.flip(); incoming.get(pending);
+            state[PENDING] = pending;
+            state[TERMINAL] = Integer.valueOf(terminal);
+            if (terminal != 0) closeQuietly(sc);
+            ((AtomicLong) state[LAST_ACTIVITY]).set(System.currentTimeMillis());
+            int size = Math.min(limit, pending.length);
+            byte[] received = size == 0 ? EMPTY : new byte[size];
+            System.arraycopy(pending, 0, received, 0, size);
+            reply.put("code", Integer.valueOf(200));
+            reply.put("writeAck", Long.valueOf(writeAck));
+            reply.put("readOffset", Long.valueOf(readBase));
+            reply.put("readCode", Integer.valueOf(terminal != 0 && size == pending.length
+                    ? terminal : size == 0 ? 204 : 200));
+            reply.put("data", received);
+            return reply;
         }
-        results.put("code", 200);
-        results.put("bytesWritten", written);
-    }
-
-    /**
-     * 处理读取数据操作
-     */
-    private void handleRead(SocketChannel socketChannel, String connId) throws IOException {
-        ByteBuffer buf = ByteBuffer.allocate(BUFFER_SIZE);
-        int len;
-        try {
-            len = socketChannel.read(buf);
-        } catch (IOException error) {
-            closeConnection(connId, socketChannel);
-            throw error;
-        }
-        if (len > 0) {
-            buf.flip();
-            byte[] data = new byte[buf.remaining()];
-            buf.get(data);
-            touchConnection(connId, socketChannel);
-            results.put("code", 200);
-            results.put("bytesRead", data.length);
-            results.put("data", data);
-        } else if (len == 0) {
-            // 非阻塞模式下没有数据
-            results.put("code", 204);
-            results.put("bytesRead", 0);
-            results.put("data", new byte[0]);
-        } else if (len == -1) {
-            // 对端关闭
-            closeConnection(connId, socketChannel);
-            results.put("code", 404);
-        }
-    }
-
-    /**
-     * 处理关闭连接操作
-     */
-    private void handleClose(SocketChannel socketChannel, String connId) throws IOException {
-        closeConnection(connId, socketChannel);
-        results.put("code", 200);
     }
 
     /** 0=success, 1=duplicate, 2=capacity reached. */
@@ -244,46 +240,51 @@ public class ProxyForwardComponent implements Runnable {
         synchronized (connMap) {
             if (connMap.containsKey(connId)) return 1;
             if (connMap.size() >= MAX_CONNECTIONS) return 2;
-            connMap.put(connId, socketChannel);
-            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            connMap.put(connId, new Object[]{socketChannel, Long.valueOf(0), Long.valueOf(0), EMPTY,
+                    Integer.valueOf(0), new AtomicLong(System.currentTimeMillis())});
             return 0;
         }
     }
 
-    private static void touchConnection(String connId, SocketChannel socketChannel) {
+    private static boolean closeConnection(String connId, Object[] state) {
+        if (state == null) return false;
         synchronized (connMap) {
-            if (connMap.get(connId) == socketChannel) {
-                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
-            }
+            if (connMap.get(connId) != state) return false;
+            connMap.remove(connId);
         }
-    }
-
-    private static void closeConnection(String connId, SocketChannel socketChannel) {
-        synchronized (connMap) {
-            if (connMap.get(connId) == socketChannel) {
-                connLastActivity.remove(connId);
-                connMap.remove(connId);
-            }
-        }
-        if (socketChannel != null) {
-            try { socketChannel.close(); } catch (IOException ignored) {}
-        }
+        closeQuietly((SocketChannel) state[CHANNEL]);
+        return true;
     }
 
     /**
-     * 清理超过 IDLE_TIMEOUT_MS 无活动的连接，在 OPEN 时触发。
+     * 请求入口清理过期连接；连接锁保护活动时间，身份检查保护同 ID 的新连接。
      */
     private static void sweepIdleConns() {
         long now = System.currentTimeMillis();
-        java.util.Iterator it = connLastActivity.entrySet().iterator();
-        while (it.hasNext()) {
-            java.util.Map.Entry e = (java.util.Map.Entry) it.next();
-            long last = ((Long) e.getValue()).longValue();
-            if (now - last > IDLE_TIMEOUT_MS) {
-                String connId = (String) e.getKey();
-                SocketChannel sc = (SocketChannel) connMap.get(connId);
-                closeConnection(connId, sc);
+        for (Map.Entry<String, Object[]> entry : connMap.entrySet()) {
+            Object[] state = entry.getValue();
+            AtomicLong activity = (AtomicLong) state[LAST_ACTIVITY];
+            if (now - activity.get() > IDLE_TIMEOUT_MS) {
+                synchronized (state) {
+                    if (now - activity.get() > IDLE_TIMEOUT_MS) closeConnection(entry.getKey(), state);
+                }
             }
         }
+    }
+
+    private String getRequiredString(String key) {
+        Object value = params.get(key);
+        if (value instanceof String && ((String) value).length() > 0) return (String) value;
+        status(results, 400, key + " required");
+        return null;
+    }
+
+    private static void status(Map response, int code, String message) {
+        response.put("code", Integer.valueOf(code));
+        response.put("msg", message);
+    }
+
+    private static void closeQuietly(Closeable resource) {
+        try { if (resource != null) resource.close(); } catch (IOException ignored) { }
     }
 }

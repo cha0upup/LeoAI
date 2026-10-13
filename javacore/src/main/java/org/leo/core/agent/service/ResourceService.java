@@ -15,10 +15,7 @@ public class ResourceService extends ComponentService {
     }
 
     public Map<String, Object> getClassBytecode(String className) throws Exception {
-        String resourcePath = className.replace('.', '/') + ".class";
-        HashMap<String, Object> componentParams = new HashMap<String, Object>();
-        componentParams.put("resourcePath", resourcePath);
-        return invokeComponent("ResourceComponent", componentParams);
+        return getResource(className.replace('.', '/') + ".class");
     }
 
     public Map<String, Object> getResource(String resourcePath) throws Exception {

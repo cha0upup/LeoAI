@@ -5,30 +5,19 @@ import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.agent.http.HttpSenderEngine;
 
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /** Java runtime adapter for the shared Repeater/Fuzzer engine. */
-public class HttpSenderService extends ComponentService {
-
-    private static final String COMPONENT_NAME = "HttpRequestComponent";
+public class HttpSenderService extends HttpRequestService {
 
     private final HttpSenderEngine engine = new HttpSenderEngine() {
         @Override
         protected Map<String, Object> executeRequest(
                 String method, String url, Map<String, String> headers, String body,
                 int connectTimeout, int readTimeout, boolean followRedirects) throws Exception {
-            HashMap<String, Object> params = new HashMap<String, Object>();
-            params.put("method", method);
-            params.put("url", url);
-            params.put("headers", new LinkedHashMap<String, String>(headers));
-            if (body != null) params.put("body", body);
-            if (connectTimeout > 0) params.put("connectTimeout", Integer.valueOf(connectTimeout));
-            if (readTimeout > 0) params.put("readTimeout", Integer.valueOf(readTimeout));
-            params.put("followRedirects", Boolean.valueOf(followRedirects));
-            return HttpSenderService.this.invokeComponent(COMPONENT_NAME, params);
+            return HttpSenderService.this.httpRequest(method, url, headers, body,
+                    connectTimeout, readTimeout, followRedirects);
         }
     };
 

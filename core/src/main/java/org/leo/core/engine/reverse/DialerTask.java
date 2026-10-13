@@ -1,6 +1,7 @@
 package org.leo.core.engine.reverse;
 
 import org.leo.core.engine.proxy.ProxySessionResources.ConnectionPermit;
+import org.leo.core.engine.proxy.ProxyDuplexIo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,6 +67,10 @@ class DialerTask implements Runnable {
     }
 
     private void startRelays(Socket local) {
+        ProxyDuplexIo io = new ProxyDuplexIo(server.getAgentNode(), "ReverseTunnelComponent", connId, local,
+                server.batchDispatcher(), permit,
+                () -> server.isRunning() && !cancelled,
+                bytes -> server.recordDownload(connId, bytes), bytes -> server.recordUpload(connId, bytes));
         AtomicBoolean cleaned = new AtomicBoolean();
         Runnable cleanup = () -> {
             if (!cleaned.compareAndSet(false, true)) return;
@@ -73,8 +78,8 @@ class DialerTask implements Runnable {
             if (!cancelled && server.isRunning()) server.closeRemoteConnection(connId);
         };
         try {
-            startRelay(new ReverseReadThread(server, local, connId), cleanup, "Read");
-            startRelay(new ReverseWriteThread(server, local, connId), cleanup, "Write");
+            startRelay(io::readLoop, cleanup, "Read");
+            startRelay(io::writeLoop, cleanup, "Write");
         } catch (RuntimeException | Error error) {
             cleanup.run();
             throw error;

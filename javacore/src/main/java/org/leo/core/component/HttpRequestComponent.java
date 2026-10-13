@@ -59,31 +59,27 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
-
     public void run() {
-        java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
+        InvocationHandler h = (InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage() != null ? t.getMessage() : t.toString());
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage() != null ? t.getMessage() : t.toString());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
 
-
     public void invoke() throws Exception {
         String method = getStringParam("method");
         String url = getStringParam("url");
 
         if (url == null || url.length() == 0) {
-            results.put("code", 400);
-            results.put("msg", "url is required");
+            setResult(400, "url is required");
             return;
         }
 
@@ -92,8 +88,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         }
         method = method.toUpperCase(Locale.ENGLISH);
         if (!isAllowedMethod(method)) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "unsupported HTTP method");
+            setResult(400, "unsupported HTTP method");
             return;
         }
 
@@ -101,28 +96,24 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         try {
             targetUrl = new URL(url);
         } catch (MalformedURLException error) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "invalid url");
+            setResult(400, "invalid url");
             return;
         }
         String protocol = targetUrl.getProtocol();
         if (!("http".equalsIgnoreCase(protocol) || "https".equalsIgnoreCase(protocol))) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "only http and https URLs are supported");
+            setResult(400, "only http and https URLs are supported");
             return;
         }
 
         Object requestHeadersObj = params.get("headers");
         if (requestHeadersObj != null && !(requestHeadersObj instanceof Map)) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "headers must be a map");
+            setResult(400, "headers must be a map");
             return;
         }
         Map requestHeaders = (Map) requestHeadersObj;
         byte[] bodyBytes = getBodyBytes();
         if (bodyBytes != null && bodyBytes.length > MAX_REQUEST_SIZE) {
-            results.put("code", Integer.valueOf(413));
-            results.put("msg", "request body exceeds 10MB limit");
+            setResult(413, "request body exceeds 10MB limit");
             return;
         }
 
@@ -186,91 +177,81 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
     }
 
     private void writeRequestBody(HttpURLConnection conn, String method, byte[] bodyBytes) throws Exception {
-        // 写入请求体
-        if (bodyBytes != null && bodyBytes.length > 0
-                && allowsRequestBody(method)) {
-            conn.setDoOutput(true);
-            if (conn.getRequestProperty("Content-Type") == null) {
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-            }
-            OutputStream os = null;
-            try {
-                os = conn.getOutputStream();
-                os.write(bodyBytes);
-                os.flush();
-            } finally {
-                if (os != null) {
-                    try { os.close(); } catch (Exception ignored) {}
-                }
-            }
+        if (bodyBytes == null || bodyBytes.length == 0 || !allowsRequestBody(method)) return;
+        conn.setDoOutput(true);
+        if (conn.getRequestProperty("Content-Type") == null) {
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        }
+        OutputStream os = null;
+        try {
+            os = conn.getOutputStream();
+            os.write(bodyBytes);
+            os.flush();
+        } finally {
+            closeQuietly(os);
         }
     }
 
     private HashMap collectResponseHeaders(HttpURLConnection conn) {
-        // 收集响应头
         HashMap responseHeaders = new HashMap();
         Map headerFields = conn.getHeaderFields();
-        if (headerFields != null) {
-            for (Object entry : headerFields.entrySet()) {
-                Map.Entry e = (Map.Entry) entry;
-                Object key = e.getKey();
-                if (key != null) {
-                    List values = (List) e.getValue();
-                    if (values != null && values.size() == 1) {
-                        responseHeaders.put(String.valueOf(key), String.valueOf(values.get(0)));
-                    } else if (values != null) {
-                        responseHeaders.put(String.valueOf(key), values);
-                    }
-                }
+        if (headerFields == null) return responseHeaders;
+        for (Object entry : headerFields.entrySet()) {
+            Map.Entry e = (Map.Entry) entry;
+            Object key = e.getKey();
+            if (key == null) continue;
+            List values = (List) e.getValue();
+            if (values != null && values.size() == 1) {
+                responseHeaders.put(String.valueOf(key), String.valueOf(values.get(0)));
+            } else if (values != null) {
+                responseHeaders.put(String.valueOf(key), values);
             }
         }
         return responseHeaders;
     }
 
     private byte[] readResponseBody(HttpURLConnection conn, String method, int statusCode) throws Exception {
-        // 读取响应体
-        byte[] responseBody = null;
-        if (!"HEAD".equals(method)) {
-            InputStream is = null;
-            try {
-                is = (statusCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
-            } catch (Exception ignored) {
-                // 某些情况下 getInputStream 会抛异常
-                is = conn.getErrorStream();
-            }
-
-            if (is != null) {
-                try {
-                    responseBody = readStream(is);
-                } finally {
-                    try { is.close(); } catch (Exception ignored) {}
-                }
-            }
+        if ("HEAD".equals(method)) return null;
+        InputStream is;
+        try {
+            is = statusCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        } catch (Exception ignored) {
+            is = conn.getErrorStream();
         }
-        return responseBody;
+        try {
+            return is == null ? null : readStream(is);
+        } finally {
+            closeQuietly(is);
+        }
     }
 
     private void putResponseBody(byte[] responseBody, String contentType) throws Exception {
-        if (responseBody != null) {
-            // 尝试判断是否为文本内容
-            if (isTextContent(contentType)) {
-                String charset = parseCharset(contentType);
-                try {
-                    results.put("body", new String(responseBody, charset));
-                } catch (Exception unsupportedCharset) {
-                    results.put("body", new String(responseBody, DEFAULT_CHARSET));
-                    results.put("charsetFallback", DEFAULT_CHARSET);
-                }
-                results.put("bodyType", "text");
-            } else {
-                results.put("body", responseBody);
-                results.put("bodyType", "binary");
-                results.put("bodySize", responseBody.length);
+        if (responseBody == null) return;
+        if (isTextContent(contentType)) {
+            String charset = parseCharset(contentType);
+            try {
+                results.put("body", new String(responseBody, charset));
+            } catch (Exception unsupportedCharset) {
+                results.put("body", new String(responseBody, DEFAULT_CHARSET));
+                results.put("charsetFallback", DEFAULT_CHARSET);
             }
+            results.put("bodyType", "text");
+        } else {
+            results.put("body", responseBody);
+            results.put("bodyType", "binary");
+            results.put("bodySize", responseBody.length);
         }
     }
 
-    // ==================== 私有辅助方法 ====================
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
+    private void closeQuietly(java.io.Closeable resource) {
+        if (resource == null) return;
+        try { resource.close(); } catch (Exception ignored) {}
+    }
 
     private boolean isAllowedMethod(String method) {
         return "GET".equals(method) || "POST".equals(method)

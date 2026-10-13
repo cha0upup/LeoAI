@@ -144,7 +144,7 @@ class AgentNodeSqlServiceJdbcContractTest {
         @Override
         public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception {
             Map<String, Object> params = new LinkedHashMap<String, Object>();
-            params.put("operation", "capabilities");
+            params.put("action", "capabilities");
             params.put("requestedDriver", adapter.defaultDriver(String.valueOf(connection.get("dialect"))));
             return invoke(params);
         }

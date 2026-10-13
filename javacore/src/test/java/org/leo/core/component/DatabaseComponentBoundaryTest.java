@@ -78,7 +78,7 @@ class DatabaseComponentBoundaryTest {
     @ValueSource(booleans = {false, true})
     void capabilityProbeReportsTrimmedUnavailableDriver(boolean transformed) throws Exception {
         Map<String, Object> result = runComponent("DatabaseComponent", transformed, Map.of(
-                "operation", "capabilities", "requestedDriver", "  missing.jdbc.Driver  "));
+                "action", "capabilities", "requestedDriver", "  missing.jdbc.Driver  "));
 
         assertEquals(200, result.get("code"));
         Map<?, ?> requested = (Map<?, ?>) result.get("requestedDriver");

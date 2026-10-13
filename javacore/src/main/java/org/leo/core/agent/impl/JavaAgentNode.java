@@ -415,10 +415,10 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     }
 
     @Override
-    public Map<String, Object> queryNetworkProbe(String taskId, long cursor,
+    public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                   int maxItems, int maxBytes,
                                                   boolean includeEvidence) throws Exception {
-        return networkProbeService.queryNetworkProbe(taskId, cursor, maxItems, maxBytes, includeEvidence);
+        return networkProbeService.queryNetworkProbe(taskId, cursor, ackCursor, maxItems, maxBytes, includeEvidence);
     }
 
     @Override

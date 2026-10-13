@@ -29,10 +29,10 @@ public class WeblogicContainerManageComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        Object methodObj = params.get("methodName");
+        Object methodObj = params.get("action");
         if (!(methodObj instanceof String)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "methodName required");
+            results.put("msg", "action required");
             return;
         }
         String methodName = (String) methodObj;
@@ -43,7 +43,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         }
         if (!"removeFilter".equals(methodName) && !"removeServlet".equals(methodName) && !"removeListener".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
-            results.put("msg", "未知 methodName: " + methodName);
+            results.put("msg", "未知 action: " + methodName);
             return;
         }
         Object context = findContext(getContext(), (String) params.get("contextId"));

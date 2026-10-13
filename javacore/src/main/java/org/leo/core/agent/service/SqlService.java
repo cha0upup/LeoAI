@@ -25,6 +25,7 @@ public class SqlService extends ComponentService {
 
     public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>(connectionAdapter.adapt(connection));
+        payload.put("action", "execute");
         payload.put("sql", command.sql());
         if (command.hasParameters()) payload.put("parameters", command.parameters());
         return invokeComponent("DatabaseComponent", payload);
@@ -32,7 +33,7 @@ public class SqlService extends ComponentService {
 
     public Map<String, Object> inspectRuntime(Map<String, Object> connection) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("operation", "capabilities");
+        payload.put("action", "capabilities");
         payload.put("requestedDriver", requestedDriver(connection));
         return invokeComponent("DatabaseComponent", payload);
     }

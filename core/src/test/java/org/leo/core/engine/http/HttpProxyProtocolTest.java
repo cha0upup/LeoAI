@@ -9,6 +9,7 @@ import org.leo.core.agent.capability.ComponentInvokeCapable;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -20,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class HttpProxyProtocolTest {
     private final StubNode node = new StubNode();
-    private final HttpProxyServer server = new HttpProxyServer(node, 0);
+    private final HttpProxyServer server = new HttpProxyServer(node, 0, "127.0.0.1");
 
     @AfterEach
     void stop() {
@@ -111,15 +112,19 @@ class HttpProxyProtocolTest {
         public Map<String, Object> invokeComponent(String id, Map<String, Object> params) throws Exception {
             int operation = ((Number) params.get("op")).intValue();
             if (operation == 0 && failOpen) return Map.of("code", 404);
-            if (operation == 1) {
-                if (failWrite) throw new IOException("simulated write failure");
-                byte[] data = (byte[]) params.get("data");
-                uploads.add(data);
-                return Map.of("code", 200, "bytesWritten", data.length);
-            }
-            if (operation == 2) {
-                byte[] data = downloads.poll();
-                return data == null ? Map.of("code", 204) : Map.of("code", 200, "data", data);
+            if (operation == 5) {
+                Map<?, ?> frame = (Map<?, ?>) ((List<?>) params.get("frames")).get(0);
+                byte[] data = (byte[]) frame.get("data");
+                if (data.length > 0) {
+                    if (failWrite) throw new IOException("simulated write failure");
+                    uploads.add(data);
+                }
+                byte[] reply = downloads.poll();
+                return Map.of("code", 200, "frames", List.of(Map.of(
+                        "connId", frame.get("connId"), "code", 200,
+                        "writeAck", ((Number) frame.get("writeOffset")).longValue() + data.length,
+                        "readOffset", frame.get("readAck"), "readCode", reply == null ? 204 : 200,
+                        "data", reply == null ? new byte[0] : reply)));
             }
             if (operation == 3) {
                 closeCalls.incrementAndGet();

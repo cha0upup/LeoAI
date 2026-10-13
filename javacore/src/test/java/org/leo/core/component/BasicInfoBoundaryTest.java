@@ -12,6 +12,23 @@ import static org.leo.core.component.ComponentTestSupport.*;
 
 class BasicInfoBoundaryTest {
     @ParameterizedTest @ValueSource(booleans = {false, true})
+    void exportsRawMetricsWithoutNodeSidePresentation(boolean payload) throws Exception {
+        Map<String, Object> result = invokeComponent(component("BasicInfoComponent", payload), Map.of());
+        assertEquals(200, result.get("code"));
+        Map<?, ?> basic = (Map<?, ?>) result.get("BasicInfo");
+        Map<?, ?> runtime = (Map<?, ?>) basic.get("JavaRuntimeInfo");
+        for (String field : List.of("TotalMemoryBytes", "FreeMemoryBytes", "MaxMemoryBytes", "HeapUsedBytes", "HeapMaxBytes")) {
+            assertInstanceOf(Number.class, runtime.get(field));
+        }
+        assertFalse(runtime.containsKey("TotalMemoryMB"));
+        assertFalse(runtime.containsKey("HeapUsagePercent"));
+        assertInstanceOf(Number.class, ((Map<?, ?>) basic.get("HardwareInfo")).get("SystemLoadAverage"));
+        for (String section : List.of("OSInfo", "ProcessInfo")) {
+            assertInstanceOf(Number.class, ((Map<?, ?>) basic.get(section)).get("UptimeMs"));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
     void unknownActionIsRejectedAndByteActionUsesRequestedView(boolean payload) throws Exception {
         Object component = component("BasicInfoComponent", payload);
         for (Object action : new Object[]{"unknown", utf8("unknown")}) {
