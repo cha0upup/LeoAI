@@ -3,6 +3,8 @@ package org.leo.core.component;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -96,8 +98,8 @@ class NetworkProbeComponentTest {
         }
     }
 
-    @Test
-    void keepsHttpSummaryAndRuleRequestEvidenceDistinct() throws Exception {
+    @ParameterizedTest @ValueSource(strings = {"plain", "chunked", "gzip"})
+    void keepsHttpSummaryAndRuleRequestEvidenceDistinct(String encoding) throws Exception {
         Map<String, Map<String, String>> received = new java.util.concurrent.ConcurrentHashMap<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -107,11 +109,17 @@ class NetworkProbeComponentTest {
                     "body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1)));
             boolean rule = path.equals("/rules/check");
             byte[] body = rule ? "réponse".getBytes(StandardCharsets.ISO_8859_1)
-                    : "<html><head><title> 资产管理平台 </title></head><body>ok</body></html>".getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", rule ? "text/plain; charset=ISO-8859-1" : "text/html; charset=UTF-8");
+                    : "<html><head><title> 资产管理平台 </title></head><body>ok</body></html>".getBytes(StandardCharsets.UTF_16LE);
+            if ("gzip".equals(encoding)) {
+                var compressed = new java.io.ByteArrayOutputStream();
+                try (var gzip = new java.util.zip.GZIPOutputStream(compressed)) { gzip.write(body); }
+                body = compressed.toByteArray();
+                exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+            }
+            exchange.getResponseHeaders().set("Content-Type", rule ? "text/plain; charset=ISO-8859-1" : "text/html; charset=\"UTF-16LE\"");
             exchange.getResponseHeaders().set("Server", "probe-fixture");
             exchange.getResponseHeaders().set("Location", "/redirect");
-            exchange.sendResponseHeaders(rule ? 404 : 302, body.length);
+            exchange.sendResponseHeaders(rule ? 404 : 302, "chunked".equals(encoding) ? 0 : body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });
@@ -119,11 +127,11 @@ class NetworkProbeComponentTest {
         try {
             int port = server.getAddress().getPort();
             Map<String, Object> summaryTarget = target(port, "http");
-            summaryTarget.put("baseUrl", "http://127.0.0.1:" + port + "/landing?scope=one");
+            summaryTarget.put("baseUrl", "http://virtual.example.invalid:" + port + "/landing?scope=one");
             summaryTarget.put("headers", Map.of("X-Test", "summary"));
             Map<String, Object> ruleTarget = target(port, "http");
             ruleTarget.put("stage", "http-request");
-            ruleTarget.put("baseUrl", "http://127.0.0.1:" + port + "/rules");
+            ruleTarget.put("baseUrl", "http://virtual.example.invalid:" + port + "/rules");
             ruleTarget.put("headers", Map.of("X-Test", "unused"));
             ruleTarget.put("httpRequest", Map.of("method", "post", "path", "check",
                     "headers", Map.of("X-Test", "rule"), "charset", "ISO-8859-1", "body", " café\r\n "));
@@ -133,8 +141,10 @@ class NetworkProbeComponentTest {
             assertEquals(List.of(), snapshot.get("errors"));
             List<?> observations = (List<?>) snapshot.get("observations");
             assertEquals(2, observations.size());
-            Map<?, ?> summary = (Map<?, ?>) ((Map<?, ?>) observations.get(0)).get("evidence");
-            Map<?, ?> rule = (Map<?, ?>) ((Map<?, ?>) observations.get(1)).get("evidence");
+            Map<?, ?> summary = (Map<?, ?>) observations.stream().map(value -> (Map<?, ?>) value)
+                    .filter(value -> "http-head".equals(value.get("stage"))).findFirst().orElseThrow().get("evidence");
+            Map<?, ?> rule = (Map<?, ?>) observations.stream().map(value -> (Map<?, ?>) value)
+                    .filter(value -> "http-request".equals(value.get("stage"))).findFirst().orElseThrow().get("evidence");
             assertEquals("资产管理平台", summary.get("title"));
             assertEquals(302, summary.get("statusCode"));
             assertEquals("probe-fixture", summary.get("server"));
@@ -145,13 +155,49 @@ class NetworkProbeComponentTest {
             assertEquals("réponse", rule.get("body"));
             assertTrue(((Map<?, ?>) rule.get("responseHeaders")).entrySet().stream()
                     .anyMatch(entry -> "server".equalsIgnoreCase(String.valueOf(entry.getKey()))
-                            && "[probe-fixture]".equals(entry.getValue())));
+                            && "probe-fixture".equals(entry.getValue())));
             assertEquals(Map.of(
                     "/landing?scope=one", Map.of("method", "GET", "header", "summary", "body", ""),
                     "/rules/check", Map.of("method", "POST", "header", "rule", "body", " café\r\n ")), received);
         } finally {
             server.stop(0);
         }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"HEAD", "GET"})
+    void keepsGzipHeadAndTruncatedPrefixEvidence(String method) throws Exception {
+        byte[] body = new byte[256];
+        new java.util.Random(1).nextBytes(body);
+        var compressed = new java.io.ByteArrayOutputStream();
+        try (var gzip = new java.util.zip.GZIPOutputStream(compressed)) { gzip.write(body); }
+        byte[] encoded = compressed.toByteArray();
+        assertTrue(encoded.length > 256);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+            exchange.getResponseHeaders().set("Content-Length", String.valueOf(encoded.length));
+            exchange.sendResponseHeaders(200, "HEAD".equals(method) ? -1 : encoded.length);
+            if (!"HEAD".equals(method)) exchange.getResponseBody().write(encoded);
+            exchange.close();
+        });
+        server.start();
+        try {
+            Map<String, Object> target = target(server.getAddress().getPort(), "http");
+            target.put("httpRequest", Map.of("method", method, "charset", "ISO-8859-1"));
+            target.put("maxReadBytes", 256);
+            Map<?, ?> started = invokeComponent(new NetworkProbeComponent(), params("action", "startTask",
+                    "plan", plan(List.of(target), List.of("http-request"))));
+            Map<?, ?> result = awaitTask(String.valueOf(started.get("taskId")), 5000L);
+            assertEquals(List.of(), result.get("errors"));
+            Map<?, ?> evidence = (Map<?, ?>) ((Map<?, ?>) ((List<?>) result.get("observations")).get(0)).get("evidence");
+            String prefix = String.valueOf(evidence.get("body"));
+            assertEquals("GET".equals(method), evidence.get("truncated"));
+            if ("HEAD".equals(method)) assertEquals("", prefix);
+            else {
+                assertTrue(!prefix.isEmpty() && prefix.length() <= 256);
+                assertEquals(new String(body, StandardCharsets.ISO_8859_1).substring(0, prefix.length()), prefix);
+            }
+        } finally { server.stop(0); }
     }
 
     @Test

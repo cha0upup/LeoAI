@@ -1,6 +1,8 @@
 package org.leo.service.discovery;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.service.fingerprint.FingerprintManageService;
 
 import java.util.ArrayList;
@@ -11,12 +13,28 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class NetworkProbeAnalysisServiceTest {
 
     private final NetworkProbeAnalysisService service =
             new NetworkProbeAnalysisService(new FingerprintManageService());
+
+    @ParameterizedTest
+    @CsvSource({"REFUSED,reachableHostList", "TIMEOUT,unknownHostList", "IO,unknownHostList",
+            "DNS,unreachableHostList", "NO_ROUTE,unreachableHostList"})
+    void distinguishesAnsweredHostsFromUnconfirmedProbes(String code, String group) throws Exception {
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", List.of("host"), "ports", List.of(80)));
+        service.register("fixture", prepared);
+        Map<String, Object> sample = new LinkedHashMap<>(observation("host", 80, "closed"));
+        sample.put("errorCode", code);
+        Map<String, Object> response = new LinkedHashMap<>(Map.of("result", Map.of("observations", List.of(sample))));
+        service.enrich("fixture", response);
+        Map<?, ?> analysis = (Map<?, ?>) ((Map<?, ?>) response.get("result")).get("analysis");
+        assertEquals(List.of("host"), analysis.get(group));
+        assertEquals(1, analysis.get("completed"));
+    }
 
     @Test
     void preparesReachabilityAsOneBoundedLogicalPlan() throws Exception {
@@ -36,13 +54,22 @@ class NetworkProbeAnalysisServiceTest {
     void reachabilityUsesExactTargetsForNonStandardPorts() throws Exception {
         NetworkProbeAnalysisService.PreparedScan prepared = service.prepare(Map.of(
                 "kind", "reachability",
-                "hosts", List.of("host-a"),
-                "targets", List.of(Map.of("host", "host-a", "port", 8080)),
+                "hosts", List.of("host-a", "host-b", "host-c"),
+                "targets", List.of(Map.of("host", "host-a", "port", 8080), Map.of("host", "host-a", "port", 8080),
+                        Map.of("host", "host-b", "port", 9090), Map.of("host", "host-b", "port", 9091)),
                 "ports", List.of(80, 443, 22, 8080)));
 
         List<?> targets = (List<?>) prepared.plan().get("targets");
-        assertEquals(1, targets.size());
+        assertEquals(3, targets.size());
         assertEquals(8080, ((Map<?, ?>) targets.get(0)).get("port"));
+        service.register("exact-targets", prepared);
+        var page = new LinkedHashMap<String, Object>(Map.of("result", Map.of("observations", List.of(
+                Map.of("host", "host-a", "port", 8080, "stage", "tcp-connect", "errorCode", "DNS"),
+                Map.of("host", "host-b", "port", 9090, "stage", "tcp-connect", "errorCode", "DNS")))));
+        service.enrich("exact-targets", page);
+        var analysis = (Map<?, ?>) ((Map<?, ?>) page.get("result")).get("analysis");
+        assertEquals(List.of("host-a"), analysis.get("unreachableHostList"));
+        assertEquals(List.of("host-b", "host-c"), analysis.get("pendingHostList"));
     }
 
     @Test
@@ -50,7 +77,8 @@ class NetworkProbeAnalysisServiceTest {
     void enrichesReachabilityWithoutMarkingPendingHostsUnreachable() throws Exception {
         NetworkProbeAnalysisService.PreparedScan prepared = service.prepare(Map.of(
                 "kind", "reachability",
-                "hosts", List.of("host-a", "host-b", "host-c")));
+                "hosts", List.of("host-a", "host-b", "host-c"),
+                "ports", List.of(80, 443, 22, 8080, 8443, 80)));
         service.register("task-1", prepared);
 
         List<Map<String, Object>> targets = (List<Map<String, Object>>) prepared.plan().get("targets");
@@ -75,7 +103,8 @@ class NetworkProbeAnalysisServiceTest {
         Map<String, Object> analysis = (Map<String, Object>) result.get("analysis");
         assertEquals("host-reachability", result.get("scanKind"));
         assertEquals(List.of("host-a"), analysis.get("reachableHostList"));
-        assertEquals(List.of("host-b"), analysis.get("unreachableHostList"));
+        assertEquals(List.of(), analysis.get("unreachableHostList"));
+        assertEquals(List.of("host-b"), analysis.get("unknownHostList"));
         assertEquals(List.of("host-c"), analysis.get("pendingHostList"));
         assertEquals(2, analysis.get("completed"));
 
@@ -107,8 +136,9 @@ class NetworkProbeAnalysisServiceTest {
                         "ports", List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))));
     }
 
-    @Test
-    void reconSelectsRulesByDiscoveredProtocolAndService() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"http,http", "https,https", "https,unknown", "http,''"})
+    void reconSelectsRulesByDiscoveredProtocolAndService(String protocol, String service) throws Exception {
         NetworkProbeAnalysisService analysisService =
                 new NetworkProbeAnalysisService(new StubFingerprintManageService());
 
@@ -117,7 +147,8 @@ class NetworkProbeAnalysisServiceTest {
                 "targets", List.of(
                         Map.of("host", "host-a", "port", 22, "protocol", "tcp", "service", "ssh"),
                         Map.of("host", "host-b", "port", 6379, "protocol", "tcp", "service", "redis"),
-                        Map.of("baseUrl", "http://host-c:8080", "protocol", "http", "service", "http")),
+                        Map.of("baseUrl", "http://non-http.test", "protocol", "http", "service", "redis"),
+                        Map.of("baseUrl", "http://host-c:8080", "protocol", protocol, "service", service)),
                 "ruleSelector", Map.of()));
 
         List<?> probes = (List<?>) prepared.plan().get("targets");
@@ -167,6 +198,19 @@ class NetworkProbeAnalysisServiceTest {
                 Map.of("evidence", Map.of("statusCode", 200, "body", "prefix"))).get("status"));
         assertEquals("INCONCLUSIVE", evaluateFingerprint(Map.of("not", Map.of("field", "headers", "operator", "contains", "value", "absent")),
                 Map.of("evidence", Map.of("statusCode", 200, "headers", "X: present", "headersTruncated", true))).get("status"));
+        assertEquals("探测证据不完整", assertThrows(IllegalArgumentException.class, () -> evaluateFingerprint(contains,
+                Map.of("probeId", "unexpected", "requestIndex", 1))).getMessage());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"all,404,NOT_MATCHED", "all,200,INCONCLUSIVE", "any,200,MATCHED", "any,404,INCONCLUSIVE"})
+    void combinesIncompleteAndKnownConditionsInEitherOrder(String mode, int status, String expected) throws Exception {
+        var incomplete = Map.of("field", "body", "value", "absent");
+        var known = Map.of("field", "status", "operator", "equals", "value", status);
+        for (var children : List.of(List.of(incomplete, known), List.of(known, incomplete))) {
+            assertEquals(expected, evaluateFingerprint(Map.of(mode, children),
+                    Map.of("evidence", Map.of("statusCode", 200, "body", "prefix", "truncated", true))).get("status"));
+        }
     }
 
     @Test
@@ -218,6 +262,8 @@ class NetworkProbeAnalysisServiceTest {
         service.enrich("multi", page);
         assertEquals("MATCHED", firstMatch(page).get("status"));
         assertEquals(2, firstMatch(page).get("evidenceCount"));
+        assertEquals(List.of(0, 1), firstMatch(page).get("requestIndices"));
+        assertEquals(probes.stream().map(probe -> probe.get("probeId")).toList(), firstMatch(page).get("probeIds"));
         service.enrich("multi", page);
         assertEquals(2, firstMatch(page).get("evidenceCount"));
     }
@@ -227,7 +273,13 @@ class NetworkProbeAnalysisServiceTest {
     void sharesReadRequestsAcrossRulesAndKeepsIndependentDecisionsAndEvidence() throws Exception {
         Map<String, Object> a = phaseTwoRule("a", List.of(Map.of("path", "/")), "marker", Map.of());
         Map<String, Object> b = phaseTwoRule("b", List.of(Map.of("path", "/"), Map.of("path", "/extra")), "absent", Map.of());
-        var prepared = service.prepare(Map.of("kind", "fingerprint", "targets", List.of(phaseTwoTarget()), "rules", List.of(a, b), "debug", true));
+        var target = new LinkedHashMap<>(phaseTwoTarget());
+        var prepared = service.prepare(Map.of("kind", "fingerprint", "targets", List.of(target), "rules", List.of(a, b), "debug", true));
+        var snapshot = prepared.context().groups().get(0).target();
+        assertSame(snapshot, prepared.context().groups().get(1).target());
+        target.put("host", "changed");
+        assertEquals("127.0.0.1", snapshot.get("host"));
+        assertThrows(UnsupportedOperationException.class, () -> snapshot.put("host", "changed"));
         var probes = (List<Map<String, Object>>) prepared.plan().get("targets");
         assertEquals(2, probes.size());
         service.register("shared", prepared);
@@ -253,15 +305,18 @@ class NetworkProbeAnalysisServiceTest {
         assertEquals(2, ((Map<?, ?>) ((Map<?, ?>) page.get("result")).get("analysis")).get("completed"));
     }
 
-    @Test
-    void doesNotShareRequestsWithDifferentSemanticsOrWrites() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"2000,3000", "5000,5000"})
+    void doesNotShareRequestsWithDifferentSemanticsOrWrites(int timeout, int timeoutLimit) throws Exception {
         List<Map<String, Object>> requests = List.of(Map.of(), Map.of("headers", Map.of("X-Tenant", "a")),
                 Map.of("headers", Map.of("X-Tenant", "b")), Map.of("body", "a"), Map.of("body", "b"),
-                Map.of("timeout", 2000), Map.of("maxBodyBytes", 256), Map.of("charset", "ISO-8859-1"),
+                Map.of("timeout", timeout), Map.of("maxBodyBytes", 256), Map.of("charset", "ISO-8859-1"),
                 Map.of("method", "POST"), Map.of("method", "POST"));
         var prepared = service.prepare(Map.of("kind", "fingerprint", "targets", List.of(phaseTwoTarget()),
                 "rules", List.of(phaseTwoRule("distinct", requests, "marker", Map.of()))));
         assertEquals(10, ((List<?>) prepared.plan().get("targets")).size());
+        assertEquals(timeoutLimit, ((Map<?, ?>) prepared.plan().get("limits")).get("timeout"));
+        assertEquals(NetworkProbeLimits.NODE_MAX_READ_BYTES, ((Map<?, ?>) prepared.plan().get("limits")).get("maxReadBytes"));
     }
 
     @Test
@@ -272,6 +327,9 @@ class NetworkProbeAnalysisServiceTest {
                 Map.of("headers", "Server: nginx/1.26.2\r\n", "version", "1.26.2", "status", "EXTRACTED"),
                 Map.of("headers", "Server: nginx/1.26", "truncated", true, "status", "INCONCLUSIVE"),
                 Map.of("headers", "Server: nginx/1.26 ", "truncated", true, "version", "1.26", "status", "EXTRACTED"),
+                Map.of("headers", "Server: nginx/" + "1".repeat(64) + "\r\n", "version", "1".repeat(64), "status", "EXTRACTED"),
+                Map.of("headers", "Server: nginx/" + "1".repeat(65) + "\r\n", "status", "NOT_FOUND"),
+                Map.of("headers", "Server: nginx/invalid; nginx/1.26.2\r\n", "version", "1.26.2", "status", "EXTRACTED"),
                 Map.of("headers", "Server: nginx", "status", "NOT_FOUND"))) {
             var prepared = service.prepare(Map.of("kind", "fingerprint", "targets", List.of(phaseTwoTarget()),
                     "rules", List.of(phaseTwoRule("version", List.of(Map.of()), "marker", extractor))));

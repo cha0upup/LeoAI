@@ -33,47 +33,53 @@ class NetworkProbeBoundaryTest {
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
-    void pendingResultLimitStopsTaskAndPreservesPollableSnapshot(boolean payload) throws Exception {
+    void pendingResultsBackpressureKeepsQueriesAndStopAvailable(boolean payload) throws Exception {
         Object component = component("NetworkProbeComponent", payload);
         Map<String, Object> task = task();
-        Map<String, Object> observation = Map.of("state", "open");
         registry(component).put("boundary", task);
         try {
-            for (int i = 0; i <= 4096; i++) add(component, task, observation);
-            assertEquals(4096, ((List<?>) task.get("observations")).size());
-            assertEquals("STOPPED", task.get("status"));
-            assertEquals("CANCELLED", task.get("outcome"));
-            assertFalse(task.containsKey("targets"));
-            assertFalse(task.containsKey("plan"));
+            for (int i = 0; i < 3072; i++) add(component, task, Map.of("state", "open"));
+            assertFalse(add(component, task, Map.of("state", "open")));
             Map<?, ?> snapshot = query(component);
-            assertEquals(true, snapshot.get("truncated"));
-            assertNotNull(snapshot.get("truncateReason"));
-            assertFalse(((List<?>) snapshot.get("observations")).isEmpty());
-            assertEquals("RESULT_LIMIT", ((Map<?, ?>) ((List<?>) snapshot.get("errors")).get(0)).get("errorCode"));
+            assertEquals("RUNNING", snapshot.get("status"));
+            assertEquals(true, snapshot.get("backpressured"));
+            assertEquals(3072, snapshot.get("pendingItems"));
+            assertFalse(snapshot.containsKey("truncated"));
+            call(component, "finishTask", new Class[]{Map.class, boolean.class}, task, true);
+            assertEquals(3072, ((List<?>) task.get("observations")).size());
             call(component, "releaseTask", new Class[]{String.class}, "boundary");
             assertFalse(registry(component).containsKey("boundary"));
-        } finally { registry(component).remove("boundary"); }
+        } finally { stop(component, task); registry(component).remove("boundary"); }
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
-    void acknowledgementsReleaseBudgetAndKeepCursorMonotonic(boolean payload) throws Exception {
+    void acknowledgementsReleaseBytePressureAndKeepCursorMonotonic(boolean payload) throws Exception {
         Object component = component("NetworkProbeComponent", payload);
         Map<String, Object> task = task();
         registry(component).put("boundary", task);
-        Map<String, Object> large = Map.of("state", "open", "evidence", "x".repeat(2 * 1024 * 1024));
         try {
-            add(component, task, large);
+            add(component, task, Map.of("state", "open", "evidence", "x".repeat(2 * 1024 * 1024)));
+            add(component, task, Map.of("state", "open", "evidence", "x".repeat(1024 * 1024)));
+            assertEquals(true, query(component).get("backpressured"));
+            assertFalse(add(component, task, Map.of("state", "open")));
             prepare(component, Map.of());
             call(component, "ackTask", new Class[]{String.class, long.class}, "boundary", 1L);
-            assertEquals(0L, task.get("retainedChars"));
-            add(component, task, large);
+            assertTrue(add(component, task, Map.of("state", "open")));
+            assertEquals(false, query(component).get("backpressured"));
             assertEquals("RUNNING", task.get("status"));
-            assertEquals(2L, query(component).get("nextCursor"));
-            add(component, task, large);
-            assertEquals("STOPPED", task.get("status"));
-            assertEquals(1, ((List<?>) task.get("observations")).size());
+            call(component, "ackTask", new Class[]{String.class, long.class}, "boundary", 3L);
+            assertEquals(0L, task.get("retainedBytes"));
+            assertEquals(3L, query(component).get("nextCursor"));
+            call(component, "ackTask", new Class[]{String.class, long.class}, "boundary", 1L);
+            assertEquals(3L, query(component).get("nextCursor"));
+            add(component, task, Map.of("evidence", "x".repeat(4 * 1024 * 1024)));
+            assertEquals("STOPPED", task.get("status")); // A single oversized row fails rather than waiting forever.
             assertEquals(true, query(component).get("truncated"));
-        } finally { registry(component).remove("boundary"); }
+        } finally { stop(component, task); registry(component).remove("boundary"); }
+    }
+
+    private void stop(Object component, Map<String, Object> task) throws Exception {
+        call(component, "finishTask", new Class[]{Map.class, boolean.class}, task, true);
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
@@ -112,8 +118,11 @@ class NetworkProbeBoundaryTest {
         return (Map<?, ?>) result.get("result");
     }
 
-    private void add(Object component, Map<String, Object> task, Map<String, Object> observation) throws Exception {
-        call(component, "addObservation", new Class[]{Map.class, Map.class}, task, observation);
+    private boolean add(Object component, Map<String, Object> task, Map<String, Object> observation) throws Exception {
+        Object size = call(component, "observationSize", new Class[]{Map.class}, observation);
+        synchronized (task) {
+            return (Boolean) call(component, "offerObservation", new Class[]{Map.class, Map.class, long[].class}, task, observation, size);
+        }
     }
 
     @SuppressWarnings("unchecked")

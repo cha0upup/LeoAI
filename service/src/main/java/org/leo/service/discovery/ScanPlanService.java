@@ -5,6 +5,7 @@ import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -90,17 +91,18 @@ public class ScanPlanService {
         Map<EndpointKey, Map<String, Object>> endpoints = new LinkedHashMap<>();
         Set<Integer> ports = new LinkedHashSet<>();
         for (ResolvedTarget target : scanPorts ? resolved : List.<ResolvedTarget>of()) {
+            boolean isUrl = "url".equalsIgnoreCase(target.source());
+            Map<String, Object> application = isUrl
+                    ? Map.of("baseUrl", target.rawTarget()) : Map.of("hostname", target.host());
             for (Integer port : target.port() == null ? policyPorts : List.of(target.port())) {
                 EndpointKey key = new EndpointKey(target.ip(), port);
                 Map<String, Object> endpoint = endpoints.computeIfAbsent(key,
                         ignored -> new LinkedHashMap<>(endpoint(target.ip(), port)));
-                if ("url".equalsIgnoreCase(target.source())) endpoint.putIfAbsent("baseUrl", target.rawTarget());
+                if (isUrl) endpoint.putIfAbsent("baseUrl", target.rawTarget());
                 // Retain applications for future supplemental scans even without fingerprinting.
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> applications = (List<Map<String, Object>>) endpoint.computeIfAbsent(
                         "applications", ignored -> new ArrayList<>());
-                Map<String, Object> application = "url".equalsIgnoreCase(target.source())
-                        ? Map.of("baseUrl", target.rawTarget()) : Map.of("hostname", target.host());
                 if (!applications.contains(application)) applications.add(application);
                 ports.add(port);
             }
@@ -109,8 +111,7 @@ public class ScanPlanService {
             throw new IllegalArgumentException("扫描目标展开后为空");
         }
         return new ScanPlan(scan.name() == null ? "" : scan.name().trim(), scan.targets().items().size(),
-                new ArrayList<>(explicitByHost.keySet()), new ArrayList<>(ports),
-                new ArrayList<>(endpoints.values()), reachability, workers, timeout, stages, fingerprintRules);
+                explicitByHost.keySet(), ports, endpoints.values(), reachability, workers, timeout, stages, fingerprintRules);
     }
 
     private static void addSample(Set<Integer> probes, List<Integer> candidates) {
@@ -145,8 +146,8 @@ public class ScanPlanService {
         private final List<ScanStage> stages;
         private final List<Map<String, Object>> fingerprintRules;
 
-        private ScanPlan(String name, int originalCount, List<String> hosts, List<Integer> ports,
-                         List<Map<String, Object>> targets, List<Map<String, Object>> reachabilityTargets,
+        private ScanPlan(String name, int originalCount, Collection<String> hosts, Collection<Integer> ports,
+                         Collection<Map<String, Object>> targets, List<Map<String, Object>> reachabilityTargets,
                          int workers, int timeoutMs, List<ScanStage> stages, List<Map<String, Object>> fingerprintRules) {
             this.name = name;
             this.originalCount = originalCount;
@@ -171,20 +172,18 @@ public class ScanPlanService {
         public List<ScanStage> stages() { return stages; }
         public List<Map<String, Object>> fingerprintRules() { return fingerprintRules; }
 
-        private static List<Map<String, Object>> immutableRows(List<Map<String, Object>> rows) {
-            return rows.stream().map(row -> {
-                Map<String, Object> copy = new LinkedHashMap<>();
-                row.forEach((key, value) -> copy.put(key, immutableValue(value)));
-                return Collections.unmodifiableMap(copy);
-            }).toList();
+        private static List<Map<String, Object>> immutableRows(Collection<Map<String, Object>> rows) {
+            return rows.stream().map(ScanPlan::immutableMap).toList();
+        }
+
+        private static <K> Map<K, Object> immutableMap(Map<K, ?> source) {
+            Map<K, Object> copy = new LinkedHashMap<>();
+            source.forEach((key, value) -> copy.put(key, immutableValue(value)));
+            return Collections.unmodifiableMap(copy);
         }
 
         private static Object immutableValue(Object value) {
-            if (value instanceof Map<?, ?> map) {
-                Map<Object, Object> copy = new LinkedHashMap<>();
-                map.forEach((key, item) -> copy.put(key, immutableValue(item)));
-                return Collections.unmodifiableMap(copy);
-            }
+            if (value instanceof Map<?, ?> map) return immutableMap(map);
             if (value instanceof List<?> list) return list.stream().map(ScanPlan::immutableValue).toList();
             return value;
         }

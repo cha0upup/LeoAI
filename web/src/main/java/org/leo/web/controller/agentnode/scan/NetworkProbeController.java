@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -92,12 +91,7 @@ public class NetworkProbeController {
             ControllerUtil.getAgentNodeSession(sessionId);
             Map<String, Object> live = workflowService.querySummaryIfPresent(sessionId, taskId);
             if (!live.isEmpty()) {
-                Map<String, Object> persisted = resultStore.summaryCounts(sessionId, taskId);
-                if (!persisted.isEmpty()) {
-                    for (String key : List.of("openCount", "serviceCount", "errorCount", "fingerprintCount", "identifiedApplicationCount")) {
-                        if (persisted.get(key) != null) live.put(key, persisted.get(key));
-                    }
-                }
+                live.putAll(resultStore.summaryCounts(sessionId, taskId));
                 return ApiResponse.success(live);
             }
             Map<String, Object> persisted = resultStore.summary(sessionId, taskId);
@@ -132,7 +126,7 @@ public class NetworkProbeController {
         try {
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId").trim();
             ControllerUtil.getAgentNodeSession(sessionId);
-            return ApiResponse.success(Map.of("tasks", resultStore.list(sessionId)));
+            return ApiResponse.success(resultStore.list(sessionId, params));
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
         }

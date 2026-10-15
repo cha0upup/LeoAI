@@ -1,9 +1,14 @@
 package org.leo.core.component;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.EOFException;
+import java.util.zip.GZIPInputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.Socket;
@@ -29,8 +34,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -53,7 +56,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private static final long MAX_PLAN_CHARS = 2L * 1024L * 1024L;
     private static final int MAX_PENDING_OBSERVATIONS = 4096;
     private static final int MAX_ERRORS = 128;
-    private static final long MAX_RESULT_CHARS = 4L * 1024L * 1024L;
+    private static final long MAX_ERROR_BYTES = 256L * 1024L;
+    private static final long MAX_RESULT_BYTES = 4L * 1024L * 1024L;
+    private static final int RESULT_HIGH_ITEMS = 3072;
+    private static final int RESULT_LOW_ITEMS = 2048;
+    private static final long RESULT_HIGH_BYTES = 3L * 1024L * 1024L;
+    private static final long RESULT_LOW_BYTES = 2L * 1024L * 1024L;
     private static final int WORK_QUEUE_CAPACITY = MAX_TASKS * MAX_THREADS;
     private static final int MAX_READ_BYTES = 8192;
     private static final int MAX_EVIDENCE_CHARS = 4096;
@@ -72,6 +80,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private HashMap params;
     private HashMap results;
     private String taskId;
+    private Map currentTarget, pendingObservation;
+    private long[] pendingSize;
+    private int stageIndex;
+    private boolean queued, running, connected, connectAttempted;
 
     public NetworkProbeComponent() {
     }
@@ -176,7 +188,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         task.put("plan", normalizedPlan);
         task.put("observations", new ArrayList());
         task.put("errors", new ArrayList());
-        task.put("retainedChars", Long.valueOf(0L));
+        task.put("retainedBytes", Long.valueOf(0L));
         task.put("errorCount", Integer.valueOf(0));
         task.put("observationOffset", Integer.valueOf(0));
         task.put("createdAt", Long.valueOf(System.currentTimeMillis()));
@@ -190,9 +202,10 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (normalizedTargets.isEmpty()) finishTask(task, false);
         try {
             int workerCount = Math.min(threads, normalizedTargets.size());
-            for (int i = 0; i < workerCount; i++) {
-                WORK_EXECUTOR.execute(new NetworkProbeComponent(id));
-            }
+            List workers = new ArrayList();
+            for (int i = 0; i < workerCount; i++) workers.add(new NetworkProbeComponent(id));
+            task.put("workers", workers);
+            scheduleWorkers(task);
         } catch (RuntimeException error) {
             finishTask(task, true);
             TASKS.remove(id);
@@ -314,71 +327,107 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return stages;
     }
 
-    // The task itself is the monitor for its state, counters and result buffer.
-    // Each submitted worker claims targets from that task; no second permit pool is needed.
+    // One runnable turn performs at most one atomic probe. Paused/backpressured
+    // workers keep their target/stage cursor but return the physical pool thread.
     private void runWorker() {
         Map task = (Map) TASKS.get(taskId);
         if (task == null) return;
-        List targets = (List) task.get("targets");
-        Map plan = (Map) task.get("plan");
-        while (true) {
-            Map currentTarget;
-            synchronized (task) {
-                if (!waitIfRunning(task)) return;
-                int index = intValue(task.get("nextIndex"), 0);
-                if (index >= targets.size()) return;
-                task.put("nextIndex", Integer.valueOf(index + 1));
-                currentTarget = (Map) targets.get(index);
-            }
-            try {
-                probeTarget(task, currentTarget, plan);
-            } catch (Exception error) {
-                addError(task, targetKey(currentTarget), "WORKER", errorCode(error), messageOf(error));
-            } finally {
+        synchronized (task) {
+            queued = false;
+            if (!runnable(task)) return;
+            running = true;
+        }
+        try {
+            if (pendingObservation != null) {
                 synchronized (task) {
-                    if (!"STOPPED".equals(task.get("status"))) {
-                        int count = intValue(task.get("completed"), 0) + 1;
-                        task.put("completed", Integer.valueOf(count));
-                        if (count >= intValue(task.get("total"), 0)) finishTask(task, false);
+                    if (!offerObservation(task, pendingObservation, pendingSize)) return;
+                }
+                pendingObservation = null; pendingSize = null; stageIndex++;
+            } else {
+                Map plan;
+                synchronized (task) {
+                    if (currentTarget == null) {
+                        List targets = (List) task.get("targets");
+                        int index = intValue(task.get("nextIndex"), 0);
+                        if (targets == null || index >= targets.size()) return;
+                        currentTarget = (Map) targets.get(index); task.put("nextIndex", Integer.valueOf(index + 1));
+                        stageIndex = 0; connected = false; connectAttempted = false;
                     }
+                    plan = (Map) task.get("plan");
+                }
+                List stages = targetStages(plan);
+                String stage = String.valueOf(stages.get(stageIndex));
+                int timeout = intValue(currentTarget.get("timeout"), intValue(plan.get("timeout"), 3000));
+                int maxRead = intValue(currentTarget.get("maxReadBytes"), intValue(plan.get("maxReadBytes"), MAX_READ_BYTES));
+                if ("tcp-connect".equals(stage)) {
+                    connectAttempted = true; pendingObservation = probeTcp(task, currentTarget, stage, timeout, maxRead);
+                    connected = "open".equals(pendingObservation.get("state"));
+                } else if ("tcp-exchange".equals(stage)) {
+                    if (!connectAttempted || connected) pendingObservation = probeTcp(task, currentTarget, stage, timeout, maxRead);
+                } else if ("http-head".equals(stage) || "http-request".equals(stage)) {
+                    pendingObservation = probeHttp(task, currentTarget, stage, timeout, maxRead);
+                } else pendingObservation = baseObservation(currentTarget, stage, "error", System.currentTimeMillis(),
+                        "UNSUPPORTED", "unsupported probe stage", null);
+                if (pendingObservation != null) {
+                    pendingSize = observationSize(pendingObservation);
+                    synchronized (task) { if (!offerObservation(task, pendingObservation, pendingSize)) return; }
+                    pendingObservation = null; pendingSize = null;
+                }
+                stageIndex++;
+            }
+            synchronized (task) {
+                if (!"STOPPED".equals(task.get("status")) && stageIndex >= targetStages((Map) task.get("plan")).size()) {
+                    currentTarget = null;
+                    int completed = intValue(task.get("completed"), 0) + 1;
+                    task.put("completed", Integer.valueOf(completed));
+                    if (completed >= intValue(task.get("total"), 0)) finishTask(task, false);
                 }
             }
-        }
-    }
-
-    private void probeTarget(Map task, Map target, Map plan) {
-        List stages = (List) plan.get("stages");
-        String targetStage = stringValue(target.get("stage"));
-        if (targetStage.length() > 0) stages = Collections.singletonList(targetStage);
-        int timeout = intValue(target.get("timeout"), intValue(plan.get("timeout"), 3000));
-        int maxRead = intValue(target.get("maxReadBytes"), intValue(plan.get("maxReadBytes"), MAX_READ_BYTES));
-        boolean connected = false;
-        boolean connectAttempted = false;
-        for (int i = 0; i < stages.size(); i++) {
-            if (!waitIfRunning(task)) return;
-            String stage = String.valueOf(stages.get(i));
-            if ("tcp-connect".equals(stage)) {
-                connectAttempted = true;
-                Map observation = probeTcp(target, stage, timeout, maxRead);
-                connected = "open".equals(observation.get("state"));
-                addObservation(task, observation);
-            } else if ("tcp-exchange".equals(stage)) {
-                if (!connectAttempted || connected) addObservation(task, probeTcp(target, stage, timeout, maxRead));
-            } else if ("http-head".equals(stage) || "http-request".equals(stage)) {
-                addObservation(task, probeHttp(target, stage, timeout, maxRead));
-            } else {
-                addObservation(task, baseObservation(target, stage, "error", System.currentTimeMillis(),
-                        "UNSUPPORTED", "unsupported probe stage", null));
+        } catch (Exception error) {
+            addError(task, currentTarget == null ? "" : targetKey(currentTarget), "WORKER", errorCode(error), messageOf(error));
+            finishTask(task, true);
+        } finally {
+            synchronized (task) {
+                running = false;
+                if ("STOPPED".equals(task.get("status"))) { currentTarget = null; pendingObservation = null; pendingSize = null; }
+                else scheduleWorker(task, this);
             }
         }
     }
 
-    private Map probeTcp(Map target, String stage, int timeout, int maxRead) {
+    private List targetStages(Map plan) {
+        String stage = stringValue(currentTarget.get("stage"));
+        return stage.length() > 0 ? Collections.singletonList(stage) : (List) plan.get("stages");
+    }
+
+    private boolean runnable(Map task) {
+        return "RUNNING".equals(task.get("status")) && !Boolean.TRUE.equals(task.get("backpressured"));
+    }
+
+    private void scheduleWorkers(Map task) {
+        synchronized (task) {
+            List workers = (List) task.get("workers");
+            if (workers == null) return;
+            for (Object worker : workers) scheduleWorker(task, (NetworkProbeComponent) worker);
+        }
+    }
+
+    // Caller owns the task monitor. The executor never runs rejected work inline.
+    private void scheduleWorker(Map task, NetworkProbeComponent worker) {
+        if (!runnable(task) || worker.queued || worker.running) return;
+        if (worker.currentTarget == null && intValue(task.get("nextIndex"), 0) >= intValue(task.get("total"), 0)) return;
+        worker.queued = true;
+        try { WORK_EXECUTOR.execute(worker); }
+        catch (RuntimeException error) { worker.queued = false; finishTask(task, true); throw error; }
+    }
+
+    private Map probeTcp(Map task, Map target, String stage, int timeout, int maxRead) {
         long started = System.currentTimeMillis();
         boolean exchange = "tcp-exchange".equals(stage);
         Socket socket = null;
         try {
             socket = new Socket(Proxy.NO_PROXY);
+            trackSocket(task, socket);
             socket.connect(new InetSocketAddress(String.valueOf(target.get("host")), intValue(target.get("port"), -1)), timeout);
             if (!exchange) return baseObservation(target, stage, "open", started, null, null, null);
             socket.setSoTimeout(timeout);
@@ -398,116 +447,231 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                     errorCode(error), messageOf(error), null);
         } finally {
             // Closing a socket also closes both of its streams.
-            closeQuietly(socket);
+            releaseSocket(task, socket);
         }
     }
 
-    private Map probeHttp(Map target, String stage, int timeout, int maxRead) {
+    private Map probeHttp(Map task, Map target, String stage, int timeout, int maxRead) {
         long started = System.currentTimeMillis();
-        HttpURLConnection connection = null;
-        InputStream input = null;
-        OutputStream output = null;
+        Socket socket = null;
+        Socket transport = null;
         try {
-            Map request = null;
-            if ("http-request".equals(stage)) {
-                request = asMap(target.get("httpRequest"));
-                if (request == null) throw new IllegalArgumentException("httpRequest is required");
+            Map request = "http-request".equals(stage) ? asMap(target.get("httpRequest")) : null;
+            if ("http-request".equals(stage) && request == null) throw new IllegalArgumentException("httpRequest is required");
+            String base = stringValue(target.get("baseUrl"));
+            if (base.length() == 0) base = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https" : "http") + "://"
+                    + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
+            URL url = new URL(request == null ? base : buildProbeUrl(base, stringValue(request.get("path"))));
+            if (!"http".equals(url.getProtocol()) && !"https".equals(url.getProtocol()))
+                throw new IllegalArgumentException("unsupported HTTP protocol");
+            transport = new Socket(Proxy.NO_PROXY);
+            trackSocket(task, transport);
+            transport.connect(new InetSocketAddress(stringValue(target.get("host")), intValue(target.get("port"), -1)), timeout);
+            socket = transport;
+            socket.setSoTimeout(timeout);
+            if ("https".equals(url.getProtocol())) {
+                // Dial the planned IP, but keep the application hostname for TLS peer identity/SNI.
+                socket = trustAllFactory().createSocket(transport, url.getHost(), intValue(target.get("port"), -1), true);
+                trackSocket(task, socket);
+                socket.setSoTimeout(timeout);
+                ((javax.net.ssl.SSLSocket) socket).startHandshake();
             }
-            String baseUrl = stringValue(target.get("baseUrl"));
-            if (baseUrl.length() == 0) {
-                baseUrl = ("https".equalsIgnoreCase(stringValue(target.get("protocol"))) ? "https://" : "http://")
-                        + hostForUrl(stringValue(target.get("host"))) + ":" + target.get("port") + "/";
-            }
-            String url = request == null ? baseUrl : buildProbeUrl(baseUrl, stringValue(request.get("path")));
-            connection = openHttpConnection(url, timeout);
-            // http-head retains its wire name; GET supplies the page title.
             String method = request == null ? "GET" : stringValue(request.get("method"));
             if (method.length() == 0) method = "GET";
-            connection.setRequestMethod(method);
-            Map headers = asMap((request == null ? target : request).get("headers"));
-            if (headers != null) {
-                Iterator iterator = headers.keySet().iterator();
-                while (iterator.hasNext()) {
-                    Object key = iterator.next();
-                    Object value = headers.get(key);
-                    if (key != null && value != null) connection.setRequestProperty(String.valueOf(key), String.valueOf(value));
-                }
-            }
+            if (!method.matches("[A-Z]{1,16}")) throw new IllegalArgumentException("invalid HTTP method");
             String charset = request == null ? "UTF-8" : stringValue(request.get("charset"));
             if (charset.length() == 0) charset = "UTF-8";
-            String body = request == null ? "" : rawString(request.get("body"));
-            if (body.length() > 0 && ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method))) {
-                connection.setDoOutput(true);
-                byte[] bytes = body.getBytes(charset);
-                connection.setFixedLengthStreamingMode(bytes.length);
-                output = connection.getOutputStream();
-                output.write(bytes);
-                output.flush();
+            byte[] body = request == null ? new byte[0] : rawString(request.get("body")).getBytes(charset);
+            String path = url.getFile().length() == 0 ? "/" : url.getFile();
+            if (path.indexOf('\r') >= 0 || path.indexOf('\n') >= 0 || path.indexOf(' ') >= 0)
+                throw new IllegalArgumentException("invalid HTTP path");
+            Map headers = asMap((request == null ? target : request).get("headers"));
+            StringBuilder wire = new StringBuilder(method).append(' ').append(path).append(" HTTP/1.1\r\n");
+            boolean hostSet = false, encodingSet = false;
+            if (headers != null) for (Object key : headers.keySet()) {
+                String name = String.valueOf(key), value = String.valueOf(headers.get(key));
+                if (!name.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]+") || value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0)
+                    throw new IllegalArgumentException("invalid HTTP header");
+                if ("Connection".equalsIgnoreCase(name) || "Content-Length".equalsIgnoreCase(name)
+                        || "Transfer-Encoding".equalsIgnoreCase(name)) continue;
+                if ("Host".equalsIgnoreCase(name)) hostSet = true;
+                if ("Accept-Encoding".equalsIgnoreCase(name)) encodingSet = true;
+                wire.append(name).append(": ").append(value).append("\r\n");
             }
-            int status = connection.getResponseCode();
-            input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            byte[] bytes = input == null ? new byte[0] : readBytes(input, maxRead, false);
-            Map evidence = request == null ? httpSummary(connection, bytes, maxRead)
-                    : httpResponse(connection, bytes, charset, maxRead);
+            if (!hostSet) wire.append("Host: ").append(hostForUrl(url.getHost())).append(':').append(target.get("port")).append("\r\n");
+            if (!encodingSet) wire.append("Accept-Encoding: identity\r\n");
+            wire.append("Connection: close\r\n");
+            if (body.length > 0) wire.append("Content-Length: ").append(body.length).append("\r\n");
+            wire.append("\r\n");
+            if (wire.length() > MAX_READ_BYTES) throw new IllegalArgumentException("HTTP request headers exceed limit");
+            OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 2048);
+            output.write(wire.toString().getBytes("ISO-8859-1"));
+            output.write(body);
+            output.flush();
+            InputStream input = new BufferedInputStream(socket.getInputStream(), 2048);
+            Map responseHeaders;
+            String responseHeaderText;
+            int status, interim = 0, headerBytes = 0;
+            do {
+                String head = readHttpHeaders(input);
+                headerBytes += head.length();
+                if (headerBytes > MAX_READ_BYTES) throw new IOException("HTTP response headers exceed limit");
+                responseHeaderText = head.substring(0, head.length() - 4);
+                String[] lines = head.split("\r\n");
+                if (!lines[0].matches("HTTP/1\\.[01] [0-9]{3}( .*)?")) throw new IOException("invalid HTTP status line");
+                status = Integer.parseInt(lines[0].substring(9, 12));
+                responseHeaders = new HashMap();
+                for (int i = 1; i < lines.length; i++) {
+                    int colon = lines[i].indexOf(':');
+                    if (colon <= 0) throw new IOException("invalid HTTP response header");
+                    String name = lines[i].substring(0, colon).toLowerCase(Locale.ENGLISH);
+                    if (!name.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]+")) throw new IOException("invalid HTTP response header name");
+                    List values = (List) responseHeaders.get(name);
+                    if (values == null) { values = new ArrayList(); responseHeaders.put(name, values); }
+                    values.add(lines[i].substring(colon + 1).trim());
+                }
+                if (++interim > 8) throw new IOException("too many interim HTTP responses");
+            } while (status >= 100 && status < 200 && status != 101);
+            boolean hasBody = !"HEAD".equals(method) && status >= 200 && status != 204 && status != 304;
+            Object[] prefix = hasBody ? readHttpBody(input, responseHeaders, maxRead)
+                    : new Object[]{new byte[0], Boolean.FALSE};
+            byte[] bytes = (byte[]) prefix[0];
+            boolean truncated = Boolean.TRUE.equals(prefix[1]);
+            if (hasBody && "gzip".equalsIgnoreCase(header(responseHeaders, "content-encoding"))) {
+                GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(bytes));
+                try { bytes = readPrefix(gzip, maxRead + 1, false, truncated); }
+                finally { gzip.close(); }
+                truncated |= bytes.length > maxRead;
+                if (bytes.length > maxRead) bytes = java.util.Arrays.copyOf(bytes, maxRead);
+            } else if (hasBody && header(responseHeaders, "content-encoding").length() > 0
+                    && !"identity".equalsIgnoreCase(header(responseHeaders, "content-encoding"))) {
+                bytes = new byte[0]; truncated = true;
+            }
+            HashMap evidence = new HashMap();
             evidence.put("statusCode", Integer.valueOf(status));
             evidence.put("bodyLength", Integer.valueOf(bytes.length));
+            evidence.put("truncated", Boolean.valueOf(truncated));
+            if (request == null) {
+                long size = longValue(header(responseHeaders, "content-length"), bytes.length);
+                evidence.put("responseSize", Long.valueOf(size));
+                addHeader(evidence, "server", header(responseHeaders, "server"), maxRead);
+                addHeader(evidence, "location", header(responseHeaders, "location"), maxRead);
+                addHeader(evidence, "contentType", header(responseHeaders, "content-type"), maxRead);
+                String title = extractTitle(decodeHttpBody(bytes, header(responseHeaders, "content-type")));
+                if (title.length() > 0) evidence.put("title", title);
+            } else {
+                evidence.put("body", new String(bytes, charset));
+                Map fields = new HashMap();
+                for (Object key : responseHeaders.keySet()) {
+                    StringBuilder value = new StringBuilder();
+                    for (Object item : (List) responseHeaders.get(key)) {
+                        if (value.length() > 0) value.append(", ");
+                        value.append(item);
+                    }
+                    fields.put(key, value.toString());
+                }
+                evidence.put("headers", responseHeaderText);
+                evidence.put("headersTruncated", Boolean.FALSE);
+                evidence.put("responseHeaders", fields);
+            }
             return baseObservation(target, stage, "open", started, null, null, evidence);
         } catch (Throwable error) {
             return baseObservation(target, stage, "error", started, errorCode(error), messageOf(error), null);
         } finally {
-            closeQuietly(output);
-            closeQuietly(input);
-            if (connection != null) connection.disconnect();
+            // Close the transport first so TLS shutdown never waits on a stopped task's peer.
+            releaseSocket(task, transport);
+            if (socket != transport) releaseSocket(task, socket);
         }
     }
 
-    private Map httpSummary(HttpURLConnection connection, byte[] bytes, int maxRead) {
-        HashMap evidence = new HashMap();
-        int contentLength = connection.getContentLength();
-        evidence.put("responseSize", Integer.valueOf(contentLength >= 0 ? contentLength : bytes.length));
-        String contentType = connection.getHeaderField("Content-Type");
-        addHeader(evidence, "server", connection.getHeaderField("Server"), maxRead);
-        addHeader(evidence, "location", connection.getHeaderField("Location"), maxRead);
-        addHeader(evidence, "contentType", contentType, maxRead);
-        String title = extractTitle(decodeHttpBody(bytes, contentType));
-        if (title.length() > 0) evidence.put("title", title);
-        return evidence;
+    private static String header(Map headers, String name) {
+        List values = (List) headers.get(name);
+        return values == null || values.isEmpty() ? "" : String.valueOf(values.get(0));
     }
 
-    private Map httpResponse(HttpURLConnection connection, byte[] bytes, String charset, int maxRead)
-            throws Exception {
-        HashMap evidence = new HashMap();
-        // The read byte limit already bounds this text. Do not silently cut it
-        // to the shorter banner limit: rule matching needs the complete prefix.
-        evidence.put("body", new String(bytes, charset));
-        evidence.put("truncated", Boolean.valueOf(bytes.length >= maxRead));
-        Map responseHeaders = new HashMap();
-        boolean headersTruncated = false;
-        StringBuilder headerText = new StringBuilder();
-        Map fields = connection.getHeaderFields();
-        if (fields != null) {
-            Iterator iterator = fields.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Map.Entry entry = (Map.Entry) iterator.next();
-                String name = stringValue(entry.getKey());
-                Object value = entry.getValue();
-                if (name.length() == 0 || value == null) continue;
-                String original = String.valueOf(value);
-                String safe = sanitize(original);
-                if (original.length() > MAX_EVIDENCE_CHARS) headersTruncated = true;
-                if (headerText.length() + name.length() + safe.length() + 4 > maxRead) {
-                    headersTruncated = true;
+    private static String readHttpHeaders(InputStream input) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        int end = 0;
+        while (buffer.size() < MAX_READ_BYTES) {
+            int value = input.read();
+            if (value < 0) throw new EOFException("incomplete HTTP response headers");
+            buffer.write(value);
+            end = (end << 8) | value;
+            if (end == 0x0d0a0d0a) return new String(buffer.toByteArray(), "ISO-8859-1");
+        }
+        throw new IOException("HTTP response headers exceed limit");
+    }
+
+    private static byte[] readPrefix(InputStream input, int size, boolean exact) throws IOException {
+        return readPrefix(input, size, exact, false);
+    }
+
+    private static byte[] readPrefix(InputStream input, int size, boolean exact, boolean truncatedInput) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[2048];
+        while (output.size() < size) {
+            int count;
+            try { count = input.read(buffer, 0, Math.min(buffer.length, size - output.size())); }
+            catch (EOFException error) {
+                if (!truncatedInput) throw error;
+                break;
+            }
+            if (count < 0) { if (exact) throw new EOFException("incomplete HTTP response body"); break; }
+            if (count > 0) output.write(buffer, 0, count);
+        }
+        return output.toByteArray();
+    }
+
+    private static Object[] readHttpBody(InputStream input, Map headers, int limit) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        String transfer = header(headers, "transfer-encoding");
+        if (transfer.length() > 0 && !"chunked".equalsIgnoreCase(transfer))
+            throw new IOException("unsupported HTTP transfer encoding");
+        if ("chunked".equalsIgnoreCase(header(headers, "transfer-encoding"))) {
+            while (true) {
+                String line = readHttpLine(input);
+                int extension = line.indexOf(';');
+                String hex = extension < 0 ? line : line.substring(0, extension);
+                if (!hex.matches("[0-9a-fA-F]{1,15}")) throw new IOException("invalid HTTP chunk size");
+                long chunk = Long.parseLong(hex, 16);
+                if (chunk == 0) {
+                    int trailerBytes = 0;
+                    while ((line = readHttpLine(input)).length() > 0) {
+                        trailerBytes += line.length() + 2;
+                        if (trailerBytes > MAX_READ_BYTES) throw new IOException("HTTP trailers exceed limit");
+                    }
                     break;
                 }
-                responseHeaders.put(name, safe);
-                if (headerText.length() > 0) headerText.append("\\n");
-                headerText.append(name).append(": ").append(safe);
+                int read = (int) Math.min(chunk, limit + 1 - output.size());
+                output.write(readPrefix(input, read, true));
+                if (output.size() > limit) break;
+                if (input.read() != '\r' || input.read() != '\n') throw new IOException("invalid HTTP chunk terminator");
             }
+        } else {
+            String length = header(headers, "content-length");
+            if (length.length() > 0 && !length.matches("[0-9]+")) throw new IOException("invalid HTTP content length");
+            long size = length.length() == 0 ? -1L : longValue(length, -2L);
+            if (size < -1L) throw new IOException("invalid HTTP content length");
+            output.write(readPrefix(input, (int) (size < 0 ? limit + 1 : Math.min(size, limit + 1)), size >= 0));
         }
-        evidence.put("headers", headerText.toString());
-        evidence.put("headersTruncated", Boolean.valueOf(headersTruncated));
-        evidence.put("responseHeaders", responseHeaders);
-        return evidence;
+        byte[] bytes = output.toByteArray();
+        boolean truncated = bytes.length > limit;
+        if (truncated) bytes = java.util.Arrays.copyOf(bytes, limit);
+        return new Object[]{bytes, Boolean.valueOf(truncated)};
+    }
+
+    private static String readHttpLine(InputStream input) throws IOException {
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        while (line.size() < MAX_READ_BYTES) {
+            int value = input.read();
+            if (value < 0) throw new EOFException("incomplete HTTP chunk line");
+            if (value == '\r') {
+                if (input.read() != '\n') throw new IOException("invalid HTTP line ending");
+                return new String(line.toByteArray(), "ISO-8859-1");
+            }
+            line.write(value);
+        }
+        throw new IOException("HTTP chunk line exceeds limit");
     }
 
     private static String decodeHttpBody(byte[] bytes, String contentType) {
@@ -518,6 +682,8 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         int marker = lower.indexOf("charset=");
         if (marker >= 0) {
             int start = marker + 8;
+            while (start < value.length() && (value.charAt(start) == ' ' || value.charAt(start) == '\t'
+                    || value.charAt(start) == '\"' || value.charAt(start) == '\'')) start++;
             int end = start;
             while (end < value.length()) {
                 char ch = value.charAt(end);
@@ -547,21 +713,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 .replaceAll("\\s+", " ").trim();
         title = sanitize(title);
         return title.length() > MAX_TITLE_CHARS ? title.substring(0, MAX_TITLE_CHARS) : title;
-    }
-
-    private HttpURLConnection openHttpConnection(String url, int timeout) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
-        connection.setConnectTimeout(timeout);
-        connection.setReadTimeout(timeout);
-        connection.setUseCaches(false);
-        connection.setInstanceFollowRedirects(false);
-        if (connection instanceof HttpsURLConnection) {
-            HttpsURLConnection https = (HttpsURLConnection) connection;
-            https.setSSLSocketFactory(trustAllFactory());
-            https.setHostnameVerifier((HostnameVerifier) java.lang.reflect.Proxy.newProxyInstance(
-                    Thread.currentThread().getContextClassLoader(), new Class[]{HostnameVerifier.class}, this));
-        }
-        return connection;
     }
 
     private static String buildProbeUrl(String baseUrl, String path) {
@@ -601,32 +752,25 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (target.get("requestIndex") != null) observation.put("requestIndex", target.get("requestIndex"));
     }
 
-    private void addObservation(Map task, Map observation) {
-        long[] size = observationSize(observation);
-        synchronized (task) {
-            if ("STOPPED".equals(task.get("status"))) return;
-            List observations = (List) task.get("observations");
-            long retained = longValue(task.get("retainedChars"), 0L) + size[0];
-            if (observations.size() >= MAX_PENDING_OBSERVATIONS || retained > MAX_RESULT_CHARS) {
-                task.put("truncated", Boolean.TRUE);
-                task.put("truncateReason", "pending results exceed retention limit");
-                finishTask(task, true);
-                return;
-            }
-            observations.add(observation);
-            List sizes = (List) task.get("observationSizes");
-            if (sizes == null) {
-                sizes = new ArrayList();
-                task.put("observationSizes", sizes);
-            }
-            sizes.add(size);
-            task.put("retainedChars", Long.valueOf(retained));
-            if ("error".equals(observation.get("state"))) {
-                addError(task, stringValue(observation.get("target")),
-                        stringValue(observation.get("stage")), stringValue(observation.get("errorCode")),
-                        stringValue(observation.get("error")));
-            }
+    private boolean offerObservation(Map task, Map observation, long[] size) {
+        if ("STOPPED".equals(task.get("status"))) return false;
+        if (size[0] > MAX_RESULT_BYTES - MAX_ERROR_BYTES) {
+            task.put("truncated", Boolean.TRUE); task.put("truncateReason", "single result exceeds buffer capacity");
+            finishTask(task, true); task.put("outcome", "FAILED"); return false;
         }
+        List observations = (List) task.get("observations");
+        if (Boolean.TRUE.equals(task.get("backpressured")) || observations.size() >= MAX_PENDING_OBSERVATIONS
+                || longValue(task.get("retainedBytes"), 0L) + size[0] > MAX_RESULT_BYTES) {
+            task.put("backpressured", Boolean.TRUE); return false;
+        }
+        observations.add(observation);
+        List sizes = (List) task.get("observationSizes");
+        if (sizes == null) { sizes = new ArrayList(); task.put("observationSizes", sizes); }
+        sizes.add(size);
+        task.put("retainedBytes", Long.valueOf(longValue(task.get("retainedBytes"), 0L) + size[0]));
+        if ("error".equals(observation.get("state"))) addError(task, stringValue(observation.get("target")),
+                stringValue(observation.get("stage")), stringValue(observation.get("errorCode")), stringValue(observation.get("error")));
+        refreshPressure(task); return true;
     }
 
     private void addError(Map task, String target, String stage, String code, String message) {
@@ -639,13 +783,16 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             error.put("error", sanitize(message));
             task.put("errorCount", Integer.valueOf(intValue(task.get("errorCount"), 0) + 1));
             List errors = (List) task.get("errors");
-            long retained = longValue(task.get("retainedChars"), 0L) + estimateChars(error, 0);
-            if (errors.size() >= MAX_ERRORS || retained > MAX_RESULT_CHARS) {
+            long bytes = estimateSize(error, 0, true);
+            long errorBytes = longValue(task.get("errorBytes"), 0L) + bytes;
+            long retained = longValue(task.get("retainedBytes"), 0L) + bytes;
+            if (errors.size() >= MAX_ERRORS || errorBytes > MAX_ERROR_BYTES || retained > MAX_RESULT_BYTES) {
                 task.put("errorsTruncated", Boolean.TRUE);
                 return;
             }
             errors.add(error);
-            task.put("retainedChars", Long.valueOf(retained));
+            task.put("errorBytes", Long.valueOf(errorBytes));
+            task.put("retainedBytes", Long.valueOf(retained));
         }
     }
 
@@ -683,7 +830,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             int index = (int) Math.max(0L, Math.min(cursor - base, (long) observations.size()));
             long bytes = 0L;
             while (index < observations.size() && page.size() < maxItems) {
-                long estimate = ((long[]) sizes.get(index))[includeEvidence ? 1 : 2];
+                long estimate = ((long[]) sizes.get(index))[includeEvidence ? 0 : 1];
                 // 至少返回一项，保证单项超过预算时游标仍能推进。
                 if (!page.isEmpty() && bytes + estimate > maxBytes) break;
                 page.add(observations.get(index));
@@ -714,6 +861,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             if (!includeEvidence) copy.remove("evidence");
             page.set(i, copy);
         }
+        scheduleWorkers(task);
         snapshot.put("observations", page);
         snapshot.put("incremental", Boolean.TRUE);
         results.put("code", Integer.valueOf(200));
@@ -735,6 +883,9 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         snapshot.put("finishedAt", task.get("finishedAt"));
         snapshot.put("errorCount", Integer.valueOf(intValue(task.get("errorCount"), 0)));
         snapshot.put("errorsTruncated", Boolean.valueOf(Boolean.TRUE.equals(task.get("errorsTruncated"))));
+        snapshot.put("backpressured", Boolean.valueOf(Boolean.TRUE.equals(task.get("backpressured"))));
+        snapshot.put("pendingItems", Integer.valueOf(((List) task.get("observations")).size()));
+        snapshot.put("pendingBytes", Long.valueOf(longValue(task.get("retainedBytes"), 0L)));
         if (Boolean.TRUE.equals(task.get("truncated"))) {
             snapshot.put("truncated", Boolean.TRUE);
             snapshot.put("truncateReason", task.get("truncateReason"));
@@ -748,6 +899,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         synchronized (task) {
             results.put("cursor", Long.valueOf(acknowledge(task, cursor)));
         }
+        scheduleWorkers(task);
         results.put("code", Integer.valueOf(200));
     }
 
@@ -759,12 +911,14 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         int remove = (int) (bounded - base);
         if (remove > 0) {
             List sizes = (List) task.get("observationSizes");
-            long retained = longValue(task.get("retainedChars"), 0L);
+            long retained = longValue(task.get("retainedBytes"), 0L);
             for (int i = 0; i < remove; i++) retained -= ((long[]) sizes.get(i))[0];
-            task.put("retainedChars", Long.valueOf(Math.max(0L, retained)));
+            task.put("retainedBytes", Long.valueOf(Math.max(0L, retained)));
             observations.subList(0, remove).clear();
             sizes.subList(0, remove).clear();
             task.put("observationOffset", Integer.valueOf((int) bounded));
+            refreshPressure(task);
+            task.notifyAll();
         }
         return bounded;
     }
@@ -791,6 +945,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             task.put("status", state);
             task.notifyAll();
         }
+        scheduleWorkers(task);
         results.put("code", Integer.valueOf(200));
     }
 
@@ -815,27 +970,47 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         results.put("code", Integer.valueOf(200));
     }
 
-    private boolean waitIfRunning(Map task) {
+    private void refreshPressure(Map task) {
+        int count = ((List) task.get("observations")).size();
+        long bytes = longValue(task.get("retainedBytes"), 0L);
+        if (count >= RESULT_HIGH_ITEMS || bytes >= RESULT_HIGH_BYTES) task.put("backpressured", Boolean.TRUE);
+        else if (count <= RESULT_LOW_ITEMS && bytes <= RESULT_LOW_BYTES) task.put("backpressured", Boolean.FALSE);
+    }
+
+    private void trackSocket(Map task, Socket socket) throws IOException {
         synchronized (task) {
-            while ("PAUSED".equals(task.get("status"))) {
-                try { task.wait(); }
-                catch (InterruptedException error) { Thread.currentThread().interrupt(); return false; }
-            }
-            return !"STOPPED".equals(task.get("status")) && !Thread.currentThread().isInterrupted();
+            if ("STOPPED".equals(task.get("status"))) { closeQuietly(socket); throw new IOException("network probe task stopped"); }
+            List sockets = (List) task.get("sockets");
+            if (sockets == null) { sockets = new ArrayList(); task.put("sockets", sockets); }
+            sockets.add(socket);
+        }
+    }
+
+    private void releaseSocket(Map task, Socket socket) {
+        closeQuietly(socket);
+        synchronized (task) {
+            List sockets = (List) task.get("sockets");
+            if (sockets != null) sockets.remove(socket);
         }
     }
 
     private void finishTask(Map task, boolean cancelled) {
+        List sockets;
         synchronized (task) {
             if ("STOPPED".equals(task.get("status"))) return;
             task.put("status", "STOPPED");
             task.put("outcome", cancelled ? "CANCELLED" : "COMPLETED");
+            task.put("backpressured", Boolean.FALSE);
             task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-            // 正在退出的 worker 保留自己的局部引用；不清空它们正在读取的列表。
             task.remove("targets");
             task.remove("plan");
+            task.remove("workers");
+            List active = (List) task.get("sockets");
+            sockets = active == null ? new ArrayList() : new ArrayList(active);
+            if (active != null) active.clear();
             task.notifyAll();
         }
+        for (Object socket : sockets) closeQuietly(socket);
     }
 
     private int cleanupExpiredTasks() {
@@ -854,7 +1029,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         return removed;
     }
 
-    // 分别缓存保留量、完整结果和去掉 evidence 后的字节预算，随 ACK 同步释放。
+    // 缓存完整结果与去掉 evidence 后的编码预算，随 ACK 同步释放。
     private static long[] observationSize(Map observation) {
         long bytes = 32L;
         long summaryBytes = 32L;
@@ -864,17 +1039,17 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             bytes += size;
             if (!"evidence".equals(entry.getKey())) summaryBytes += size;
         }
-        return new long[]{estimateChars(observation, 0), bytes, summaryBytes};
+        return new long[]{bytes, summaryBytes};
     }
 
-    // 保留量维持原有口径；分页按编码后的字符串字节数加容器开销估算。
+    // 计划按字符估算；结果缓冲和分页按编码字节加容器开销估算。
     private static long estimateChars(Object value, int depth) {
         return estimateSize(value, depth, false);
     }
 
     private static long estimateSize(Object value, int depth, boolean encoded) {
         if (value == null) return 4L;
-        if (depth > 8) return MAX_RESULT_CHARS + 1L;
+        if (depth > 8) return MAX_RESULT_BYTES + 1L;
         if (value instanceof String) {
             return 16L + (encoded ? encodedStringSize((String) value) : ((String) value).length());
         }
@@ -886,13 +1061,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 Map.Entry entry = (Map.Entry) entries.next();
                 size += 32L + estimateSize(entry.getKey(), depth + 1, encoded)
                         + estimateSize(entry.getValue(), depth + 1, encoded);
-                if (!encoded && size > MAX_RESULT_CHARS) break;
+                if (size > MAX_RESULT_BYTES) break;
             }
         } else if (value instanceof List) {
             List values = (List) value;
             for (int i = 0; i < values.size(); i++) {
                 size += 8L + estimateSize(values.get(i), depth + 1, encoded);
-                if (!encoded && size > MAX_RESULT_CHARS) break;
+                if (size > MAX_RESULT_BYTES) break;
             }
         } else {
             String text = String.valueOf(value);
@@ -940,7 +1115,8 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         if (error instanceof SocketTimeoutException) return "TIMEOUT";
         String name = error == null ? "ERROR" : error.getClass().getName();
         if (name.indexOf("UnknownHost") >= 0) return "DNS";
-        if (name.indexOf("ConnectException") >= 0) return "REFUSED";
+        if (name.indexOf("NoRouteToHost") >= 0) return "NO_ROUTE";
+        if (name.indexOf("ConnectException") >= 0 && messageOf(error).toLowerCase(Locale.ENGLISH).indexOf("refused") >= 0) return "REFUSED";
         return "IO";
     }
 
@@ -1042,7 +1218,6 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
         String name = method.getName();
         if ("checkClientTrusted".equals(name) || "checkServerTrusted".equals(name)) return null;
         if ("getAcceptedIssuers".equals(name)) return new X509Certificate[0];
-        if ("verify".equals(name)) return Boolean.TRUE;
         return null;
     }
 }

@@ -17,7 +17,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +33,9 @@ public final class NetworkProbeResultStore {
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_FILTER_VALUES = 256;
     private static final int MAX_SUMMARY_HOSTS = 160;
+    // A refused connection confirms reachability; a timeout does not.
+    private static final String REACHABLE_HOST_FILTER =
+            "(state='open' OR json_extract(observation_json, '$.errorCode')='REFUSED') AND host IS NOT NULL AND host<>''";
     private static final Logger logger = LoggerFactory.getLogger(NetworkProbeResultStore.class);
 
     private final DataSource dataSource;
@@ -115,23 +122,19 @@ public final class NetworkProbeResultStore {
                          "INSERT OR IGNORE INTO scan_evidence "
                                  + "(evidence_id, task_id, endpoint_id, content_json, content_bytes, sha256, created_at) "
                                  + "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                var errorKeys = new HashSet<String>();
                 for (Map<String, Object> observation : safeObservations) {
                     persistObservation(observationStatement, endpointStatement,
                             evidenceStatement, taskId, observation);
-                }
-                java.util.Set<String> observationErrorKeys = new java.util.HashSet<>();
-                for (Map<String, Object> observation : safeObservations) {
                     if ("error".equalsIgnoreCase(text(observation.get("state")))) {
-                        observationErrorKeys.add(errorKey(observation));
+                        errorKeys.add(errorKey(observation));
                     }
                 }
-                java.util.Set<String> persistedErrorKeys = new java.util.HashSet<>();
                 for (Map<String, Object> error : safeErrors) {
                     Map<String, Object> normalized = new LinkedHashMap<>(error == null ? Map.of() : error);
                     normalized.putIfAbsent("stage", "error");
                     normalized.putIfAbsent("state", "error");
-                    String key = errorKey(normalized);
-                    if (!persistedErrorKeys.add(key) || observationErrorKeys.contains(key)) continue;
+                    if (!errorKeys.add(errorKey(normalized))) continue;
                     persistObservation(observationStatement, endpointStatement,
                             evidenceStatement, taskId, normalized);
                 }
@@ -222,15 +225,10 @@ public final class NetworkProbeResultStore {
                 }
             }
             if (endpoints.size() != ids.size()) throw new IllegalArgumentException("选择中包含不存在的资产，请刷新后重试");
-            try (PreparedStatement statement = connection.prepareStatement("SELECT config_json FROM scan_tasks WHERE task_id=?")) {
-                statement.setString(1, taskId);
-                try (ResultSet rows = statement.executeQuery()) {
-                    if (rows.next() && map(parseJson(rows.getString(1))).get("targets") instanceof List<?> values) {
-                        for (Object value : values) {
-                            Map<String, Object> target = map(value);
-                            if (ids.contains(endpointId(target))) targets.add(target);
-                        }
-                    }
+            if (taskConfig(connection, taskId).get("targets") instanceof List<?> values) {
+                for (Object value : values) {
+                    Map<String, Object> target = map(value);
+                    if (ids.contains(endpointId(target))) targets.add(target);
                 }
             }
             return new FingerprintSource(endpoints, targets);
@@ -303,26 +301,13 @@ public final class NetworkProbeResultStore {
                 }
             }
             Object rule = Map.of();
-            try (PreparedStatement statement = connection.prepareStatement("SELECT config_json FROM scan_tasks WHERE task_id=?")) {
-                statement.setString(1, taskId);
-                try (ResultSet rows = statement.executeQuery()) {
-                    if (rows.next() && map(parseJson(rows.getString(1))).get("fingerprintRules") instanceof List<?> rules)
-                        for (Object value : rules)
-                            if (text(map(value).get("fingerprintId")).equals(text(match.get("ruleId")))) rule = value;
+            if (taskConfig(connection, taskId).get("fingerprintRules") instanceof List<?> rules) {
+                for (Object value : rules) {
+                    if (text(map(value).get("fingerprintId")).equals(text(match.get("ruleId")))) rule = value;
                 }
             }
             return Map.of("match", match, "rule", rule, "observations", observations);
         } catch (SQLException error) { throw new IllegalStateException("读取组件识别证据失败", error); }
-    }
-
-    private Map<String, Object> fingerprintCounts(Connection connection, String taskId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT COUNT(*), COUNT(DISTINCT target_id) FROM scan_fingerprint_results WHERE task_id=? AND status='MATCHED'")) {
-            statement.setString(1, taskId);
-            try (ResultSet rows = statement.executeQuery()) {
-                return rows.next() ? Map.of("fingerprintCount", rows.getInt(1), "identifiedApplicationCount", rows.getInt(2)) : Map.of();
-            }
-        }
     }
 
     public void updateTask(String taskId, String status, String outcome, String currentStage,
@@ -385,8 +370,14 @@ public final class NetworkProbeResultStore {
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return Map.of();
                 Map<String, Object> task = taskMap(result);
-                task.putAll(reachableHostSummary(connection, taskId));
-                task.putAll(fingerprintCounts(connection, taskId));
+                task.put("error", result.getString("error_message"));
+                Object stages = parseJson(result.getString("stage_json"));
+                if (stages instanceof List<?> list && !list.isEmpty()) {
+                    task.put("stages", list);
+                    task.put("stageCount", list.size());
+                }
+                addTaskCounts(connection, List.of(task));
+                task.put("reachableHostList", reachableHosts(connection, taskId));
                 return task;
             }
         } catch (SQLException error) {
@@ -395,35 +386,102 @@ public final class NetworkProbeResultStore {
         }
     }
 
-    public List<Map<String, Object>> list(String sessionId) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT task_id, name, status, outcome, current_stage, progress, target_count, "
-                             + "open_count, service_count, error_count, error_message, stage_json, "
-                             + "created_at, updated_at, finished_at "
-                             + "FROM scan_tasks WHERE session_id=? ORDER BY created_at DESC")) {
-            statement.setString(1, sessionId);
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    Map<String, Object> task = taskMap(rows);
-                    task.putAll(reachableHostSummary(connection, text(task.get("taskId"))));
-                    task.putAll(fingerprintCounts(connection, text(task.get("taskId"))));
-                    result.add(task);
+    /** Bounded, lightweight list; full stages and host samples belong to summary(). */
+    public Map<String, Object> list(String sessionId, Map<String, Object> request) {
+        int pageSize = boundedInt(request.get("pageSize"), 20, 1, 100);
+        String scope = value(request.get("scope"), "history");
+        if (!"history".equals(scope) && !"active".equals(scope)) {
+            throw new IllegalArgumentException("未知的任务列表范围");
+        }
+        List<String> cursor = taskCursor(text(request.get("cursor")));
+        String sql = "SELECT task_id, name, status, outcome, current_stage, progress, target_count, "
+                + "open_count, service_count, error_count, created_at, updated_at, finished_at "
+                + "FROM scan_tasks WHERE session_id=?"
+                + ("active".equals(scope) ? " AND status IN ('RUNNING','PAUSED')" : "")
+                + (cursor.isEmpty() ? "" : " AND (created_at, task_id) < (?, ?)")
+                + " ORDER BY created_at DESC, task_id DESC LIMIT ?";
+        List<Map<String, Object>> tasks = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection()) {
+            // Use one read snapshot for the page and both grouped counts.
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, sessionId);
+                int parameter = 2;
+                for (String part : cursor) statement.setString(parameter++, part);
+                statement.setInt(parameter, pageSize + 1);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) tasks.add(taskMap(rows));
                 }
             }
+            boolean hasMore = tasks.size() > pageSize;
+            if (hasMore) tasks.remove(tasks.size() - 1);
+            addTaskCounts(connection, tasks);
+            connection.commit();
+            String nextCursor = "";
+            if (hasMore) {
+                Map<String, Object> last = tasks.get(tasks.size() - 1);
+                nextCursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                        json(List.of(last.get("createdAt"), last.get("taskId"))).getBytes(StandardCharsets.UTF_8));
+            }
+            return Map.of("tasks", tasks, "hasMore", hasMore, "nextCursor", nextCursor, "pageSize", pageSize);
         } catch (SQLException error) {
-            logger.warn("Unable to list network scan tasks for session {}", sessionId, error);
+            throw new IllegalStateException("读取扫描任务列表失败", error);
         }
-        return result;
+    }
+
+    private List<String> taskCursor(String cursor) {
+        if (cursor.isEmpty()) return List.of();
+        if (cursor.length() <= 1024) {
+            try {
+                Object decoded = parseJson(new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8));
+                if (decoded instanceof List<?> parts && parts.size() == 2
+                        && parts.get(0) instanceof String createdAt && !createdAt.isBlank() && createdAt.length() <= 64
+                        && parts.get(1) instanceof String taskId && !taskId.isBlank() && taskId.length() <= 100) {
+                    return List.of(createdAt, taskId);
+                }
+            } catch (IllegalArgumentException ignored) { }
+        }
+        throw new IllegalArgumentException("无效的任务列表游标");
+    }
+
+    private void addTaskCounts(Connection connection, List<Map<String, Object>> tasks) throws SQLException {
+        if (tasks.isEmpty()) return;
+        Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+        for (Map<String, Object> task : tasks) {
+            task.put("reachableHostCount", 0);
+            task.put("fingerprintCount", 0);
+            task.put("identifiedApplicationCount", 0);
+            byId.put(text(task.get("taskId")), task);
+        }
+        String placeholders = String.join(",", Collections.nCopies(tasks.size(), "?"));
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT task_id, COUNT(DISTINCT host) FROM scan_observations WHERE task_id IN (" + placeholders + ") "
+                        + "AND " + REACHABLE_HOST_FILTER + " GROUP BY task_id")) {
+            bind(statement, byId.keySet());
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) byId.get(rows.getString(1)).put("reachableHostCount", rows.getInt(2));
+            }
+        }
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT task_id, COUNT(*), COUNT(DISTINCT target_id) FROM scan_fingerprint_results "
+                        + "WHERE task_id IN (" + placeholders + ") AND status='MATCHED' GROUP BY task_id")) {
+            bind(statement, byId.keySet());
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Map<String, Object> task = byId.get(rows.getString(1));
+                    task.put("fingerprintCount", rows.getInt(2));
+                    task.put("identifiedApplicationCount", rows.getInt(3));
+                }
+            }
+        }
     }
 
     public Map<String, Object> queryResults(String sessionId, String taskId, Map<String, Object> request) {
         if (!ownsTask(sessionId, taskId)) return Map.of();
-        int page = boundedInt(request == null ? null : request.get("page"), 1, 1, Integer.MAX_VALUE);
-        int pageSize = boundedInt(request == null ? null : request.get("pageSize"), 50, 1, MAX_PAGE_SIZE);
-        Map<String, Object> filter = map(request == null ? null : request.get("filter"));
-        QueryParts query = queryParts(taskId, filter);
+        request = request == null ? Map.of() : request;
+        int page = boundedInt(request.get("page"), 1, 1, Integer.MAX_VALUE);
+        int pageSize = boundedInt(request.get("pageSize"), 50, 1, MAX_PAGE_SIZE);
+        QueryParts query = queryParts(taskId, map(request.get("filter")));
         try (Connection connection = dataSource.getConnection()) {
             long total;
             try (PreparedStatement count = connection.prepareStatement(
@@ -434,15 +492,14 @@ public final class NetworkProbeResultStore {
                 }
             }
             List<Map<String, Object>> endpoints = new ArrayList<>();
-            String sortField = value(request == null ? null : map(request.get("sort")).get("field"), "discoveredAt");
-            String sortColumn = switch (sortField) {
+            Map<String, Object> sort = map(request.get("sort"));
+            String sortColumn = switch (text(sort.get("field"))) {
                 case "host" -> "host"; case "port" -> "port"; case "state" -> "state";
                 case "service" -> "service"; case "statusCode" -> "status_code";
                 case "responseSize" -> "response_size"; case "responseTime" -> "response_time";
                 default -> "discovered_at";
             };
-            String sortOrder = "asc".equalsIgnoreCase(value(request == null ? null : map(request.get("sort")).get("order"), "desc"))
-                    ? "ASC" : "DESC";
+            String sortOrder = "asc".equalsIgnoreCase(text(sort.get("order"))) ? "ASC" : "DESC";
             String sql = "SELECT endpoint_id, host, port, protocol, state, service, banner, title, "
                     + "status_code, response_size, server, location, content_type, fingerprint_json, confidence, response_time, evidence_id, discovered_at "
                     + "FROM scan_endpoint_results " + query.where
@@ -473,13 +530,17 @@ public final class NetworkProbeResultStore {
     public Map<String, Object> summaryCounts(String sessionId, String taskId) {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "SELECT open_count, service_count, error_count "
-                             + "FROM scan_tasks WHERE task_id=? AND session_id=?")) {
+                     "SELECT t.open_count, t.service_count, t.error_count, COUNT(f.match_key), COUNT(DISTINCT f.target_id) "
+                             + "FROM scan_tasks t LEFT JOIN scan_fingerprint_results f "
+                             + "ON f.task_id=t.task_id AND f.status='MATCHED' "
+                             + "WHERE t.task_id=? AND t.session_id=? GROUP BY t.task_id")) {
             statement.setString(1, taskId);
             statement.setString(2, sessionId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return Map.of();
-                Map<String, Object> counts = new LinkedHashMap<>(fingerprintCounts(connection, taskId));
+                Map<String, Object> counts = new LinkedHashMap<>();
+                counts.put("fingerprintCount", result.getInt(4));
+                counts.put("identifiedApplicationCount", result.getInt(5));
                 counts.put("openCount", result.getInt(1));
                 counts.put("serviceCount", result.getInt(2));
                 counts.put("errorCount", result.getInt(3));
@@ -543,7 +604,8 @@ public final class NetworkProbeResultStore {
         observationStatement.addBatch();
 
         if (host.isEmpty() || port < 1) return;
-        if ("REACHABILITY".equalsIgnoreCase(text(observation.get("workflowStage")))) return;
+        String workflowStage = text(observation.get("workflowStage"));
+        if ("REACHABILITY".equalsIgnoreCase(workflowStage)) return;
         String endpointId = endpointId(host, port);
         Map<String, Object> evidence = map(observation.get("evidence"));
         String evidenceId = null;
@@ -560,7 +622,6 @@ public final class NetworkProbeResultStore {
             evidenceStatement.addBatch();
         }
 
-        String workflowStage = text(observation.get("workflowStage"));
         // Rule requests describe a particular path, not the endpoint's service summary.
         if ("FINGERPRINT".equals(workflowStage)) return;
         String service = "SERVICE_PROBE".equalsIgnoreCase(workflowStage)
@@ -613,6 +674,15 @@ public final class NetworkProbeResultStore {
                 + "response_time=COALESCE(excluded.response_time, scan_endpoint_results.response_time), "
                 + "evidence_id=COALESCE(excluded.evidence_id, scan_endpoint_results.evidence_id), "
                 + "updated_at=excluded.updated_at";
+    }
+
+    private Map<String, Object> taskConfig(Connection connection, String taskId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT config_json FROM scan_tasks WHERE task_id=?")) {
+            statement.setString(1, taskId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? map(parseJson(rows.getString(1))) : Map.of();
+            }
+        }
     }
 
     private boolean ownsTask(String sessionId, String taskId) {
@@ -682,17 +752,14 @@ public final class NetworkProbeResultStore {
         if (values.size() > MAX_FILTER_VALUES) {
             throw new IllegalArgumentException(column + "筛选值不能超过" + MAX_FILTER_VALUES + "个");
         }
-        where.append(" AND ").append(column).append(" IN (");
-        boolean first = true;
-        for (Object item : values) {
-            if (!first) where.append(',');
-            where.append('?'); first = false; parameters.add(item);
-        }
-        where.append(')');
+        where.append(" AND ").append(column).append(" IN (")
+                .append(String.join(",", Collections.nCopies(values.size(), "?"))).append(')');
+        parameters.addAll(values);
     }
 
-    private void bind(PreparedStatement statement, List<Object> values) throws SQLException {
-        for (int index = 0; index < values.size(); index++) statement.setObject(index + 1, values.get(index));
+    private void bind(PreparedStatement statement, Iterable<?> values) throws SQLException {
+        int index = 1;
+        for (Object value : values) statement.setObject(index++, value);
     }
 
     private Map<String, Object> taskMap(ResultSet row) throws SQLException {
@@ -707,12 +774,6 @@ public final class NetworkProbeResultStore {
         result.put("openCount", row.getInt("open_count"));
         result.put("serviceCount", row.getInt("service_count"));
         result.put("errorCount", row.getInt("error_count"));
-        result.put("error", row.getString("error_message"));
-        Object stages = parseJson(row.getString("stage_json"));
-        if (stages instanceof List<?> list && !list.isEmpty()) {
-            result.put("stages", list);
-            result.put("stageCount", list.size());
-        }
         result.put("createdAt", row.getString("created_at"));
         result.put("updatedAt", row.getString("updated_at"));
         result.put("finishedAt", row.getString("finished_at"));
@@ -751,21 +812,11 @@ public final class NetworkProbeResultStore {
         return targets instanceof Collection<?> collection ? collection.size() : 0;
     }
 
-    private Map<String, Object> reachableHostSummary(Connection connection, String taskId) throws SQLException {
-        // Any successful probe proves reachability, including port scans with discovery disabled.
-        int count = 0;
-        try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT COUNT(DISTINCT host) FROM scan_observations "
-                        + "WHERE task_id=? AND state='open' AND host IS NOT NULL AND host<>''")) {
-            statement.setString(1, taskId);
-            try (ResultSet result = statement.executeQuery()) {
-                if (result.next()) count = result.getInt(1);
-            }
-        }
+    private List<String> reachableHosts(Connection connection, String taskId) throws SQLException {
         List<String> hosts = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT host FROM scan_observations "
-                        + "WHERE task_id=? AND state='open' AND host IS NOT NULL AND host<>'' "
+                        + "WHERE task_id=? AND " + REACHABLE_HOST_FILTER + " "
                         + "GROUP BY host ORDER BY MIN(observation_id) LIMIT ?")) {
             statement.setString(1, taskId);
             statement.setInt(2, MAX_SUMMARY_HOSTS);
@@ -776,10 +827,7 @@ public final class NetworkProbeResultStore {
                 }
             }
         }
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("reachableHostCount", Integer.valueOf(count));
-        summary.put("reachableHostList", hosts);
-        return summary;
+        return hosts;
     }
 
     private String endpointId(Map<String, Object> endpoint) {
@@ -846,9 +894,7 @@ public final class NetworkProbeResultStore {
         try {
             byte[] bytes = MessageDigest.getInstance("SHA-256")
                     .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder(bytes.length * 2);
-            for (byte item : bytes) result.append(String.format("%02x", item));
-            return result.toString();
+            return HexFormat.of().formatHex(bytes);
         } catch (Exception error) {
             return Integer.toHexString(String.valueOf(value).hashCode());
         }

@@ -2,6 +2,8 @@ package org.leo.core.component;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Constructor;
@@ -79,7 +81,8 @@ class NetworkProbeLifecycleTest {
                 invoke(new NetworkProbeComponent(), "stopTask", taskId);
                 Map<String, Object> stopped = new HashMap<>(task);
                 invoke(new NetworkProbeComponent(), "releaseTask", taskId);
-                connection.getOutputStream().write("SSH-2.0-late\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                connection.setSoTimeout(1000);
+                assertEquals(-1, connection.getInputStream().read(), "stop must close the active socket");
                 connection.shutdownOutput();
                 completed.get(3, TimeUnit.SECONDS);
                 assertEquals(stopped, task);
@@ -91,6 +94,66 @@ class NetworkProbeLifecycleTest {
                 thread.join(2000);
             }
         }
+    }
+
+    @ParameterizedTest @CsvSource({"false,pause", "true,pause", "false,pressure", "true,pressure"})
+    void parkedNodeWorkersReleasePoolThreadsWithoutReplayingTheCurrentStage(boolean payload, String mode) throws Exception {
+        Object component = ComponentTestSupport.component("NetworkProbeComponent", payload);
+        String id = "";
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            server.setSoTimeout(2000);
+            Map<String, Object> plan = Map.of("targets", List.of(Map.of("host", "127.0.0.1", "port", server.getLocalPort())),
+                    "stages", "pause".equals(mode) ? List.of("tcp-exchange", "tcp-exchange") : List.of("tcp-exchange"),
+                    "limits", Map.of("threads", 1, "timeout", 1000));
+            id = String.valueOf(ComponentTestSupport.invokeComponent(component, Map.of("action", "startTask", "plan", plan)).get("taskId"));
+            Field registry = component.getClass().getDeclaredField("TASKS"); registry.setAccessible(true);
+            Map task = (Map) ((Map)registry.get(null)).get(id);
+            try (Socket connection = server.accept()) {
+                if ("pause".equals(mode)) ComponentTestSupport.invokeComponent(component, Map.of("action", "pauseTask", "taskId", id));
+                else synchronized (task) {
+                    Map<String, Object> row = Map.of("state", "open");
+                    Object size = ComponentTestSupport.call(component, "observationSize", new Class[]{Map.class}, row);
+                    for (int i = 0; i < 3072; i++) ComponentTestSupport.call(component, "offerObservation",
+                            new Class[]{Map.class, Map.class, long[].class}, task, row, size);
+                }
+                connection.getOutputStream().write("first".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            }
+            Field executor = component.getClass().getDeclaredField("WORK_EXECUTOR"); executor.setAccessible(true);
+            var pool = (java.util.concurrent.ThreadPoolExecutor) executor.get(null);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (pool.getActiveCount() > 0 && System.nanoTime() < deadline) Thread.sleep(5);
+            assertEquals(0, pool.getActiveCount(), "idle tasks must return their physical worker threads");
+            Object small = component.getClass().getDeclaredConstructor().newInstance();
+            String smallId = String.valueOf(ComponentTestSupport.invokeComponent(small, Map.of("action", "startTask", "plan",
+                    Map.of("targets", List.of(Map.of("host", "127.0.0.1", "port", 1)), "stages", List.of("fixture-stage")))).get("taskId"));
+            awaitNode(small, smallId);
+            ComponentTestSupport.invokeComponent(small, Map.of("action", "releaseTask", "taskId", smallId));
+            if ("pause".equals(mode)) {
+                ComponentTestSupport.invokeComponent(component, Map.of("action", "resumeTask", "taskId", id));
+                try (Socket connection = server.accept()) { connection.getOutputStream().write("second".getBytes(java.nio.charset.StandardCharsets.US_ASCII)); }
+            } else ComponentTestSupport.invokeComponent(component, Map.of("action", "ackTask", "taskId", id, "cursor", 3072L));
+            Map<?, ?> result = awaitNode(component, id);
+            assertEquals(1, result.get("completed"));
+            List<?> rows = (List<?>)result.get("observations");
+            assertEquals("pause".equals(mode) ? 2 : 1, rows.size());
+            assertEquals("first", ((Map<?, ?>)((Map<?, ?>)rows.get(0)).get("evidence")).get("banner"));
+            if ("pause".equals(mode)) assertEquals("second", ((Map<?, ?>)((Map<?, ?>)rows.get(1)).get("evidence")).get("banner"));
+        } finally {
+            if (!id.isEmpty()) {
+                ComponentTestSupport.invokeComponent(component, Map.of("action", "stopTask", "taskId", id));
+                ComponentTestSupport.invokeComponent(component, Map.of("action", "releaseTask", "taskId", id));
+            }
+        }
+    }
+
+    private Map<?, ?> awaitNode(Object component, String id) throws Exception {
+        for (int i = 0; i < 200; i++) {
+            Map<?, ?> result = (Map<?, ?>) ComponentTestSupport.invokeComponent(component,
+                    Map.of("action", "queryTask", "taskId", id)).get("result");
+            if ("STOPPED".equals(result.get("status"))) { assertEquals("COMPLETED", result.get("outcome")); return result; }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("node task did not complete");
     }
 
     private void invoke(NetworkProbeComponent component, String method, String taskId) throws Exception {

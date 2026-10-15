@@ -33,9 +33,7 @@ public class ScanPreviewService {
 
         try {
             ScanPlanService.ScanPlan plan = planService.plan(scan);
-            int originalCount = plan.originalCount();
             int hostCount = plan.hosts().size();
-            int portCount = plan.ports().size();
             long combinationCount = plan.targets().size();
             long reachabilityProbeCount = plan.reachabilityTargets().size();
 
@@ -70,9 +68,9 @@ public class ScanPreviewService {
                     warnings.add("组件请求上界超过单次限制，实际应用数过多时组件阶段将失败，请缩小范围或减少规则");
             }
             TargetPreview preview = new TargetPreview(
-                    originalCount,
+                    plan.originalCount(),
                     hostCount,
-                    portCount,
+                    plan.ports().size(),
                     (int) Math.min(combinationCount, Integer.MAX_VALUE),
                     (int) reachabilityProbeCount,
                     serviceProbeCount,
@@ -113,12 +111,8 @@ public class ScanPreviewService {
     }
 
     private String formatBytes(long estimatedBytes) {
-        if (estimatedBytes < 1024) {
-            return estimatedBytes + " B";
-        } else if (estimatedBytes < 1024 * 1024) {
-            return (estimatedBytes / 1024) + " KB";
-        } else {
-            return (estimatedBytes / (1024 * 1024)) + " MB";
-        }
+        if (estimatedBytes < 1024) return estimatedBytes + " B";
+        if (estimatedBytes < 1024 * 1024) return (estimatedBytes / 1024) + " KB";
+        return (estimatedBytes / (1024 * 1024)) + " MB";
     }
 }

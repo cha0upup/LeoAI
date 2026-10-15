@@ -23,6 +23,23 @@ class ScanPreviewServiceTest {
     private final ScanPreviewService service = new ScanPreviewService(planner);
 
     @Test
+    void resolvesPortPoliciesWithoutSharingMutablePresets() {
+        var resolver = new PortPolicyResolver();
+        assertEquals(resolver.resolve(new PortPolicy("quick", null, null, null)), resolver.resolve(null));
+        assertEquals(resolver.resolve(new PortPolicy("standard", null, null, null)),
+                resolver.resolve(new PortPolicy(null, null, null, null)));
+        for (String profile : List.of("quick", "standard", "extended")) {
+            var policy = new PortPolicy(profile, null, null, null);
+            var ports = resolver.resolve(policy);
+            var snapshot = List.copyOf(ports);
+            ports.clear();
+            assertEquals(snapshot, resolver.resolve(policy));
+        }
+        assertEquals(List.of(1, 3, 65535), resolver.resolve(new PortPolicy(
+                "custom", List.of(" 1-3 "), List.of(3, 65535, 0, 65536), List.of(2))));
+    }
+
+    @Test
     void doesNotMultiplyExplicitPortsByThePortPolicy() {
         ScanConfig scan = new ScanConfig(
                 "explicit ports",
@@ -75,11 +92,15 @@ class ScanPreviewServiceTest {
     void deduplicatesEndpointsWithoutLosingTheExplicitUrl() {
         var plan = planner.plan(new ScanConfig("url", new TargetInput(
                 List.of("127.0.0.1", "http://127.0.0.1:8080/app"), List.of()),
-                new PortPolicy("custom", List.of(), List.of(8080), List.of()), null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
+                new PortPolicy("custom", List.of(), List.of(8080, 9090), List.of()), null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
 
-        assertEquals(1, plan.targets().size());
+        assertEquals(2, plan.targets().size());
         assertEquals("http://127.0.0.1:8080/app", plan.targets().get(0).get("baseUrl"));
+        assertEquals(List.of(Map.of("hostname", "127.0.0.1"), Map.of("baseUrl", "http://127.0.0.1:8080/app")), plan.targets().get(0).get("applications"));
+        assertEquals(List.of(Map.of("hostname", "127.0.0.1")), plan.targets().get(1).get("applications"));
         assertThrows(UnsupportedOperationException.class, () -> plan.targets().get(0).put("port", 80));
+        assertThrows(UnsupportedOperationException.class, () -> plan.targets().clear());
+        assertThrows(UnsupportedOperationException.class, () -> plan.reachabilityTargets().get(0).clear());
         assertThrows(UnsupportedOperationException.class, () -> plan.hosts().clear());
         assertThrows(UnsupportedOperationException.class, () -> plan.ports().clear());
         List<?> applications = (List<?>) plan.targets().get(0).get("applications");
@@ -91,6 +112,7 @@ class ScanPreviewServiceTest {
     void snapshotsRulesBeforeTheyCanBeChangedWhileWaitingForExecution() {
         var analysis = org.mockito.Mockito.mock(NetworkProbeAnalysisService.class);
         Map<String, Object> request = new java.util.LinkedHashMap<>(Map.of("method", "GET"));
+        request.put("optional", null);
         List<Map<String, Object>> requests = new java.util.ArrayList<>(List.of(request));
         Map<String, Object> rule = new java.util.LinkedHashMap<>(Map.of("id", "test-rule", "requests", requests));
         org.mockito.Mockito.when(analysis.snapshotRules(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(rule));
@@ -105,6 +127,8 @@ class ScanPreviewServiceTest {
         assertEquals("test-rule", plan.fingerprintRules().get(0).get("id"));
         List<?> snapshot = (List<?>) plan.fingerprintRules().get(0).get("requests");
         assertEquals("GET", ((Map<?, ?>) snapshot.get(0)).get("method"));
+        assertTrue(((Map<?, ?>) snapshot.get(0)).containsKey("optional"));
+        assertNull(((Map<?, ?>) snapshot.get(0)).get("optional"));
         assertThrows(UnsupportedOperationException.class, () -> ((Map<?, ?>) snapshot.get(0)).clear());
     }
 

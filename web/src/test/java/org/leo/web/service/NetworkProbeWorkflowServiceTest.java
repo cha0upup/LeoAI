@@ -32,7 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class NetworkProbeWorkflowServiceTest {
@@ -70,6 +78,13 @@ class NetworkProbeWorkflowServiceTest {
         assertEquals(List.of("host-a"), snapshot.get("reachableHostList"));
         assertEquals(1, ((List<?>) snapshot.get("openPortResults")).size());
         assertEquals("http", ((Map<?, ?>) ((List<?>) snapshot.get("openPortResults")).get(0)).get("service"));
+        var summary = service.querySummaryIfPresent("session-1", taskId);
+        assertEquals(((List<?>) snapshot.get("openPortResults")).size(), summary.get("openCount"));
+        assertEquals(((List<?>) snapshot.get("serviceResults")).size(), summary.get("serviceCount"));
+        assertEquals(((List<?>) snapshot.get("reachableHostList")).size(), summary.get("reachableHostCount"));
+        assertEquals(snapshot.get("reachableHostList"), summary.get("reachableHostList"));
+        ((List<?>) snapshot.get("reachableHostList")).clear();
+        assertEquals(List.of("host-a"), service.querySummaryIfPresent("session-1", taskId).get("reachableHostList"));
     }
 
     @Test
@@ -92,11 +107,13 @@ class NetworkProbeWorkflowServiceTest {
         assertTrue(!tcpOnly.startedStages.contains("RECON"));
     }
 
-    @Test
-    void probesUnknownNonStandardPortsForHttpAndSkipsKnownTcpServices() throws Exception {
+    @ParameterizedTest
+    @ValueSource(ints = {443, 8443})
+    void probesUnknownNonStandardPortsForHttpAndSkipsKnownTcpServices(int tlsPort) throws Exception {
         WorkflowNode node = new WorkflowNode();
-        node.openPorts = Set.of(80, 18080, 5432);
-        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80, 18080, 5432), null)).get("taskId"));
+        node.openPorts = Set.of(80, 18080, 5432, tlsPort);
+        node.pageSize = 1;
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80, 18080, 5432, tlsPort), null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<Map<String, Object>> openPorts = (List<Map<String, Object>>) snapshot.get("openPortResults");
@@ -109,14 +126,25 @@ class NetworkProbeWorkflowServiceTest {
                 .findFirst().orElseThrow();
         assertEquals("https", web.get("service"));
         assertEquals(200, web.get("statusCode"));
+        assertEquals("http-head", web.get("probe"));
+        assertEquals("test-server", ((Map<?, ?>) web.get("evidence")).get("server"));
+        assertEquals("plaintext request rejected", web.get("probeError"));
         assertEquals("postgresql", postgres.get("service"));
         assertEquals(List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "SERVICE_PROBE",
                         "SERVICE_PROBE"),
                 node.startedStages);
+        List<Map<String, Object>> httpTargets = node.tasks.values().stream()
+                .flatMap(child -> ((List<Map<String, Object>>) child.get("targets")).stream())
+                .filter(target -> "http-head".equals(target.get("stage"))).toList();
+        assertEquals(List.of("http", "https"), httpTargets.stream()
+                .filter(target -> Integer.valueOf(18080).equals(target.get("port"))).map(target -> target.get("protocol")).toList());
+        assertEquals(List.of("https"), httpTargets.stream()
+                .filter(target -> Integer.valueOf(tlsPort).equals(target.get("port"))).map(target -> target.get("protocol")).toList());
+        assertTrue(httpTargets.stream().noneMatch(target -> Integer.valueOf(5432).equals(target.get("port"))));
     }
 
     @Test
-    void skipsDependentStagesWhenNoHostIsReachable() throws Exception {
+    void keepsUnconfirmedHostsForPortScanning() throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.reachable = false;
         String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
@@ -126,9 +154,43 @@ class NetworkProbeWorkflowServiceTest {
 
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
         assertEquals("COMPLETED", ((Map<?, ?>) stages.get(0)).get("status"));
-        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(1)).get("status"));
-        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(2)).get("status"));
-        assertTrue(node.startedStages.size() == 1);
+        assertEquals("COMPLETED", ((Map<?, ?>) stages.get(1)).get("status"));
+        assertEquals("COMPLETED", ((Map<?, ?>) stages.get(2)).get("status"));
+        assertTrue(node.startedStages.contains("PORT_SCAN"));
+    }
+
+    @Test
+    void persistenceFailureStopsAndReleasesTheActiveChild() throws Exception {
+        var store = mock(NetworkProbeResultStore.class);
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenReturn(false);
+        service.setResultStore(store);
+        var node = new ControlledWorkflowNode();
+        node.emitObservation = true;
+        String id = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertEquals("FAILED", awaitTerminal(id).get("outcome"));
+        verify(store, timeout(1000)).updateTask(eq(id), eq("STOPPED"), eq("FAILED"), isNull(),
+                eq(99), eq(1), eq("扫描结果连续持久化失败"), anyList());
+        assertTrue(node.stopCalls.get() > 0);
+        awaitCount(node.releaseCalls);
+    }
+
+    @Test
+    void drainsQueuedPagesWithoutWaitingForTheIdlePollInterval() throws Exception {
+        var backend = mock(NetworkProbeOrchestrationService.class);
+        when(backend.start(anyString(), any(), anyMap())).thenReturn(Map.of("taskId", "pages"));
+        CountDownLatch secondPage = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        when(backend.querySince(anyString(), anyString(), anyLong(), anyLong())).thenAnswer(invocation -> {
+            int page = calls.incrementAndGet();
+            if (page == 2) secondPage.countDown();
+            return Map.of("result", Map.of("status", "STOPPED", "outcome", "COMPLETED",
+                    "total", 2, "completed", 2, "observations", List.of(), "errors", List.of(), "hasMore", page == 1));
+        });
+        try (var worker = new NetworkProbeWorkflowService(analysis, backend, Executors.newSingleThreadExecutor(), 2000)) {
+            worker.start("session-1", new WorkflowNode(), plan(List.of(80), List.of("PORT_SCAN")));
+            assertTrue(secondPage.await(1, TimeUnit.SECONDS), "queued pages should not wait two seconds");
+        }
     }
 
     @Test
@@ -196,13 +258,14 @@ class NetworkProbeWorkflowServiceTest {
         assertEquals(8080, endpoints.get(0).get("port"));
     }
 
-    @Test
-    void identifiesBinaryMysqlHandshakeWithoutMysqlWord() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"J\n8.0.43\u0000\u0010\u0000caching_sha2_password",
+            "10.11.2\r\nsha256_password", "caching_sha2_password"})
+    void identifiesBinaryMysqlHandshakeWithoutMysqlWord(String handshake) throws Exception {
         Method method = NetworkProbeWorkflowService.class
-                .getDeclaredMethod("detectService", String.class, int.class);
+                .getDeclaredMethod("detectService", String.class);
         method.setAccessible(true);
-        String handshake = "J\n8.0.43\u0000\u0010\u0000caching_sha2_password";
-        assertEquals("mysql", method.invoke(null, handshake, 3306));
+        assertEquals(handshake.equals("caching_sha2_password") ? "" : "mysql", method.invoke(null, handshake));
     }
 
     @Test
@@ -265,6 +328,53 @@ class NetworkProbeWorkflowServiceTest {
         service.stop("session-1", id);
         assertEquals("CANCELLED", awaitTerminal(id).get("outcome"));
         awaitCount(node.control.stopCalls);
+    }
+
+    @Test
+    void pausedWorkflowsDoNotOccupyTheSingleStageExecutor() throws Exception {
+        ControlledWorkflowNode first = new ControlledWorkflowNode(), second = new ControlledWorkflowNode();
+        String a = String.valueOf(service.start("session-1", first, plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertTrue(first.started.await(1, TimeUnit.SECONDS)); service.pause("session-1", a);
+        String b = String.valueOf(service.start("session-1", second, plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertTrue(second.started.await(1, TimeUnit.SECONDS)); service.pause("session-1", b);
+        String small = String.valueOf(service.start("session-1", new WorkflowNode(), plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertEquals("COMPLETED", awaitTerminal(small).get("outcome"));
+        assertEquals("PAUSED", service.querySummaryIfPresent("session-1", a).get("status"));
+        assertEquals("PAUSED", service.querySummaryIfPresent("session-1", b).get("status"));
+        service.resume("session-1", a); awaitCount(first.resumeCalls);
+        service.stop("session-1", a); service.stop("session-1", b);
+    }
+
+    @Test
+    void arrivingResultsWakeTheWorkflowInsteadOfWaitingForTheTwoSecondFallback() throws Exception {
+        NetworkProbeCapable node = mock(NetworkProbeCapable.class);
+        java.util.concurrent.atomic.AtomicLong started = new java.util.concurrent.atomic.AtomicLong();
+        when(node.startNetworkProbe(anyMap())).thenAnswer(call -> {
+            started.set(System.nanoTime()); return Map.of("code", 200, "taskId", "event-child");
+        });
+        when(node.queryNetworkProbe(anyString(), anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(call -> {
+            long cursor = call.getArgument(1);
+            boolean ready = System.nanoTime() - started.get() >= TimeUnit.MILLISECONDS.toNanos(100);
+            List<?> rows = ready && cursor == 0 ? List.of(Map.of("host", "host-a", "port", 80, "state", "open", "stage", "tcp-connect")) : List.of();
+            return Map.of("code", 200, "result", Map.of("status", ready ? "STOPPED" : "RUNNING",
+                    "outcome", ready ? "COMPLETED" : "RUNNING", "completed", ready ? 1 : 0,
+                    "cursor", cursor, "nextCursor", cursor + rows.size(), "hasMore", false, "observations", rows, "errors", List.of()));
+        });
+        when(node.ackNetworkProbe(anyString(), anyLong())).thenReturn(Map.of("code", 200));
+        when(node.releaseNetworkProbe(anyString())).thenReturn(Map.of("code", 200));
+        try (var workflows = new NetworkProbeWorkflowService(analysis, orchestration, Executors.newSingleThreadExecutor(), 2000)) {
+            String id = String.valueOf(workflows.start("session-1", node, plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            Map<String, Object> snapshot;
+            do {
+                snapshot = workflows.querySummaryIfPresent("session-1", id);
+                if ("COMPLETED".equals(snapshot.get("outcome"))) break;
+                Thread.sleep(5);
+            } while (System.nanoTime() < deadline);
+            assertEquals("COMPLETED", snapshot.get("outcome"));
+            assertEquals(1, snapshot.get("openCount"));
+        }
     }
 
     private ScanPlanService.ScanPlan plan(List<Integer> ports, List<String> stages) {
@@ -348,6 +458,7 @@ class NetworkProbeWorkflowServiceTest {
         private final Map<String, Map<String, Object>> tasks = new LinkedHashMap<>();
         private final List<String> startedStages = new ArrayList<>();
         private Set<Integer> openPorts = Set.of(80);
+        private int pageSize = Integer.MAX_VALUE;
         private boolean reachable = true;
 
         @Override
@@ -369,7 +480,14 @@ class NetworkProbeWorkflowServiceTest {
         public synchronized Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                                     int maxItems, int maxBytes,
                                                                     boolean includeEvidence) {
-            return cursorPage(queryNetworkProbe(taskId), cursor);
+            Map<String, Object> response = cursorPage(queryNetworkProbe(taskId), cursor);
+            Map<String, Object> result = (Map<String, Object>) response.get("result");
+            List<?> observations = (List<?>) result.get("observations");
+            int end = (int) Math.min(observations.size(), cursor + pageSize);
+            result.put("observations", observations.subList((int) cursor, end));
+            result.put("nextCursor", (long) end);
+            result.put("hasMore", end < observations.size());
+            return response;
         }
 
         @SuppressWarnings("unchecked")
@@ -444,6 +562,8 @@ class NetworkProbeWorkflowServiceTest {
         private final AtomicInteger pauseCalls = new AtomicInteger();
         private final AtomicInteger resumeCalls = new AtomicInteger();
         private final AtomicInteger stopCalls = new AtomicInteger();
+        private final AtomicInteger releaseCalls = new AtomicInteger();
+        private boolean emitObservation;
         private volatile boolean stopped;
 
         @Override
@@ -456,7 +576,13 @@ class NetworkProbeWorkflowServiceTest {
         public Map<String, Object> queryNetworkProbe(String taskId, long cursor, long ackCursor,
                                                       int maxItems, int maxBytes,
                                                       boolean includeEvidence) {
-            return cursorPage(queryNetworkProbe(taskId), cursor);
+            Map<String, Object> response = queryNetworkProbe(taskId);
+            if (emitObservation && cursor == 0) {
+                Map<String, Object> page = new LinkedHashMap<>((Map<String, Object>) response.get("result"));
+                page.put("observations", List.of(Map.of("host", "host-a", "port", 80, "stage", "tcp-connect", "state", "open")));
+                response = Map.of("code", 200, "result", page);
+            }
+            return cursorPage(response, cursor);
         }
 
         public Map<String, Object> queryNetworkProbe(String taskId) {
@@ -491,6 +617,7 @@ class NetworkProbeWorkflowServiceTest {
 
         @Override
         public Map<String, Object> releaseNetworkProbe(String taskId) {
+            releaseCalls.incrementAndGet();
             return Map.of("code", 200);
         }
     }

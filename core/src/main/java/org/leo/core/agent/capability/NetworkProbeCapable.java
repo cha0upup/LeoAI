@@ -10,6 +10,9 @@ import java.util.Map;
  */
 public interface NetworkProbeCapable {
 
+    /** Concurrent probe workers available in this node runtime (threads or processes). */
+    default int networkProbeWorkerLimit() { return 256; }
+
     Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception;
 
     /**

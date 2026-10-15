@@ -8,6 +8,8 @@ public final class NetworkProbeLimits {
     /** Fixed contract of the bundled Java/PHP network probe components. */
     /** Keep a whole /24 (and the usual quick scan) in one node request. */
     public static final int NODE_BATCH_SIZE = 4096;
+    /** Scheduling quantum; a large task returns to the node queue after each child batch. */
+    public static final int SERVER_BATCH_SIZE = 1024;
     /** Port discovery is connection-bound; allow enough workers to hide connect timeouts. */
     public static final int NODE_MAX_THREADS = 256;
     public static final int NODE_DEFAULT_THREADS = 256;

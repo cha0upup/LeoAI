@@ -24,6 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -85,6 +87,43 @@ class NetworkProbeControllerTest {
             }
         }
         verifyNoInteractions(workflow, resolver);
+    }
+
+    @Test
+    void forwardsTaskPageAndRejectsInvalidCursor() {
+        var store = mock(NetworkProbeResultStore.class);
+        var controller = new NetworkProbeController(mock(NetworkProbeWorkflowService.class),
+                mock(ScanPreviewService.class), mock(ScanPlanService.class), store, new ObjectMapper());
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "scope", "active", "cursor", "next"));
+        Map<String, Object> page = Map.of("tasks", List.of(), "hasMore", true, "nextCursor", "after", "pageSize", 20);
+        try (var utilities = mockStatic(ControllerUtil.class)) {
+            utilities.when(() -> ControllerUtil.getRequiredStringParam(params, "sessionId")).thenReturn("session");
+            when(store.list("session", params)).thenReturn(page);
+            assertSame(page, controller.listWorkflows(params).get("data"));
+            verify(store).list("session", params);
+            when(store.list("session", params)).thenThrow(new IllegalArgumentException("无效的任务列表游标"));
+            assertEquals(400, controller.listWorkflows(params).get("code"));
+        }
+    }
+
+    @Test
+    void mergesDurableCountsWithoutReplacingLiveState() {
+        var workflow = mock(NetworkProbeWorkflowService.class);
+        var store = mock(NetworkProbeResultStore.class);
+        var controller = new NetworkProbeController(workflow, mock(ScanPreviewService.class),
+                mock(ScanPlanService.class), store, new ObjectMapper());
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "taskId", "task"));
+        Map<String, Object> live = Map.of("status", "PAUSED", "currentStage", "PORT_SCAN", "openCount", 9);
+        when(workflow.querySummaryIfPresent("session", "task")).thenAnswer(ignored -> new HashMap<>(live));
+        try (var utilities = mockStatic(ControllerUtil.class)) {
+            utilities.when(() -> ControllerUtil.getRequiredStringParam(params, "sessionId")).thenReturn("session");
+            utilities.when(() -> ControllerUtil.getRequiredStringParam(params, "taskId")).thenReturn("task");
+            when(store.summaryCounts("session", "task")).thenReturn(Map.of("openCount", 0, "fingerprintCount", 2));
+            assertEquals(Map.of("status", "PAUSED", "currentStage", "PORT_SCAN", "openCount", 0, "fingerprintCount", 2),
+                    controller.queryWorkflow(params).get("data"));
+            when(store.summaryCounts("session", "task")).thenReturn(Map.of());
+            assertEquals(live, controller.queryWorkflow(params).get("data"));
+        }
     }
 
     @Test

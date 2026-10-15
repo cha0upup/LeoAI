@@ -59,7 +59,7 @@ public class TargetResolver {
         if (input.exclude() != null) {
             for (String exclude : input.exclude()) {
                 if (exclude != null && !exclude.isBlank()) {
-                    excludeSet.addAll(expandToIps(exclude.trim()));
+                    for (ResolvedTarget target : parseTarget(exclude.trim())) excludeSet.add(target.ip());
                 }
             }
         }
@@ -135,13 +135,11 @@ public class TargetResolver {
         // host:port (an unbracketed IPv6 address is treated as a host)
         Matcher hostPortMatcher = HOST_PORT_PATTERN.matcher(target);
         if (hostPortMatcher.matches() && target.indexOf(':') == target.lastIndexOf(':')) {
-            String host = hostPortMatcher.group(1);
-            int port = Integer.parseInt(hostPortMatcher.group(2));
-            return parseHostPort(host, port);
+            return parseHostPort(hostPortMatcher.group(1), Integer.parseInt(hostPortMatcher.group(2)));
         }
 
         // 纯IP或域名（无端口，需要结合端口策略）
-        return parseHost(target);
+        return resolveHostTargets(target, null, "tcp", "manual", target);
     }
 
     private List<ResolvedTarget> parseUrl(String urlString) {
@@ -158,20 +156,7 @@ public class TargetResolver {
                 port = protocol.equals("https") ? 443 : 80;
             }
 
-            List<String> ips = resolveHost(host);
-            List<ResolvedTarget> results = new ArrayList<>();
-            for (String ip : ips) {
-                results.add(new ResolvedTarget(
-                        generateTargetId(urlString),
-                        host,
-                        ip,
-                        port,
-                        protocol,
-                        "url",
-                        urlString
-                ));
-            }
-            return results;
+            return resolveHostTargets(host, port, protocol, "url", urlString);
         } catch (Exception e) {
             throw new IllegalArgumentException("URL 解析失败: " + e.getMessage(), e);
         }
@@ -191,19 +176,12 @@ public class TargetResolver {
         long hostCount = 1L << (32 - prefixLength);
         ensureExpansionCapacity(hostCount);
 
+        String rawTarget = network + "/" + prefixLength;
         List<ResolvedTarget> results = new ArrayList<>((int) hostCount);
         for (long i = 0; i < hostCount; i++) {
             String ip = longToIp(networkLong + i);
             // CIDR 不指定端口，返回 null，由端口策略决定
-            results.add(new ResolvedTarget(
-                    network + "/" + prefixLength,
-                    ip,
-                    ip,
-                    null,
-                    "tcp",
-                    "cidr",
-                    network + "/" + prefixLength
-            ));
+            results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", "cidr", rawTarget));
         }
         return results;
     }
@@ -227,12 +205,12 @@ public class TargetResolver {
                         + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
             }
             int count = hostCount.intValue();
+            String rawTarget = network + "/" + prefixLength;
             List<ResolvedTarget> results = new ArrayList<>(count);
             for (int index = 0; index < count; index++) {
                 byte[] bytes = toFixedBytes(base.add(BigInteger.valueOf(index)), 16);
                 String ip = InetAddress.getByAddress(bytes).getHostAddress();
-                results.add(new ResolvedTarget(network + "/" + prefixLength, ip, ip,
-                        null, "tcp", "cidr", network + "/" + prefixLength));
+                results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", "cidr", rawTarget));
             }
             return results;
         } catch (UnknownHostException e) {
@@ -249,18 +227,11 @@ public class TargetResolver {
         }
         ensureExpansionCapacity(end - start + 1L);
 
+        String rawTarget = startIp + "-" + endIp;
         List<ResolvedTarget> results = new ArrayList<>((int) (end - start + 1L));
         for (long i = start; i <= end; i++) {
             String ip = longToIp(i);
-            results.add(new ResolvedTarget(
-                    startIp + "-" + endIp,
-                    ip,
-                    ip,
-                    null,
-                    "tcp",
-                    "range",
-                    startIp + "-" + endIp
-            ));
+            results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", "range", rawTarget));
         }
         return results;
     }
@@ -270,35 +241,16 @@ public class TargetResolver {
             throw new IllegalArgumentException("端口必须在 1-65535 之间");
         }
 
-        List<String> ips = resolveHost(host);
-        List<ResolvedTarget> results = new ArrayList<>();
-        for (String ip : ips) {
-            results.add(new ResolvedTarget(
-                    generateTargetId(host + ":" + port),
-                    host,
-                    ip,
-                    port,
-                    "tcp",
-                    "manual",
-                    host + ":" + port
-            ));
-        }
-        return results;
+        return resolveHostTargets(host, port, "tcp", "manual", host + ":" + port);
     }
 
-    private List<ResolvedTarget> parseHost(String host) {
+    private List<ResolvedTarget> resolveHostTargets(String host, Integer port, String protocol,
+                                                   String source, String rawTarget) {
         List<String> ips = resolveHost(host);
-        List<ResolvedTarget> results = new ArrayList<>();
+        String targetId = UUID.nameUUIDFromBytes(rawTarget.getBytes(StandardCharsets.UTF_8)).toString();
+        List<ResolvedTarget> results = new ArrayList<>(ips.size());
         for (String ip : ips) {
-            results.add(new ResolvedTarget(
-                    generateTargetId(host),
-                    host,
-                    ip,
-                    null,  // 端口由端口策略决定
-                    "tcp",
-                    "manual",
-                    host
-            ));
+            results.add(new ResolvedTarget(targetId, host, ip, port, protocol, source, rawTarget));
         }
         return results;
     }
@@ -334,18 +286,6 @@ public class TargetResolver {
         }
     }
 
-    /**
-     * 展开目标为IP列表（用于排除列表）。
-     */
-    private Set<String> expandToIps(String target) {
-        Set<String> ips = new HashSet<>();
-        List<ResolvedTarget> resolved = parseTarget(target);
-        for (ResolvedTarget t : resolved) {
-            ips.add(t.ip());
-        }
-        return ips;
-    }
-
     private void ensureExpansionCapacity(long count) {
         if (count > NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
             throw new IllegalArgumentException("目标展开后不能超过"
@@ -374,10 +314,6 @@ public class TargetResolver {
                ((ip >> 16) & 0xFF) + "." +
                ((ip >> 8) & 0xFF) + "." +
                (ip & 0xFF);
-    }
-
-    private String generateTargetId(String raw) {
-        return UUID.nameUUIDFromBytes(raw.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private byte[] toFixedBytes(BigInteger value, int length) {

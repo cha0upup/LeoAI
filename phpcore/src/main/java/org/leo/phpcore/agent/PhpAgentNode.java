@@ -279,6 +279,9 @@ public final class PhpAgentNode extends AbstractAgentNode implements
     }
 
     @Override
+    public int networkProbeWorkerLimit() { return 16; }
+
+    @Override
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         return invoke("NetworkProbeComponent", "startTask", Map.of("plan", plan));
     }

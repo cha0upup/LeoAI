@@ -239,8 +239,11 @@ CREATE TABLE IF NOT EXISTS scan_tasks (
     updated_at DATETIME NOT NULL,
     finished_at DATETIME
 );
-CREATE INDEX IF NOT EXISTS idx_scan_tasks_session_created
-    ON scan_tasks(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_tasks_session_cursor
+    ON scan_tasks(session_id, created_at DESC, task_id DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_tasks_active_cursor
+    ON scan_tasks(session_id, created_at DESC, task_id DESC)
+    WHERE status IN ('RUNNING','PAUSED');
 
 CREATE TABLE IF NOT EXISTS scan_endpoint_results (
     result_id INTEGER PRIMARY KEY AUTOINCREMENT,

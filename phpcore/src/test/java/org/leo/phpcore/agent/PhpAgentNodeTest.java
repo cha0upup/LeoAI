@@ -136,6 +136,7 @@ class PhpAgentNodeTest {
 
         assertTrue(node instanceof NetworkConnectionCapable);
         assertTrue(node instanceof NetworkProbeCapable);
+        assertEquals(16, node.networkProbeWorkerLimit());
         assertTrue(node instanceof ServiceCapable);
         assertTrue(node instanceof ScheduledTaskCapable);
         node.listNetworkConnections("LISTEN", "TCP", "8080", "12", "php", "10.", true, 100);

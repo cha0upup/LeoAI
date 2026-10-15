@@ -167,8 +167,17 @@ class NetworkProbeFingerprintIntegrationTest {
             var stage = (Map<?, ?>) ((List<?>) store.summary("session", id).get("stages")).get(0);
             assertEquals(4, stage.get("logicalRequestCount"));
             assertEquals(2, stage.get("networkRequestCount"));
+            assertEquals(2, stage.get("savedRequestCount"));
+            var liveStage = (Map<?, ?>) ((List<?>) summary.get("stages")).get(0);
+            var lightweightStage = (Map<?, ?>) ((List<?>) workflow.querySummaryIfPresent("session", id).get("stages")).get(0);
+            for (String key : List.of("name", "status", "progress", "total", "completed",
+                    "logicalRequestCount", "networkRequestCount", "savedRequestCount"))
+                assertEquals(liveStage.get(key), lightweightStage.get(key), key);
             var matches = (List<Map<String, Object>>) store.queryFingerprintMatches("session", id, Map.of()).get("matches");
             assertEquals(4, matches.size());
+            var counts = store.summaryCounts("session", id);
+            assertEquals(4, counts.get("fingerprintCount"));
+            assertEquals(2, counts.get("identifiedApplicationCount"));
             for (var match : matches) {
                 assertEquals("2.4.1", match.get("detectedVersion"));
                 var evidence = store.fingerprintEvidence("session", id, String.valueOf(match.get("matchKey")));

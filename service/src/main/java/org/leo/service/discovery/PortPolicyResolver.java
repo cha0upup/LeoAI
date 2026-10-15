@@ -3,7 +3,10 @@ package org.leo.service.discovery;
 import org.leo.service.discovery.NetworkDiscoveryDtos.PortPolicy;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -13,9 +16,9 @@ import java.util.stream.Collectors;
  *
  * <p>预定义端口策略：
  * <ul>
- *   <li>quick: 常用端口，约 100 个</li>
- *   <li>standard: 常见服务端口，约 1000 个</li>
- *   <li>extended: 扩展端口集，约 5000 个</li>
+ *   <li>quick: 常用端口</li>
+ *   <li>standard: 常见服务端口</li>
+ *   <li>extended: 扩展端口集</li>
  *   <li>custom: 自定义端口和范围</li>
  * </ul>
  */
@@ -24,20 +27,19 @@ public class PortPolicyResolver {
 
     private static final Pattern RANGE_PATTERN = Pattern.compile("^(\\d+)-(\\d+)$");
 
-    // Quick: Top 100 常用端口
-    private static final int[] QUICK_PORTS = {
+    private static final List<Integer> QUICK_PORTS = List.of(
             21, 22, 23, 25, 53, 80, 81, 110, 111, 123, 135, 139, 143, 161, 443, 445, 465, 514, 515, 587,
             993, 995, 1080, 1433, 1521, 2049, 2181, 2375, 2376, 3000, 3001, 3306, 3389, 4369, 4848, 5000,
             5432, 5601, 5672, 5900, 6379, 7001, 7002, 8000, 8001, 8008, 8009, 8080, 8081, 8082, 8083, 8084,
             8085, 8086, 8087, 8088, 8089, 8090, 8091, 8161, 8443, 8888, 9000, 9001, 9042, 9090, 9092, 9093,
             9100, 9200, 9300, 9443, 9999, 10000, 11211, 15672, 27017, 27018, 50000, 50070
-    };
+    );
 
     // Standard: 常见服务端口（包含 Quick + 其他常见端口）
-    private static final int[] STANDARD_PORTS = expandStandard();
+    private static final List<Integer> STANDARD_PORTS = expandStandard();
 
     // Extended: 1-10000 范围内的重要端口
-    private static final int[] EXTENDED_PORTS = expandExtended();
+    private static final List<Integer> EXTENDED_PORTS = expandExtended();
 
     /**
      * 解析端口策略为端口列表。
@@ -47,20 +49,18 @@ public class PortPolicyResolver {
      */
     public List<Integer> resolve(PortPolicy policy) {
         if (policy == null) {
-            return Arrays.stream(QUICK_PORTS).boxed().collect(Collectors.toCollection(ArrayList::new));
+            return new ArrayList<>(QUICK_PORTS);
         }
-
-        Set<Integer> ports = new LinkedHashSet<>();
 
         // 根据 profile 添加预定义端口
         String profile = policy.profile() != null ? policy.profile().toLowerCase() : "standard";
-        switch (profile) {
-            case "quick" -> addPorts(ports, QUICK_PORTS);
-            case "standard" -> addPorts(ports, STANDARD_PORTS);
-            case "extended" -> addPorts(ports, EXTENDED_PORTS);
-            case "custom" -> { } // custom 不添加预定义端口
+        Set<Integer> ports = new LinkedHashSet<>(switch (profile) {
+            case "quick" -> QUICK_PORTS;
+            case "standard" -> STANDARD_PORTS;
+            case "extended" -> EXTENDED_PORTS;
+            case "custom" -> List.<Integer>of();
             default -> throw new IllegalArgumentException("不支持的端口策略: " + profile);
-        }
+        });
 
         // 解析自定义范围
         if (policy.ranges() != null) {
@@ -90,12 +90,6 @@ public class PortPolicyResolver {
         return ports.stream().sorted().collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private static void addPorts(Set<Integer> target, int[] ports) {
-        for (int port : ports) {
-            target.add(port);
-        }
-    }
-
     private void addRange(Set<Integer> target, String range) {
         Matcher matcher = RANGE_PATTERN.matcher(range);
         if (!matcher.matches()) {
@@ -114,14 +108,11 @@ public class PortPolicyResolver {
         }
     }
 
-    private static int[] expandStandard() {
-        Set<Integer> ports = new LinkedHashSet<>();
-
-        // 包含所有 quick 端口
-        addPorts(ports, QUICK_PORTS);
+    private static List<Integer> expandStandard() {
+        Set<Integer> ports = new LinkedHashSet<>(QUICK_PORTS);
 
         // 常见服务端口
-        int[] additional = {
+        ports.addAll(List.of(
             20, 21, 22, 23, 25, 37, 42, 43, 49, 53, 70, 79, 80, 81, 82, 83, 84, 85, 88, 89, 90, 99, 100,
             106, 109, 110, 111, 113, 119, 125, 135, 139, 143, 144, 146, 161, 163, 179, 199, 211, 212, 222,
             254, 255, 256, 259, 264, 280, 301, 306, 311, 340, 366, 389, 406, 407, 416, 417, 425, 427, 443,
@@ -158,17 +149,12 @@ public class PortPolicyResolver {
             49400, 49999, 50000, 50001, 50002, 50003, 50006, 50300, 50389, 50500, 50636, 50800, 51103, 51493,
             52673, 52822, 52848, 52869, 54045, 54328, 55055, 55056, 55555, 55600, 56737, 56738, 57294, 57797,
             58080, 60020, 60443, 61532, 61900, 62078, 63331, 64623, 64680, 65000, 65129, 65389
-        };
-
-        addPorts(ports, additional);
-        return ports.stream().mapToInt(Integer::intValue).sorted().toArray();
+        ));
+        return ports.stream().sorted().toList();
     }
 
-    private static int[] expandExtended() {
-        Set<Integer> ports = new LinkedHashSet<>();
-
-        // 包含所有 standard 端口
-        addPorts(ports, STANDARD_PORTS);
+    private static List<Integer> expandExtended() {
+        Set<Integer> ports = new LinkedHashSet<>(STANDARD_PORTS);
 
         // 1-10000 范围内每隔一定间隔的端口
         for (int port = 1; port <= 10000; port++) {
@@ -177,6 +163,6 @@ public class PortPolicyResolver {
             }
         }
 
-        return ports.stream().mapToInt(Integer::intValue).sorted().toArray();
+        return ports.stream().sorted().toList();
     }
 }
