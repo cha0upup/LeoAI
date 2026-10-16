@@ -22,15 +22,45 @@ class AiThreadQueryServiceTest {
     private final AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
     private final AiThreadQueryService queries = new AiThreadQueryService(store, protocol);
 
+    @Test
+    void returnsStableCursorMetadataAndClampsPageSize() {
+        List<Map<String, Object>> messages = List.of(
+                Map.of("messageId", "m-10", "sequence", 10L),
+                Map.of("messageId", "m-11", "sequence", 11L));
+        when(store.listMessagesBefore("thread", 20L, 200)).thenReturn(messages);
+        when(store.countMessages("thread")).thenReturn(30);
+        when(store.hasMessagesBefore("thread", 10L)).thenReturn(true);
+
+        Map<String, Object> page = queries.messages("thread", 0, 500, 20L);
+
+        assertEquals(messages, page.get("messages"));
+        assertEquals(10L, page.get("nextBeforeSequence"));
+        assertEquals(true, page.get("hasMore"));
+        assertEquals(200, page.get("limit"));
+        assertEquals(30, page.get("total"));
+        verify(store, never()).listMessages(anyString(), anyInt(), anyInt());
+    }
+
+    @Test
+    void initialAndEmptyHistoryPagesKeepCursorContract() {
+        when(store.listMessages("thread", 0, 50)).thenReturn(List.of());
+        Map<String, Object> page = queries.messages("thread", 0, 50, null);
+        assertNull(page.get("nextBeforeSequence"));
+        assertEquals(false, page.get("hasMore"));
+        assertThrows(org.leo.web.exception.ApiException.class,
+                () -> queries.messages("thread", 0, 50, 0L));
+    }
+
     @ParameterizedTest
-    @CsvSource(value = {"null,null,0,50", "-8,15,0,15", "7,20,7,20"}, nullValues = "null")
+    @CsvSource(value = {"null,null,0,50", "-8,15,0,15", "7,20,7,20", "0,0,0,1", "0,-1,0,200", "0,500,0,200"}, nullValues = "null")
     void preservesMessagePagination(Integer offset, Integer limit, int expectedOffset, int expectedLimit) {
-        List<Map<String, Object>> messages = List.of(Map.of("id", "message-1", "content", "hello"));
+        List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L, "content", "hello"));
         when(store.listMessages("thread", expectedOffset, expectedLimit)).thenReturn(messages);
         when(store.countMessages("thread")).thenReturn(30);
 
-        assertEquals(Map.of("messages", messages, "total", 30, "offset", expectedOffset, "limit", expectedLimit),
-                queries.messages("thread", offset, limit));
+        assertEquals(Map.of("messages", messages, "total", 30, "offset", expectedOffset, "limit", expectedLimit,
+                        "nextBeforeSequence", 1L, "hasMore", false),
+                queries.messages("thread", offset, limit, null));
         verify(store).listMessages("thread", expectedOffset, expectedLimit);
     }
 

@@ -23,6 +23,18 @@ class AiTurnProtocolServiceTest {
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
     private final AiTurnProtocolService service = new AiTurnProtocolService(store);
 
+    @Test
+    void startupFailureWithoutLeaseUsesAtomicTerminalEventPath() {
+        AiTurnRecord failed = existingTurn();
+        failed.setProtocolStatus("failed");
+        when(store.failProtocolTurnBeforeRun(org.mockito.ArgumentMatchers.eq("turn-1"),
+                org.mockito.ArgumentMatchers.eq("expired"), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(failed);
+
+        assertEquals("failed", service.failStart("turn-1", "expired", null).status());
+        verify(store, never()).completeProtocolTurn(any(), any(), any(), org.mockito.ArgumentMatchers.anyLong(), any());
+    }
+
     @ParameterizedTest
     @CsvSource({
             "inProgress,queued,queued,queued",

@@ -84,7 +84,7 @@ class PlatformAiThreadServiceTest {
     void deniesHistoryQueriesBeforeReadingForeignThreadData() {
         Fixture fixture = fixture("other-user");
         assertEquals(404, assertThrows(ApiException.class,
-                () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null)).getCode());
+                () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, null)).getCode());
         assertEquals(404, assertThrows(ApiException.class,
                 () -> fixture.service.events(user("user-1"), THREAD_ID, null, null)).getCode());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());

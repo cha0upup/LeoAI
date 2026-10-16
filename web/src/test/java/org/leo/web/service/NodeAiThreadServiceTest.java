@@ -1,6 +1,8 @@
 package org.leo.web.service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
@@ -72,8 +74,7 @@ class NodeAiThreadServiceTest {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
         AiThread thread = session.createAiThread("persisted-thread", "已有对话");
-        AiThreadRecord record = new AiThreadRecord();
-        record.setThreadId(thread.getThreadId());
+        AiThreadRecord record = ownedRecord(thread.getThreadId());
         when(fixture.conversationStore.findThread(thread.getThreadId())).thenReturn(record);
 
         NodeAiThreadService.ThreadResolution resolution =
@@ -91,6 +92,7 @@ class NodeAiThreadServiceTest {
         AgentNodeSession session = cacheSession();
         AiThreadRecord record = new AiThreadRecord();
         record.setThreadId("stored-thread");
+        record.setScope(AiConversationStoreService.SCOPE_AGENT);
         record.setUserId("user-1");
         record.setAgentId("agent-1");
         record.setTitle("历史对话");
@@ -162,12 +164,70 @@ class NodeAiThreadServiceTest {
     @Test
     void historyKeepsExistingPaginationShape() {
         Fixture fixture = fixture();
+        when(fixture.conversationStore.findThread("thread-1")).thenReturn(ownedRecord("thread-1"));
+        List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L));
         when(fixture.conversationStore.listMessages("thread-1", 0, 50))
-                .thenReturn(List.of(Map.of("id", "message-1")));
+                .thenReturn(messages);
         when(fixture.conversationStore.countMessages("thread-1")).thenReturn(1);
 
-        assertEquals(Map.of("messages", List.of(Map.of("id", "message-1")), "total", 1, "offset", 0, "limit", 50),
-                fixture.service.threadMessages(cacheSession(), "thread-1", -2, null));
+        assertEquals(Map.of("messages", messages, "total", 1, "offset", 0, "limit", 50,
+                        "nextBeforeSequence", 1L, "hasMore", false),
+                fixture.service.threadMessages(cacheSession(), "thread-1", -2, null, null));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "agent,other-agent,user-1",
+            "agent,agent-1,other-user",
+            "platform,agent-1,user-1",
+            "agent,agent-1,"
+    })
+    void rejectsForeignThreadsForEveryEntryEvenWhenCached(String scope, String agentId, String userId) {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        AiThread cached = session.createAiThread("foreign", "original");
+        AiThreadRecord record = ownedRecord("foreign");
+        record.setScope(scope);
+        record.setAgentId(agentId);
+        record.setUserId(userId);
+        when(fixture.conversationStore.findThread("foreign")).thenReturn(record);
+
+        List<Runnable> operations = List.of(
+                () -> fixture.service.threadMessages(session, "foreign", 0, 50, null),
+                () -> fixture.service.threadMessages(session, "foreign", 0, 50, 20L),
+                () -> fixture.service.renameThread(session, "foreign", "changed"),
+                () -> fixture.service.deleteThread(session, "foreign"),
+                () -> fixture.service.requireThread(session, "foreign"),
+                () -> fixture.service.ensureThreadReady(session, "foreign", null),
+                () -> fixture.service.resetThread(session, "foreign", null),
+                () -> fixture.service.switchChannel(session, "foreign", null));
+        for (Runnable operation : operations) {
+            assertEquals(404, assertThrows(ApiException.class, operation::run).getCode());
+        }
+        assertSame(cached, session.getAiThread("foreign"));
+        assertEquals("original", cached.getTitle());
+        verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
+        verify(fixture.conversationStore, never()).deleteThread(anyString());
+        verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
+    }
+
+    @Test
+    void rejectsMissingThreadBeforeReadingOrMutatingStorage() {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        assertThrows(ApiException.class, () -> fixture.service.threadMessages(session, "missing", 0, 50, null));
+        assertThrows(ApiException.class, () -> fixture.service.renameThread(session, "missing", "changed"));
+        assertThrows(ApiException.class, () -> fixture.service.deleteThread(session, "missing"));
+        verify(fixture.conversationStore, never()).deleteThread(anyString());
+    }
+
+    private static AiThreadRecord ownedRecord(String threadId) {
+        AiThreadRecord record = new AiThreadRecord();
+        record.setThreadId(threadId);
+        record.setScope(AiConversationStoreService.SCOPE_AGENT);
+        record.setAgentId("agent-1");
+        record.setUserId("user-1");
+        return record;
     }
 
     @Test

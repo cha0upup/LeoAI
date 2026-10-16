@@ -47,6 +47,29 @@ class AiConversationStoreServiceTest {
             new AiMessageRepository(mapper), new AiContextCheckpointRepository(mapper));
 
     @Test
+    void startupFailureDiscardsMessagesAndPersistsOneReplayableTerminalEvent() {
+        AiTurnRecord row = new AiTurnRecord();
+        row.setTurnId("turn-start");
+        row.setThreadId("thread-1");
+        row.setAssistantItemId("assistant-start");
+        when(mapper.findTurnById("turn-start")).thenReturn(row);
+        when(mapper.failProtocolTurnBeforeRun("turn-start", "session expired", 100L)).thenReturn(1, 0);
+        when(mapper.findLastEventSeq("thread-1")).thenReturn(9L);
+
+        service.failProtocolTurnBeforeRun("turn-start", "session expired", 100L);
+        service.failProtocolTurnBeforeRun("turn-start", "session expired", 100L);
+
+        verify(mapper).updateTurnMessageStatus("thread-1", "turn-start", "discarded");
+        verify(mapper).failOrphanedThread("thread-1", 100L);
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(mapper).insertEvent(anyString(), isNull(), eq("thread-1"), eq("turn-start"),
+                eq("assistant-start"), isNull(), eq(10L), eq(100L), eq("turn/completed"),
+                payload.capture(), isNull(), anyLong());
+        assertTrue(payload.getValue().contains("session expired"));
+        assertTrue(payload.getValue().contains("\"status\":\"failed\""));
+    }
+
+    @Test
     void storesAndRestoresVersionedContextCheckpointMetadata() {
         AiThreadRecord thread = new AiThreadRecord();
         thread.setThreadId("thread-1");

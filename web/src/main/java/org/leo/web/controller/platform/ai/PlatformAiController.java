@@ -302,7 +302,7 @@ public class PlatformAiController {
                                         HttpServletRequest request) {
         return ApiResponse.success(threadService.messages(
                 ControllerUtil.getCurrentUser(request), body.threadId(),
-                body.offset(), body.limit()));
+                body.offset(), body.limit(), body.beforeSequence()));
     }
 
     /** 加载当前平台 AI 线程派发过的 Node AI 子任务。 */

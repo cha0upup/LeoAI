@@ -1,6 +1,7 @@
 package org.leo.web.service;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -44,6 +45,32 @@ class AiTurnApplicationServiceTest {
     void cleanState() {
         PlatformAiStateStore.remove("thread-1");
         AgentNodeSessionContainer.clearAllSessions();
+    }
+
+    @Test
+    void closesLostNodeSessionInsteadOfRequeueingForever() {
+        Fixture fixture = fixture(true);
+        AgentNodeSessionContainer.clearAllSessions();
+
+        assertTrue(fixture.application.execute(fixture.turn).join());
+
+        verify(fixture.protocol).failStart("turn-1", "节点会话已失效，请重新连接节点后重新提交任务", null);
+        verify(fixture.protocol, never()).requeue(anyString());
+        verify(fixture.agentTurns, never()).tryClaimExecution(any());
+        fixture.verifyReleased(false);
+    }
+
+    @Test
+    void threadResolutionFailureStillClosesTheClaimedProtocolTurn() {
+        Fixture fixture = fixture(true);
+        when(fixture.agentThreads.ensureThreadReady(any(), eq("thread-1"), nullable(Integer.class)))
+                .thenThrow(new IllegalStateException("thread no longer accessible"));
+
+        assertTrue(fixture.application.execute(fixture.turn).join());
+
+        verify(fixture.protocol).failStart("turn-1", "thread no longer accessible", null);
+        verify(fixture.protocol, never()).requeue(anyString());
+        verify(fixture.agentTurns, never()).tryClaimExecution(any());
     }
 
     @ParameterizedTest
@@ -246,7 +273,7 @@ class AiTurnApplicationServiceTest {
 
         when(protocol.failStart(eq("turn-1"), anyString(), nullable(String.class)))
                 .thenAnswer(invocation -> completedTurn("failed", invocation.getArgument(1)));
-        return new Fixture(application, protocol, platformTurns, agentTurns, state, runtime, turn);
+        return new Fixture(application, protocol, platformTurns, agentTurns, agentThreads, state, runtime, turn);
     }
 
     private static AiTurnProtocolService.TurnSnapshot completedTurn(
@@ -267,6 +294,7 @@ class AiTurnApplicationServiceTest {
             AiTurnProtocolService protocol,
             PlatformAiTurnService platformTurns,
             NodeAiTurnService agentTurns,
+            NodeAiThreadService agentThreads,
             AiRuntimeState state,
             CompletableFuture<AiTurnOrchestrator.TerminalResult> runtime,
             AiTurnProtocolService.TurnSnapshot turn) {

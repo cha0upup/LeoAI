@@ -163,6 +163,10 @@ public class AiTurnProtocolService {
     }
 
     public TurnSnapshot failStart(String turnId, String message, String leaseToken) {
+        if (isBlank(leaseToken)) {
+            return snapshot(store.failProtocolTurnBeforeRun(
+                    turnId, message, System.currentTimeMillis()));
+        }
         return snapshot(store.completeProtocolTurn(
                 turnId, STATUS_FAILED, message, System.currentTimeMillis(),
                 leaseToken));

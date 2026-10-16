@@ -156,9 +156,9 @@ public class PlatformAiThreadService {
     }
 
     public Map<String, Object> messages(User user, String threadId,
-                                        Integer requestedOffset, Integer requestedLimit) {
+                                        Integer requestedOffset, Integer requestedLimit, Long beforeSequence) {
         AiThreadRecord thread = requireOwnedThread(user, threadId);
-        return threadQueries.messages(thread.getThreadId(), requestedOffset, requestedLimit);
+        return threadQueries.messages(thread.getThreadId(), requestedOffset, requestedLimit, beforeSequence);
     }
 
     public List<org.leo.core.entity.AiSubagentInvocation> subagentInvocations(

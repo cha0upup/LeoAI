@@ -22,6 +22,13 @@ import java.util.List;
 @Mapper
 public interface AiConversationMapper {
 
+    String MESSAGE_HISTORY_SELECT = "SELECT m.*, r.status AS run_status, "
+            + "t.protocol_status, t.dispatch_status, t.error_message AS protocol_error_message, "
+            + "t.answer_to_question_id FROM ai_messages m "
+            + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
+            + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
+            + "WHERE m.thread_id = #{threadId} ";
+
     @Insert("INSERT INTO ai_operation_assessments (assessment_id, user_id, thread_id, tool_name, arguments_json, arguments_hash, "
             + "risk_level, requires_confirmation, reason, impact, rollback, status, created_at, expires_at, consumed_at) "
             + "VALUES (#{assessmentId}, #{userId}, #{threadId}, #{toolName}, #{argumentsJson}, #{argumentsHash}, #{riskLevel}, "
@@ -218,6 +225,14 @@ public interface AiConversationMapper {
             + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress'")
     int completeProtocolTurn(AiTurnRecord row);
 
+    @Update("UPDATE ai_turns SET protocol_status = 'failed', dispatch_status = 'failed', "
+            + "status = 'discarded', completed_at = #{completedAt}, error_message = #{message} "
+            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress' "
+            + "AND NOT EXISTS (SELECT 1 FROM ai_runs r WHERE r.turn_id = ai_turns.turn_id)")
+    int failProtocolTurnBeforeRun(@Param("turnId") String turnId,
+                                  @Param("message") String message,
+                                  @Param("completedAt") long completedAt);
+
     @Update("UPDATE ai_turns SET protocol_status = #{protocolStatus}, "
             + "dispatch_status = #{protocolStatus}, "
             + "completed_at = COALESCE(completed_at, #{completedAt}), "
@@ -318,22 +333,26 @@ public interface AiConversationMapper {
                                 @Param("turnId") String turnId,
                                 @Param("runId") String runId);
 
-    @Select("SELECT * FROM ("
-            + "SELECT m.*, r.status AS run_status, "
-            + "t.protocol_status AS protocol_status, "
-            + "t.dispatch_status AS dispatch_status, "
-            + "t.error_message AS protocol_error_message, "
-            + "t.answer_to_question_id AS answer_to_question_id "
-            + "FROM ai_messages m "
-            + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
-            + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
-            + "WHERE m.thread_id = #{threadId} "
+    @Select("SELECT * FROM (" + MESSAGE_HISTORY_SELECT
             + "ORDER BY m.message_seq DESC, m.message_id DESC "
             + "LIMIT #{limit} OFFSET #{offset}"
             + ") recent ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> listMessages(@Param("threadId") String threadId,
                                        @Param("offset") int offset,
                                        @Param("limit") int limit);
+
+    @Select("SELECT * FROM (" + MESSAGE_HISTORY_SELECT
+            + "AND m.message_seq < #{beforeSequence} "
+            + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}) "
+            + "recent ORDER BY message_seq ASC, message_id ASC")
+    List<AiMessageRecord> listMessagesBefore(@Param("threadId") String threadId,
+                                            @Param("beforeSequence") long beforeSequence,
+                                            @Param("limit") int limit);
+
+    @Select("SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId} "
+            + "AND message_seq < #{beforeSequence}")
+    int countMessagesBefore(@Param("threadId") String threadId,
+                            @Param("beforeSequence") long beforeSequence);
 
     @Select("SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId}")
     int countMessages(@Param("threadId") String threadId);

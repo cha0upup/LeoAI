@@ -94,10 +94,10 @@ public class NodeAiThreadService {
     }
 
     public AiThread requireThread(AgentNodeSession session, String threadId) {
+        AiThreadRecord persisted = requireOwnedThread(session, threadId);
         AiThread thread = session.getAiThread(threadId);
         if (thread == null) {
-            thread = restorePersistedThread(
-                    session, threadId, findPersistedThread(session, threadId));
+            thread = restorePersistedThread(session, threadId, persisted);
         }
         if (thread == null) {
             throw ApiException.notFound("线程不存在，threadId: " + threadId);
@@ -187,6 +187,7 @@ public class NodeAiThreadService {
     }
 
     public void deleteThread(AgentNodeSession session, String threadId) {
+        requireOwnedThread(session, threadId);
         session.removeAiThread(threadId);
         agentRegistry.evict(session, threadId);
         String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
@@ -197,6 +198,7 @@ public class NodeAiThreadService {
 
     public void renameThread(
             AgentNodeSession session, String threadId, String title) {
+        requireOwnedThread(session, threadId);
         AiThread thread = session.getAiThread(threadId);
         if (thread != null) thread.setTitle(title);
         conversationStore.renameThread(threadId, title);
@@ -204,8 +206,9 @@ public class NodeAiThreadService {
 
     public Map<String, Object> threadMessages(
             AgentNodeSession session, String threadId,
-            Integer requestedOffset, Integer requestedLimit) {
-        return threadQueries.messages(threadId, requestedOffset, requestedLimit);
+            Integer requestedOffset, Integer requestedLimit, Long beforeSequence) {
+        requireOwnedThread(session, threadId);
+        return threadQueries.messages(threadId, requestedOffset, requestedLimit, beforeSequence);
     }
 
     public Map<String, Object> threadEvents(
@@ -265,14 +268,7 @@ public class NodeAiThreadService {
 
     private AiThread restorePersistedThread(
             AgentNodeSession session, String threadId, AiThreadRecord record) {
-        if (session == null || threadId == null || threadId.isBlank()) return null;
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
-        String userId = session.getCreateByUser();
-        if (agentId == null || record == null
-                || !agentId.equals(record.getAgentId())
-                || record.getUserId() != null && !record.getUserId().equals(userId)) {
-            return null;
-        }
+        if (threadId == null || threadId.isBlank() || !ownsPersistedThread(session, record)) return null;
         String title = record.getTitle() != null && !record.getTitle().isBlank()
                 ? record.getTitle() : "历史对话";
         AiThread thread = session.restoreAiThread(
@@ -305,7 +301,30 @@ public class NodeAiThreadService {
     private AiThreadRecord findPersistedThread(
             AgentNodeSession session, String threadId) {
         if (session == null || threadId == null || threadId.isBlank()) return null;
-        return conversationStore.findThread(threadId);
+        AiThreadRecord record = conversationStore.findThread(threadId);
+        if (record != null && !ownsPersistedThread(session, record)) {
+            throw ApiException.notFound("线程不存在");
+        }
+        return record;
+    }
+
+    private boolean ownsPersistedThread(AgentNodeSession session, AiThreadRecord record) {
+        if (session == null || record == null) return false;
+        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
+        String userId = session.getCreateByUser();
+        return AiConversationStoreService.SCOPE_AGENT.equals(record.getScope())
+                && agentId != null && agentId.equals(record.getAgentId())
+                && userId != null && userId.equals(record.getUserId());
+    }
+
+    /** 持久化记录始终校验归属；未落库的线程仅允许其所属内存 Session 访问。 */
+    private AiThreadRecord requireOwnedThread(AgentNodeSession session, String threadId) {
+        AiThreadRecord record = findPersistedThread(session, threadId);
+        if (session == null || threadId == null || threadId.isBlank()
+                || record == null && session.getAiThread(threadId) == null) {
+            throw ApiException.notFound("线程不存在");
+        }
+        return record;
     }
 
     private String ensureThreadPersisted(

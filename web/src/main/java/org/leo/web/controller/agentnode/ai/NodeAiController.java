@@ -199,7 +199,8 @@ public class NodeAiController {
         String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer offset = body != null ? body.offset() : null;
         Integer limit = body != null ? body.limit() : null;
-        return ApiResponse.success(aiThreadService.threadMessages(session, threadId, offset, limit));
+        return ApiResponse.success(aiThreadService.threadMessages(
+                session, threadId, offset, limit, body.beforeSequence()));
     }
 
     /**

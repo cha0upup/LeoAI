@@ -37,7 +37,7 @@ public final class PlatformAiDtos {
     public record ThreadRenameRequest(String threadId, String title) {
     }
 
-    public record MessagesRequest(String threadId, Integer offset, Integer limit) {
+    public record MessagesRequest(String threadId, Integer offset, Integer limit, Long beforeSequence) {
     }
 
     public record AuditLogsRequest(Integer limit) {

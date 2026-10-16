@@ -47,6 +47,11 @@ public class AiMessageRepository {
         return toMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
     }
 
+    public List<Map<String, Object>> listBefore(String threadId, long beforeSequence, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        return toMaps(mapper.listMessagesBefore(threadId, beforeSequence, safeLimit));
+    }
+
     private static List<Map<String, Object>> toMaps(List<AiMessageRecord> records) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (AiMessageRecord record : records) {

@@ -309,6 +309,28 @@ public class AiConversationStoreService {
         return protocolTurn.requeue(turnId);
     }
 
+    /** 启动前失败也产生可重放终态，避免没有 Run 的订阅永久等待。 */
+    @Transactional
+    public AiTurnRecord failProtocolTurnBeforeRun(String turnId, String message, long completedAt) {
+        AiTurnRecord current = findProtocolTurn(turnId);
+        if (current == null) return null;
+        if (mapper.failProtocolTurnBeforeRun(turnId, message, completedAt) == 1) {
+            String threadId = current.getThreadId();
+            mapper.updateTurnMessageStatus(threadId, turnId, MESSAGE_DISCARDED);
+            mapper.failOrphanedThread(threadId, completedAt);
+            Map<String, Object> turn = new LinkedHashMap<>();
+            turn.put("id", turnId);
+            turn.put("threadId", threadId);
+            turn.put("status", "failed");
+            turn.put("error", Map.of("message", message != null ? message : "任务启动失败"));
+            eventJournal.append(threadId, new AiSseEvent(
+                    eventJournal.lastSequence(threadId) + 1L, completedAt,
+                    "turn/completed", Map.of("turn", turn), null,
+                    turnId, current.getAssistantItemId(), null), null);
+        }
+        return findProtocolTurn(turnId);
+    }
+
     // ── 可重放事件日志 ───────────────────────────────────────────────────────
 
     /**
@@ -515,6 +537,14 @@ public class AiConversationStoreService {
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
         return messages.list(threadId, offset, limit);
+    }
+
+    public List<Map<String, Object>> listMessagesBefore(String threadId, long beforeSequence, int limit) {
+        return messages.listBefore(threadId, beforeSequence, limit);
+    }
+
+    public boolean hasMessagesBefore(String threadId, long beforeSequence) {
+        return mapper.countMessagesBefore(threadId, beforeSequence) > 0;
     }
 
     /**

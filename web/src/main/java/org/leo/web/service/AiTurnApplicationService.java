@@ -3,6 +3,7 @@ package org.leo.web.service;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
+import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
@@ -60,12 +61,10 @@ public class AiTurnApplicationService {
         try {
             command = AiTurnCommandPayload.fromJson(turn.commandJson());
         } catch (RuntimeException error) {
-            protocol.failStart(turn.id(), error.getMessage(), null);
-            return CompletableFuture.completedFuture(true);
+            return failBeforeExecution(turn, error.getMessage());
         }
         if (!Objects.equals(turn.commandScope(), command.getScope())) {
-            protocol.failStart(turn.id(), "Turn 命令作用域不一致", null);
-            return CompletableFuture.completedFuture(true);
+            return failBeforeExecution(turn, "Turn 命令作用域不一致");
         }
         if (AiTurnCommandPayload.SCOPE_PLATFORM.equals(turn.commandScope())) {
             return executePlatform(turn, command);
@@ -73,8 +72,7 @@ public class AiTurnApplicationService {
         if (AiTurnCommandPayload.SCOPE_AGENT.equals(turn.commandScope())) {
             return executeAgent(turn, command);
         }
-        protocol.failStart(turn.id(), "未知 Turn 命令作用域", null);
-        return CompletableFuture.completedFuture(true);
+        return failBeforeExecution(turn, "未知 Turn 命令作用域");
     }
 
     private CompletableFuture<Boolean> executePlatform(
@@ -82,8 +80,7 @@ public class AiTurnApplicationService {
             AiTurnCommandPayload command) {
         AiThreadRecord persisted = store.findThread(turn.threadId());
         if (persisted == null) {
-            protocol.failStart(turn.id(), "平台 AI 线程不存在", null);
-            return CompletableFuture.completedFuture(true);
+            return failBeforeExecution(turn, "平台 AI 线程不存在");
         }
         PlatformAiState existingState = PlatformAiStateStore.get(turn.threadId());
         PlatformAiState state = existingState != null
@@ -112,24 +109,11 @@ public class AiTurnApplicationService {
             String messageForAgent = userInputService.resumePrompt(
                     turn.threadId(), command.getAnswerToQuestionId(),
                     command.getGuardedMessage());
-            return platformTurns.executeChat(
-                            state, AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs))
-                    .handle((terminal, error) -> {
-                        if (error != null) {
-                            failTurn(turn, state, rootMessage(error), leaseToken,
-                                    () -> platformTurns.failDetachedExecution(state),
-                                    () -> platformTurns.releaseExecutionLease(state));
-                        } else {
-                            completeTurn(
-                                    turn, state,
-                                    state.isWaitingForUserInput()
-                                            ? AiRunStatus.WAITING_FOR_USER
-                                            : terminal.runtimeStatus(),
-                                    terminal.errorMessage(), leaseToken,
-                                    () -> platformTurns.releaseExecutionLease(state));
-                        }
-                        return true;
-                    });
+            return completeAfterExecution(turn, state, leaseToken,
+                    platformTurns.executeChat(state,
+                            AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs)),
+                    () -> platformTurns.failDetachedExecution(state),
+                    () -> platformTurns.releaseExecutionLease(state));
         } catch (Throwable error) {
             failTurn(turn, state, rootMessage(error), executionLeaseToken,
                     () -> platformTurns.failDetachedExecution(state),
@@ -144,16 +128,19 @@ public class AiTurnApplicationService {
         AgentNodeSession session =
                 AgentNodeSessionContainer.getSession(command.getSessionId());
         if (session == null) {
-            protocol.requeue(turn.id());
-            return CompletableFuture.completedFuture(false);
+            // 临时 Session 在进程重启/销毁后不会恢复原 ID，持续重排只会留下悬挂任务。
+            return failBeforeExecution(turn, "节点会话已失效，请重新连接节点后重新提交任务");
         }
-        NodeAiThreadService.ThreadResolution resolution =
-                agentThreads.ensureThreadReady(session, turn.threadId(), null);
+        NodeAiThreadService.ThreadResolution resolution;
+        try {
+            resolution = agentThreads.ensureThreadReady(session, turn.threadId(), null);
+        } catch (RuntimeException error) {
+            return failBeforeExecution(turn, rootMessage(error));
+        }
         AiThread thread = resolution.thread();
         if (thread == null || resolution.errorMessage() != null) {
-            protocol.failStart(turn.id(), resolution.errorMessage() != null
-                    ? resolution.errorMessage() : "Node AI 线程不存在", null);
-            return CompletableFuture.completedFuture(true);
+            return failBeforeExecution(turn, resolution.errorMessage() != null
+                    ? resolution.errorMessage() : "Node AI 线程不存在");
         }
 
         String executionLeaseToken = null;
@@ -181,30 +168,40 @@ public class AiTurnApplicationService {
             String messageForAgent = userInputService.resumePrompt(
                     turn.threadId(), command.getAnswerToQuestionId(),
                     command.getGuardedMessage());
-            return agentTurns.executeChat(
-                            session, thread, AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs))
-                    .handle((terminal, error) -> {
-                        if (error != null) {
-                            failTurn(turn, thread, rootMessage(error), leaseToken,
-                                    () -> agentTurns.failDetachedExecution(thread),
-                                    () -> agentTurns.releaseExecutionLease(thread));
-                        } else {
-                            completeTurn(
-                                    turn, thread,
-                                    thread.isWaitingForUserInput()
-                                            ? AiRunStatus.WAITING_FOR_USER
-                                            : terminal.runtimeStatus(),
-                                    terminal.errorMessage(), leaseToken,
-                                    () -> agentTurns.releaseExecutionLease(thread));
-                        }
-                        return true;
-                    });
+            return completeAfterExecution(turn, thread, leaseToken,
+                    agentTurns.executeChat(session, thread,
+                            AiTurnExecutionRequest.from(turn, command, messageForAgent, audit, startMs)),
+                    () -> agentTurns.failDetachedExecution(thread),
+                    () -> agentTurns.releaseExecutionLease(thread));
         } catch (Throwable error) {
             failTurn(turn, thread, rootMessage(error), executionLeaseToken,
                     () -> agentTurns.failDetachedExecution(thread),
                     () -> agentTurns.releaseExecutionLease(thread));
             return CompletableFuture.completedFuture(true);
         }
+    }
+
+    private CompletableFuture<Boolean> failBeforeExecution(
+            AiTurnProtocolService.TurnSnapshot turn, String message) {
+        protocol.failStart(turn.id(), message, null);
+        return CompletableFuture.completedFuture(true);
+    }
+
+    /** 两类运行时共用终态处理，租约保持到异步执行和持久化均结束。 */
+    private CompletableFuture<Boolean> completeAfterExecution(
+            AiTurnProtocolService.TurnSnapshot turn, AiRuntimeState runtime, String leaseToken,
+            CompletableFuture<AiTurnOrchestrator.TerminalResult> completion,
+            Runnable failExecution, Runnable releaseLease) {
+        return completion.handle((terminal, error) -> {
+            if (error != null) {
+                failTurn(turn, runtime, rootMessage(error), leaseToken, failExecution, releaseLease);
+            } else {
+                String status = runtime.isWaitingForUserInput()
+                        ? AiRunStatus.WAITING_FOR_USER : terminal.runtimeStatus();
+                completeTurn(turn, runtime, status, terminal.errorMessage(), leaseToken, releaseLease);
+            }
+            return true;
+        });
     }
 
     private void completeTurn(AiTurnProtocolService.TurnSnapshot turn,
@@ -226,7 +223,10 @@ public class AiTurnApplicationService {
         if (owns) failExecution.run();
         try {
             AiTurnProtocolService.TurnSnapshot failed = protocol.failStart(turn.id(), message, leaseToken);
-            if (owns) runtime.offerSseEvent("turn/completed", Map.of("turn", failed.toMap()));
+            // 无租约的启动失败已由存储层原子写入终态事件。
+            if (owns && leaseToken != null) {
+                runtime.offerSseEvent("turn/completed", Map.of("turn", failed.toMap()));
+            }
         } finally {
             if (owns) releaseLease.run();
         }
