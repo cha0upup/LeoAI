@@ -185,6 +185,14 @@ The exact PHP feature set depends on the target environment: database operations
 Every Java build keeps the final Packer text and also exposes downloadable Core,
 Shell, and Injector class artifacts with byte sizes and server-generated SHA-256 digests.
 
+### Artifact Library
+
+- The default view is a paginated file list with category/source filters and search across titles, filenames, hosts, and source identifiers.
+- Script builds and AI reports are archived explicitly with an artifact ID, creation time, and provenance. Public task outputs can be copied into Task Results from their task cards; originals remain untouched.
+- Live `ai-tasks` workspaces, internal directories, and symbolic links are excluded from library listings and category totals. Task cards can still download public outputs.
+- Provenance is stored in the hidden `.artifacts` directory inside each user's workspace; include it in backups. Existing files remain intact and are marked as having unrecorded provenance where applicable.
+- Imports and both text/file archives respect the configured per-file size limit. This iteration adds no database tables, team sharing, or artifact version management.
+
 ### Fingerprint & Identification Rules
 
 - **Built-in Rule Library**: HTTP fingerprint rules that can match request data, response headers, status codes, and response bodies

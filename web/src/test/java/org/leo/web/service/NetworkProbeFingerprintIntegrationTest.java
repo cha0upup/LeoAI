@@ -142,13 +142,19 @@ class NetworkProbeFingerprintIntegrationTest {
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         Map<String, Object> configured = Map.of("host", "127.0.0.1", "port", port, "applications", List.of(
                 Map.of("baseUrl", url + "/app/"), Map.of("baseUrl", url + "/other/")));
-        assertTrue(store.createTask("source", "session", "source", Map.of("targets", List.of(configured))));
+        assertTrue(store.createTask("source", "session", "source", Map.of("targets", List.of(
+                Map.of("host", "127.0.0.2", "port", port), "ignored", configured))));
         assertTrue(store.append("source", List.of(Map.of("host", "127.0.0.1", "port", port, "state", "open",
                 "stage", "http-head", "workflowStage", "SERVICE_PROBE", "protocol", "http", "service", "http",
                 "evidence", Map.of("statusCode", 201, "title", "Original home"))), List.of()));
         String endpointId = "tcp|127.0.0.1|" + port;
         assertThrows(IllegalArgumentException.class, () -> store.fingerprintSource("other-session", "source", List.of(endpointId)));
         assertThrows(IllegalArgumentException.class, () -> store.fingerprintSource("session", "source", List.of("missing")));
+        var source = store.fingerprintSource("session", "source", List.of(endpointId, endpointId));
+        assertEquals(1, source.endpoints().size());
+        assertEquals(List.of(configured), source.targets());
+        source.targets().get(0).put("host", "changed");
+        assertEquals(List.of(configured), store.fingerprintSource("session", "source", List.of(endpointId)).targets());
         assertTrue(store.append("source", List.of(Map.of("host", "127.0.0.1", "port", 22, "state", "open",
                 "stage", "tcp-connect", "workflowStage", "PORT_SCAN")), List.of()));
         assertThrows(IllegalArgumentException.class, () -> store.fingerprintSource("session", "source", List.of("tcp|127.0.0.1|22")));
@@ -181,6 +187,7 @@ class NetworkProbeFingerprintIntegrationTest {
             for (var match : matches) {
                 assertEquals("2.4.1", match.get("detectedVersion"));
                 var evidence = store.fingerprintEvidence("session", id, String.valueOf(match.get("matchKey")));
+                assertEquals(match.get("ruleId"), ((Map<?, ?>) evidence.get("rule")).get("fingerprintId"));
                 var observations = (List<Map<String, Object>>) evidence.get("observations");
                 assertEquals(1, observations.size());
                 assertEquals(match.get("ruleId"), observations.get(0).get("ruleId"));

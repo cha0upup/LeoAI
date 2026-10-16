@@ -208,8 +208,10 @@ class NetworkProbeAnalysisServiceTest {
         var incomplete = Map.of("field", "body", "value", "absent");
         var known = Map.of("field", "status", "operator", "equals", "value", status);
         for (var children : List.of(List.of(incomplete, known), List.of(known, incomplete))) {
-            assertEquals(expected, evaluateFingerprint(Map.of(mode, children),
-                    Map.of("evidence", Map.of("statusCode", 200, "body", "prefix", "truncated", true))).get("status"));
+            var expression = Map.<String, Object>of(mode, children);
+            var response = Map.<String, Object>of("evidence", Map.of("statusCode", 200, "body", "prefix", "truncated", true));
+            assertEquals(expected, evaluateFingerprint(expression, response).get("status"));
+            assertEquals(expected, evaluateFingerprint(Map.of("not", Map.of("not", expression)), response).get("status"));
         }
     }
 
@@ -241,12 +243,14 @@ class NetworkProbeAnalysisServiceTest {
 
     @Test
     void accumulatesMultiRequestEvidenceAcrossPagesAndDeduplicatesReplay() throws Exception {
+        var firstCondition = new LinkedHashMap<String, Object>(Map.of("request", 0, "field", "body", "value", "one"));
         Map<String, Object> rule = Map.of("fingerprintId", "multi", "name", "Multi", "protocol", "http",
                 "rule", Map.of("requests", List.of(Map.of("uri", "/first"), Map.of("uri", "/second")),
-                "match", Map.of("all", List.of(Map.of("request", 0, "field", "body", "value", "one"),
+                "match", Map.of("all", List.of(firstCondition,
                         Map.of("request", 1, "field", "body", "value", "two")))));
         var prepared = service.prepare(Map.of("kind", "fingerprint", "rules", List.of(rule), "targets", List.of(
                 Map.of("host", "127.0.0.1", "port", 80, "baseUrl", "http://example.test/app/", "protocol", "http"))));
+        firstCondition.put("value", "changed after preparation");
         service.register("multi", prepared);
         List<Map<String, Object>> probes = (List<Map<String, Object>>) prepared.plan().get("targets");
         assertEquals("/app/first", ((Map<?, ?>) probes.get(0).get("httpRequest")).get("path"));

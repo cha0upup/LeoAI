@@ -227,8 +227,7 @@ public final class NetworkProbeResultStore {
             if (endpoints.size() != ids.size()) throw new IllegalArgumentException("选择中包含不存在的资产，请刷新后重试");
             if (taskConfig(connection, taskId).get("targets") instanceof List<?> values) {
                 for (Object value : values) {
-                    Map<String, Object> target = map(value);
-                    if (ids.contains(endpointId(target))) targets.add(target);
+                    if (value instanceof Map<?, ?> target && ids.contains(endpointId(target))) targets.add(map(target));
                 }
             }
             return new FingerprintSource(endpoints, targets);
@@ -301,9 +300,10 @@ public final class NetworkProbeResultStore {
                 }
             }
             Object rule = Map.of();
+            String ruleId = text(match.get("ruleId"));
             if (taskConfig(connection, taskId).get("fingerprintRules") instanceof List<?> rules) {
                 for (Object value : rules) {
-                    if (text(map(value).get("fingerprintId")).equals(text(match.get("ruleId")))) rule = value;
+                    if (value instanceof Map<?, ?> snapshot && ruleId.equals(text(snapshot.get("fingerprintId")))) rule = value;
                 }
             }
             return Map.of("match", match, "rule", rule, "observations", observations);
@@ -830,7 +830,7 @@ public final class NetworkProbeResultStore {
         return hosts;
     }
 
-    private String endpointId(Map<String, Object> endpoint) {
+    private String endpointId(Map<?, ?> endpoint) {
         return endpointId(text(endpoint.get("host")), integer(endpoint.get("port"), 0));
     }
 

@@ -2,6 +2,7 @@ package org.leo.service.discovery;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.service.discovery.NetworkDiscoveryDtos.ResolvedTarget;
 import org.leo.service.discovery.NetworkDiscoveryDtos.TargetInput;
@@ -13,6 +14,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TargetResolverTest {
 
@@ -40,25 +43,46 @@ class TargetResolverTest {
         assertEquals("2001:db8::1:8443", targets.get(0).rawTarget());
     }
 
-    @Test
-    void normalizesIpv4CidrToTheNetworkAddress() {
+    @ParameterizedTest
+    @CsvSource({
+            "192.168.1.9/30,192.168.1.8,192.168.1.11,4,cidr",
+            "192.168.1.9-192.168.1.11,192.168.1.9,192.168.1.11,3,range",
+            "255.255.255.255/32,255.255.255.255,255.255.255.255,1,cidr",
+            "255.255.255.254-255.255.255.255,255.255.255.254,255.255.255.255,2,range"})
+    void expandsIpv4Intervals(String input, String first, String last, int count, String source) {
         List<ResolvedTarget> targets = resolver.resolve(new TargetInput(
-                List.of("192.168.1.9/30"), List.of()));
+                List.of(input), List.of()));
 
-        assertEquals(4, targets.size());
-        assertEquals("192.168.1.8", targets.get(0).ip());
-        assertEquals("192.168.1.11", targets.get(3).ip());
-        assertEquals("192.168.1.9/30", targets.get(0).targetId());
+        assertEquals(count, targets.size());
+        assertEquals(first, targets.get(0).ip());
+        assertEquals(last, targets.get(count - 1).ip());
+        assertEquals(input, targets.get(0).targetId());
+        assertEquals(source, targets.get(0).source());
     }
 
-    @Test
-    void expandsSmallIpv6Cidr() {
+    @ParameterizedTest
+    @CsvSource({
+            "2001:db8::9/126,2001:db8:0:0:0:0:0:8,2001:db8:0:0:0:0:0:b,4",
+            "2001:db8::1/128,2001:db8:0:0:0:0:0:1,2001:db8:0:0:0:0:0:1,1",
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/127,ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe,ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff,2"})
+    void normalizesAndExpandsIpv6Cidr(String input, String first, String last, int count) {
         List<ResolvedTarget> targets = resolver.resolve(new TargetInput(
-                List.of("2001:db8::/126"), List.of()));
+                List.of(input), List.of()));
 
-        assertEquals(4, targets.size());
-        assertEquals(4, targets.stream().map(ResolvedTarget::ip).distinct().count());
+        assertEquals(count, targets.size());
+        assertEquals(first, targets.get(0).ip());
+        assertEquals(last, targets.get(count - 1).ip());
+        assertEquals(count, targets.stream().map(ResolvedTarget::ip).distinct().count());
         assertNull(targets.get(0).port());
+        assertEquals(input, targets.get(0).rawTarget());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0.0.0.0/0", "2001:db8::/0", "0.0.0.0-255.255.255.255"})
+    void rejectsExpansionsBeyondTheAddressLimit(String input) {
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(new TargetInput(List.of(input), List.of())));
+        assertTrue(error.getMessage().contains("超过"));
     }
 
     @ParameterizedTest

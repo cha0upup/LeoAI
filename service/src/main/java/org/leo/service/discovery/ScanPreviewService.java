@@ -14,6 +14,8 @@ public class ScanPreviewService {
 
     private static final int WARN_COMBINATIONS = 4096;
     private static final int WARN_REACHABILITY_PROBES = 10000;
+    private static final double ESTIMATED_OPEN_RATE = 0.10;
+    private static final int ESTIMATED_BYTES_PER_RESULT = 500;
 
     private final ScanPlanService planService;
 
@@ -34,8 +36,8 @@ public class ScanPreviewService {
         try {
             ScanPlanService.ScanPlan plan = planService.plan(scan);
             int hostCount = plan.hosts().size();
-            long combinationCount = plan.targets().size();
-            long reachabilityProbeCount = plan.reachabilityTargets().size();
+            int combinationCount = plan.targets().size();
+            int reachabilityProbeCount = plan.reachabilityTargets().size();
 
             int serviceProbeCount = plan.stages().contains(ScanStage.SERVICE_PROBE)
                     ? estimateServiceProbeCount(combinationCount) : 0;
@@ -52,14 +54,14 @@ public class ScanPreviewService {
                 warnings.add("探活请求数较大，扫描可能需要较长时间: " + reachabilityProbeCount);
             }
 
-            String estimatedSize = plan.stages().contains(ScanStage.PORT_SCAN)
-                    ? estimateResultSize(combinationCount) : formatBytes((long) hostCount * 100);
+            long estimatedBytes = plan.stages().contains(ScanStage.PORT_SCAN)
+                    ? (long) (combinationCount * ESTIMATED_OPEN_RATE * ESTIMATED_BYTES_PER_RESULT)
+                    : (long) hostCount * 100;
 
             int ruleRequests = plan.fingerprintRules().stream().mapToInt(rule ->
                     ((List<?>) ((java.util.Map<?, ?>) rule.get("rule")).get("requests")).size()).sum();
-            long applicationCount = plan.targets().stream().mapToLong(target ->
-                    target.get("applications") instanceof List<?> list ? list.size() : 1).sum();
-            long fingerprintUpperBound = applicationCount * ruleRequests;
+            long fingerprintUpperBound = ruleRequests == 0 ? 0 : plan.targets().stream().mapToLong(target ->
+                    target.get("applications") instanceof List<?> list ? list.size() : 1).sum() * ruleRequests;
             if (ruleRequests > 0) {
                 warnings.add("组件识别仅扫描 HTTP/HTTPS 应用；实际请求数以发现结果为准，单次最多 "
                         + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + " 个请求，响应正文最多读取 "
@@ -71,12 +73,12 @@ public class ScanPreviewService {
                     plan.originalCount(),
                     hostCount,
                     plan.ports().size(),
-                    (int) Math.min(combinationCount, Integer.MAX_VALUE),
-                    (int) reachabilityProbeCount,
+                    combinationCount,
+                    reachabilityProbeCount,
                     serviceProbeCount,
                     plan.fingerprintRules().size(), ruleRequests, fingerprintUpperBound,
                     NetworkProbeLimits.NODE_MAX_READ_BYTES,
-                    estimatedSize,
+                    formatBytes(estimatedBytes),
                     warnings,
                     plan.stages().stream().map(Enum::name).toList()
             );
@@ -92,22 +94,9 @@ public class ScanPreviewService {
     /**
      * 估算深度探测数。
      */
-    private int estimateServiceProbeCount(long combinationCount) {
-        double openRate = 0.10;  // 假设 10% 端口开放
-
-        long baseProbes = (long) (combinationCount * openRate);
-        return (int) Math.min(Integer.MAX_VALUE, (long) (baseProbes * 1.5));
-    }
-
-    /**
-     * 估算结果规模。
-     */
-    private String estimateResultSize(long combinationCount) {
-        int avgBytesPerResult = 500;
-        double openRate = 0.10;
-        long estimatedBytes = (long) (combinationCount * openRate * avgBytesPerResult);
-
-        return formatBytes(estimatedBytes);
+    private int estimateServiceProbeCount(int combinationCount) {
+        long baseProbes = (long) (combinationCount * ESTIMATED_OPEN_RATE);
+        return (int) (baseProbes * 1.5);
     }
 
     private String formatBytes(long estimatedBytes) {

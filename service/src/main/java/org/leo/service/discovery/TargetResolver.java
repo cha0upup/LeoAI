@@ -174,16 +174,7 @@ public class TargetResolver {
         long mask = prefixLength == 0 ? 0L : (0xFFFFFFFFL << (32 - prefixLength)) & 0xFFFFFFFFL;
         networkLong &= mask;
         long hostCount = 1L << (32 - prefixLength);
-        ensureExpansionCapacity(hostCount);
-
-        String rawTarget = network + "/" + prefixLength;
-        List<ResolvedTarget> results = new ArrayList<>((int) hostCount);
-        for (long i = 0; i < hostCount; i++) {
-            String ip = longToIp(networkLong + i);
-            // CIDR 不指定端口，返回 null，由端口策略决定
-            results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", "cidr", rawTarget));
-        }
-        return results;
+        return expandIpv4(networkLong, hostCount, "cidr", network + "/" + prefixLength);
     }
 
     private List<ResolvedTarget> parseIpv6Cidr(String network, int prefixLength) {
@@ -193,13 +184,9 @@ public class TargetResolver {
         try {
             byte[] address = InetAddress.getByName(network).getAddress();
             if (address.length != 16) throw new IllegalArgumentException("无效的 IPv6 地址: " + network);
-            BigInteger value = new BigInteger(1, address);
-            BigInteger mask = prefixLength == 0
-                    ? BigInteger.ZERO
-                    : BigInteger.ONE.shiftLeft(128 - prefixLength).subtract(BigInteger.ONE)
-                    .shiftLeft(prefixLength);
-            BigInteger base = value.and(mask);
-            BigInteger hostCount = BigInteger.ONE.shiftLeft(128 - prefixLength);
+            int hostBits = 128 - prefixLength;
+            BigInteger base = new BigInteger(1, address).shiftRight(hostBits).shiftLeft(hostBits);
+            BigInteger hostCount = BigInteger.ONE.shiftLeft(hostBits);
             if (hostCount.compareTo(BigInteger.valueOf(NetworkProbeLimits.MAX_RESOLVED_TARGETS)) > 0) {
                 throw new IllegalArgumentException("IPv6 网段展开后不能超过"
                         + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
@@ -225,13 +212,18 @@ public class TargetResolver {
         if (end < start) {
             throw new IllegalArgumentException("IP 范围结束地址小于起始地址");
         }
-        ensureExpansionCapacity(end - start + 1L);
+        return expandIpv4(start, end - start + 1L, "range", startIp + "-" + endIp);
+    }
 
-        String rawTarget = startIp + "-" + endIp;
-        List<ResolvedTarget> results = new ArrayList<>((int) (end - start + 1L));
-        for (long i = start; i <= end; i++) {
-            String ip = longToIp(i);
-            results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", "range", rawTarget));
+    private List<ResolvedTarget> expandIpv4(long start, long count, String source, String rawTarget) {
+        if (count > NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
+            throw new IllegalArgumentException("目标展开后不能超过"
+                    + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
+        }
+        List<ResolvedTarget> results = new ArrayList<>((int) count);
+        for (long offset = 0; offset < count; offset++) {
+            String ip = longToIp(start + offset);
+            results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", source, rawTarget));
         }
         return results;
     }
@@ -283,13 +275,6 @@ public class TargetResolver {
             return ips;
         } catch (UnknownHostException e) {
             throw new IllegalArgumentException("无法解析主机: " + host, e);
-        }
-    }
-
-    private void ensureExpansionCapacity(long count) {
-        if (count > NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
-            throw new IllegalArgumentException("目标展开后不能超过"
-                    + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
         }
     }
 

@@ -247,15 +247,21 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void retainsOpenPortResultsAfterIncrementalStageCompletion() throws Exception {
         WorkflowNode node = new WorkflowNode();
-        node.openPorts = Set.of(8080);
+        node.openPorts = Set.of(8080, 9090);
+        node.pageSize = 1;
         String taskId = String.valueOf(service.start("session-1", node,
-                plan(List.of(8080), List.of("PORT_SCAN"))).get("taskId"));
+                plan(List.of(8080, 9090, 10000), List.of("PORT_SCAN"))).get("taskId"));
         Map<String, Object> snapshot = awaitTerminal(taskId);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> endpoints = (List<Map<String, Object>>) snapshot.get("openPortResults");
-        assertEquals(1, endpoints.size());
+        assertEquals(2, endpoints.size());
         assertEquals("host-a", endpoints.get(0).get("host"));
-        assertEquals(8080, endpoints.get(0).get("port"));
+        assertEquals(List.of(8080, 9090), endpoints.stream().map(endpoint -> endpoint.get("port")).toList());
+        var stage = (Map<?, ?>) ((List<?>) snapshot.get("stages")).get(0);
+        assertEquals(List.of(8080, 9090), ((Map<?, ?>) stage.get("result")).get("openPortList"));
+        endpoints.get(0).clear();
+        var refreshed = (Map<?, ?>) service.query("session-1", taskId).get("result");
+        assertEquals(8080, ((Map<?, ?>) ((List<?>) refreshed.get("openPortResults")).get(0)).get("port"));
     }
 
     @ParameterizedTest

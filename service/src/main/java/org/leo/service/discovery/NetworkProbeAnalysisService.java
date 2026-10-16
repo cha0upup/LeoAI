@@ -562,20 +562,21 @@ public class NetworkProbeAnalysisService {
         return response.containsKey("error") || !(response.get("status") instanceof Number code) || code.intValue() < 100;
     }
 
-    private boolean evaluate(Map<String, Object> expression, List<Map<String, Object>> responses) {
+    private boolean evaluate(Map<?, ?> expression, List<Map<String, Object>> responses) {
         boolean all = expression.containsKey("all");
         if (all || expression.containsKey("any")) {
             // ALL settles on false and ANY on true, even after incomplete evidence.
             boolean shortCircuitResult = !all;
             IncompleteEvidence incomplete = null;
-            for (Map<String, Object> child : expressionList(expression.get(all ? "all" : "any"))) {
-                try { if (evaluate(child, responses) == shortCircuitResult) return shortCircuitResult; }
+            // Rules are validated and snapshotted before evaluation; children are read-only here.
+            for (Object child : (List<?>) expression.get(all ? "all" : "any")) {
+                try { if (evaluate((Map<?, ?>) child, responses) == shortCircuitResult) return shortCircuitResult; }
                 catch (IncompleteEvidence error) { incomplete = error; }
             }
             if (incomplete != null) throw incomplete;
             return all;
         }
-        if (expression.get("not") instanceof Map<?, ?> child) return !evaluate(copyMap(child), responses);
+        if (expression.get("not") instanceof Map<?, ?> child) return !evaluate(child, responses);
 
         int requestIndex = boundedInt(expression.get("request"), 0, 0, Math.max(0, responses.size() - 1));
         Map<String, Object> response = responses.get(requestIndex);
@@ -680,12 +681,6 @@ public class NetworkProbeAnalysisService {
         if (expression.get("not") instanceof Map<?, ?> child)
             trace.addAll(conditionTrace(copyMap(child), responses, path + ".not"));
         return trace;
-    }
-
-    private List<Map<String, Object>> expressionList(Object value) {
-        List<Map<String, Object>> result = mapList(value, "match expression");
-        if (result.isEmpty()) throw new IllegalArgumentException("match表达式不能为空");
-        return result;
     }
 
     private boolean equalsValue(Object actual, Object expected, boolean ignoreCase) {

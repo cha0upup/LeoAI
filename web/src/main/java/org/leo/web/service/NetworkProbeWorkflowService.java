@@ -319,7 +319,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                     .thenCompose(portResult -> {
                         if (!proceed(task)) return CompletableFuture.completedFuture(null);
                         List<Map<String, Object>> endpoints = mapList(portResult.get("openPortResults"));
-                        enrichPortResult(ports, endpoints);
                         if (endpoints.isEmpty()) {
                             skip(task, task.stages.get("SERVICE_PROBE"), "NO_OPEN_PORTS");
                             skip(task, task.stages.get("FINGERPRINT"), "NO_OPEN_PORTS");
@@ -351,7 +350,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 return executeStage(task, stage, serviceHttpPlan(task.spec, https, true), null, endpoints, total, expanded);
             }).thenRun(() -> {
                 if (!proceed(task)) return;
-                enrichPortResult(stage, endpoints); enrichPortResult(task.stages.get("PORT_SCAN"), endpoints);
+                enrichPortResult(task.stages.get("PORT_SCAN"), endpoints);
             });
         });
     }
@@ -364,9 +363,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         try {
             var prepared = analysisService.prepare(Map.of("kind", "fingerprint", "targets", applications,
                     "rules", task.spec.fingerprintRules(), "threads", Math.min(32, task.spec.threads()), "debug", task.spec.debug()));
-            return executeStage(task, stage, prepared.plan(), prepared, endpoints).thenAccept(ignored -> {
-                if (proceed(task)) enrichPortResult(stage, endpoints);
-            });
+            return executeStage(task, stage, prepared.plan(), prepared, endpoints);
         } catch (Exception error) { return CompletableFuture.failedFuture(error); }
     }
 
@@ -445,10 +442,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             }
         }
         if ("PORT_SCAN".equals(context.stage.name)) {
-            for (Map<String, Object> endpoint : openEndpoints(observations)) {
-                context.endpointsByKey.putIfAbsent(endpointKey(endpoint), endpoint);
-            }
-            enrichPortResult(context.stage, new ArrayList<>(context.endpointsByKey.values()));
+            collectOpenEndpoints(context.endpointsByKey, observations);
+            enrichPortResult(context.stage, context.endpointsByKey.values());
         } else if ("SERVICE_PROBE".equals(context.stage.name)) {
             for (Map<String, Object> observation : observations) {
                 String key = text(observation.get("stage")) + "|" + endpointKey(observation);
@@ -964,8 +959,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return plan;
     }
 
-    private List<Map<String, Object>> openEndpoints(List<Map<String, Object>> observations) {
-        Map<String, Map<String, Object>> byEndpoint = new LinkedHashMap<>();
+    private void collectOpenEndpoints(Map<String, Map<String, Object>> byEndpoint,
+                                      List<Map<String, Object>> observations) {
         for (Map<String, Object> observation : observations) {
             if (!"tcp-connect".equals(text(observation.get("stage")))
                     || !"open".equalsIgnoreCase(text(observation.get("state")))) continue;
@@ -983,7 +978,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             endpoint.put("probe", "connect");
             byEndpoint.putIfAbsent(host + ":" + port, endpoint);
         }
-        return new ArrayList<>(byEndpoint.values());
     }
 
     private void applyServiceEvidence(Map<String, Map<String, Object>> endpointsByKey,
@@ -1027,12 +1021,16 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         if (observation.get("error") != null) endpoint.put("probeError", observation.get("error"));
     }
 
-    private void enrichPortResult(StageState stage, List<Map<String, Object>> endpoints) {
+    private void enrichPortResult(StageState stage, Collection<Map<String, Object>> endpoints) {
         synchronized (stage) {
             // Published snapshots must not share the worker's mutable endpoint maps.
-            stage.result.put("openPortResults", mapList(endpoints));
-            List<Object> ports = new ArrayList<>();
-            for (Map<String, Object> endpoint : endpoints) ports.add(endpoint.get("port"));
+            List<Map<String, Object>> results = new ArrayList<>(endpoints.size());
+            List<Object> ports = new ArrayList<>(endpoints.size());
+            for (Map<String, Object> endpoint : endpoints) {
+                results.add(copyMap(endpoint));
+                ports.add(endpoint.get("port"));
+            }
+            stage.result.put("openPortResults", results);
             stage.result.put("openPortList", ports);
         }
     }

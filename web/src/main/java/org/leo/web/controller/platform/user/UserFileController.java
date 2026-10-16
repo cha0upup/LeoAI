@@ -6,7 +6,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
-import org.leo.service.config.SystemConfigService;
+import org.leo.web.service.UserArtifactService;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -36,14 +36,10 @@ import java.util.stream.Stream;
 public class UserFileController {
     private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
-    private static final long DEFAULT_MAX_UPLOAD_SIZE_MB = 100L;
-    private static final int RECENT_FILE_LIMIT = 8;
-    private static final int TOP_DIRECTORY_LIMIT = 6;
+    private final UserArtifactService artifacts;
 
-    private final SystemConfigService systemConfigService;
-
-    public UserFileController(SystemConfigService systemConfigService) {
-        this.systemConfigService = systemConfigService;
+    public UserFileController(UserArtifactService artifacts) {
+        this.artifacts = artifacts;
     }
 
     @RequestMapping(value = "/overview", method = RequestMethod.GET)
@@ -54,33 +50,9 @@ public class UserFileController {
                 return ApiResponse.unauthorized("用户未登录");
             }
 
-            Path base = getUserWorkspacePath(user.getUserId());
-            Files.createDirectories(base);
-
-            WorkspaceOverviewStats stats = collectWorkspaceOverview(base);
-
-            List<HashMap<String, Object>> recentFiles = stats.files.stream()
-                    .sorted(Comparator.comparingLong(this::getLastModified).reversed())
-                    .limit(RECENT_FILE_LIMIT)
-                    .map(path -> toItem(user.getUserId(), path))
-                    .toList();
-
-            List<HashMap<String, Object>> topDirectories = stats.directories.stream()
-                    .sorted(Comparator.comparingLong(this::getLastModified).reversed())
-                    .limit(TOP_DIRECTORY_LIMIT)
-                    .map(path -> toDirectorySummary(user.getUserId(), path))
-                    .toList();
-
-            HashMap<String, Object> data = new HashMap<>();
+            HashMap<String, Object> data = new HashMap<>(artifacts.overview(user.getUserId()));
             data.put("rootPath", "");
-            data.put("totalFiles", stats.totalFiles);
-            data.put("totalDirectories", stats.totalDirectories);
-            data.put("totalBytes", stats.totalBytes);
-            data.put("rootItems", countDirectChildren(base));
-            data.put("updatedAt", stats.updatedAt);
-            data.put("recentFiles", recentFiles);
-            data.put("topDirectories", topDirectories);
-            data.put("maxUploadBytes", getMaxUploadSizeBytes());
+            data.put("maxUploadBytes", artifacts.maxUploadBytes());
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("获取用户空间概览失败: " + e.getMessage());
@@ -89,13 +61,19 @@ public class UserFileController {
 
     @RequestMapping(value = "/list", method = RequestMethod.GET)
     public HashMap<String, Object> list(HttpServletRequest request,
-                                        @RequestParam(value = "path", required = false) String relativePath) {
+                                        @RequestParam(value = "path", required = false) String relativePath,
+                                        @RequestParam(defaultValue = "false") boolean recursive,
+                                        @RequestParam(defaultValue = "1") int page,
+                                        @RequestParam(defaultValue = "50") int pageSize,
+                                        @RequestParam(required = false) String search,
+                                        @RequestParam(required = false) String source) {
         try {
             User user = getUserFromSession(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, true);
+            if (recursive) return ApiResponse.success(artifacts.list(user.getUserId(), relativePath, search, source, page, pageSize));
+            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
             if (!Files.exists(target)) {
                 return ApiResponse.notFound("目录不存在");
             }
@@ -105,7 +83,9 @@ public class UserFileController {
 
             List<HashMap<String, Object>> fileList = new ArrayList<>();
             try (var stream = Files.list(target)) {
-                stream.sorted(Comparator.comparing(p -> p.getFileName().toString().toLowerCase()))
+                stream.filter(path -> !path.getFileName().toString().startsWith(".")
+                                && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
+                        .sorted(Comparator.comparing(p -> p.getFileName().toString().toLowerCase()))
                         .forEach(path -> fileList.add(toItem(user.getUserId(), path)));
             }
             HashMap<String, Object> data = new HashMap<>();
@@ -118,6 +98,15 @@ public class UserFileController {
         } catch (Exception e) {
             return ApiResponse.error("获取文件列表失败: " + e.getMessage());
         }
+    }
+
+    @RequestMapping(value = "/archive", method = RequestMethod.POST)
+    public HashMap<String, Object> archive(HttpServletRequest request, @RequestBody UserArtifactService.ArchiveRequest body) {
+        User user = getUserFromSession(request);
+        if (user == null) return ApiResponse.unauthorized("用户未登录");
+        try { return ApiResponse.success(artifacts.archive(user.getUserId(), body)); }
+        catch (IllegalArgumentException error) { return ApiResponse.badRequest(error.getMessage()); }
+        catch (Exception error) { return ApiResponse.error("归档失败: " + error.getMessage()); }
     }
 
     @RequestMapping(value = "/upload", method = RequestMethod.POST)
@@ -134,7 +123,7 @@ public class UserFileController {
             if (file == null || file.isEmpty()) {
                 return ApiResponse.badRequest("上传文件不能为空");
             }
-            long maxUploadBytes = getMaxUploadSizeBytes();
+            long maxUploadBytes = artifacts.maxUploadBytes();
             if (file.getSize() > maxUploadBytes) {
                 return ApiResponse.badRequest("文件超过单文件上传上限（" + (maxUploadBytes / 1024 / 1024) + " MB）");
             }
@@ -147,9 +136,9 @@ public class UserFileController {
                 return ApiResponse.badRequest("文件名不能为空");
             }
 
-            Path dir = resolveUserPath(user.getUserId(), relativeDir, true);
+            Path dir = artifacts.resolve(user.getUserId(), relativeDir, true);
             Files.createDirectories(dir);
-            Path target = dir.resolve(uploadName).normalize();
+            Path target = artifacts.resolve(user.getUserId(), toUserRelativePath(user.getUserId(), dir.resolve(uploadName)), true);
             if (!target.startsWith(getUserWorkspacePath(user.getUserId()))) {
                 return ApiResponse.forbidden("非法路径");
             }
@@ -164,6 +153,7 @@ public class UserFileController {
                  OutputStream output = Files.newOutputStream(target, writeOptions)) {
                 input.transferTo(output);
             }
+            artifacts.recordManual(user.getUserId(), target);
 
             HashMap<String, Object> data = new HashMap<>();
             data.put("path", toUserRelativePath(user.getUserId(), target));
@@ -227,7 +217,7 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, false);
+            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
             Path parent = target.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
@@ -237,11 +227,13 @@ public class UserFileController {
                 return ApiResponse.conflict("同名文件已存在，请确认后覆盖创建");
             }
             byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
+            if (data.length > artifacts.maxUploadBytes()) return ApiResponse.badRequest("成果内容超过归档上限");
             if (overwriteExisting) {
                 Files.write(target, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             } else {
                 Files.write(target, data, StandardOpenOption.CREATE_NEW);
             }
+            artifacts.recordManual(user.getUserId(), target);
 
             HashMap<String, Object> result = new HashMap<>();
             result.put("path", toUserRelativePath(user.getUserId(), target));
@@ -264,7 +256,7 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, true);
+            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
             if (Files.exists(target) && !Files.isDirectory(target)) {
                 return ApiResponse.conflict("同名文件已存在，无法创建目录");
             }
@@ -329,7 +321,8 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, false);
+            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
+            if (target.equals(getUserWorkspacePath(user.getUserId()))) return ApiResponse.badRequest("请选择具体成果");
             if (!Files.exists(target)) {
                 return ApiResponse.notFound("文件或目录不存在");
             }
@@ -339,9 +332,10 @@ public class UserFileController {
             }
 
             if (Files.isDirectory(target)) {
-                deleteRecursively(target);
+                deleteRecursively(user.getUserId(), target);
             } else {
                 Files.deleteIfExists(target);
+                artifacts.removeMetadata(user.getUserId(), target);
             }
 
             HashMap<String, Object> result = new HashMap<>();
@@ -367,36 +361,11 @@ public class UserFileController {
                 .normalize();
     }
 
-    private long getMaxUploadSizeBytes() {
-        String configured = systemConfigService.getString("max.file.upload.size.mb",
-                String.valueOf(DEFAULT_MAX_UPLOAD_SIZE_MB));
-        try {
-            long megabytes = Long.parseLong(configured);
-            if (megabytes <= 0 || megabytes > Long.MAX_VALUE / 1024 / 1024) {
-                return DEFAULT_MAX_UPLOAD_SIZE_MB * 1024 * 1024;
-            }
-            return megabytes * 1024 * 1024;
-        } catch (NumberFormatException e) {
-            return DEFAULT_MAX_UPLOAD_SIZE_MB * 1024 * 1024;
-        }
-    }
-
     private Path resolveUserPath(String userId, String relativePath, boolean asDirectory) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户信息无效");
         }
-        Path base = getUserWorkspacePath(userId);
-        Path resolved = base;
-        if (relativePath != null && !relativePath.isBlank()) {
-            String normalized = relativePath.trim().replace('\\', '/');
-            if (normalized.startsWith("/")) {
-                normalized = normalized.substring(1);
-            }
-            resolved = base.resolve(Paths.get(normalized)).normalize();
-        }
-        if (!resolved.startsWith(base)) {
-            throw new IllegalArgumentException("非法路径");
-        }
+        Path resolved = artifacts.resolve(userId, relativePath, false);
         if (asDirectory && Files.exists(resolved) && !Files.isDirectory(resolved)) {
             throw new IllegalArgumentException("目标路径不是目录");
         }
@@ -430,82 +399,9 @@ public class UserFileController {
         return item;
     }
 
-    private WorkspaceOverviewStats collectWorkspaceOverview(Path base) throws Exception {
-        WorkspaceOverviewStats stats = new WorkspaceOverviewStats();
-        try (Stream<Path> walk = Files.walk(base)) {
-            walk.forEach(path -> collectWorkspacePath(base, path, stats));
-        }
-        return stats;
-    }
-
-    private void collectWorkspacePath(Path base, Path path, WorkspaceOverviewStats stats) {
-        stats.updatedAt = Math.max(stats.updatedAt, getLastModified(path));
-        if (path.equals(base)) {
-            return;
-        }
-        if (Files.isDirectory(path)) {
-            stats.totalDirectories++;
-            stats.directories.add(path);
-            return;
-        }
-        if (Files.isRegularFile(path)) {
-            stats.totalFiles++;
-            stats.totalBytes += safeSize(path);
-            stats.files.add(path);
-        }
-    }
-
-    private HashMap<String, Object> toDirectorySummary(String userId, Path path) {
-        HashMap<String, Object> item = toItem(userId, path);
-        DirectorySummaryStats stats = new DirectorySummaryStats();
-        try (Stream<Path> walk = Files.walk(path)) {
-            walk.forEach(child -> {
-                if (child.equals(path)) {
-                    return;
-                }
-                if (Files.isDirectory(child)) {
-                    stats.directories++;
-                } else if (Files.isRegularFile(child)) {
-                    stats.files++;
-                    stats.bytes += safeSize(child);
-                }
-            });
-        } catch (Exception ignored) {
-            // Keep workspace overview resilient when one directory cannot be read.
-        }
-        item.put("files", stats.files);
-        item.put("directories", stats.directories);
-        item.put("bytes", stats.bytes);
-        return item;
-    }
-
     private Path getParentPath(String userId, Path path) {
         Path parent = path.getParent();
         return parent == null ? getUserWorkspacePath(userId) : parent;
-    }
-
-    private long countDirectChildren(Path path) {
-        try (Stream<Path> children = Files.list(path)) {
-            return children.count();
-        } catch (Exception e) {
-            return 0L;
-        }
-    }
-
-    private long safeSize(Path path) {
-        try {
-            return Files.size(path);
-        } catch (Exception e) {
-            return 0L;
-        }
-    }
-
-    private long getLastModified(Path path) {
-        try {
-            return Files.getLastModifiedTime(path).toMillis();
-        } catch (Exception e) {
-            return 0L;
-        }
     }
 
     private String toUserRelativePath(String userId, Path path) {
@@ -517,11 +413,12 @@ public class UserFileController {
         return base.relativize(p).toString().replace(File.separatorChar, '/');
     }
 
-    private void deleteRecursively(Path rootPath) throws Exception {
+    private void deleteRecursively(String userId, Path rootPath) throws Exception {
         try (Stream<Path> walk = Files.walk(rootPath)) {
             walk.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
+                    artifacts.removeMetadata(userId, path);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -529,18 +426,4 @@ public class UserFileController {
         }
     }
 
-    private static class WorkspaceOverviewStats {
-        private long totalFiles;
-        private long totalDirectories;
-        private long totalBytes;
-        private long updatedAt;
-        private final List<Path> files = new ArrayList<>();
-        private final List<Path> directories = new ArrayList<>();
-    }
-
-    private static class DirectorySummaryStats {
-        private long files;
-        private long directories;
-        private long bytes;
-    }
 }

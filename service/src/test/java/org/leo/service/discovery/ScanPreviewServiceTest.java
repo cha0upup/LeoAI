@@ -1,6 +1,8 @@
 package org.leo.service.discovery;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.service.discovery.NetworkDiscoveryDtos.PortPolicy;
 import org.leo.service.discovery.NetworkDiscoveryDtos.PreviewResponse;
 import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
@@ -21,6 +23,18 @@ class ScanPreviewServiceTest {
     private final ScanPlanService planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(),
             new NetworkProbeAnalysisService(new org.leo.service.fingerprint.FingerprintManageService()));
     private final ScanPreviewService service = new ScanPreviewService(planner);
+
+    @ParameterizedTest
+    @CsvSource({"19, 1, 950 B", "20, 3, 1000 B", "21, 3, 1 KB"})
+    void preservesProbeRoundingAndResultSizeUnits(int combinations, int probes, String size) {
+        var response = service.preview(new ScanConfig("estimates", new TargetInput(List.of("127.0.0.1"), List.of()),
+                new PortPolicy("custom", List.of("1-" + combinations), List.of(), List.of()),
+                null, null, List.of("PORT_SCAN", "SERVICE_PROBE")));
+        assertTrue(response.errors().isEmpty(), response.errors().toString());
+        assertEquals(probes, response.preview().serviceProbeCount());
+        assertEquals(size, response.preview().estimatedSize());
+        assertEquals(0L, response.preview().fingerprintProbeUpperBound());
+    }
 
     @Test
     void resolvesPortPoliciesWithoutSharingMutablePresets() {
@@ -152,6 +166,7 @@ class ScanPreviewServiceTest {
         assertEquals(plan.hosts().size() * NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size(), plan.reachabilityTargets().size());
         assertEquals(0, preview.combinationCount());
         assertEquals(0, preview.serviceProbeCount());
+        assertEquals("25 KB", preview.estimatedSize());
         assertEquals(List.of("REACHABILITY"), plan.stages().stream().map(Enum::name).toList());
     }
 
