@@ -37,7 +37,9 @@ public class ScanPreviewService {
             ScanPlanService.ScanPlan plan = planService.plan(scan);
             int hostCount = plan.hosts().size();
             int combinationCount = plan.targets().size();
-            int reachabilityProbeCount = plan.reachabilityTargets().size();
+            int reachabilityProbeCount = plan.reachabilityTargets().size()
+                    + (int) plan.reachabilityTargets().stream().filter(target -> !Boolean.TRUE.equals(target.get("explicitPort")))
+                    .map(target -> target.get("host")).distinct().count();
 
             int serviceProbeCount = plan.stages().contains(ScanStage.SERVICE_PROBE)
                     ? estimateServiceProbeCount(combinationCount) : 0;

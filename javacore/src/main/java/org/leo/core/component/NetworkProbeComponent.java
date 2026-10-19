@@ -10,6 +10,7 @@ import java.io.EOFException;
 import java.util.zip.GZIPInputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.net.Proxy;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
@@ -217,6 +218,24 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     private Map normalizeTarget(Object value) {
         Map source = asMap(value);
         if (source == null) throw new IllegalArgumentException("target must be a map");
+        if ("host-reachability".equals(source.get("stage"))) {
+            String host = stringValue(source.get("host"));
+            List rawPorts = asList(source.get("ports"));
+            if (host.length() == 0 || rawPorts == null || rawPorts.isEmpty() || rawPorts.size() > 32)
+                throw new IllegalArgumentException("host discovery requires a host and 1-32 ports");
+            Map target = new HashMap(); List ports = new ArrayList(); List stages = new ArrayList();
+            boolean javaProbe = Boolean.TRUE.equals(source.get("javaReachability"));
+            if (javaProbe) stages.add("java-reachability");
+            for (Object valuePort : rawPorts) {
+                int port = intValue(valuePort, -1);
+                if (port < 1 || port > 65535) throw new IllegalArgumentException("invalid discovery port");
+                if (!ports.contains(Integer.valueOf(port))) { ports.add(Integer.valueOf(port)); stages.add("tcp-connect"); }
+            }
+            target.put("host", host); target.put("port", Integer.valueOf(0)); target.put("protocol", "tcp");
+            target.put("ports", ports); target.put("reachabilityStages", stages); target.put("javaReachability", Boolean.valueOf(javaProbe));
+            copyTargetMetadata(source, target);
+            return target;
+        }
         HashMap target = new HashMap();
         String protocol = stringValue(source.get("protocol")).toLowerCase(Locale.ENGLISH);
         String baseUrl = stringValue(source.get("baseUrl"));
@@ -359,7 +378,14 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                 String stage = String.valueOf(stages.get(stageIndex));
                 int timeout = intValue(currentTarget.get("timeout"), intValue(plan.get("timeout"), 3000));
                 int maxRead = intValue(currentTarget.get("maxReadBytes"), intValue(plan.get("maxReadBytes"), MAX_READ_BYTES));
-                if ("tcp-connect".equals(stage)) {
+                boolean discovery = currentTarget.containsKey("reachabilityStages");
+                if (discovery) {
+                    int portIndex = stageIndex - (Boolean.TRUE.equals(currentTarget.get("javaReachability")) ? 1 : 0);
+                    currentTarget.put("port", portIndex < 0 ? Integer.valueOf(0) : ((List) currentTarget.get("ports")).get(portIndex));
+                }
+                if ("java-reachability".equals(stage)) {
+                    pendingObservation = probeJavaReachability(currentTarget);
+                } else if ("tcp-connect".equals(stage)) {
                     connectAttempted = true; pendingObservation = probeTcp(task, currentTarget, stage, timeout, maxRead);
                     connected = "open".equals(pendingObservation.get("state"));
                 } else if ("tcp-exchange".equals(stage)) {
@@ -368,6 +394,13 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
                     pendingObservation = probeHttp(task, currentTarget, stage, timeout, maxRead);
                 } else pendingObservation = baseObservation(currentTarget, stage, "error", System.currentTimeMillis(),
                         "UNSUPPORTED", "unsupported probe stage", null);
+                if (discovery && pendingObservation != null) {
+                    boolean answered = "open".equals(pendingObservation.get("state")) || "REFUSED".equals(pendingObservation.get("errorCode"));
+                    // A host has one active worker (below the two-probe ceiling), so no sibling socket can outlive a hit.
+                    if (answered) stageIndex = stages.size() - 1;
+                    pendingObservation.put("hostComplete", Boolean.valueOf(stageIndex == stages.size() - 1));
+                    pendingObservation.put("probeSource", stage);
+                }
                 if (pendingObservation != null) {
                     pendingSize = observationSize(pendingObservation);
                     synchronized (task) { if (!offerObservation(task, pendingObservation, pendingSize)) return; }
@@ -385,7 +418,12 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             }
         } catch (Exception error) {
             addError(task, currentTarget == null ? "" : targetKey(currentTarget), "WORKER", errorCode(error), messageOf(error));
-            finishTask(task, true);
+            synchronized (task) {
+                if (!"STOPPED".equals(task.get("status"))) {
+                    finishTask(task, false);
+                    task.put("outcome", "FAILED");
+                }
+            }
         } finally {
             synchronized (task) {
                 running = false;
@@ -396,6 +434,7 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
     }
 
     private List targetStages(Map plan) {
+        if (currentTarget.get("reachabilityStages") instanceof List) return (List) currentTarget.get("reachabilityStages");
         String stage = stringValue(currentTarget.get("stage"));
         return stage.length() > 0 ? Collections.singletonList(stage) : (List) plan.get("stages");
     }
@@ -449,6 +488,24 @@ public class NetworkProbeComponent implements Runnable, ThreadFactory,
             // Closing a socket also closes both of its streams.
             releaseSocket(task, socket);
         }
+    }
+
+    protected boolean isHostReachable(String host, int timeout) throws IOException {
+        return InetAddress.getByName(host).isReachable(timeout);
+    }
+
+    private Map probeJavaReachability(Map target) {
+        long started = System.currentTimeMillis();
+        Map observation;
+        try {
+            boolean reachable = isHostReachable(stringValue(target.get("host")), 800);
+            observation = baseObservation(target, "java-reachability", reachable ? "open" : "unknown", started,
+                    reachable ? null : "NO_RESPONSE", null, null);
+        } catch (Throwable error) {
+            observation = baseObservation(target, "java-reachability", "unknown", started, errorCode(error), messageOf(error), null);
+        }
+        observation.put("protocol", "ip"); observation.put("transport", "java-reachability");
+        return observation;
     }
 
     private Map probeHttp(Map task, Map target, String stage, int timeout, int maxRead) {

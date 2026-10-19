@@ -32,6 +32,27 @@ class NetworkProbeResultStoreTest {
     Path tempDir;
 
     @Test
+    void restoresStrictDiscoveryStatisticsFromTheDurableStageSnapshot() throws Exception {
+        var dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("discovery-stats.db"));
+        try (var connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+        assertTrue(store.createTask("stats", "session", "strict", Map.of("targetCount", 4)));
+        assertTrue(store.append("stats", List.of(Map.of("workflowStage", "REACHABILITY", "stage", "java-reachability",
+                "host", "127.0.0.1", "port", 0, "state", "open")), List.of()));
+        store.updateTask("stats", "STOPPED", "COMPLETED", null, 100, 4, null, List.of(
+                Map.of("name", "REACHABILITY", "status", "COMPLETED", "reachableHostCount", 1,
+                        "unknownHostCount", 2, "unreachableHostCount", 1, "pendingHostCount", 0),
+                Map.of("name", "PORT_SCAN", "status", "COMPLETED")));
+        var restored = store.summary("session", "stats");
+        assertEquals(2, restored.get("unknownHostCount")); assertEquals(1, restored.get("unreachableHostCount"));
+        assertEquals(0, restored.get("pendingHostCount")); assertEquals(3, restored.get("skippedHostCount"));
+        assertEquals(1, restored.get("portScanHostCount")); assertEquals(1, restored.get("reachableHostCount"));
+    }
+
+    @Test
     void deletesTaskAndCascadedResultsWithoutTouchingAnotherSession() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("network-results.db"));

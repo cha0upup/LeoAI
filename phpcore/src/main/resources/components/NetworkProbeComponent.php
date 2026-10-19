@@ -500,8 +500,13 @@ $probe = static function ($target, $stage, $timeout, $maxRead) use ($observation
             'peer_name' => trim($httpHost, '[]'), 'SNI_enabled' => true]]);
         $errno = 0; $error = '';
         $stream = @stream_socket_client($address, $errno, $error, $timeout / 1000.0, STREAM_CLIENT_CONNECT, $context);
-        if (!is_resource($stream)) return $observation($target, $stage, $stage === 'tcp-connect' ? 'closed' : 'error',
-            $started, $error ?: 'connection failed', [], in_array($errno, [61, 111, 10061], true) ? 'REFUSED' : 'IO');
+        if (!is_resource($stream)) {
+            $code = in_array($errno, [61, 111, 10061], true) ? 'REFUSED'
+                : (in_array($errno, [60, 110, 10060], true) ? 'TIMEOUT'
+                : (in_array($errno, [51, 65, 101, 113, 10051, 10065], true) ? 'NO_ROUTE' : 'IO'));
+            if (stripos($error, 'getaddrinfo') !== false || stripos($error, 'php_network_getaddresses') !== false) $code = 'DNS';
+            return $observation($target, $stage, $stage === 'tcp-connect' ? 'closed' : 'error', $started, $error ?: 'connection failed', [], $code);
+        }
         stream_set_timeout($stream, intdiv($timeout, 1000), ($timeout % 1000) * 1000);
         if ($stage === 'tcp-connect') {
             return $observation($target, $stage, 'open', $started);
@@ -652,6 +657,11 @@ $runTurn = static function ($job) use ($path, $read, $write, $statusUpdate, $sta
             }
             $target = $config['targets'][$state['next']];
             $stages = !empty($target['stage']) ? [(string)$target['stage']] : $config['stages'];
+            $discovery = ($target['stage'] ?? '') === 'host-reachability';
+            if ($discovery) {
+                $stages = array_fill(0, count($target['ports']), 'tcp-connect');
+                $target['port'] = $target['ports'][$state['step']];
+            }
             $stage = $stages[$state['step']]; $row = null;
             if ($stage !== 'tcp-exchange' || !$state['connectAttempted'] || $state['connected']) {
                 $row = $probe($target, $stage, (int)($target['timeout'] ?? $config['timeout']),
@@ -659,6 +669,11 @@ $runTurn = static function ($job) use ($path, $read, $write, $statusUpdate, $sta
             }
             if ($stage === 'tcp-connect') { $state['connectAttempted'] = true; $state['connected'] = ($row['state'] ?? '') === 'open'; }
             if ($row !== null) {
+                if ($discovery) {
+                    if (($row['state'] ?? '') === 'open' || ($row['errorCode'] ?? '') === 'REFUSED') $state['step'] = count($stages) - 1;
+                    $row['hostComplete'] = $state['step'] === count($stages) - 1;
+                    $row['probeSource'] = 'tcp-connect';
+                }
                 $state['rows'][] = $row; $state['bytes'] += strlen((string)json_encode($row));
             }
             if (++$state['step'] >= count($stages)) {
@@ -729,6 +744,14 @@ $handle = static function ($action, $params) use ($get, $base, $path, $stateName
             $targets = $get($plan, 'targets', []);
             if (!is_array($targets) || count($targets) > 4096) return ['code' => 400, 'msg' => 'require at most 4096 targets'];
             foreach ($targets as $target) {
+                if (is_array($target) && ($target['stage'] ?? '') === 'host-reachability') {
+                    $ports = $target['ports'] ?? null;
+                    if (empty($target['host']) || !is_array($ports) || count($ports) < 1 || count($ports) > 32)
+                        return ['code' => 400, 'msg' => 'host discovery requires a host and 1-32 ports'];
+                    foreach ($ports as $port) if (!is_int($port) || $port < 1 || $port > 65535)
+                        return ['code' => 400, 'msg' => 'invalid discovery port'];
+                    continue;
+                }
                 if (!is_array($target) || empty($target['host']) || (int)($target['port'] ?? 0) < 1 || (int)$target['port'] > 65535) {
                     return ['code' => 400, 'msg' => 'target requires a host and valid port'];
                 }

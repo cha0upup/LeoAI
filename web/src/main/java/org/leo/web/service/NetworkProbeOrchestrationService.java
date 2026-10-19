@@ -47,6 +47,8 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
     private static final long DEFAULT_POLL_INTERVAL_MS = 2000L;
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(NetworkProbeOrchestrationService.class);
+
     private final Map<String, LogicalTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<NetworkProbeCapable, NodeBudget> nodeBudgets = new java.util.concurrent.ConcurrentHashMap<>();
     private final NetworkProbeScheduler scheduler;
@@ -138,7 +140,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             acknowledge(task.observations, true, task, observationCursor);
             acknowledge(task.errors, false, task, errorCursor);
             refreshPressure(task);
-            task.monitor.notifyAll();
             advanced = before != (long) task.observationOffset + task.errorOffset;
         }
         if (advanced) scheduler.wake(task.ticket);
@@ -180,7 +181,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         synchronized (task.monitor) {
             if (task.terminal()) return response(Map.of("status", "STOPPED"));
             task.status = "RUNNING";
-            task.monitor.notifyAll();
         }
         scheduler.wake(task.ticket);
         changed(task);
@@ -195,7 +195,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
                 task.status = "STOPPED";
                 task.outcome = "CANCELLED";
                 task.finishedAt = System.currentTimeMillis();
-                task.monitor.notifyAll();
             }
         }
         scheduler.wake(task.ticket);
@@ -295,7 +294,17 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             // Release before clearing the child ID, so failures still have a cleanup target.
             releaseChild(task, id); mergeCompletedBatch(task, id, latest);
             task.nextIndex += task.childTargetCount; task.nodePaused = false; releaseBudget(task);
-            if ("FAILED".equals(outcome)) { fail(task, "节点网络探测子任务失败"); finish(task, "FAILED"); }
+            if ("FAILED".equals(outcome)) {
+                String detail = text(latest.get("error"));
+                if (detail.isEmpty()) {
+                    for (Map<String, Object> error : mapListOrEmpty(latest.get("errors"))) {
+                        detail = text(error.get("error"));
+                        if (!detail.isEmpty()) break;
+                    }
+                }
+                fail(task, detail.isEmpty() ? "节点网络探测子任务失败" : "节点网络探测子任务失败 · " + detail);
+                finish(task, "FAILED");
+            }
             else if ("CANCELLED".equals(outcome)) finish(task, "CANCELLED");
             return 0;
         }
@@ -349,6 +358,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     }
 
     private void abort(LogicalTask task, Exception error) {
+        logger.warn("Network probe orchestration failed for task {}", task.taskId, error);
         fail(task, messageOf(error));
         boolean interrupted = Thread.interrupted();
         try {
@@ -543,7 +553,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
                 task.status = "STOPPED";
                 task.outcome = "CANCELLED";
                 if (task.finishedAt == 0L) task.finishedAt = System.currentTimeMillis();
-                task.monitor.notifyAll();
                 return;
             }
             task.status = "STOPPED";
@@ -560,7 +569,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
                 task.errors.add(error);
                 task.pendingBytes += bytes;
             }
-            task.monitor.notifyAll();
         }
     }
 
@@ -663,7 +671,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         for (LogicalTask task : tasks.values()) {
             synchronized (task.monitor) {
                 task.cancelRequested = true;
-                task.monitor.notifyAll();
             }
             if (!task.terminal()) fail(task, "网络探测服务关闭");
             String id = task.childTaskId;

@@ -71,21 +71,22 @@ public class ScanPlanService {
                 throw new IllegalArgumentException("扫描组合数不能超过" + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
             }
             if (!discoverHosts) continue;
-            // Reserve explicit ports before sampling policy ports, independent of input order.
+            // Bound explicitly supplied discovery ports independently of the full port-scan policy.
             if (explicit.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
                 throw new IllegalArgumentException("单台主机的探活端口不能超过"
                         + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
             }
-            Set<Integer> probes = new LinkedHashSet<>(explicit);
-            if (policyHosts.contains(entry.getKey())) {
-                addSample(probes, NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS);
-                addSample(probes, policyPorts);
-            }
+            // An explicit endpoint takes precedence over generic host discovery, even for mixed inputs.
+            Collection<Integer> probes = explicit.isEmpty() ? NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS : explicit;
             if (reachability.size() + probes.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
                 throw new IllegalArgumentException("探活目标数不能超过"
                         + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个，请缩小主机范围或减少探活端口");
             }
-            for (Integer port : probes) reachability.add(endpoint(entry.getKey(), port));
+            for (Integer port : probes) {
+                Map<String, Object> probe = new LinkedHashMap<>(endpoint(entry.getKey(), port));
+                probe.put("explicitPort", !explicit.isEmpty());
+                reachability.add(probe);
+            }
         }
 
         Map<EndpointKey, Map<String, Object>> endpoints = new LinkedHashMap<>();
@@ -112,13 +113,6 @@ public class ScanPlanService {
         }
         return new ScanPlan(scan.name() == null ? "" : scan.name().trim(), scan.targets().items().size(),
                 explicitByHost.keySet(), ports, endpoints.values(), reachability, workers, timeout, stages, fingerprintRules);
-    }
-
-    private static void addSample(Set<Integer> probes, List<Integer> candidates) {
-        for (Integer port : candidates) {
-            if (probes.size() >= NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) break;
-            probes.add(port);
-        }
     }
 
     private static Map<String, Object> endpoint(String host, int port) {

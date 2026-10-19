@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.core.util.javassist.CloneWithJavassist;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Constructor;
@@ -23,6 +25,75 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Lifecycle coverage for the unified probe task registry. */
 class NetworkProbeLifecycleTest {
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void unexpectedWorkerErrorsAreFailuresRatherThanUserCancellations(boolean payload) throws Exception {
+        Object component = ComponentTestSupport.component("NetworkProbeComponent", payload);
+        Map<String, Object> task = new HashMap<>();
+        task.put("taskId", "broken-worker");
+        task.put("status", "RUNNING");
+        task.put("outcome", "RUNNING");
+        task.put("total", 1);
+        task.put("targets", List.of(Map.of("host", "127.0.0.1", "port", 1)));
+        task.put("plan", Map.of("stages", List.of())); // Malformed internal state triggers a worker exception.
+        task.put("errors", new ArrayList<>());
+        Field registry = component.getClass().getDeclaredField("TASKS");
+        registry.setAccessible(true);
+        Map tasks = (Map) registry.get(null);
+        tasks.put("broken-worker", task);
+        try {
+            Constructor<?> constructor = component.getClass().getDeclaredConstructor(String.class);
+            constructor.setAccessible(true);
+            ((Runnable) constructor.newInstance("broken-worker")).run();
+            assertEquals("STOPPED", task.get("status"));
+            assertEquals("FAILED", task.get("outcome"));
+            assertEquals("WORKER", ((Map<?, ?>) ((List<?>) task.get("errors")).get(0)).get("stage"));
+        } finally {
+            tasks.remove("broken-worker");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void concurrentWorkersRemainIsolatedAfterTheComponentIsTransformed(boolean transformed) throws Exception {
+        Class<?> type = transformed
+                ? new ComponentTestSupport.BytecodeLoader().load(CloneWithJavassist.cloneClass(
+                        "NetworkProbeComponent", "org.leo.generated.ConcurrentProbe" + System.nanoTime(), 42L))
+                : NetworkProbeComponent.class;
+        List<Map<String, Object>> targets = new ArrayList<>();
+        int closedPort;
+        try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            closedPort = socket.getLocalPort();
+        }
+        for (int i = 0; i < 256; i++) targets.add(Map.of("host", "127.0.0.1", "port", closedPort, "targetId", "target-" + i));
+        Map<String, Object> started = ComponentTestSupport.runComponent((Runnable) type.getDeclaredConstructor().newInstance(),
+                Map.of("action", "startTask", "plan", Map.of("targets", targets,
+                        "stages", List.of("tcp-connect"), "limits", Map.of("threads", 32, "timeout", 100))));
+        assertEquals(200, started.get("code"));
+        String id = String.valueOf(started.get("taskId"));
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            Map<?, ?> snapshot = Map.of();
+            while (System.nanoTime() < deadline) {
+                Map<String, Object> response = ComponentTestSupport.runComponent((Runnable) type.getDeclaredConstructor().newInstance(),
+                        Map.of("action", "queryTask", "taskId", id, "maxItems", 512));
+                assertEquals(200, response.get("code"), response.toString());
+                snapshot = (Map<?, ?>) response.get("result");
+                if ("STOPPED".equals(snapshot.get("status"))) break;
+                Thread.sleep(1L);
+            }
+            assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
+            assertEquals(256, snapshot.get("completed"));
+            List<?> rows = (List<?>) snapshot.get("observations");
+            assertEquals(256, rows.size());
+            assertEquals(256L, rows.stream().map(row -> ((Map<?, ?>) row).get("targetId")).distinct().count());
+            assertEquals(List.of(), snapshot.get("errors"));
+        } finally {
+            ComponentTestSupport.runComponent((Runnable) type.getDeclaredConstructor().newInstance(), Map.of("action", "stopTask", "taskId", id));
+            ComponentTestSupport.runComponent((Runnable) type.getDeclaredConstructor().newInstance(), Map.of("action", "releaseTask", "taskId", id));
+        }
+    }
 
     @AfterEach
     void clearStaticState() throws Exception {

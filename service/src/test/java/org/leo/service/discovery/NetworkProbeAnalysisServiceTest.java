@@ -3,6 +3,7 @@ package org.leo.service.discovery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.service.fingerprint.FingerprintManageService;
 
 import java.util.ArrayList;
@@ -45,8 +46,8 @@ class NetworkProbeAnalysisServiceTest {
                 "threads", 64));
 
         assertEquals(List.of("tcp-connect"), prepared.plan().get("stages"));
-        assertEquals(10, ((List<?>) prepared.plan().get("targets")).size());
-        assertEquals(10, ((Map<?, ?>) prepared.plan().get("limits")).get("threads"));
+        assertEquals(16, ((List<?>) prepared.plan().get("targets")).size());
+        assertEquals(16, ((Map<?, ?>) prepared.plan().get("limits")).get("threads"));
         assertEquals(1500, ((Map<?, ?>) prepared.plan().get("limits")).get("timeout"));
     }
 
@@ -123,7 +124,48 @@ class NetworkProbeAnalysisServiceTest {
         NetworkProbeAnalysisService.PreparedScan prepared =
                 service.prepare(Map.of("kind", "reachability", "hosts", hosts));
 
-        assertEquals(2731 * 5, ((List<?>) prepared.plan().get("targets")).size());
+        assertEquals(2731 * NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size(), ((List<?>) prepared.plan().get("targets")).size());
+    }
+
+    @Test
+    void groupsDiscoveryByHostAndUsesJavaDetectionOnlyWithoutExplicitPorts() throws Exception {
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", List.of("host-a", "host-b"),
+                "hostDiscovery", true, "javaReachability", true,
+                "targets", List.of(Map.of("host", "host-a", "port", 443, "explicitPort", false),
+                        Map.of("host", "host-b", "port", 18080, "explicitPort", false),
+                        Map.of("host", "host-a", "port", 80, "explicitPort", false),
+                        Map.of("host", "host-b", "port", 18080, "explicitPort", true))));
+        var targets = (List<Map<String, Object>>) prepared.plan().get("targets");
+        assertEquals(List.of("host-reachability"), prepared.plan().get("stages"));
+        assertEquals(2, targets.size());
+        assertEquals(List.of(443, 80), targets.get(0).get("ports"));
+        assertEquals(List.of(18080), targets.get(1).get("ports"));
+        assertEquals(true, targets.get(0).get("javaReachability"));
+        assertEquals(false, targets.get(1).get("javaReachability"));
+        service.register("grouped", prepared);
+        var page = new LinkedHashMap<String, Object>(Map.of("result", Map.of("observations", List.of(
+                Map.of("host", "host-a", "stage", "java-reachability", "port", 0, "state", "open", "hostComplete", true),
+                Map.of("host", "host-b", "stage", "tcp-connect", "port", 18080, "state", "closed", "errorCode", "TIMEOUT", "hostComplete", true)))));
+        service.enrich("grouped", page);
+        var stats = (Map<?, ?>) ((Map<?, ?>) page.get("result")).get("analysis");
+        assertEquals(2, stats.get("completed"));
+        assertEquals(1, stats.get("unknownHostCount"));
+        assertEquals(List.of("host-a"), stats.get("reachableHostList"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void groupsDefaultDiscoveryPortsAndBoundsWorkersByHostCount(boolean javaReachability) throws Exception {
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", List.of("host-a", "host-b"),
+                "hostDiscovery", true, "javaReachability", javaReachability, "threads", 64, "timeout", 1500));
+        var targets = (List<Map<String, Object>>) prepared.plan().get("targets");
+        assertEquals(List.of("host-reachability"), prepared.plan().get("stages"));
+        assertEquals(2, targets.size());
+        assertEquals(Map.of("threads", 2, "timeout", 1500), prepared.plan().get("limits"));
+        for (var target : targets) {
+            assertEquals(NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS, target.get("ports"));
+            assertEquals(javaReachability, target.get("javaReachability"));
+        }
     }
 
     @Test

@@ -132,6 +132,14 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     @Test
+    void keepsTheUnderlyingNodeFailureMessage() throws Exception {
+        String id = startSingleTarget(new FailedNode("worker fixture failure"));
+        Map<String, Object> snapshot = awaitTerminal(id);
+        assertEquals("FAILED", snapshot.get("outcome"));
+        assertEquals("节点网络探测子任务失败 · worker fixture failure", snapshot.get("error"));
+    }
+
+    @Test
     void propagatesFailedChildOutcomeToTheLogicalTask() throws Exception {
         String taskId = startSingleTarget(new FailedNode());
 
@@ -448,6 +456,11 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     private static final class FailedNode implements NetworkProbeCapable {
+        private final String reason;
+
+        private FailedNode() { this(null); }
+        private FailedNode(String reason) { this.reason = reason; }
+
         @Override
         public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
             return Map.of("code", 200, "cursor", cursor);
@@ -468,7 +481,8 @@ class NetworkProbeOrchestrationServiceTest {
         public Map<String, Object> queryNetworkProbe(String taskId) {
             return Map.of("code", 200, "result", Map.of(
                     "status", "STOPPED", "outcome", "FAILED",
-                    "completed", 0, "observations", List.of(), "errors", List.of()));
+                    "completed", 0, "observations", List.of(), "errors",
+                    reason == null ? List.of() : List.of(Map.of("stage", "WORKER", "error", reason))));
         }
 
         @Override

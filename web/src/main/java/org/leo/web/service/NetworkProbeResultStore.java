@@ -375,6 +375,13 @@ public final class NetworkProbeResultStore {
                 if (stages instanceof List<?> list && !list.isEmpty()) {
                     task.put("stages", list);
                     task.put("stageCount", list.size());
+                    for (Object value : list) if (value instanceof Map<?, ?> stage && "REACHABILITY".equals(stage.get("name"))) {
+                        for (String key : List.of("unknownHostCount", "unreachableHostCount", "pendingHostCount"))
+                            if (stage.containsKey(key)) task.put(key, stage.get(key));
+                        boolean ports = list.stream().anyMatch(item -> item instanceof Map<?, ?> entry && "PORT_SCAN".equals(entry.get("name")));
+                        task.put("skippedHostCount", ports ? integer(task.get("unknownHostCount"), 0) + integer(task.get("unreachableHostCount"), 0) : 0);
+                        task.put("portScanHostCount", ports ? integer(stage.get("reachableHostCount"), 0) : 0);
+                    }
                 }
                 addTaskCounts(connection, List.of(task));
                 task.put("reachableHostList", reachableHosts(connection, taskId));

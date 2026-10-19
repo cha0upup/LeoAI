@@ -27,6 +27,38 @@ class NetworkProbeFingerprintIntegrationTest {
     @TempDir Path directory;
 
     @Test
+    void reusesRealDiscoveryConnectionsAndPersistsTheResultAndHostStatistics() throws Exception {
+        try (var socket = new java.net.ServerSocket(0, 2, java.net.InetAddress.getByName("127.0.0.1"))) {
+            int port = socket.getLocalPort();
+            var analysis = new NetworkProbeAnalysisService(new FingerprintManageService());
+            var planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(), analysis);
+            var dataSource = new SQLiteDataSource();
+            dataSource.setUrl("jdbc:sqlite:" + directory.resolve("host-discovery.db"));
+            try (var connection = dataSource.getConnection()) { ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql")); }
+            var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+            try (var orchestration = new NetworkProbeOrchestrationService(Executors.newSingleThreadExecutor(), 10);
+                 var workflow = new NetworkProbeWorkflowService(analysis, orchestration, Executors.newSingleThreadExecutor(), 10)) {
+                workflow.setResultStore(store);
+                LocalNode node = new LocalNode();
+                var config = new ScanConfig("host discovery", new TargetInput(List.of("127.0.0.1:" + port), List.of()),
+                        null, new ExecutionConfig(4, 100), null, List.of("REACHABILITY", "PORT_SCAN"));
+                String id = String.valueOf(workflow.start("session", node, planner.plan(config)).get("taskId"));
+                var result = awaitWorkflow(workflow, id);
+                assertEquals("COMPLETED", result.get("outcome"), result.toString());
+                assertEquals(1, ((List<?>) result.get("openPortResults")).size());
+                assertEquals(List.of(List.of("host-reachability")), node.stages);
+                var restored = store.summary("session", id);
+                assertEquals(0, restored.get("unknownHostCount")); assertEquals(0, restored.get("skippedHostCount"));
+                assertEquals(1, restored.get("portScanHostCount"));
+                assertEquals(1L, store.queryResults("session", id, Map.of()).get("total"));
+                try (var accepted = socket.accept()) { }
+                socket.setSoTimeout(30);
+                assertThrows(java.net.SocketTimeoutException.class, socket::accept);
+            }
+        }
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void scansApplicationPathsWithFrozenRulesAndRestoresEvidenceFromDatabase() throws Exception {
         List<String> requestedPaths = new CopyOnWriteArrayList<>();

@@ -155,10 +155,12 @@ public class CloneWithJavassist {
                 if (!cc.getName().equals(fa.getClassName())) return;
                 String newName = fieldRenames.get(fa.getFieldName());
                 if (newName == null) return;
+                // Instance access may target a peer (for example worker.running), not this.
+                String access = fa.isStatic() ? cc.getName() + "." + newName : "$0." + newName;
                 if (fa.isReader()) {
-                    fa.replace("{ $_ = " + newName + "; }");
+                    fa.replace("{ $_ = " + access + "; }");
                 } else {
-                    fa.replace("{ " + newName + " = $1; }");
+                    fa.replace("{ " + access + " = $1; }");
                 }
             }
         };

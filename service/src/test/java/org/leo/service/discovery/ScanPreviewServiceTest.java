@@ -71,7 +71,7 @@ class ScanPreviewServiceTest {
     }
 
     @Test
-    void rejectsAReachabilityPlanThatWouldOverloadTheWorkflow() {
+    void boundsDiscoveryIndependentlyOfTheSelectedPortScanPolicy() {
         List<Integer> ports = new java.util.ArrayList<>();
         for (int port = 1; port <= 26; port++) ports.add(port);
 
@@ -81,8 +81,8 @@ class ScanPreviewServiceTest {
                 new PortPolicy("custom", List.of(), ports, List.of()),
                 null, null, List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE")));
 
-        assertTrue(response.preview() == null);
-        assertTrue(response.errors().stream().anyMatch(error -> error.contains("探活目标数")));
+        assertTrue(response.errors().isEmpty(), response.errors().toString());
+        assertEquals(4096 * 9, response.preview().reachabilityProbeCount());
     }
 
     @Test
@@ -95,8 +95,9 @@ class ScanPreviewServiceTest {
         var second = planner.plan(reversed);
 
         assertEquals(Set.copyOf(first.reachabilityTargets()), Set.copyOf(second.reachabilityTargets()));
-        assertEquals(32, first.reachabilityTargets().size());
-        assertTrue(first.reachabilityTargets().contains(Map.of("host", "127.0.0.1", "port", 45678, "protocol", "tcp")));
+        assertEquals(1, first.reachabilityTargets().size());
+        assertEquals(45678, first.reachabilityTargets().get(0).get("port"));
+        assertEquals(true, first.reachabilityTargets().get(0).get("explicitPort"));
         assertEquals(101, first.targets().size());
         assertEquals(first.targets().size(), service.preview(reversed).preview().combinationCount());
         assertEquals(first.reachabilityTargets().size(), service.preview(reversed).preview().reachabilityProbeCount());

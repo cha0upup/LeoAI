@@ -61,6 +61,29 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
+    void retainsFailureDetailsAndDoesNotCountTheFailedStageAsCompleted() throws Exception {
+        var backend = mock(NetworkProbeOrchestrationService.class);
+        when(backend.start(anyString(), any(), anyMap())).thenReturn(Map.of("taskId", "failed-reachability"));
+        when(backend.querySince(anyString(), anyString(), anyLong(), anyLong())).thenReturn(new LinkedHashMap<>(Map.of("result", Map.of(
+                "status", "STOPPED", "outcome", "FAILED", "total", 32, "completed", 0,
+                "observations", List.of(), "errors", List.of(Map.of("error", "worker fixture failure"))))));
+        try (var worker = new NetworkProbeWorkflowService(analysis, backend, Executors.newSingleThreadExecutor(), 10)) {
+            String id = String.valueOf(worker.start("session-1", new WorkflowNode(), plan(List.of(80), null)).get("taskId"));
+            Map<?, ?> result = Map.of();
+            for (int attempt = 0; attempt < 200; attempt++) {
+                result = (Map<?, ?>) worker.query("session-1", id).get("result");
+                if ("STOPPED".equals(result.get("status"))) break;
+                Thread.sleep(5);
+            }
+            assertEquals("FAILED", result.get("outcome"));
+            assertEquals("工作流阶段失败: REACHABILITY · worker fixture failure", result.get("error"));
+            assertEquals(0, result.get("progress"));
+            assertEquals(0, result.get("completedStageCount"));
+            assertEquals("FAILED", ((Map<?, ?>) ((List<?>) result.get("stages")).get(0)).get("status"));
+        }
+    }
+
+    @Test
     void runsReachabilityPortAndServiceIdentificationAsOneTask() throws Exception {
         WorkflowNode node = new WorkflowNode();
         String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80, 22), null)).get("taskId"));
@@ -143,20 +166,118 @@ class NetworkProbeWorkflowServiceTest {
         assertTrue(httpTargets.stream().noneMatch(target -> Integer.valueOf(5432).equals(target.get("port"))));
     }
 
-    @Test
-    void keepsUnconfirmedHostsForPortScanning() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void skipsUnconfirmedHostsForPortScanning(boolean fingerprint) throws Exception {
         WorkflowNode node = new WorkflowNode();
         node.reachable = false;
-        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
+        String taskId = String.valueOf(service.start("session-1", node, plan(List.of(80), fingerprint
+                ? List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT") : null)).get("taskId"));
 
         Map<String, Object> snapshot = awaitTerminal(taskId);
         List<?> stages = (List<?>) snapshot.get("stages");
 
         assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
         assertEquals("COMPLETED", ((Map<?, ?>) stages.get(0)).get("status"));
-        assertEquals("COMPLETED", ((Map<?, ?>) stages.get(1)).get("status"));
-        assertEquals("COMPLETED", ((Map<?, ?>) stages.get(2)).get("status"));
-        assertTrue(node.startedStages.contains("PORT_SCAN"));
+        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(1)).get("status"));
+        assertEquals("NO_REACHABLE_HOSTS", ((Map<?, ?>) stages.get(1)).get("reason"));
+        assertEquals("SKIPPED", ((Map<?, ?>) stages.get(2)).get("status"));
+        assertEquals(List.of("REACHABILITY"), node.startedStages);
+        assertEquals(1, snapshot.get("unknownHostCount"));
+        assertEquals(1, snapshot.get("skippedHostCount"));
+        assertEquals(0, snapshot.get("portScanHostCount"));
+        assertEquals(List.of(), snapshot.get("openPortResults"));
+        if (fingerprint) assertEquals("SKIPPED", ((Map<?, ?>) stages.get(3)).get("status"));
+    }
+
+    @Test
+    void scansOnlyAnsweredHostsInAMixedDiscoveryAndCountsSkippedHosts() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        node.reachabilityErrors = Map.of("host-b", "REFUSED", "host-c", "TIMEOUT", "host-d", "NO_ROUTE");
+        String id = String.valueOf(service.start("session-1", node,
+                plan(List.of(80, 22), null, List.of("host-a", "host-b", "host-c", "host-d"))).get("taskId"));
+        var snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertEquals(List.of("host-a", "host-b"), snapshot.get("reachableHostList"));
+        assertEquals(1, snapshot.get("unknownHostCount"));
+        assertEquals(1, snapshot.get("unreachableHostCount"));
+        assertEquals(2, snapshot.get("skippedHostCount"));
+        List<String> scanned = node.tasks.values().stream().filter(task -> "PORT_SCAN".equals(task.get("stage")))
+                .flatMap(task -> ((List<Map<String, Object>>) task.get("targets")).stream())
+                .map(target -> String.valueOf(target.get("host"))).distinct().toList();
+        assertEquals(List.of("host-a", "host-b"), scanned);
+        var reachability = (Map<?, ?>) ((List<?>) snapshot.get("stages")).get(0);
+        assertEquals(4, reachability.get("total"));
+        assertEquals(4, reachability.get("completed"));
+    }
+
+    @Test
+    void reusesSuccessfulAndRefusedTcpProbesWithinTheSelectedPortRange() throws Exception {
+        WorkflowNode node = new WorkflowNode(); node.javaReachable = false;
+        String id = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
+        var snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertTrue(!node.startedStages.contains("PORT_SCAN"));
+        assertEquals(1, ((List<?>) snapshot.get("openPortResults")).size());
+        node = new WorkflowNode(); node.reachabilityErrors = Map.of("host-a", "REFUSED");
+        id = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
+        snapshot = awaitTerminal(id);
+        assertEquals(List.of("REACHABILITY"), node.startedStages);
+        assertEquals(List.of(), snapshot.get("openPortResults"));
+    }
+
+    @Test
+    void cancellationDuringCachedResultPersistenceDoesNotCompleteThePortStage() throws Exception {
+        var store = mock(NetworkProbeResultStore.class);
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        when(store.append(anyString(), anyList(), anyList())).thenAnswer(call -> {
+            List<Map<String, Object>> observations = call.getArgument(1);
+            if (observations.stream().anyMatch(row -> "reachability-cache".equals(row.get("probeSource")))) {
+                entered.countDown(); assertTrue(release.await(2, TimeUnit.SECONDS));
+            }
+            return true;
+        });
+        when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenReturn(true);
+        service.setResultStore(store);
+        var node = new WorkflowNode(); node.javaReachable = false;
+        String id = String.valueOf(service.start("session-1", node, plan(List.of(80), null)).get("taskId"));
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+        var stopped = java.util.concurrent.CompletableFuture.runAsync(() -> service.stop("session-1", id));
+        try { assertEquals("CANCELLED", awaitStatus(id, "STOPPED").get("outcome")); }
+        finally { release.countDown(); }
+        stopped.get(2, TimeUnit.SECONDS);
+        var result = awaitTerminal(id);
+        assertEquals("CANCELLED", ((Map<?, ?>) ((List<?>) result.get("stages")).get(1)).get("status"));
+        verify(store, timeout(1000)).updateTask(eq(id), eq("STOPPED"), eq("CANCELLED"), eq("PORT_SCAN"),
+                org.mockito.ArgumentMatchers.anyInt(), eq(1), isNull(), anyList());
+    }
+
+    @Test
+    void retainsEarlierServicePagesWhenPersistenceRetriesTheCurrentPage() throws Exception {
+        var store = mock(NetworkProbeResultStore.class);
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        AtomicInteger serviceWrites = new AtomicInteger();
+        when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenAnswer(call -> {
+            List<Map<String, Object>> rows = call.getArgument(1);
+            boolean servicePage = rows.stream().anyMatch(row -> "SERVICE_PROBE".equals(row.get("workflowStage")));
+            return !servicePage || serviceWrites.incrementAndGet() != 2;
+        });
+        service.setResultStore(store);
+        WorkflowNode node = new WorkflowNode();
+        node.pageSize = 1;
+        node.openPorts = Set.of(80, 5432);
+        String id = String.valueOf(service.start("session-1", node,
+                plan(List.of(80, 5432), List.of("PORT_SCAN", "SERVICE_PROBE"))).get("taskId"));
+
+        var snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
+        List<Map<String, Object>> endpoints = (List<Map<String, Object>>) snapshot.get("serviceResults");
+        assertEquals(2, endpoints.size());
+        assertEquals(Set.of("http", "postgresql"), endpoints.stream().map(row -> row.get("service")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals("test-server", endpoints.stream().filter(row -> Integer.valueOf(80).equals(row.get("port")))
+                .findFirst().orElseThrow().get("server"));
+        assertTrue(serviceWrites.get() >= 3, "banner and HTTP evidence must survive the persistence retry");
     }
 
     @Test
@@ -170,7 +291,7 @@ class NetworkProbeWorkflowServiceTest {
         String id = String.valueOf(service.start("session-1", node, plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
         assertEquals("FAILED", awaitTerminal(id).get("outcome"));
         verify(store, timeout(1000)).updateTask(eq(id), eq("STOPPED"), eq("FAILED"), isNull(),
-                eq(99), eq(1), eq("扫描结果连续持久化失败"), anyList());
+                eq(0), eq(1), eq("扫描结果连续持久化失败"), anyList());
         assertTrue(node.stopCalls.get() > 0);
         awaitCount(node.releaseCalls);
     }
@@ -384,11 +505,15 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     private ScanPlanService.ScanPlan plan(List<Integer> ports, List<String> stages) {
+        return plan(ports, stages, List.of("host-a"));
+    }
+
+    private ScanPlanService.ScanPlan plan(List<Integer> ports, List<String> stages, List<String> hosts) {
         TargetResolver resolver = mock(TargetResolver.class);
-        when(resolver.resolve(any())).thenReturn(List.of(
-                new ResolvedTarget("host-a", "host-a", "host-a", null, "tcp", "host", "host-a")));
+        when(resolver.resolve(any())).thenReturn(hosts.stream().map(host ->
+                new ResolvedTarget(host, host, host, null, "tcp", "host", host)).toList());
         ScanPlanService planner = new ScanPlanService(resolver, new PortPolicyResolver(), analysis);
-        return planner.plan(new ScanConfig("test workflow", new TargetInput(List.of("host-a"), List.of()),
+        return planner.plan(new ScanConfig("test workflow", new TargetInput(hosts, List.of()),
                 new PortPolicy("custom", List.of(), ports, List.of()),
                 new ExecutionConfig(4, 1000), null, stages == null ? List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE") : stages));
     }
@@ -466,13 +591,17 @@ class NetworkProbeWorkflowServiceTest {
         private Set<Integer> openPorts = Set.of(80);
         private int pageSize = Integer.MAX_VALUE;
         private boolean reachable = true;
+        private boolean javaReachable = true;
+        private Map<String, String> reachabilityErrors = Map.of();
+
+        @Override public boolean supportsJavaReachability() { return true; }
 
         @Override
         @SuppressWarnings("unchecked")
         public synchronized Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             List<Map<String, Object>> targets = (List<Map<String, Object>>) plan.get("targets");
             List<String> stages = (List<String>) plan.get("stages");
-            String stage = stages.contains("http-request") ? "RECON"
+            String stage = stages.contains("host-reachability") ? "REACHABILITY" : stages.contains("http-request") ? "RECON"
                     : stages.contains("http-head") ? "SERVICE_PROBE"
                     : stages.contains("tcp-exchange") ? "SERVICE_PROBE"
                     : targets.get(0).containsKey("targetId") ? "REACHABILITY" : "PORT_SCAN";
@@ -506,11 +635,21 @@ class NetworkProbeWorkflowServiceTest {
                 Map<String, Object> observation = new LinkedHashMap<>(target);
                 observation.put("state", "open");
                 if ("REACHABILITY".equals(stage)) {
-                    observation.put("stage", "tcp-connect");
-                    if (!reachable || Integer.valueOf(80).equals(target.get("port"))) {
-                        observation.put("state", reachable ? "open" : "closed");
-                    } else {
-                        observation.put("state", "closed");
+                    String error = reachabilityErrors.get(String.valueOf(target.get("host")));
+                    boolean javaAnswer = reachable && javaReachable && error == null;
+                    observation.put("stage", javaAnswer ? "java-reachability" : "tcp-connect");
+                    List<Integer> ports = (List<Integer>) target.get("ports");
+                    observation.put("port", javaAnswer ? 0 : ports.contains(80) ? 80 : ports.get(0));
+                    observation.put("state", reachable && error == null ? "open" : "closed");
+                    if (error != null || !reachable) observation.put("errorCode", error == null ? "TIMEOUT" : error);
+                    observation.put("hostComplete", true);
+                    if ("NO_ROUTE".equals(error) || "DNS".equals(error)) {
+                        for (Integer port : ports) {
+                            Map<String, Object> failed = new LinkedHashMap<>(observation);
+                            failed.put("port", port); failed.put("hostComplete", port.equals(ports.get(ports.size() - 1)));
+                            observations.add(failed);
+                        }
+                        continue;
                     }
                 } else if ("PORT_SCAN".equals(stage)) {
                     observation.put("stage", "tcp-connect");
@@ -640,7 +779,7 @@ class NetworkProbeWorkflowServiceTest {
         @SuppressWarnings("unchecked")
         public synchronized Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             List<String> stages = (List<String>) plan.get("stages");
-            startedStages.add(stages.contains("tcp-connect") ? "REACHABILITY" : "OTHER");
+            startedStages.add(stages.contains("host-reachability") || stages.contains("tcp-connect") ? "REACHABILITY" : "OTHER");
             return Map.of("code", 200, "taskId", "cancelled-stage-child");
         }
 

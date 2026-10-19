@@ -13,6 +13,9 @@ public interface NetworkProbeCapable {
     /** Concurrent probe workers available in this node runtime (threads or processes). */
     default int networkProbeWorkerLimit() { return 256; }
 
+    /** Whether the runtime can perform Java's best-effort address reachability check. */
+    default boolean supportsJavaReachability() { return false; }
+
     Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception;
 
     /**

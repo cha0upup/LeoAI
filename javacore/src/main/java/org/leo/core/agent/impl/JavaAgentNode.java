@@ -410,6 +410,9 @@ public class JavaAgentNode extends AbstractAgentNode implements BasicInfoCapable
     }
 
     @Override
+    public boolean supportsJavaReachability() { return true; }
+
+    @Override
     public Map<String, Object> startNetworkProbe(Map<String, Object> plan) throws Exception {
         return networkProbeService.startNetworkProbe(plan);
     }

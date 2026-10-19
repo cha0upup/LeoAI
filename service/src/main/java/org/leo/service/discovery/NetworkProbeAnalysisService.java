@@ -189,6 +189,7 @@ public class NetworkProbeAnalysisService {
         }
         List<Map<String, Object>> probes = new ArrayList<>();
         Map<String, Integer> expectedByHost = new LinkedHashMap<>();
+        Set<String> explicitHosts = new LinkedHashSet<>();
         Object rawTargets = rawScan.get("targets");
         if (rawTargets instanceof List<?> targets && !targets.isEmpty()) {
             if (targets.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
@@ -200,15 +201,15 @@ public class NetworkProbeAnalysisService {
                 if (!(value instanceof Map<?, ?> rawTarget)) {
                     throw new IllegalArgumentException("scan.targets中的项目必须是对象");
                 }
-                Map<String, Object> target = copyMap(rawTarget);
-                String host = text(target.get("host"));
-                int port = boundedInt(target.get("port"), -1, -1, 65535);
+                String host = text(rawTarget.get("host"));
+                int port = boundedInt(rawTarget.get("port"), -1, -1, 65535);
                 if (host.isEmpty() || port < 1) {
                     throw new IllegalArgumentException("scan.targets包含无效host/port");
                 }
                 if (!hosts.contains(host)) {
                     throw new IllegalArgumentException("scan.targets包含不在scan.hosts中的主机");
                 }
+                if (Boolean.TRUE.equals(rawTarget.get("explicitPort"))) explicitHosts.add(host);
                 if (seen.add(host + "\u0000" + port)) {
                     int hostProbeCount = expectedByHost.merge(host, 1, Integer::sum);
                     if (hostProbeCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
@@ -235,13 +236,31 @@ public class NetworkProbeAnalysisService {
         int timeout = boundedInt(rawScan.get("timeout"), NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS, 100, 300000);
         int threads = boundedInt(rawScan.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
                 1, NetworkProbeLimits.NODE_MAX_THREADS);
+        boolean hostDiscovery = Boolean.TRUE.equals(rawScan.get("hostDiscovery"));
+        List<Map<String, Object>> targets = probes;
+        if (hostDiscovery) {
+            Map<String, List<Integer>> portsByHost = new LinkedHashMap<>();
+            for (Map<String, Object> probe : probes) {
+                portsByHost.computeIfAbsent(text(probe.get("host")), ignored -> new ArrayList<>())
+                        .add((Integer) probe.get("port"));
+            }
+            targets = new ArrayList<>();
+            for (var entry : portsByHost.entrySet()) {
+                String host = entry.getKey();
+                Map<String, Object> target = new LinkedHashMap<>();
+                target.put("host", host);
+                target.put("targetId", host);
+                target.put("stage", "host-reachability");
+                target.put("protocol", "tcp");
+                target.put("ports", entry.getValue());
+                target.put("javaReachability", Boolean.TRUE.equals(rawScan.get("javaReachability")) && !explicitHosts.contains(host));
+                targets.add(target);
+            }
+        }
         Map<String, Object> plan = new LinkedHashMap<>();
-        plan.put("targets", probes);
-        plan.put("stages", new ArrayList<>(List.of("tcp-connect")));
-        Map<String, Object> limits = new LinkedHashMap<>();
-        limits.put("threads", Integer.valueOf(Math.min(threads, probes.size())));
-        limits.put("timeout", Integer.valueOf(timeout));
-        plan.put("limits", limits);
+        plan.put("targets", targets);
+        plan.put("stages", List.of(hostDiscovery ? "host-reachability" : "tcp-connect"));
+        plan.put("limits", Map.of("threads", Math.min(threads, targets.size()), "timeout", timeout));
         ScanContext context = new ScanContext("reachability", Map.of(), List.of(),
                 hosts, Set.of(), expectedByHost, System.currentTimeMillis());
         return new PreparedScan(plan, context);
@@ -401,14 +420,17 @@ public class NetworkProbeAnalysisService {
     private void enrichReachability(ScanContext context, Map<String, Object> snapshot,
                                     List<Map<String, Object>> observations) {
         for (Map<String, Object> observation : observations) {
-            if (!"tcp-connect".equals(text(observation.get("stage")))) continue;
+            String stage = text(observation.get("stage"));
+            if (!"tcp-connect".equals(stage) && !"java-reachability".equals(stage)) continue;
             String host = text(observation.get("host"));
             if (host.isEmpty()) continue;
-            context.completedByHost.merge(host, Integer.valueOf(1), Integer::sum);
+            if ("tcp-connect".equals(stage)) context.completedByHost.merge(host, Integer.valueOf(1), Integer::sum);
+            if (Boolean.TRUE.equals(observation.get("hostComplete")))
+                context.completedByHost.put(host, context.expectedByHost.getOrDefault(host, REACHABILITY_PORTS.size()));
             String code = text(observation.get("errorCode"));
             if ("open".equalsIgnoreCase(text(observation.get("state"))) || "REFUSED".equals(code))
                 context.reachableHosts.add(host);
-            if ("DNS".equals(code) || "NO_ROUTE".equals(code))
+            if ("tcp-connect".equals(stage) && ("DNS".equals(code) || "NO_ROUTE".equals(code)))
                 context.unreachableByHost.merge(host, 1, Integer::sum);
         }
 
@@ -439,6 +461,10 @@ public class NetworkProbeAnalysisService {
         analysis.put("unreachableHostList", unreachable);
         analysis.put("unknownHostList", unknown);
         analysis.put("pendingHostList", pending);
+        analysis.put("reachableHostCount", reachable.size());
+        analysis.put("unknownHostCount", unknown.size());
+        analysis.put("unreachableHostCount", unreachable.size());
+        analysis.put("pendingHostCount", pending.size());
         snapshot.put("scanKind", "host-reachability");
         snapshot.put("analysis", analysis);
     }
