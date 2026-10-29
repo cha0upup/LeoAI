@@ -24,6 +24,24 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NetworkProbeFingerprintIntegrationTest {
+    @org.junit.jupiter.api.BeforeEach
+    void registerFixtureSessions() {
+        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        for (String id : List.of("session", "session-a", "session-b", "other")) {
+            var session = new org.leo.core.session.AgentNodeSession();
+            session.setSessionId(id);
+            session.setCreateByUser("user-" + id);
+            session.setAgentId("agent-1");
+            session.bindHostId("host-1");
+            org.leo.core.session.AgentNodeSessionContainer.addSession(id, session);
+        }
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearFixtureSessions() {
+        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+    }
+
     @TempDir Path directory;
 
     @Test

@@ -76,6 +76,33 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     @Test
+    void drainsMoreThanTenThousandTargetsInBoundedNodeBatches() throws Exception {
+        ImmediateNode node = new ImmediateNode();
+        var targets = java.util.stream.IntStream.range(0, 10001)
+                .mapToObj(index -> Map.<String, Object>of("host", "fixture-" + index, "port", 80)).toList();
+        String id = String.valueOf(service.start("session-1", node, Map.of("targets", targets,
+                "limits", Map.of("threads", 64))).get("taskId"));
+        long observationCursor = 0, errorCursor = 0;
+        Map<String, Object> snapshot = Map.of();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            snapshot = result(service.querySince("session-1", id, observationCursor, errorCursor));
+            observationCursor = ((Number) snapshot.get("nextCursor")).longValue();
+            errorCursor = ((Number) snapshot.get("nextErrorCursor")).longValue();
+            service.acknowledge("session-1", id, observationCursor, errorCursor);
+            if ("STOPPED".equals(snapshot.get("status")) && observationCursor == targets.size()) break;
+            Thread.sleep(5);
+        } while (System.nanoTime() < deadline);
+        assertEquals("COMPLETED", snapshot.get("outcome"));
+        assertEquals(10001, snapshot.get("total"));
+        assertEquals(10001, snapshot.get("completed"));
+        assertEquals(10001L, observationCursor);
+        assertEquals(10001, node.batchSizes.stream().mapToInt(Integer::intValue).sum());
+        assertTrue(node.batchSizes.stream().allMatch(size -> size <= 1024));
+        assertEquals(node.batchSizes.size(), node.released.size());
+    }
+
+    @Test
     void usesTheNodesActualWorkerCapacityForAdmission() throws Exception {
         ImmediateNode node = new ImmediateNode() {
             @Override public int networkProbeWorkerLimit() { return 16; }

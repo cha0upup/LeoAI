@@ -172,7 +172,30 @@ class ScanPreviewServiceTest {
     }
 
     @Test
-    void skippingDiscoveryAvoidsReachabilityLimitsButStillBoundsPortWork() {
+    void preservesHostOrderAndExplicitPortPrecedenceWithAndWithoutDiscovery() {
+        var input = new TargetInput(List.of("198.18.0.2", "198.18.0.1:18080", "198.18.0.2:80",
+                "198.18.0.1:18080", "198.18.0.3"), List.of());
+        var policy = new PortPolicy("custom", List.of(), List.of(8080), List.of());
+        var portsOnly = planner.plan(new ScanConfig("ports", input, policy,
+                null, null, List.of("PORT_SCAN")));
+        var discovery = planner.plan(new ScanConfig("discovery", input, policy,
+                null, null, List.of("REACHABILITY", "PORT_SCAN")));
+
+        assertEquals(List.of("198.18.0.2", "198.18.0.1", "198.18.0.3"), portsOnly.hosts());
+        assertEquals(portsOnly.hosts(), discovery.hosts());
+        assertEquals(portsOnly.targets(), discovery.targets());
+        assertEquals(4, portsOnly.targets().size());
+        assertTrue(portsOnly.reachabilityTargets().isEmpty());
+        var probes = discovery.reachabilityTargets();
+        assertEquals(2 + NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size(), probes.size());
+        assertEquals(Map.of("host", "198.18.0.2", "port", 80, "protocol", "tcp", "explicitPort", true), probes.get(0));
+        assertEquals(Map.of("host", "198.18.0.1", "port", 18080, "protocol", "tcp", "explicitPort", true), probes.get(1));
+        assertTrue(probes.subList(2, probes.size()).stream().allMatch(probe ->
+                "198.18.0.3".equals(probe.get("host")) && Boolean.FALSE.equals(probe.get("explicitPort"))));
+    }
+
+    @Test
+    void skippingDiscoveryAcceptsLargePortWorkWithWarningsOnly() {
         List<String> endpoints = java.util.stream.IntStream.rangeClosed(1, 40)
                 .mapToObj(port -> "127.0.0.1:" + port).toList();
         ScanConfig scan = new ScanConfig("ports", new TargetInput(endpoints, List.of()),
@@ -183,10 +206,61 @@ class ScanPreviewServiceTest {
         assertTrue(plan.reachabilityTargets().isEmpty());
         assertEquals(0, preview.reachabilityProbeCount());
         assertEquals(0, preview.serviceProbeCount());
-        ScanConfig oversized = new ScanConfig("too many", new TargetInput(List.of("192.0.2.0/24"), List.of()),
+        ScanConfig oversized = new ScanConfig("large ports", new TargetInput(List.of("192.0.2.0/30"), List.of()),
                 new PortPolicy("custom", List.of("1-65535"), List.of(), List.of()),
                 null, null, List.of("PORT_SCAN"));
-        assertTrue(service.preview(oversized).errors().get(0).contains("扫描组合数"));
+        var large = service.preview(oversized);
+        assertTrue(large.errors().isEmpty(), large.errors().toString());
+        assertEquals(4 * 65535, large.preview().combinationCount());
+        assertTrue(large.preview().warnings().stream().anyMatch(warning -> warning.contains("组合数较大")));
+    }
+
+    @Test
+    void moreThanTenThousandHostsAndOneHundredThousandDiscoveryProbesAreAdvisoryOnly() {
+        var scan = new ScanConfig("large hosts", new TargetInput(List.of("198.18.0.0/18"), List.of()),
+                new PortPolicy("custom", List.of(), List.of(80), List.of()),
+                null, null, List.of("REACHABILITY", "PORT_SCAN"));
+        var response = service.preview(scan);
+        assertTrue(response.errors().isEmpty(), response.errors().toString());
+        assertEquals(16384, response.preview().hostCount());
+        assertEquals(16384, response.preview().combinationCount());
+        assertEquals(16384 * 9, response.preview().reachabilityProbeCount());
+        assertTrue(response.preview().warnings().stream().anyMatch(warning ->
+                warning.contains("10000") && warning.contains("仅提示")));
+        var execution = planner.plan(scan);
+        assertEquals(16384, execution.hosts().size());
+        assertEquals(16384 * 8, execution.reachabilityTargets().size());
+    }
+
+    @Test
+    void largeRawInputAndExclusionListsAreWarnedAboutButFullyApplied() {
+        List<String> items = java.util.stream.IntStream.range(0, 400)
+                .mapToObj(index -> "198.18." + (index / 256) + "." + (index % 256)).toList();
+        var response = service.preview(new ScanConfig("bulk", new TargetInput(items, items.subList(0, 200)),
+                new PortPolicy("custom", List.of(), List.of(80), List.of()),
+                null, null, List.of("PORT_SCAN")));
+        assertTrue(response.errors().isEmpty(), response.errors().toString());
+        assertEquals(400, response.preview().originalCount());
+        assertEquals(200, response.preview().hostCount());
+        assertTrue(response.preview().warnings().stream().anyMatch(warning -> warning.contains("输入目标条目较多")));
+        assertTrue(response.preview().warnings().stream().anyMatch(warning -> warning.contains("排除条目较多")));
+    }
+
+    @Test
+    void largeFingerprintRequestEstimateIsOnlyAWarning() {
+        var analysis = org.mockito.Mockito.mock(NetworkProbeAnalysisService.class);
+        var requests = java.util.Collections.nCopies(16, Map.of("path", "/"));
+        var rules = java.util.stream.IntStream.range(0, 64).mapToObj(index -> Map.<String, Object>of(
+                "fingerprintId", "rule-" + index, "rule", Map.of("requests", requests))).toList();
+        org.mockito.Mockito.when(analysis.snapshotRules(org.mockito.ArgumentMatchers.any())).thenReturn(rules);
+        var preview = new ScanPreviewService(new ScanPlanService(new TargetResolver(), new PortPolicyResolver(), analysis));
+        var response = preview.preview(new ScanConfig("components", new TargetInput(List.of("198.18.0.0/26"), List.of()),
+                new PortPolicy("custom", List.of(), List.of(80), List.of()), null, null,
+                List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT")));
+        assertTrue(response.errors().isEmpty(), response.errors().toString());
+        assertEquals(65536L, response.preview().fingerprintProbeUpperBound());
+        assertTrue(response.preview().warnings().stream().anyMatch(warning -> warning.contains("组件请求上界较大")));
+        assertTrue(response.preview().warnings().stream().noneMatch(warning -> warning.contains("将失败") || warning.contains("单次最多")));
     }
 
     @Test

@@ -1,6 +1,8 @@
 package org.leo.web.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -77,24 +79,29 @@ public final class NetworkProbeResultStore {
 
     public boolean createTask(String taskId, String sessionId, String name, Map<String, Object> config) {
         if (taskId == null || taskId.isBlank() || sessionId == null || sessionId.isBlank()) return false;
+        AgentNodeSession session = scopedSession(sessionId);
+        if (session == null) return false;
         String now = Instant.now().toString();
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "INSERT OR IGNORE INTO scan_tasks "
-                             + "(task_id, session_id, name, status, outcome, progress, target_count, "
+                     "INSERT INTO scan_tasks "
+                             + "(task_id, session_id, user_id, agent_id, host_id, project_id, name, status, outcome, progress, target_count, "
                              + "open_count, service_count, error_count, config_json, created_at, updated_at) "
-                             + "VALUES (?, ?, ?, 'RUNNING', 'RUNNING', 0, ?, 0, 0, 0, ?, ?, ?)")) {
+                             + "VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', 'RUNNING', 0, ?, 0, 0, 0, ?, ?, ?)")) {
             statement.setString(1, taskId);
             statement.setString(2, sessionId);
-            statement.setString(3, name);
-            statement.setInt(4, targetCount(config));
-            statement.setString(5, json(config));
-            statement.setString(6, now);
-            statement.setString(7, now);
-            statement.executeUpdate();
-            return true;
+            statement.setString(3, session.getCreateByUser());
+            statement.setString(4, session.resolveAgentId());
+            statement.setString(5, session.getCurrentHostId());
+            statement.setString(6, session.getProjectId());
+            statement.setString(7, name);
+            statement.setInt(8, targetCount(config));
+            statement.setString(9, json(config));
+            statement.setString(10, now);
+            statement.setString(11, now);
+            return statement.executeUpdate() == 1;
         } catch (SQLException error) {
-            logger.warn("Unable to create network scan result task {}", taskId, error);
+            logger.warn("Failed to create network scan result task {}", taskId, error);
             return false;
         }
     }
@@ -205,8 +212,8 @@ public final class NetworkProbeResultStore {
     /** Load selections only from a task owned by the requested session. */
     public FingerprintSource fingerprintSource(String sessionId, String taskId, List<String> endpointIds) {
         if (!ownsTask(sessionId, taskId)) throw new IllegalArgumentException("来源扫描任务不存在或不属于当前会话");
-        if (endpointIds == null || endpointIds.isEmpty() || endpointIds.size() > 256)
-            throw new IllegalArgumentException("请选择 1–256 个 HTTP/HTTPS 资产");
+        if (endpointIds == null || endpointIds.isEmpty())
+            throw new IllegalArgumentException("请选择至少一个 HTTP/HTTPS 资产");
         java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>(endpointIds);
         List<Map<String, Object>> endpoints = new ArrayList<>();
         List<Map<String, Object>> targets = new ArrayList<>();
@@ -316,11 +323,6 @@ public final class NetworkProbeResultStore {
     }
 
     public void updateTask(String taskId, String status, String outcome, String currentStage,
-                           int progress, int targetCount, String errorMessage) {
-        updateTask(taskId, status, outcome, currentStage, progress, targetCount, errorMessage, null);
-    }
-
-    public void updateTask(String taskId, String status, String outcome, String currentStage,
                            int progress, int targetCount, String errorMessage,
                            List<Map<String, Object>> stages) {
         if (taskId == null || taskId.isBlank()) return;
@@ -359,14 +361,15 @@ public final class NetworkProbeResultStore {
     }
 
     public Map<String, Object> summary(String sessionId, String taskId) {
+        Ownership ownership = ownership(sessionId, "");
         try (Connection connection = dataSource.getConnection();
             PreparedStatement statement = connection.prepareStatement(
                      "SELECT task_id, name, status, outcome, current_stage, progress, target_count, "
                              + "open_count, service_count, error_count, error_message, stage_json, "
                              + "created_at, updated_at, finished_at "
-                             + "FROM scan_tasks WHERE task_id=? AND session_id=?")) {
+                             + "FROM scan_tasks WHERE task_id=? AND " + ownership.predicate())) {
             statement.setString(1, taskId);
-            statement.setString(2, sessionId);
+            ownership.bind(statement, 2);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return Map.of();
                 Map<String, Object> task = taskMap(result);
@@ -395,6 +398,8 @@ public final class NetworkProbeResultStore {
 
     /** Bounded, lightweight list; full stages and host samples belong to summary(). */
     public Map<String, Object> list(String sessionId, Map<String, Object> request) {
+        request = request == null ? Map.of() : request;
+        Ownership ownership = ownership(sessionId, "");
         int pageSize = boundedInt(request.get("pageSize"), 20, 1, 100);
         String scope = value(request.get("scope"), "history");
         if (!"history".equals(scope) && !"active".equals(scope)) {
@@ -403,7 +408,7 @@ public final class NetworkProbeResultStore {
         List<String> cursor = taskCursor(text(request.get("cursor")));
         String sql = "SELECT task_id, name, status, outcome, current_stage, progress, target_count, "
                 + "open_count, service_count, error_count, created_at, updated_at, finished_at "
-                + "FROM scan_tasks WHERE session_id=?"
+                + "FROM scan_tasks WHERE " + ownership.predicate()
                 + ("active".equals(scope) ? " AND status IN ('RUNNING','PAUSED')" : "")
                 + (cursor.isEmpty() ? "" : " AND (created_at, task_id) < (?, ?)")
                 + " ORDER BY created_at DESC, task_id DESC LIMIT ?";
@@ -412,8 +417,7 @@ public final class NetworkProbeResultStore {
             // Use one read snapshot for the page and both grouped counts.
             connection.setAutoCommit(false);
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setString(1, sessionId);
-                int parameter = 2;
+                int parameter = ownership.bind(statement, 1);
                 for (String part : cursor) statement.setString(parameter++, part);
                 statement.setInt(parameter, pageSize + 1);
                 try (ResultSet rows = statement.executeQuery()) {
@@ -535,14 +539,15 @@ public final class NetworkProbeResultStore {
     }
 
     public Map<String, Object> summaryCounts(String sessionId, String taskId) {
+        Ownership ownership = ownership(sessionId, "t.");
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
                      "SELECT t.open_count, t.service_count, t.error_count, COUNT(f.match_key), COUNT(DISTINCT f.target_id) "
                              + "FROM scan_tasks t LEFT JOIN scan_fingerprint_results f "
                              + "ON f.task_id=t.task_id AND f.status='MATCHED' "
-                             + "WHERE t.task_id=? AND t.session_id=? GROUP BY t.task_id")) {
+                             + "WHERE t.task_id=? AND " + ownership.predicate() + " GROUP BY t.task_id")) {
             statement.setString(1, taskId);
-            statement.setString(2, sessionId);
+            ownership.bind(statement, 2);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return Map.of();
                 Map<String, Object> counts = new LinkedHashMap<>();
@@ -559,32 +564,19 @@ public final class NetworkProbeResultStore {
         }
     }
 
-    /** Removes a task and all of its endpoint, observation and evidence rows. */
+    /** Explicit history deletion; session destruction only stops execution. */
     public boolean deleteTask(String sessionId, String taskId) {
         if (sessionId == null || sessionId.isBlank() || taskId == null || taskId.isBlank()) return false;
+        Ownership ownership = ownership(sessionId, "");
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "DELETE FROM scan_tasks WHERE task_id=? AND session_id=?")) {
+                     "DELETE FROM scan_tasks WHERE task_id=? AND " + ownership.predicate())) {
             statement.setString(1, taskId.trim());
-            statement.setString(2, sessionId.trim());
+            ownership.bind(statement, 2);
             return statement.executeUpdate() > 0;
         } catch (SQLException error) {
-            logger.warn("Unable to delete network scan task {}", taskId, error);
+            logger.warn("Failed to delete network scan task {}", taskId, error);
             return false;
-        }
-    }
-
-    /** Deletes every persisted network scan owned by a destroyed session. */
-    public int deleteTasksBySession(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) return 0;
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "DELETE FROM scan_tasks WHERE session_id=?")) {
-            statement.setString(1, sessionId.trim());
-            return statement.executeUpdate();
-        } catch (SQLException error) {
-            logger.warn("Unable to delete network scan tasks for session {}", sessionId, error);
-            return 0;
         }
     }
 
@@ -692,17 +684,45 @@ public final class NetworkProbeResultStore {
         }
     }
 
-    private boolean ownsTask(String sessionId, String taskId) {
+    public boolean ownsTask(String sessionId, String taskId) {
+        Ownership ownership = ownership(sessionId, "");
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "SELECT 1 FROM scan_tasks WHERE task_id=? AND session_id=?")) {
+                     "SELECT 1 FROM scan_tasks WHERE task_id=? AND " + ownership.predicate())) {
             statement.setString(1, taskId);
-            statement.setString(2, sessionId);
+            ownership.bind(statement, 2);
             try (ResultSet result = statement.executeQuery()) {
                 return result.next();
             }
         } catch (SQLException error) {
             return false;
+        }
+    }
+
+    private AgentNodeSession scopedSession(String sessionId) {
+        AgentNodeSession session = sessionId == null ? null : AgentNodeSessionContainer.getSession(sessionId.trim());
+        if (session == null || blank(session.getCreateByUser()) || blank(session.resolveAgentId())
+                || blank(session.getCurrentHostId())) return null;
+        return session;
+    }
+
+    private boolean blank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private Ownership ownership(String sessionId, String prefix) {
+        AgentNodeSession session = scopedSession(sessionId);
+        if (session == null) return new Ownership("0=1", List.of());
+        // Missing ownership is never inferred from a transient session ID.
+        String predicate = "(" + prefix + "user_id=? AND " + prefix + "agent_id=? AND " + prefix + "host_id=?)";
+        return new Ownership(predicate, List.of(session.getCreateByUser(), session.resolveAgentId(),
+                session.getCurrentHostId()));
+    }
+
+    private record Ownership(String predicate, List<String> parameters) {
+        int bind(PreparedStatement statement, int first) throws SQLException {
+            for (String parameter : parameters) statement.setString(first++, parameter);
+            return first;
         }
     }
 

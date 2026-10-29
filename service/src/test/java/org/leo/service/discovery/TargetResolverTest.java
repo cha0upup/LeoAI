@@ -79,10 +79,27 @@ class TargetResolverTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"0.0.0.0/0", "2001:db8::/0", "0.0.0.0-255.255.255.255"})
-    void rejectsExpansionsBeyondTheAddressLimit(String input) {
+    void rejectsRangesThatCannotBeRepresentedByJavaListIndices(String input) {
         var error = assertThrows(IllegalArgumentException.class,
                 () -> resolver.resolve(new TargetInput(List.of(input), List.of())));
-        assertTrue(error.getMessage().contains("超过"));
+        assertTrue(error.getMessage().contains("索引容量"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"198.18.0.0/15", "198.18.0.0-198.19.255.255", "2001:db8::/111"})
+    void resolvesMoreThanOneHundredThousandAddressesWithoutATaskQuota(String input) {
+        var targets = resolver.resolve(new TargetInput(List.of(input), List.of()));
+        assertEquals(131072, targets.size());
+        assertFalse(targets.get(targets.size() - 1).ip().isBlank());
+    }
+
+    @Test
+    void acceptsLargeInputAndExclusionListsWithoutTruncation() {
+        List<String> items = java.util.stream.IntStream.range(0, 400)
+                .mapToObj(index -> "198.18." + (index / 256) + "." + (index % 256)).toList();
+        var targets = resolver.resolve(new TargetInput(items, items.subList(0, 200)));
+        assertEquals(200, targets.size());
+        assertEquals(items.subList(200, 400), targets.stream().map(ResolvedTarget::ip).toList());
     }
 
     @ParameterizedTest

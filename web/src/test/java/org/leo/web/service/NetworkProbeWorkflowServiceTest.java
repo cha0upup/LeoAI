@@ -111,6 +111,22 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
+    void acceptsSupplementalFingerprintSelectionsBeyondTheFormerAssetQuota() throws Exception {
+        WorkflowNode node = new WorkflowNode();
+        var endpoints = java.util.stream.IntStream.range(0, 300)
+                .mapToObj(index -> Map.<String, Object>of("host", "fixture-" + index,
+                        "port", 80, "protocol", "tcp", "service", "http", "state", "open")).toList();
+        String id = String.valueOf(service.startFingerprint("session-1", node, endpoints, List.of(),
+                analysis.snapshotRules(Map.of("ids", List.of("web_any"))), "large supplemental", "source", false).get("taskId"));
+        var snapshot = awaitTerminal(id);
+        assertEquals("COMPLETED", snapshot.get("outcome"), snapshot.toString());
+        assertEquals(300, ((List<?>) snapshot.get("serviceResults")).size());
+        int submitted = node.tasks.values().stream().mapToInt(task -> ((List<?>) task.get("targets")).size()).sum();
+        assertEquals(300, submitted);
+        assertEquals(List.of("RECON"), node.startedStages);
+    }
+
+    @Test
     void runsFingerprintStageAndSkipsItWhenThereAreNoHttpApplications() throws Exception {
         WorkflowNode node = new WorkflowNode();
         var stages = List.of("PORT_SCAN", "SERVICE_PROBE", "FINGERPRINT");
@@ -229,6 +245,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void cancellationDuringCachedResultPersistenceDoesNotCompleteThePortStage() throws Exception {
         var store = mock(NetworkProbeResultStore.class);
+        when(store.ownsTask(eq("session-1"), anyString())).thenReturn(true);
         when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         when(store.append(anyString(), anyList(), anyList())).thenAnswer(call -> {
@@ -256,6 +273,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void retainsEarlierServicePagesWhenPersistenceRetriesTheCurrentPage() throws Exception {
         var store = mock(NetworkProbeResultStore.class);
+        when(store.ownsTask(eq("session-1"), anyString())).thenReturn(true);
         when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
         AtomicInteger serviceWrites = new AtomicInteger();
         when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenAnswer(call -> {
@@ -283,6 +301,7 @@ class NetworkProbeWorkflowServiceTest {
     @Test
     void persistenceFailureStopsAndReleasesTheActiveChild() throws Exception {
         var store = mock(NetworkProbeResultStore.class);
+        when(store.ownsTask(eq("session-1"), anyString())).thenReturn(true);
         when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
         when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenReturn(false);
         service.setResultStore(store);
@@ -455,6 +474,48 @@ class NetworkProbeWorkflowServiceTest {
         service.stop("session-1", id);
         assertEquals("CANCELLED", awaitTerminal(id).get("outcome"));
         awaitCount(node.control.stopCalls);
+    }
+
+    @Test
+    void reconnectedScopeControlsTheOriginalExecutionConnection() throws Exception {
+        var store = mock(NetworkProbeResultStore.class);
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        when(store.ownsTask(eq("session-1"), anyString())).thenReturn(true);
+        when(store.ownsTask(eq("reconnected"), anyString())).thenReturn(true);
+        service.setResultStore(store);
+        var node = new ControlledWorkflowNode();
+        String id = String.valueOf(service.start("session-1", node,
+                plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertTrue(node.started.await(2, TimeUnit.SECONDS));
+        assertThrows(org.leo.web.exception.ApiException.class, () -> service.pause("other-host", id));
+        assertTrue(service.querySummaryIfPresent("other-host", id).isEmpty());
+        service.pause("reconnected", id);
+        awaitCount(node.pauseCalls);
+        assertEquals("PAUSED", service.querySummaryIfPresent("reconnected", id).get("status"));
+        service.resume("reconnected", id);
+        awaitCount(node.resumeCalls);
+        service.stop("reconnected", id);
+        awaitCount(node.stopCalls);
+        assertEquals("CANCELLED", service.querySummaryIfPresent("reconnected", id).get("outcome"));
+    }
+
+    @Test
+    void destructionStopsExecutionAfterItsSessionHasAlreadyLeftTheRegistry() throws Exception {
+        var store = mock(NetworkProbeResultStore.class);
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        service.setResultStore(store);
+        var node = new ControlledWorkflowNode();
+        String id = String.valueOf(service.start("session-1", node,
+                plan(List.of(80), List.of("PORT_SCAN"))).get("taskId"));
+        assertTrue(node.started.await(2, TimeUnit.SECONDS));
+        // The public ownership lookup now fails, as it does after session removal.
+        assertTrue(service.querySummaryIfPresent("session-1", id).isEmpty());
+        service.cleanupSession("session-1");
+        awaitCount(node.stopCalls);
+        verify(store, timeout(1000).atLeastOnce()).updateTask(eq(id), eq("STOPPED"), eq("CANCELLED"),
+                org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.anyInt(),
+                eq(1), isNull(), anyList());
+        assertTrue(service.querySummaryIfPresent("session-1", id).isEmpty());
     }
 
     @Test

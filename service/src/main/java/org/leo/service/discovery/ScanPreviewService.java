@@ -45,8 +45,18 @@ public class ScanPreviewService {
                     ? estimateServiceProbeCount(combinationCount) : 0;
 
             // 警告
+            if (plan.originalCount() > NetworkProbeLimits.WARN_TARGET_ITEMS) {
+                warnings.add("输入目标条目较多: " + plan.originalCount() + "，仅提示，不限制任务总量");
+            }
+            if (scan.targets().exclude() != null && scan.targets().exclude().size() > NetworkProbeLimits.WARN_EXCLUDE_ITEMS) {
+                warnings.add("排除条目较多: " + scan.targets().exclude().size() + "，仅提示，仍完整应用排除条件");
+            }
+            if (hostCount > NetworkProbeLimits.WARN_RESOLVED_HOSTS) {
+                warnings.add("扫描主机数为 " + hostCount + "，超过建议规模 "
+                        + NetworkProbeLimits.WARN_RESOLVED_HOSTS + "；仅提示，不影响开始扫描，任务将分批执行");
+            }
             if (combinationCount > WARN_COMBINATIONS) {
-                warnings.add("组合数较大，扫描可能需要较长时间: " + combinationCount);
+                warnings.add("组合数较大，扫描可能需要较长时间: " + combinationCount + "，仅提示，任务将分批执行");
             }
 
             if (serviceProbeCount > 5000) {
@@ -65,11 +75,10 @@ public class ScanPreviewService {
             long fingerprintUpperBound = ruleRequests == 0 ? 0 : plan.targets().stream().mapToLong(target ->
                     target.get("applications") instanceof List<?> list ? list.size() : 1).sum() * ruleRequests;
             if (ruleRequests > 0) {
-                warnings.add("组件识别仅扫描 HTTP/HTTPS 应用；实际请求数以发现结果为准，单次最多 "
-                        + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + " 个请求，响应正文最多读取 "
+                warnings.add("组件识别仅扫描 HTTP/HTTPS 应用；实际请求数以发现结果为准，不限制任务请求总量，响应正文最多读取 "
                         + NetworkProbeLimits.NODE_MAX_READ_BYTES + " 字节");
-                if (fingerprintUpperBound > NetworkProbeLimits.MAX_FINGERPRINT_PROBES)
-                    warnings.add("组件请求上界超过单次限制，实际应用数过多时组件阶段将失败，请缩小范围或减少规则");
+                if (fingerprintUpperBound > NetworkProbeLimits.WARN_FINGERPRINT_PROBES)
+                    warnings.add("组件请求上界较大: " + fingerprintUpperBound + "，仅提示，实际请求将分批执行");
             }
             TargetPreview preview = new TargetPreview(
                     plan.originalCount(),

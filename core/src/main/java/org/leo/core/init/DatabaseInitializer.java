@@ -102,7 +102,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "requires_confirmation", "reason", "impact", "rollback",
                             "status", "created_at", "expires_at", "consumed_at"));
             requireColumns(connection, "scan_tasks",
-                    Set.of("task_id", "session_id", "status", "outcome",
+                    Set.of("task_id", "session_id", "user_id", "agent_id", "host_id", "project_id", "status", "outcome",
                             "error_message", "stage_json"));
             requireColumns(connection, "scan_endpoint_results",
                     Set.of("task_id", "endpoint_id", "fingerprint_json", "response_size"));

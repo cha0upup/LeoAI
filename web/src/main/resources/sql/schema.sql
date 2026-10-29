@@ -187,6 +187,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip);
 CREATE TABLE IF NOT EXISTS scan_tasks (
     task_id VARCHAR(100) PRIMARY KEY,
     session_id VARCHAR(100) NOT NULL,
+    user_id VARCHAR(50),
+    agent_id VARCHAR(50),
+    host_id TEXT,
+    project_id VARCHAR(50),
     name VARCHAR(200),
     status VARCHAR(20) NOT NULL DEFAULT 'RUNNING',
     outcome VARCHAR(20) NOT NULL DEFAULT 'RUNNING',
@@ -203,10 +207,10 @@ CREATE TABLE IF NOT EXISTS scan_tasks (
     updated_at DATETIME NOT NULL,
     finished_at DATETIME
 );
-CREATE INDEX IF NOT EXISTS idx_scan_tasks_session_cursor
-    ON scan_tasks(session_id, created_at DESC, task_id DESC);
-CREATE INDEX IF NOT EXISTS idx_scan_tasks_active_cursor
-    ON scan_tasks(session_id, created_at DESC, task_id DESC)
+CREATE INDEX IF NOT EXISTS idx_scan_tasks_owner_cursor
+    ON scan_tasks(user_id, agent_id, host_id, created_at DESC, task_id DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_tasks_owner_active_cursor
+    ON scan_tasks(user_id, agent_id, host_id, created_at DESC, task_id DESC)
     WHERE status IN ('RUNNING','PAUSED');
 
 CREATE TABLE IF NOT EXISTS scan_endpoint_results (

@@ -122,10 +122,7 @@ public class NetworkProbeAnalysisService {
                 groups.add(new WorkGroup(targetId, rule.id(), rule.requests().size(), targetSnapshot));
                 ruleIds.add(rule.id());
                 for (int requestIndex = 0; requestIndex < rule.requests().size(); requestIndex++) {
-                    if (logicalRequests++ >= NetworkProbeLimits.MAX_FINGERPRINT_PROBES) {
-                        throw new IllegalArgumentException("指纹探测请求数不能超过"
-                                + NetworkProbeLimits.MAX_FINGERPRINT_PROBES + "个");
-                    }
+                    logicalRequests++;
                     Map<String, Object> probe = buildProbe(target, targetId, rule, requestIndex);
                     Map<String, Object> identity = new LinkedHashMap<>(probe);
                     identity.keySet().removeAll(List.of("probeId", "ruleId", "requestIndex"));
@@ -183,21 +180,15 @@ public class NetworkProbeAnalysisService {
             hosts.add(host);
         }
         if (hosts.isEmpty()) throw new IllegalArgumentException("scan.hosts不能为空");
-        if (hosts.size() > NetworkProbeLimits.MAX_RESOLVED_HOSTS) {
-            throw new IllegalArgumentException("scan.hosts不能超过"
-                    + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
-        }
-        List<Map<String, Object>> probes = new ArrayList<>();
+        boolean hostDiscovery = Boolean.TRUE.equals(rawScan.get("hostDiscovery"));
+        List<Map<String, Object>> targets = new ArrayList<>();
+        Map<String, List<Integer>> portsByHost = new LinkedHashMap<>();
         Map<String, Integer> expectedByHost = new LinkedHashMap<>();
         Set<String> explicitHosts = new LinkedHashSet<>();
         Object rawTargets = rawScan.get("targets");
-        if (rawTargets instanceof List<?> targets && !targets.isEmpty()) {
-            if (targets.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
-                throw new IllegalArgumentException("scan.targets不能超过"
-                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个");
-            }
+        if (rawTargets instanceof List<?> targetList && !targetList.isEmpty()) {
             Set<String> seen = new LinkedHashSet<>();
-            for (Object value : targets) {
+            for (Object value : targetList) {
                 if (!(value instanceof Map<?, ?> rawTarget)) {
                     throw new IllegalArgumentException("scan.targets中的项目必须是对象");
                 }
@@ -216,35 +207,28 @@ public class NetworkProbeAnalysisService {
                         throw new IllegalArgumentException("单台主机的探活端口不能超过"
                                 + NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST + "个");
                     }
-                    probes.add(reachabilityProbe(host, port));
+                    if (hostDiscovery) {
+                        portsByHost.computeIfAbsent(host, ignored -> new ArrayList<>()).add(port);
+                    } else {
+                        targets.add(reachabilityProbe(host, port));
+                    }
                 }
             }
         } else {
             List<Integer> ports = reachabilityPorts(rawScan.get("ports"));
-            long probeCount = (long) hosts.size() * (long) ports.size();
-            if (probeCount > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
-                throw new IllegalArgumentException("探活目标数不能超过"
-                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个");
-            }
             for (String host : hosts) {
                 expectedByHost.put(host, ports.size());
-                for (Integer port : ports) {
-                    probes.add(reachabilityProbe(host, port));
+                if (hostDiscovery) {
+                    portsByHost.put(host, new ArrayList<>(ports));
+                } else {
+                    for (Integer port : ports) targets.add(reachabilityProbe(host, port));
                 }
             }
         }
         int timeout = boundedInt(rawScan.get("timeout"), NetworkProbeLimits.NODE_DEFAULT_TIMEOUT_MS, 100, 300000);
         int threads = boundedInt(rawScan.get("threads"), NetworkProbeLimits.NODE_DEFAULT_THREADS,
                 1, NetworkProbeLimits.NODE_MAX_THREADS);
-        boolean hostDiscovery = Boolean.TRUE.equals(rawScan.get("hostDiscovery"));
-        List<Map<String, Object>> targets = probes;
         if (hostDiscovery) {
-            Map<String, List<Integer>> portsByHost = new LinkedHashMap<>();
-            for (Map<String, Object> probe : probes) {
-                portsByHost.computeIfAbsent(text(probe.get("host")), ignored -> new ArrayList<>())
-                        .add((Integer) probe.get("port"));
-            }
-            targets = new ArrayList<>();
             for (var entry : portsByHost.entrySet()) {
                 String host = entry.getKey();
                 Map<String, Object> target = new LinkedHashMap<>();
@@ -518,7 +502,7 @@ public class NetworkProbeAnalysisService {
         fingerprintManageService.validateRule(rawRule);
         if (!"http".equals(protocol)) throw new IllegalArgumentException("仅支持 HTTP 指纹: " + id);
         return new RuleDefinition(id, text(fingerprint.get("name")), protocol,
-                textSet(fingerprint.get("tags")), requests, copyMap(rawMatch), rawRule.get("version") instanceof Map<?, ?> version ? copyMap(version) : Map.of(), ruleHash(fingerprint));
+                requests, copyMap(rawMatch), rawRule.get("version") instanceof Map<?, ?> version ? copyMap(version) : Map.of(), ruleHash(fingerprint));
     }
 
     private Map<String, Object> buildProbe(Map<String, Object> source, String targetId,
@@ -833,7 +817,7 @@ public class NetworkProbeAnalysisService {
 
     public record PreparedScan(Map<String, Object> plan, ScanContext context) { }
 
-    public record RuleDefinition(String id, String name, String protocol, Set<String> tags,
+    public record RuleDefinition(String id, String name, String protocol,
                                  List<Map<String, Object>> requests, Map<String, Object> match, Map<String, Object> version, String hash) { }
 
     public record WorkGroup(String targetId, String ruleId, int requestCount, Map<String, Object> target) { }

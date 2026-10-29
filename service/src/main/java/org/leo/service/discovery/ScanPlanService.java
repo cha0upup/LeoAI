@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Builds the bounded, deduplicated scan plan shared by preview and execution. */
+/** Builds the deduplicated scan plan shared by preview and batched execution. */
 @Service
 public class ScanPlanService {
 
@@ -47,30 +47,17 @@ public class ScanPlanService {
                 NetworkProbeLimits.NODE_MAX_TIMEOUT_MS, "超时时间");
         List<ResolvedTarget> resolved = targetResolver.resolve(scan.targets());
         List<Integer> policyPorts = scanPorts ? portPolicyResolver.resolve(scan.portPolicy()) : List.of();
+        Set<String> hosts = new LinkedHashSet<>();
         Map<String, Set<Integer>> explicitByHost = new LinkedHashMap<>();
-        Set<String> policyHosts = new LinkedHashSet<>();
         for (ResolvedTarget target : resolved) {
-            Set<Integer> explicit = explicitByHost.computeIfAbsent(target.ip(), ignored -> new LinkedHashSet<>());
-            if (target.port() == null) policyHosts.add(target.ip());
-            else explicit.add(target.port());
+            hosts.add(target.ip());
+            if (discoverHosts && target.port() != null) {
+                explicitByHost.computeIfAbsent(target.ip(), ignored -> new LinkedHashSet<>()).add(target.port());
+            }
         }
-        if (explicitByHost.size() > NetworkProbeLimits.MAX_RESOLVED_HOSTS) {
-            throw new IllegalArgumentException("扫描主机数不能超过" + NetworkProbeLimits.MAX_RESOLVED_HOSTS + "个");
-        }
-
-        long combinationCount = 0;
-        Set<Integer> policyPortSet = new LinkedHashSet<>(policyPorts);
         List<Map<String, Object>> reachability = new ArrayList<>();
-        for (var entry : explicitByHost.entrySet()) {
-            Set<Integer> explicit = entry.getValue();
-            if (scanPorts) combinationCount += explicit.size();
-            if (policyHosts.contains(entry.getKey())) {
-                combinationCount += policyPorts.size() - explicit.stream().filter(policyPortSet::contains).count();
-            }
-            if (combinationCount > NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS) {
-                throw new IllegalArgumentException("扫描组合数不能超过" + NetworkProbeLimits.MAX_ENDPOINT_COMBINATIONS + "个");
-            }
-            if (!discoverHosts) continue;
+        for (String host : discoverHosts ? hosts : Set.<String>of()) {
+            Set<Integer> explicit = explicitByHost.getOrDefault(host, Set.of());
             // Bound explicitly supplied discovery ports independently of the full port-scan policy.
             if (explicit.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES_PER_HOST) {
                 throw new IllegalArgumentException("单台主机的探活端口不能超过"
@@ -78,12 +65,8 @@ public class ScanPlanService {
             }
             // An explicit endpoint takes precedence over generic host discovery, even for mixed inputs.
             Collection<Integer> probes = explicit.isEmpty() ? NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS : explicit;
-            if (reachability.size() + probes.size() > NetworkProbeLimits.MAX_REACHABILITY_PROBES) {
-                throw new IllegalArgumentException("探活目标数不能超过"
-                        + NetworkProbeLimits.MAX_REACHABILITY_PROBES + "个，请缩小主机范围或减少探活端口");
-            }
             for (Integer port : probes) {
-                Map<String, Object> probe = new LinkedHashMap<>(endpoint(entry.getKey(), port));
+                Map<String, Object> probe = new LinkedHashMap<>(endpoint(host, port));
                 probe.put("explicitPort", !explicit.isEmpty());
                 reachability.add(probe);
             }
@@ -108,11 +91,11 @@ public class ScanPlanService {
                 ports.add(port);
             }
         }
-        if (explicitByHost.isEmpty() || (scanPorts && endpoints.isEmpty())) {
+        if (hosts.isEmpty() || (scanPorts && endpoints.isEmpty())) {
             throw new IllegalArgumentException("扫描目标展开后为空");
         }
         return new ScanPlan(scan.name() == null ? "" : scan.name().trim(), scan.targets().items().size(),
-                explicitByHost.keySet(), ports, endpoints.values(), reachability, workers, timeout, stages, fingerprintRules);
+                hosts, ports, endpoints.values(), reachability, workers, timeout, stages, fingerprintRules);
     }
 
     private static Map<String, Object> endpoint(String host, int port) {

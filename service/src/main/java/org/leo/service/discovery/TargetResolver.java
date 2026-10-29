@@ -48,13 +48,6 @@ public class TargetResolver {
         if (input == null || input.items() == null || input.items().isEmpty()) {
             throw new IllegalArgumentException("目标列表不能为空");
         }
-        if (input.items().size() > NetworkProbeLimits.MAX_TARGET_ITEMS) {
-            throw new IllegalArgumentException("目标条目不能超过" + NetworkProbeLimits.MAX_TARGET_ITEMS + "个");
-        }
-        if (input.exclude() != null && input.exclude().size() > NetworkProbeLimits.MAX_EXCLUDE_ITEMS) {
-            throw new IllegalArgumentException("排除条目不能超过" + NetworkProbeLimits.MAX_EXCLUDE_ITEMS + "个");
-        }
-
         Set<String> excludeSet = new HashSet<>();
         if (input.exclude() != null) {
             for (String exclude : input.exclude()) {
@@ -83,10 +76,6 @@ public class TargetResolver {
                     String key = target.ip() + "\u0000" + target.port() + "\u0000" + target.protocol()
                             + "\u0000" + target.host() + "\u0000" + ("url".equals(target.source()) ? target.rawTarget() : "");
                     if (dedup.add(key)) {
-                        if (results.size() >= NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
-                            throw new IllegalArgumentException("目标展开后不能超过"
-                                    + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个");
-                        }
                         results.add(target);
                     }
                 }
@@ -187,13 +176,13 @@ public class TargetResolver {
             int hostBits = 128 - prefixLength;
             BigInteger base = new BigInteger(1, address).shiftRight(hostBits).shiftLeft(hostBits);
             BigInteger hostCount = BigInteger.ONE.shiftLeft(hostBits);
-            if (hostCount.compareTo(BigInteger.valueOf(NetworkProbeLimits.MAX_RESOLVED_TARGETS)) > 0) {
-                throw new IllegalArgumentException("IPv6 网段展开后不能超过"
-                        + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
+            // List indices are signed ints; reject unrepresentable ranges before narrowing the count.
+            if (hostCount.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+                throw new IllegalArgumentException("IPv6 地址范围超出当前集合的索引容量");
             }
             int count = hostCount.intValue();
             String rawTarget = network + "/" + prefixLength;
-            List<ResolvedTarget> results = new ArrayList<>(count);
+            List<ResolvedTarget> results = new ArrayList<>(Math.min(count, 4096));
             for (int index = 0; index < count; index++) {
                 byte[] bytes = toFixedBytes(base.add(BigInteger.valueOf(index)), 16);
                 String ip = InetAddress.getByAddress(bytes).getHostAddress();
@@ -216,11 +205,10 @@ public class TargetResolver {
     }
 
     private List<ResolvedTarget> expandIpv4(long start, long count, String source, String rawTarget) {
-        if (count > NetworkProbeLimits.MAX_RESOLVED_TARGETS) {
-            throw new IllegalArgumentException("目标展开后不能超过"
-                    + NetworkProbeLimits.MAX_RESOLVED_TARGETS + "个地址");
+        if (count > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("IPv4 地址范围超出当前集合的索引容量");
         }
-        List<ResolvedTarget> results = new ArrayList<>((int) count);
+        List<ResolvedTarget> results = new ArrayList<>((int) Math.min(count, 4096));
         for (long offset = 0; offset < count; offset++) {
             String ip = longToIp(start + offset);
             results.add(new ResolvedTarget(rawTarget, ip, ip, null, "tcp", source, rawTarget));
@@ -264,10 +252,6 @@ public class TargetResolver {
         // DNS 解析
         try {
             InetAddress[] addresses = InetAddress.getAllByName(normalized);
-            if (addresses.length > NetworkProbeLimits.MAX_DNS_ADDRESSES) {
-                throw new IllegalArgumentException("主机解析结果不能超过"
-                        + NetworkProbeLimits.MAX_DNS_ADDRESSES + "个地址: " + host);
-            }
             List<String> ips = new ArrayList<>();
             for (InetAddress addr : addresses) {
                 ips.add(addr.getHostAddress());

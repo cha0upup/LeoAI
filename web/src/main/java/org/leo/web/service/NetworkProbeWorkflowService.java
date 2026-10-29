@@ -144,11 +144,11 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         endpoints = mapList(endpoints);
         targets = mapList(targets);
         rules = mapList(rules);
-        if (endpoints.isEmpty() || endpoints.size() > 256) throw new IllegalArgumentException("组件识别需要 1–256 个资产");
+        if (endpoints.isEmpty()) throw new IllegalArgumentException("组件识别需要至少一个资产");
         List<String> hosts = endpoints.stream().map(endpoint -> text(endpoint.get("host"))).distinct().toList();
         WorkflowSpec spec = new WorkflowSpec(hosts, List.of(), targets, 3000, 16,
                 List.of(ScanStage.FINGERPRINT), name, List.of(), rules, endpoints, sourceTaskId, debug);
-        // Validate and bound all work before creating a durable task or calling the node.
+        // Validate all work before creating a durable task; the orchestrator bounds node batches.
         analysisService.prepare(Map.of("kind", "fingerprint", "targets", fingerprintTargets(spec, endpoints), "rules", rules));
         return start(sessionId, node, spec);
     }
@@ -164,7 +164,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             return Map.of();
         }
         WorkflowTask task = tasks.get(taskId.trim());
-        if (task == null || !task.sessionId.equals(sessionId.trim())) return Map.of();
+        if (task == null || !ownsTask(sessionId, task)) return Map.of();
         return snapshot(task, false);
     }
 
@@ -178,7 +178,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             if (stage != null && !stage.terminal()) stage.status = "PAUSED";
             childTaskId = task.childTaskId;
         }
-        if (childTaskId != null) orchestrationService.pause(sessionId, childTaskId);
+        if (childTaskId != null) orchestrationService.pause(task.sessionId, childTaskId);
         wakeStage(task);
         return response(Map.of("status", "PAUSED"));
     }
@@ -193,13 +193,16 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             if (stage != null && "PAUSED".equals(stage.status)) stage.status = "RUNNING";
             childTaskId = task.childTaskId;
         }
-        if (childTaskId != null) orchestrationService.resume(sessionId, childTaskId);
+        if (childTaskId != null) orchestrationService.resume(task.sessionId, childTaskId);
         wakeStage(task);
         return response(Map.of("status", "RUNNING"));
     }
 
     public Map<String, Object> stop(String sessionId, String taskId) {
-        WorkflowTask task = requireTask(sessionId, taskId);
+        return stopTask(requireTask(sessionId, taskId));
+    }
+
+    private Map<String, Object> stopTask(WorkflowTask task) {
         String childTaskId;
         boolean changed;
         synchronized (task.monitor) {
@@ -215,7 +218,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             childTaskId = task.childTaskId;
         }
         if (changed) persistTaskState(task);
-        if (childTaskId != null) orchestrationService.stop(sessionId, childTaskId);
+        if (childTaskId != null) orchestrationService.stop(task.sessionId, childTaskId);
         wakeStage(task);
         try {
             task.finished.await(5L, TimeUnit.SECONDS);
@@ -236,7 +239,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         String normalizedSessionId = sessionId.trim();
         String normalizedTaskId = taskId.trim();
         WorkflowTask task = tasks.get(normalizedTaskId);
-        if (task != null && !task.sessionId.equals(normalizedSessionId)) {
+        if (task != null && !ownsTask(normalizedSessionId, task)) {
             throw ApiException.notFound("扫描工作流任务不存在或不属于当前会话");
         }
         if (task != null) {
@@ -256,7 +259,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 .toList();
         for (String taskId : taskIds) {
             try {
-                stop(normalizedSessionId, taskId);
+                WorkflowTask task = tasks.get(taskId);
+                if (task != null) stopTask(task);
             } catch (Exception error) {
                 // Session destruction must continue even if a child node is unavailable.
                 synchronized (tasks) {
@@ -861,11 +865,16 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return List.of();
     }
 
+    private boolean ownsTask(String sessionId, WorkflowTask task) {
+        return resultStore != null ? resultStore.ownsTask(sessionId, task.taskId)
+                : task.sessionId.equals(sessionId.trim());
+    }
+
     private WorkflowTask requireTask(String sessionId, String taskId) {
         if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("sessionId不能为空");
         if (taskId == null || taskId.isBlank()) throw new IllegalArgumentException("taskId不能为空");
         WorkflowTask task = tasks.get(taskId.trim());
-        if (task == null || !task.sessionId.equals(sessionId.trim())) {
+        if (task == null || !ownsTask(sessionId, task)) {
             throw ApiException.notFound("扫描工作流任务不存在或不属于当前会话");
         }
         return task;

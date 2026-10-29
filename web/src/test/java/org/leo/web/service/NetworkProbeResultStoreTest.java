@@ -28,8 +28,47 @@ import static org.mockito.Mockito.when;
 
 class NetworkProbeResultStoreTest {
 
+    @org.junit.jupiter.api.BeforeEach
+    void registerFixtureSessions() {
+        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        for (String id : List.of("session", "session-a", "session-b", "other")) {
+            var session = new org.leo.core.session.AgentNodeSession();
+            session.setSessionId(id);
+            session.setCreateByUser("user-" + id);
+            session.setAgentId("agent-1");
+            session.bindHostId("host-1");
+            org.leo.core.session.AgentNodeSessionContainer.addSession(id, session);
+        }
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearFixtureSessions() {
+        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+    }
+
     @TempDir
     Path tempDir;
+
+    @Test
+    void loadsEverySupplementalAssetBeyondTheFormerSelectionQuota() throws Exception {
+        var dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("large-selection.db"));
+        try (var connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+        var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
+        assertTrue(store.createTask("source", "session", "source", Map.of()));
+        var rows = java.util.stream.IntStream.range(1, 301).mapToObj(port -> Map.<String, Object>of(
+                "host", "127.0.0.1", "port", port, "stage", "http-head", "state", "open",
+                "workflowStage", "SERVICE_PROBE", "evidence", Map.of("statusCode", 200))).toList();
+        assertTrue(store.append("source", rows, List.of()));
+        var ids = java.util.stream.IntStream.range(1, 301).mapToObj(port -> "tcp|127.0.0.1|" + port).toList();
+        var source = store.fingerprintSource("session", "source", ids);
+        assertEquals(300, source.endpoints().size());
+        assertTrue(source.endpoints().stream().allMatch(row -> "http".equals(row.get("service"))));
+        assertThrows(IllegalArgumentException.class, () -> store.fingerprintSource("other", "source", ids));
+        assertThrows(IllegalArgumentException.class, () -> store.fingerprintSource("session", "source", List.of()));
+    }
 
     @Test
     void restoresStrictDiscoveryStatisticsFromTheDurableStageSnapshot() throws Exception {
@@ -110,7 +149,7 @@ class NetworkProbeResultStoreTest {
     }
 
     @Test
-    void deletesAllTasksOwnedBySession() throws Exception {
+    void deletesExplicitlySelectedHistoryWithoutTouchingAnotherOwner() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("network-session-delete.db"));
         dataSource.setEnforceForeignKeys(true);
@@ -123,7 +162,8 @@ class NetworkProbeResultStoreTest {
         assertTrue(store.createTask("task-b", "session-a", "b", Map.of("targetCount", 1)));
         assertTrue(store.createTask("task-c", "session-b", "c", Map.of("targetCount", 1)));
 
-        assertEquals(2, store.deleteTasksBySession("session-a"));
+        assertTrue(store.deleteTask("session-a", "task-a"));
+        assertTrue(store.deleteTask("session-a", "task-b"));
         assertTrue(((List<?>) store.list("session-a", Map.of()).get("tasks")).isEmpty());
         assertEquals(1, ((List<?>) store.list("session-b", Map.of()).get("tasks")).size());
     }

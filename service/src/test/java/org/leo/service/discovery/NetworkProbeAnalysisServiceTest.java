@@ -14,8 +14,10 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NetworkProbeAnalysisServiceTest {
 
@@ -35,6 +37,20 @@ class NetworkProbeAnalysisServiceTest {
         Map<?, ?> analysis = (Map<?, ?>) ((Map<?, ?>) response.get("result")).get("analysis");
         assertEquals(List.of("host"), analysis.get(group));
         assertEquals(1, analysis.get("completed"));
+    }
+
+    @Test
+    void keepsTagSelectionAndSnapshotMetadataWithoutCopyingTagsIntoExecutionRules() throws Exception {
+        var analysis = new NetworkProbeAnalysisService(new StubFingerprintManageService());
+        var selected = analysis.snapshotRules(Map.of("tags", List.of("server")));
+        assertEquals(1, selected.size());
+        assertEquals("web_any", selected.get(0).get("fingerprintId"));
+        assertEquals(List.of("web", "server"), selected.get(0).get("tags"));
+        var prepared = analysis.prepare(Map.of("kind", "fingerprint", "rules", selected,
+                "targets", List.of(phaseTwoTarget())));
+        assertEquals(Set.of("web_any"), prepared.context().rulesById().keySet());
+        assertThrows(IllegalArgumentException.class,
+                () -> analysis.snapshotRules(Map.of("tags", List.of("missing-tag"))));
     }
 
     @Test
@@ -128,6 +144,22 @@ class NetworkProbeAnalysisServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void preservesFlatProbeOrderWhenDiscoveryGroupingIsDisabled() throws Exception {
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", List.of("host-a", "host-b"),
+                "hostDiscovery", false, "javaReachability", true,
+                "targets", List.of(Map.of("host", "host-a", "port", 443),
+                        Map.of("host", "host-b", "port", 18080),
+                        Map.of("host", "host-a", "port", 80),
+                        Map.of("host", "host-b", "port", 18080, "explicitPort", true))));
+        var targets = (List<Map<String, Object>>) prepared.plan().get("targets");
+        assertEquals(List.of("tcp-connect"), prepared.plan().get("stages"));
+        assertEquals(List.of("host-a", "host-b", "host-a"), targets.stream().map(target -> target.get("host")).toList());
+        assertEquals(List.of(443, 18080, 80), targets.stream().map(target -> target.get("port")).toList());
+        assertTrue(targets.stream().noneMatch(target -> target.containsKey("javaReachability") || target.containsKey("ports")));
+    }
+
+    @Test
     void groupsDiscoveryByHostAndUsesJavaDetectionOnlyWithoutExplicitPorts() throws Exception {
         var prepared = service.prepare(Map.of("kind", "reachability", "hosts", List.of("host-a", "host-b"),
                 "hostDiscovery", true, "javaReachability", true,
@@ -166,16 +198,49 @@ class NetworkProbeAnalysisServiceTest {
             assertEquals(NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS, target.get("ports"));
             assertEquals(javaReachability, target.get("javaReachability"));
         }
+        assertNotSame(targets.get(0).get("ports"), targets.get(1).get("ports"));
+        ((List<?>) targets.get(0).get("ports")).clear();
+        assertEquals(NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS, targets.get(1).get("ports"));
+        assertEquals(8, NetworkProbeLimits.DEFAULT_REACHABILITY_PORTS.size());
     }
 
     @Test
-    void rejectsReachabilityPlansThatExceedTheGlobalProbeLimit() {
+    void acceptsReachabilityPlansBeyondTheFormerGlobalProbeLimit() throws Exception {
         List<String> hosts = new ArrayList<>();
         for (int index = 0; index < 10000; index++) hosts.add("host-" + index);
 
-        assertThrows(IllegalArgumentException.class,
-                () -> service.prepare(Map.of("kind", "reachability", "hosts", hosts,
-                        "ports", List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))));
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", hosts,
+                "ports", List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)));
+        assertEquals(110000, ((List<?>) prepared.plan().get("targets")).size());
+    }
+
+    @Test
+    void acceptsGroupedDiscoveryWithMoreThanTenThousandHosts() throws Exception {
+        var hosts = java.util.stream.IntStream.range(0, 10001).mapToObj(index -> "host-" + index).toList();
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", hosts,
+                "hostDiscovery", true, "javaReachability", true));
+        assertEquals(10001, ((List<?>) prepared.plan().get("targets")).size());
+        assertEquals(256, ((Map<?, ?>) prepared.plan().get("limits")).get("threads"));
+    }
+
+    @Test
+    void acceptsMoreThanOneHundredThousandExplicitDiscoveryTargets() throws Exception {
+        var hosts = java.util.stream.IntStream.range(0, 12501).mapToObj(index -> "host-" + index).toList();
+        var targets = hosts.stream().flatMap(host -> java.util.stream.IntStream.rangeClosed(1, 8)
+                .mapToObj(port -> Map.<String, Object>of("host", host, "port", port, "explicitPort", true))).toList();
+        var prepared = service.prepare(Map.of("kind", "reachability", "hosts", hosts, "targets", targets));
+        assertEquals(100008, ((List<?>) prepared.plan().get("targets")).size());
+    }
+
+    @Test
+    void largeFingerprintTasksStillDeduplicateIdenticalReadRequests() throws Exception {
+        var rules = java.util.stream.IntStream.range(0, 50).mapToObj(index ->
+                phaseTwoRule("rule-" + index, List.of(Map.of("path", "/")), "marker", Map.of())).toList();
+        var targets = java.util.stream.IntStream.range(0, 1001).mapToObj(index -> Map.<String, Object>of(
+                "host", "host-" + index, "port", 80, "protocol", "http")).toList();
+        var prepared = service.prepare(Map.of("kind", "fingerprint", "targets", targets, "rules", rules));
+        assertEquals(50050, prepared.context().groups().size());
+        assertEquals(1001, ((List<?>) prepared.plan().get("targets")).size());
     }
 
     @ParameterizedTest
