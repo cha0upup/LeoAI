@@ -41,6 +41,23 @@ class DatabaseConnectionProfileServiceTest {
     }
 
     @Test
+    void newProfilesKeepTheEffectiveTimeout() {
+        Fixture fixture = fixture();
+        doAnswer(invocation -> {
+            AgentDatabaseConnection saved = invocation.getArgument(0);
+            assertEquals(45, saved.getTimeoutSeconds());
+            return 1;
+        }).when(fixture.mapper()).insert(any(AgentDatabaseConnection.class));
+
+        Map<String, Object> result = fixture.profile().create("user-1", "agent-1", Map.of(
+                "connection", mysqlConnection("db.internal", "secret"),
+                "timeoutSeconds", 45));
+
+        assertFalse(result.containsKey("maxConnections"));
+        assertEquals(45, result.get("timeoutSeconds"));
+    }
+
+    @Test
     void patchUpdateRetainsUnspecifiedConnectionFieldsAndStoredPassword() {
         Fixture fixture = fixture();
         AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
@@ -147,6 +164,65 @@ class DatabaseConnectionProfileServiceTest {
         fixture.profile().delete("user-1", "agent-1", "connection-1");
 
         verify(fixture.mapper()).deleteByIdAndAgent("connection-1", "agent-1");
+    }
+
+    @Test
+    void editingThePublicViewRestoresMaskedAndOmittedSecretsInTheActualSavePath() {
+        Fixture fixture = fixture();
+        AgentDatabaseConnection existing = customExisting(fixture);
+        when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
+        when(fixture.mapper().update(any(AgentDatabaseConnection.class))).thenReturn(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> view = (Map<String, Object>) fixture.persistence()
+                .toConnectionView(existing).get("connection");
+        assertFalse(view.toString().contains("stored-token"));
+        assertFalse(view.toString().contains("url-secret"));
+
+        Map<String, Object> response = fixture.profile().update("user-1", "agent-1", "connection-1",
+                Map.of("connection", view, "description", "edited"));
+
+        DatabaseConnectionSpec restored = fixture.persistence().toConnectionSpec(existing);
+        assertEquals("stored-token", restored.getOptions().get("apiToken"));
+        assertEquals("jdbc:vendor://app:url-secret@db.internal/db?token=query-secret",
+                restored.runtimeOptions("java").get("jdbcUrl"));
+        assertEquals("stored-key", ((Map<?, ?>) restored.runtimeOptions("java")
+                .get("connectionProperties")).get("privateKey"));
+        assertEquals("existing-secret", restored.getPassword());
+        assertEquals("edited", existing.getDescription());
+        assertFalse(response.toString().contains("stored-token"));
+        assertFalse(response.toString().contains("url-secret"));
+        verify(fixture.mapper()).update(existing);
+    }
+
+    @Test
+    void explicitCredentialChangesTakePrecedenceOverStoredProtectedValues() {
+        Fixture fixture = fixture();
+        AgentDatabaseConnection existing = customExisting(fixture);
+        when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
+        var persistedSpec = new java.util.concurrent.atomic.AtomicReference<DatabaseConnectionSpec>();
+        doAnswer(invocation -> {
+            persistedSpec.set(fixture.persistence().toConnectionSpec(invocation.getArgument(0)));
+            return 1;
+        }).when(fixture.mapper()).update(any(AgentDatabaseConnection.class));
+
+        fixture.profile().update("user-1", "agent-1", "connection-1", Map.of("connection", Map.of(
+                "password", "new-password", "options", Map.of("apiToken", "new-token"),
+                "runtimeOptions", Map.of("java", Map.of("jdbcUrl", "jdbc:vendor://new-host/db")))));
+
+        DatabaseConnectionSpec restored = persistedSpec.get();
+        assertEquals("new-password", restored.getPassword());
+        assertEquals("new-token", restored.getOptions().get("apiToken"));
+        assertEquals("jdbc:vendor://new-host/db", restored.runtimeOptions("java").get("jdbcUrl"));
+    }
+
+    private AgentDatabaseConnection customExisting(Fixture fixture) {
+        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
+        fixture.persistence().applyConnectionSpec(existing, DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "generic", "connectionMode", "custom", "options", Map.of("apiToken", "stored-token"),
+                "runtimeOptions", Map.of("java", Map.of("driverClass", "custom.Driver",
+                        "jdbcUrl", "jdbc:vendor://app:url-secret@db.internal/db?token=query-secret",
+                        "connectionProperties", Map.of("privateKey", "stored-key"))))));
+        return existing;
     }
 
     private Fixture fixture() {

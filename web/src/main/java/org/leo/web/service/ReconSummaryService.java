@@ -36,7 +36,7 @@ public class ReconSummaryService {
 
     public ReconSummaryResponse load(String sessionId, AgentNodeSession session) {
         String persisted = repository.load(sessionId);
-        if (persisted != null) session.setReconSummary(persisted);
+        session.setReconSummary(persisted);
 
         return new ReconSummaryResponse(
                 sessionId,
@@ -47,28 +47,25 @@ public class ReconSummaryService {
     public ReconSummaryMutateResponse set(String sessionId,
                                           AgentNodeSession session,
                                           String summary) {
-        session.setReconSummary(summary == null || summary.isBlank() ? null : summary);
-        repository.save(sessionId, session.getReconSummary());
+        String normalized = summary == null || summary.isBlank() ? null : summary.strip();
+        repository.save(sessionId, normalized);
+        session.setReconSummary(normalized);
         triggerDigestIfNeeded(session);
         return new ReconSummaryMutateResponse(sessionId, session.getReconSummary(), "侦察摘要已更新");
     }
 
     public ReconSummaryMutateResponse append(String sessionId, AgentNodeSession session, String content) {
+        if (content == null || content.isBlank()) throw ApiException.badRequest("追加内容为空");
         String updated = repository.append(sessionId, content);
-        if (updated == null) {
-            session.appendReconSummary(content);
-            updated = session.getReconSummary();
-            repository.save(sessionId, updated);
-        } else {
-            session.setReconSummary(updated);
-        }
+        if (updated == null) throw new IllegalStateException("追加侦察摘要失败");
+        session.setReconSummary(updated);
         triggerDigestIfNeeded(session);
         return new ReconSummaryMutateResponse(sessionId, updated, "侦察摘要已追加");
     }
 
     public ReconSummaryMutateResponse clear(String sessionId, AgentNodeSession session) {
-        session.setReconSummary(null);
         repository.save(sessionId, null);
+        session.setReconSummary(null);
         return new ReconSummaryMutateResponse(sessionId, null, "侦察摘要已清空");
     }
 
@@ -77,8 +74,8 @@ public class ReconSummaryService {
             throw ApiException.badRequest("侦察摘要为空，无需整理");
         }
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
-        session.setReconSummary(organized);
         repository.save(sessionId, organized);
+        session.setReconSummary(organized);
         if (organized.length() >= ReconSummaryDigestService.DIGEST_THRESHOLD) {
             reconSummaryDigestService.generateAndSaveAsync(session);
         }

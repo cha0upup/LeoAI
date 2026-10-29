@@ -58,8 +58,7 @@ CREATE TABLE IF NOT EXISTS agents (
     proxy_port INTEGER,
     max_req_count INTEGER NOT NULL DEFAULT 1 CHECK (max_req_count BETWEEN 1 AND 10), -- 请求总数，包含首次请求；1 表示不重试
     permission VARCHAR(20) DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public')), -- private, team, public
-    last_heartbeat DATETIME,
-    heartbeat_interval INTEGER DEFAULT 30000 CHECK (heartbeat_interval > 0), -- 心跳间隔(毫秒)
+    last_connected_at DATETIME,
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     remark TEXT,
@@ -104,7 +103,6 @@ CREATE TABLE IF NOT EXISTS agent_database_connections (
     test_status INTEGER DEFAULT 0 CHECK (test_status IN (0, 1, 2)),
     last_test_time DATETIME,
     last_test_message TEXT,
-    max_connections INTEGER DEFAULT 10 CHECK (max_connections > 0),
     timeout_seconds INTEGER DEFAULT 30 CHECK (timeout_seconds > 0),
     create_user_id VARCHAR(50) NOT NULL,
     create_time DATETIME NOT NULL,

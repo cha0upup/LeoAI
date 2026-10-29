@@ -62,7 +62,7 @@ class AgentConnectionServiceTest {
         Map<String, Object> result = service.testConnection(config.getAgentId());
 
         assertEquals(true, result.get("success"));
-        verify(agentService).updateLastHeartbeat(config.getAgentId());
+        verify(agentService).updateLastConnectedAt(config.getAgentId());
     }
 
     @Test
@@ -91,7 +91,7 @@ class AgentConnectionServiceTest {
         assertEquals(message, result.get("message"));
         assertEquals(3, result.size());
         assertTrue(result.get("latencyMs") instanceof Long);
-        verify(agentService, never()).updateLastHeartbeat(config.getAgentId());
+        verify(agentService, never()).updateLastConnectedAt(config.getAgentId());
     }
 
     private static Stream<Arguments> invalidPingResults() {
@@ -109,7 +109,7 @@ class AgentConnectionServiceTest {
         assertEquals(Map.of("success", false, "message", "invalid config"),
                 service.testConnection(config.getAgentId()));
         verifyNoInteractions(node);
-        verify(agentService, never()).updateLastHeartbeat(config.getAgentId());
+        verify(agentService, never()).updateLastConnectedAt(config.getAgentId());
     }
 
     @Test

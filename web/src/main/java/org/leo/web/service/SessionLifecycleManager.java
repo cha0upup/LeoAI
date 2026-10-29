@@ -26,13 +26,10 @@ public final class SessionLifecycleManager {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionLifecycleManager.class);
     private final NetworkProbeWorkflowService workflowService;
-    private final NetworkProbeResultStore resultStore;
     private final Consumer<String> sessionDestroyListener = this::cleanupDestroyedSession;
 
-    public SessionLifecycleManager(NetworkProbeWorkflowService workflowService,
-                                   NetworkProbeResultStore resultStore) {
+    public SessionLifecycleManager(NetworkProbeWorkflowService workflowService) {
         this.workflowService = workflowService;
-        this.resultStore = resultStore;
     }
 
     @PostConstruct
@@ -43,10 +40,6 @@ public final class SessionLifecycleManager {
     @PreDestroy
     void unregisterDestroyHook() {
         AgentNodeSessionContainer.unregisterDestroyListener(sessionDestroyListener);
-    }
-
-    public AgentNodeSession get(String sessionId) {
-        return AgentNodeSessionContainer.getSession(requireId(sessionId));
     }
 
     public void register(AgentNodeSession session) {
@@ -92,7 +85,6 @@ public final class SessionLifecycleManager {
     private void cleanupDestroyedSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return;
         workflowService.cleanupSession(sessionId);
-        int deleted = resultStore.deleteTasksBySession(sessionId);
-        logger.info("[SessionLifecycle] cleaned session {}: {} scan task(s)", sessionId, deleted);
+        logger.info("[SessionLifecycle] stopped session {}; scan history retained", sessionId);
     }
 }

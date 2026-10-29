@@ -28,7 +28,7 @@ public interface AgentMapper {
                 team_id, conn_link, protocol, headers,
                 req_disguise_id, resp_disguise_id, payload_key, proxy_enabled,
                 proxy_type, proxy_host, proxy_port, max_req_count,
-                permission, last_heartbeat, heartbeat_interval, create_time,
+                permission, last_connected_at, create_time,
                 update_time, remark, url_strategy, padding_strategy,
                 header_noise_strategy, tls_fingerprint_strategy, component_class_name_strategy, type
             ) VALUES (
@@ -36,7 +36,7 @@ public interface AgentMapper {
                 #{agent.teamId}, #{agent.connLink}, #{agent.protocol}, #{agent.headers},
                 #{agent.reqDisguiseId}, #{agent.respDisguiseId}, #{agent.payloadKey}, #{agent.proxyEnabled},
                 #{agent.proxyType}, #{agent.proxyHost}, #{agent.proxyPort}, #{agent.maxReqCount},
-                #{agent.permission}, #{agent.lastHeartbeat}, #{agent.heartbeatInterval}, #{timestamp},
+                #{agent.permission}, #{agent.lastConnectedAt}, #{timestamp},
                 #{timestamp}, #{agent.remark}, #{agent.urlStrategy}, #{agent.paddingStrategy},
                 #{agent.headerNoiseStrategy}, #{agent.tlsFingerprintStrategy}, #{agent.componentClassNameStrategy}, #{agent.type}
             )
@@ -60,6 +60,7 @@ public interface AgentMapper {
     @Delete("DELETE FROM project_agents WHERE agent_id = #{agentId}")
     boolean deleteProjectRelationsByAgentId(@Param("agentId") String agentId);
 
+    /** Editable configuration only; connection timestamps are server-owned. */
     @Update("""
             UPDATE agents SET
                 agent_name=#{agent.agentName}, parent_agent_id=#{agent.parentAgentId},
@@ -70,7 +71,6 @@ public interface AgentMapper {
                 proxy_enabled=#{agent.proxyEnabled}, proxy_type=#{agent.proxyType},
                 proxy_host=#{agent.proxyHost}, proxy_port=#{agent.proxyPort},
                 max_req_count=#{agent.maxReqCount}, permission=#{agent.permission},
-                last_heartbeat=#{agent.lastHeartbeat}, heartbeat_interval=#{agent.heartbeatInterval},
                 update_time=#{timestamp}, remark=#{agent.remark},
                 url_strategy=#{agent.urlStrategy}, padding_strategy=#{agent.paddingStrategy},
                 header_noise_strategy=#{agent.headerNoiseStrategy}, tls_fingerprint_strategy=#{agent.tlsFingerprintStrategy},
@@ -80,12 +80,12 @@ public interface AgentMapper {
     boolean updateAgentById(@Param("agent") Agent agent, @Param("timestamp") String timestamp);
 
     /**
-     * 仅更新 last_heartbeat 字段，避免全量覆盖。
+     * 仅更新 last_connected_at 字段，避免全量覆盖。
      * 连接测试成功或初始化成功后调用。
      */
-    @Update("UPDATE agents SET last_heartbeat=#{lastHeartbeat}, update_time=#{updateTime} WHERE agent_id=#{agentId}")
-    boolean updateLastHeartbeat(@Param("agentId") String agentId,
-                                @Param("lastHeartbeat") String lastHeartbeat,
+    @Update("UPDATE agents SET last_connected_at=#{lastConnectedAt}, update_time=#{updateTime} WHERE agent_id=#{agentId}")
+    boolean updateLastConnectedAt(@Param("agentId") String agentId,
+                                @Param("lastConnectedAt") String lastConnectedAt,
                                 @Param("updateTime") String updateTime);
 
 }

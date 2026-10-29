@@ -22,6 +22,41 @@ import static org.mockito.Mockito.when;
 class PermissionServiceTest {
 
     @Test
+    void passwordChangesInvalidateEverySessionStillHoldingThePreviousCredential() {
+        UserService users = mock(UserService.class);
+        PermissionService permissions = new PermissionService(mock(AgentService.class), users);
+        User changed = activeUser("user-1");
+        changed.setPassword("new-password-hash");
+        when(users.getUserById("user-1")).thenReturn(changed);
+        for (int device = 0; device < 2; device++) {
+            MockHttpServletRequest request = requestWithUser("user-1");
+            User previous = (User) request.getSession(false).getAttribute("user");
+            previous.setPassword("previous-password-hash");
+            MockHttpSession session = (MockHttpSession) request.getSession(false);
+
+            assertNull(permissions.getCurrentUser(request));
+            assertTrue(session.isInvalid());
+            assertNull(PermissionService.forVerifiedRequest(request));
+        }
+    }
+
+    @Test
+    void keepsTheCurrentSessionWhenItsCredentialWasExplicitlyRefreshed() {
+        UserService users = mock(UserService.class);
+        PermissionService permissions = new PermissionService(mock(AgentService.class), users);
+        User changed = activeUser("user-1");
+        changed.setPassword("new-password-hash");
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", changed);
+        when(users.getUserById("user-1")).thenReturn(changed);
+
+        assertSame(changed, permissions.requireLogin(request));
+        assertSame(permissions, PermissionService.forVerifiedRequest(request));
+        request.getSession().setAttribute("user", activeUser("user-1"));
+        assertNull(PermissionService.forVerifiedRequest(request));
+    }
+
+    @Test
     void refreshesActiveUserFromDatabase() {
         UserService users = mock(UserService.class);
         PermissionService service = new PermissionService(mock(AgentService.class), users);

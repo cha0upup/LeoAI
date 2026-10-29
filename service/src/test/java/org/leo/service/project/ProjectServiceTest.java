@@ -132,19 +132,17 @@ class ProjectServiceTest {
     }
 
     @Test
-    void deletesRelationsAndClearsSessionReferencesBeforeDeletingProject() {
+    void deletesRelationsBeforeDeletingProject() {
         ProjectMapper mapper = mock(ProjectMapper.class);
         ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         Project project = projectWithId("project-1");
         when(mapper.deleteAgentRelations("project-1")).thenReturn(3);
-        when(mapper.clearSessionProject("project-1")).thenReturn(2);
         when(mapper.deleteProject("project-1")).thenReturn(1);
 
         assertEquals(3, service.delete(project));
 
         InOrder order = inOrder(mapper);
         order.verify(mapper).deleteAgentRelations("project-1");
-        order.verify(mapper).clearSessionProject("project-1");
         order.verify(mapper).deleteProject("project-1");
     }
 

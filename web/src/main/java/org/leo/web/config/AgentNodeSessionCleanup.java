@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * AgentNode 会话 TTL 清理器。
  *
- * <p>定期扫描 {@link AgentNodeSessionContainer}，将超过 {@value #MAX_IDLE_MS} ms
+ * <p>通过 {@link SessionLifecycleManager}，将超过 {@value #MAX_IDLE_MS} ms
  * 未活跃的会话从内存中驱逐，防止僵尸会话长期占用内存。
  *
  * <p>活跃时间通过 {@code AgentNodeSession#touchLastActiveTime()} 更新：

@@ -40,8 +40,8 @@ public class Agent {
      */
     private Integer maxReqCount;
     private String permission;
-    private String lastHeartbeat;
-    private Integer heartbeatInterval;
+    /** Server-recorded most recent successful connection; not editable client configuration. */
+    private String lastConnectedAt;
     private String createTime;
     private String updateTime;
     private String remark;
@@ -67,7 +67,6 @@ public class Agent {
     public Agent() {
         this.maxReqCount = DEFAULT_MAX_REQUEST_COUNT;
         this.proxyEnabled = 0;
-        this.heartbeatInterval = 30000;
         this.permission = "private";
         this.protocol = "http";
         this.type = "java";
@@ -234,20 +233,12 @@ public class Agent {
         this.permission = permission;
     }
 
-    public String getLastHeartbeat() {
-        return lastHeartbeat;
+    public String getLastConnectedAt() {
+        return lastConnectedAt;
     }
 
-    public void setLastHeartbeat(String lastHeartbeat) {
-        this.lastHeartbeat = lastHeartbeat;
-    }
-
-    public Integer getHeartbeatInterval() {
-        return heartbeatInterval;
-    }
-
-    public void setHeartbeatInterval(Integer heartbeatInterval) {
-        this.heartbeatInterval = heartbeatInterval;
+    public void setLastConnectedAt(String lastConnectedAt) {
+        this.lastConnectedAt = lastConnectedAt;
     }
 
     public String getCreateTime() {

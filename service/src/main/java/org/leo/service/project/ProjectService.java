@@ -114,8 +114,8 @@ public class ProjectService {
     }
 
     /**
-     * 永久删除项目及其主机归属关系。主机资产本身不会被删除，历史会话也会保留，
-     * 仅解除它们与项目的关联。
+     * 永久删除项目及其主机归属关系，保留主机资产本身。
+     * 运行中会话的项目关联由 Web 应用层解除。
      *
      * @return 被解除的入口主机归属数量
      */
@@ -126,7 +126,6 @@ public class ProjectService {
         }
         String projectId = project.getProjectId().trim();
         int detachedAgents = projectMapper.deleteAgentRelations(projectId);
-        projectMapper.clearSessionProject(projectId);
         if (projectMapper.deleteProject(projectId) != 1) {
             throw new IllegalStateException("删除项目失败");
         }

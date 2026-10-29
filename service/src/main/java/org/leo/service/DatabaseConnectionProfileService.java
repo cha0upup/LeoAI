@@ -141,7 +141,7 @@ public final class DatabaseConnectionProfileService {
             throw failure(VALIDATION, "connection 必须是对象");
         }
 
-        Map<String, Object> supplied = stringKeyMap(source);
+        Map<String, Object> supplied = connectionService.mergeProtectedValues(existing, stringKeyMap(source));
         Map<String, Object> values = existing == null
                 ? supplied : mergeMaps(currentConnectionValues(existing), supplied);
         try {
@@ -183,11 +183,6 @@ public final class DatabaseConnectionProfileService {
         if (status != null) {
             if (status != 0 && status != 1) throw failure(VALIDATION, "status必须是0或1");
             connection.setStatus(status);
-        }
-        Integer maxConnections = optionalInteger(params.get("maxConnections"), "maxConnections");
-        if (maxConnections != null) {
-            if (maxConnections < 1) throw failure(VALIDATION, "maxConnections必须大于0");
-            connection.setMaxConnections(maxConnections);
         }
         Integer timeoutSeconds = optionalInteger(params.get("timeoutSeconds"), "timeoutSeconds");
         if (timeoutSeconds != null) {

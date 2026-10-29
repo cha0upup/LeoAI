@@ -58,7 +58,7 @@ public class SessionReportService {
         StringBuilder sb = new StringBuilder();
         appendHeader(sb, agentName, connLink, reportTime);
         appendBasicInfoSection(sb, hostCacheRepository.loadBasicInfo(userId, agentId, session.getCurrentHostId()));
-        appendReconSummarySection(sb, reconRepository.load(userId, agentId));
+        appendReconSummarySection(sb, reconRepository.load(userId, agentId, session.getCurrentHostId()));
 
         String filename = "recon-report-" + agentName.replaceAll("[^\\w\\-]", "_") + ".md";
         return new ReportResponse(session.getSessionId(), sb.toString(), filename);

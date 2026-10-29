@@ -77,7 +77,7 @@ public class AgentNodeLifecycleService {
             throw ApiException.serverError("Agent初始化失败，无主机回复");
         }
 
-        agentService.updateLastHeartbeat(agent.getAgentId());
+        agentService.updateLastConnectedAt(agent.getAgentId());
         logger.info("Agent初始化成功，agentId: {}, sessionId: {}", agent.getAgentId(), sessionId);
         AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
         return new AgentInitResponse(sessionId, projectId, false,
@@ -98,7 +98,7 @@ public class AgentNodeLifecycleService {
         if (hostId != null) session.bindHostId(hostId);
 
         try {
-            String savedSummary = reconRepository.load(userId, agentId);
+            String savedSummary = reconRepository.load(userId, agentId, session.getCurrentHostId());
             if (savedSummary != null) {
                 session.setReconSummary(savedSummary);
             }
@@ -158,7 +158,7 @@ public class AgentNodeLifecycleService {
                 return;
             }
             String agentId = node.getAgent().getAgentId();
-            String savedSummary = reconRepository.load(userId, agentId);
+            String savedSummary = reconRepository.load(userId, agentId, session.getCurrentHostId());
             if (savedSummary != null) {
                 session.setReconSummary(savedSummary);
                 logger.debug("已回填侦察摘要, agentId={}, length={}", agentId, savedSummary.length());

@@ -35,9 +35,6 @@ public interface ProjectMapper {
     @Delete("DELETE FROM project_agents WHERE project_id=#{projectId}")
     int deleteAgentRelations(@Param("projectId") String projectId);
 
-    @Update("UPDATE agent_sessions SET project_id=NULL WHERE project_id=#{projectId}")
-    int clearSessionProject(@Param("projectId") String projectId);
-
     @Delete("DELETE FROM projects WHERE project_id=#{projectId}")
     int deleteProject(@Param("projectId") String projectId);
 

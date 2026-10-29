@@ -7,12 +7,13 @@ import org.springframework.stereotype.Repository;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
-/** Persistent agent-level reconnaissance summary storage. */
+/** Persistent reconnaissance summaries isolated by user, Agent and HostId. */
 @Repository
 public class AgentReconRepository {
 
-    private static final String RECON_SUMMARY_MD = "recon-summary.md";
     private final AtomicFileStore fileStore;
 
     public AgentReconRepository(AtomicFileStore fileStore) {
@@ -23,8 +24,7 @@ public class AgentReconRepository {
         if (sessionId == null || sessionId.isBlank()) return null;
         try {
             AgentNodeSession session = requireSession(sessionId);
-            File file = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(
-                    session.getCreateByUser(), session.resolveAgentId()), RECON_SUMMARY_MD);
+            File file = summaryFile(session.getCreateByUser(), session.resolveAgentId(), session.getCurrentHostId());
             String normalized = normalize(content);
             if (normalized == null) {
                 Files.deleteIfExists(file.toPath());
@@ -35,7 +35,7 @@ public class AgentReconRepository {
             sync(session, normalized);
             return saved;
         } catch (Exception e) {
-            return null;
+            throw new IllegalStateException("保存侦察摘要失败", e);
         }
     }
 
@@ -44,42 +44,42 @@ public class AgentReconRepository {
         if (sessionId == null || sessionId.isBlank() || addition == null) return null;
         try {
             AgentNodeSession session = requireSession(sessionId);
-            File file = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(
-                    session.getCreateByUser(), session.resolveAgentId()), RECON_SUMMARY_MD);
-            String current = fileStore.readText(file);
-            if (current == null) current = normalize(session.getReconSummary());
+            File file = summaryFile(session.getCreateByUser(), session.resolveAgentId(), session.getCurrentHostId());
+            String current = normalize(fileStore.readText(file));
             String updated = current == null ? addition : current + "\n\n" + addition;
             fileStore.writeText(file, updated);
             sync(session, updated);
             return updated;
         } catch (Exception e) {
-            return null;
+            throw new IllegalStateException("追加侦察摘要失败", e);
         }
     }
 
     public String load(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
-        try {
-            AgentNodeSession session = requireSession(sessionId);
-            return load(session.getCreateByUser(), session.resolveAgentId());
-        } catch (Exception e) {
-            return null;
-        }
+        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
+        return session == null ? null : load(session.getCreateByUser(), session.resolveAgentId(), session.getCurrentHostId());
     }
 
-    public String load(String userId, String agentId) {
-        if (agentId == null || agentId.isBlank()) return null;
-        try {
-            return fileStore.readText(new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), RECON_SUMMARY_MD));
-        } catch (Exception e) {
-            return null;
-        }
+    public String load(String userId, String agentId, String hostId) {
+        if (userId == null || userId.isBlank() || agentId == null || agentId.isBlank()
+                || hostId == null || hostId.isBlank()) return null;
+        return normalize(fileStore.readText(summaryFile(userId, agentId, hostId)));
+    }
+
+    private File summaryFile(String userId, String agentId, String hostId) {
+        String encodedHostId = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(hostId.getBytes(StandardCharsets.UTF_8));
+        File dir = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), "recon-summary");
+        return new File(dir, encodedHostId + ".md");
     }
 
     private AgentNodeSession requireSession(String sessionId) {
         AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
-        if (session == null || session.resolveAgentId() == null) {
-            throw new IllegalStateException("session 未绑定 agentId: " + sessionId);
+        if (session == null || session.resolveAgentId() == null
+                || session.getCreateByUser() == null || session.getCreateByUser().isBlank()
+                || session.getCurrentHostId() == null || session.getCurrentHostId().isBlank()) {
+            throw new IllegalStateException("session 缺少用户、Agent 或 HostId: " + sessionId);
         }
         return session;
     }
@@ -91,6 +91,7 @@ public class AgentReconRepository {
             if (session == null) continue;
             if (!java.util.Objects.equals(userId, session.getCreateByUser())) continue;
             if (!java.util.Objects.equals(agentId, session.resolveAgentId())) continue;
+            if (!java.util.Objects.equals(source.getCurrentHostId(), session.getCurrentHostId())) continue;
             session.setReconSummary(content);
         }
     }

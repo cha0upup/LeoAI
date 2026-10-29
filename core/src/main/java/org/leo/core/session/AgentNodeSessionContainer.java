@@ -124,24 +124,4 @@ public class AgentNodeSessionContainer {
         }
     }
 
-    /**
-     * 移除所有超过 {@code maxIdleMs} 毫秒未活跃的会话，并释放底层资源。
-     *
-     * @param maxIdleMs 最大空闲时长（毫秒），超过此值的会话将被驱逐
-     * @return 被驱逐的 sessionId 列表
-     */
-    public static List<String> evictExpired(long maxIdleMs) {
-        long now = System.currentTimeMillis();
-        List<String> evicted = new ArrayList<>();
-        for (Map.Entry<String, AgentNodeSession> entry : sessionMap.entrySet()) {
-            AgentNodeSession session = entry.getValue();
-            if (now - session.getLastActiveTime() > maxIdleMs) {
-                sessionMap.remove(entry.getKey());
-                try { session.close(); } catch (Exception ignored) {}
-                fireSessionDestroyed(entry.getKey());
-                evicted.add(entry.getKey());
-            }
-        }
-        return evicted;
-    }
 }

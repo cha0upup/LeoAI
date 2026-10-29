@@ -13,11 +13,11 @@ import java.util.List;
 @Mapper
 public interface AgentDatabaseConnectionMapper {
 
-    @Insert("INSERT INTO agent_database_connections (connection_id, connection_name, agent_id, dialect, connection_spec, username, password, status, test_status, last_test_time, last_test_message, max_connections, timeout_seconds, create_user_id, create_time, update_time, description, remark) " +
-            "VALUES (#{connectionId}, #{connectionName}, #{agentId}, #{dialect}, #{connectionSpec}, #{username}, #{password}, #{status}, #{testStatus}, #{lastTestTime}, #{lastTestMessage}, #{maxConnections}, #{timeoutSeconds}, #{createUserId}, #{createTime}, #{updateTime}, #{description}, #{remark})")
+    @Insert("INSERT INTO agent_database_connections (connection_id, connection_name, agent_id, dialect, connection_spec, username, password, status, test_status, last_test_time, last_test_message, timeout_seconds, create_user_id, create_time, update_time, description, remark) " +
+            "VALUES (#{connectionId}, #{connectionName}, #{agentId}, #{dialect}, #{connectionSpec}, #{username}, #{password}, #{status}, #{testStatus}, #{lastTestTime}, #{lastTestMessage}, #{timeoutSeconds}, #{createUserId}, #{createTime}, #{updateTime}, #{description}, #{remark})")
     int insert(AgentDatabaseConnection connection);
 
-    @Update("UPDATE agent_database_connections SET connection_name=#{connectionName}, agent_id=#{agentId}, dialect=#{dialect}, connection_spec=#{connectionSpec}, username=#{username}, password=#{password}, status=#{status}, test_status=#{testStatus}, last_test_time=#{lastTestTime}, last_test_message=#{lastTestMessage}, max_connections=#{maxConnections}, timeout_seconds=#{timeoutSeconds}, update_time=#{updateTime}, description=#{description}, remark=#{remark} WHERE connection_id=#{connectionId}")
+    @Update("UPDATE agent_database_connections SET connection_name=#{connectionName}, agent_id=#{agentId}, dialect=#{dialect}, connection_spec=#{connectionSpec}, username=#{username}, password=#{password}, status=#{status}, test_status=#{testStatus}, last_test_time=#{lastTestTime}, last_test_message=#{lastTestMessage}, timeout_seconds=#{timeoutSeconds}, update_time=#{updateTime}, description=#{description}, remark=#{remark} WHERE connection_id=#{connectionId}")
     int update(AgentDatabaseConnection connection);
 
     @Update("UPDATE agent_database_connections SET test_status=#{testStatus}, "

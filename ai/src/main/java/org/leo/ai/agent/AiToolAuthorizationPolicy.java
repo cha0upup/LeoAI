@@ -11,7 +11,7 @@ import dev.langchain4j.service.tool.ToolService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
-import org.leo.core.security.AccessPolicy;
+import org.leo.service.security.AgentAccessService;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.user.UserService;
 import org.slf4j.Logger;
@@ -46,6 +46,7 @@ public class AiToolAuthorizationPolicy {
     private final AiToolCatalog toolCatalog;
     private final AiRuntimeResolver runtimeResolver;
     private final AiToolExposurePolicy exposurePolicy;
+    private final AgentAccessService agentAccess;
 
     public AiToolAuthorizationPolicy(UserService userService) {
         this(userService, new AiToolExecutionBoundary(), null,
@@ -59,18 +60,29 @@ public class AiToolAuthorizationPolicy {
                 new AiToolCatalog(), new AiRuntimeResolver(), null);
     }
 
-    @Autowired
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
                                      AiToolCatalog toolCatalog,
                                      AiRuntimeResolver runtimeResolver,
                                      AiToolExposurePolicy exposurePolicy) {
+        this(userService, executionBoundary, archiveTools, toolCatalog, runtimeResolver, exposurePolicy, null);
+    }
+
+    @Autowired
+    public AiToolAuthorizationPolicy(UserService userService,
+                                     AiToolExecutionBoundary executionBoundary,
+                                     AiToolResultArchiveTools archiveTools,
+                                     AiToolCatalog toolCatalog,
+                                     AiRuntimeResolver runtimeResolver,
+                                     AiToolExposurePolicy exposurePolicy,
+                                     AgentAccessService agentAccess) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
         this.exposurePolicy = exposurePolicy;
+        this.agentAccess = agentAccess;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
@@ -238,7 +250,7 @@ public class AiToolAuthorizationPolicy {
         }
         if (scope == AiAgentScope.AGENT_NODE) {
             AgentNodeSession session = runtimeResolver.resolveAgentSession(memoryId);
-            if (!AccessPolicy.canAccessSession(session, user)) {
+            if (agentAccess == null || !agentAccess.canAccessSession(session, user)) {
                 return AiExecutionPolicy.defaultPolicy();
             }
         }

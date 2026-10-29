@@ -11,6 +11,7 @@ import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionPolicy;
+import org.leo.web.security.PermissionService;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -200,10 +201,13 @@ public class ControllerUtil {
         if (session == null) {
             throw ApiException.notFound("会话不存在或已过期: " + sessionId);
         }
-        User currentUser = getCurrentUser();
-        if (!canAccessSession(session, currentUser)) {
-            throw ApiException.forbidden("无权限访问此会话: " + sessionId);
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)) {
+            throw ApiException.unauthorized("用户未登录");
         }
+        HttpServletRequest request = attributes.getRequest();
+        PermissionService permissions = PermissionService.forVerifiedRequest(request);
+        if (permissions == null) throw ApiException.unauthorized("用户未登录");
+        permissions.requireSessionAccess(session, permissions.requireLogin(request), sessionId);
         return session;
     }
 

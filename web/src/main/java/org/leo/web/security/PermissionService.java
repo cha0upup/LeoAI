@@ -6,9 +6,11 @@ import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.AgentService;
+import org.leo.service.security.AgentAccessService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Objects;
 
@@ -18,16 +20,22 @@ import java.util.Objects;
 @Service
 public class PermissionService {
 
-    private static final int MAX_PARENT_DEPTH = 100;
     private static final String SESSION_ATTR_USER = "user";
     private static final String REQUEST_ATTR_VERIFIED_USER = PermissionService.class.getName() + ".verifiedUser";
 
-    private record VerifiedUser(HttpSession session, User user, String userId) {}
+    private record VerifiedUser(HttpSession session, User user, String userId, PermissionService verifier) {}
 
+    private final AgentAccessService agentAccess;
     private final AgentService agentService;
     private final UserService userService;
 
     public PermissionService(AgentService agentService, UserService userService) {
+        this(agentService, userService, new AgentAccessService(agentService, userService));
+    }
+
+    @Autowired
+    public PermissionService(AgentService agentService, UserService userService, AgentAccessService agentAccess) {
+        this.agentAccess = agentAccess;
         this.agentService = agentService;
         this.userService = userService;
     }
@@ -43,20 +51,35 @@ public class PermissionService {
         // 只复用当前请求已校验的对象；Session 替换、登出或身份变更后重新查库。
         Object verified = request.getAttribute(REQUEST_ATTR_VERIFIED_USER);
         if (verified instanceof VerifiedUser snapshot
+                && snapshot.verifier() == this
                 && snapshot.session() == session && snapshot.user() == user
                 && Objects.equals(snapshot.userId(), user.getUserId())
                 && Integer.valueOf(1).equals(user.getStatus())) {
             return user;
         }
         User fresh = userService.getUserById(user.getUserId());
-        if (fresh == null || !Integer.valueOf(1).equals(fresh.getStatus())) {
+        if (fresh == null || !Integer.valueOf(1).equals(fresh.getStatus())
+                || !Objects.equals(user.getPassword(), fresh.getPassword())) {
             request.removeAttribute(REQUEST_ATTR_VERIFIED_USER);
             session.invalidate();
             return null;
         }
         session.setAttribute(SESSION_ATTR_USER, fresh);
-        request.setAttribute(REQUEST_ATTR_VERIFIED_USER, new VerifiedUser(session, fresh, fresh.getUserId()));
+        request.setAttribute(REQUEST_ATTR_VERIFIED_USER, new VerifiedUser(session, fresh, fresh.getUserId(), this));
         return fresh;
+    }
+
+    /** Only a successfully verified request may resolve the static controller facade. */
+    public static PermissionService forVerifiedRequest(HttpServletRequest request) {
+        if (request == null) return null;
+        HttpSession session = request.getSession(false);
+        Object verified = request.getAttribute(REQUEST_ATTR_VERIFIED_USER);
+        if (session != null && verified instanceof VerifiedUser snapshot
+                && snapshot.session() == session && snapshot.user() == session.getAttribute(SESSION_ATTR_USER)
+                && Objects.equals(snapshot.userId(), snapshot.user().getUserId())) {
+            return snapshot.verifier();
+        }
+        return null;
     }
 
     public User requireLogin(HttpServletRequest request) {
@@ -74,7 +97,7 @@ public class PermissionService {
     }
 
     public void requireSessionAccess(AgentNodeSession session, User user, String sessionId) {
-        if (!PermissionPolicy.canAccessSession(session, user)) {
+        if (!agentAccess.canAccessSession(session, user)) {
             throw ApiException.forbidden("无权限访问此会话: " + sessionId);
         }
     }
@@ -92,37 +115,7 @@ public class PermissionService {
     }
 
     public boolean canAccessAgentChain(Agent agent, User user) {
-        Agent current = agent;
-        int depth = 0;
-        while (current != null && depth < MAX_PARENT_DEPTH) {
-            if (!canAccessAgent(current, user)) {
-                return false;
-            }
-            String parentId = current.getParentAgentId();
-            if (parentId == null || parentId.isBlank() || "root".equals(parentId)) {
-                return true;
-            }
-            current = agentService.findAgentById(parentId);
-            depth++;
-        }
-        return false;
-    }
-
-    private boolean canAccessAgent(Agent agent, User user) {
-        if (PermissionPolicy.canAccessAgent(agent, user)) {
-            return true;
-        }
-        if (agent == null || user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
-            return false;
-        }
-        if (!PermissionPolicy.isTeamVisiblePermission(agent.getPermission())) {
-            return false;
-        }
-        if (agent.getTeamId() != null && !agent.getTeamId().isBlank()) {
-            return false;
-        }
-        User owner = userService.getUserById(agent.getCreateByUserId());
-        return owner != null && user.getTeamId().equals(owner.getTeamId());
+        return agentAccess.canAccessAgentChain(agent, user);
     }
 
     public static String requireText(String value, String message) {

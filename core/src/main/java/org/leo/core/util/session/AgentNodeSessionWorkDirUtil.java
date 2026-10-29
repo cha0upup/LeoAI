@@ -23,8 +23,7 @@ import java.util.stream.Stream;
  * ├── agents/{agentId}/          ← agent 级，跨 session 共享
  * │   ├── basic-info/{hostId}.json ← 按 HostId 隔离的 OS/硬件/中间件快照
  * │   ├── web-runtime/{hostId}.snapshot.json ← 按 HostId 隔离的 Web Runtime 快照
- * │   ├── recon-summary.md         ← 侦察摘要（覆盖/追加写，跨 session 共享）
- * │   └── recon-summary.json       ← 结构化侦察摘要（last-write-wins，跨 session 共享）
+ * │   └── recon-summary/{hostId}.md ← 按 HostId 隔离的侦察摘要（文件名采用 URL-safe Base64）
  * │
  * └── sessions/{sessionId}/        ← session 级，本次操作专属
  *     └── file/{server-path}/

@@ -23,6 +23,7 @@ import org.leo.service.AgentService;
 import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
 import org.leo.web.service.AgentDirectoryService;
@@ -39,11 +40,12 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-/** 使用实际 SQLite schema 和 MyBatis 映射验证列表契约及查询次数。 */
+/** 使用实际 SQLite schema 和 MyBatis 映射验证项目列表、删除契约及查询次数。 */
 class ProjectListIntegrationTest {
 
     @TempDir Path temp;
@@ -129,6 +131,39 @@ class ProjectListIntegrationTest {
         assertTrue(result.get(0).manageable());
         assertTrue(result.get(0).contentEditable());
         assertTwoProjectQueries();
+    }
+
+    @Test
+    void deletesProjectWithoutReservedSessionIndexAndRetainsSessionsAndHosts() {
+        project("removed", "user-1", "private", "active", "Removed");
+        project("kept", "user-1", "private", "active", "Kept");
+        host("retained-host");
+        attach("removed", "retained-host");
+        attach("kept", "retained-host");
+        session("retained-session", "removed", "user-1");
+        session("other-session", "kept", "user-1");
+        User owner = new User();
+        owner.setUserId("user-1");
+        owner.setPrivilege("normal");
+        owner.setStatus(1);
+        when(users.getUserById("user-1")).thenReturn(owner);
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/platform/projects/delete");
+        request.getSession(true).setAttribute("user", owner);
+
+        var response = controller.deleteProject(request, new ProjectIdRequest("removed"));
+
+        assertEquals(200, response.get("code"));
+        assertEquals(Map.of("projectId", "removed", "detachedHostCount", 1, "retainedSessionCount", 1),
+                response.get("data"));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_sessions'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM projects WHERE project_id='removed'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM project_agents WHERE project_id='removed'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM agents WHERE agent_id='retained-host'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM project_agents WHERE project_id='kept'", Integer.class));
+        assertNotNull(AgentNodeSessionContainer.getSession("retained-session"));
+        assertNull(AgentNodeSessionContainer.getSession("retained-session").getProjectId());
+        assertEquals("kept", AgentNodeSessionContainer.getSession("other-session").getProjectId());
     }
 
     @Test

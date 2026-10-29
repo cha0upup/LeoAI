@@ -86,6 +86,8 @@ public class AgentService {
     public boolean insertAgent(Agent agent) {
         if (agent == null) throw new IllegalArgumentException("agent参数不能为空");
         validateRequestPolicy(agent);
+        // New/imported configurations have no successful live connection yet.
+        agent.setLastConnectedAt(null);
         String now = DATE_FORMAT.format(LocalDateTime.now());
         return agentMapper.insertAgent(agent, now);
     }
@@ -100,13 +102,13 @@ public class AgentService {
     }
 
     /**
-     * 仅更新 last_heartbeat 字段。
+     * 仅更新 last_connected_at 字段。
      * 连接测试成功或 Agent 初始化成功后调用，避免全量更新。
      */
-    public boolean updateLastHeartbeat(String agentId) {
+    public boolean updateLastConnectedAt(String agentId) {
         if (agentId == null || agentId.isBlank()) return false;
         String now = DATE_FORMAT.format(LocalDateTime.now());
-        return agentMapper.updateLastHeartbeat(agentId.trim(), now, now);
+        return agentMapper.updateLastConnectedAt(agentId.trim(), now, now);
     }
 
     /**

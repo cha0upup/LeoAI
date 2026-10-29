@@ -74,7 +74,7 @@ public class AgentConnectionService {
 
             // 测试连接成功，记录心跳时间
             if (updateHeartbeat && agent.getAgentId() != null) {
-                agentService.updateLastHeartbeat(agent.getAgentId());
+                agentService.updateLastConnectedAt(agent.getAgentId());
             }
 
             return data;

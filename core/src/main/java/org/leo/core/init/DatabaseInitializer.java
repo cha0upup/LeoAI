@@ -65,7 +65,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
             requireColumns(connection, "agents",
-                    Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key"));
+                    Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "ai_threads",
                     Set.of("thread_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",

@@ -17,7 +17,6 @@ public class AgentDatabaseConnection {
     private Integer testStatus;
     private Date lastTestTime;
     private String lastTestMessage;
-    private Integer maxConnections;
     private Integer timeoutSeconds;
     private String createUserId;
     private Date createTime;
@@ -28,7 +27,6 @@ public class AgentDatabaseConnection {
     public AgentDatabaseConnection() {
         status = 1;
         testStatus = 0;
-        maxConnections = 10;
         timeoutSeconds = 30;
         createTime = new Date();
         updateTime = new Date();
@@ -57,8 +55,6 @@ public class AgentDatabaseConnection {
     public void setLastTestTime(Date lastTestTime) { this.lastTestTime = lastTestTime; }
     public String getLastTestMessage() { return lastTestMessage; }
     public void setLastTestMessage(String lastTestMessage) { this.lastTestMessage = lastTestMessage; }
-    public Integer getMaxConnections() { return maxConnections; }
-    public void setMaxConnections(Integer maxConnections) { this.maxConnections = maxConnections; }
     public Integer getTimeoutSeconds() { return timeoutSeconds; }
     public void setTimeoutSeconds(Integer timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
     public String getCreateUserId() { return createUserId; }

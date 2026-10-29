@@ -19,6 +19,12 @@ import org.leo.core.session.AiThread;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.user.UserService;
+import org.leo.service.AgentService;
+import org.leo.service.security.AgentAccessService;
+import org.leo.core.entity.Agent;
+import org.leo.ai.tools.common.AiWorkspaceCommandTools;
+import org.leo.ai.service.workspace.AiWorkspaceService;
+import org.leo.ai.service.workspace.AiWorkspaceCommandService;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -43,6 +49,65 @@ class AiToolAuthorizationPolicyTest {
         PlatformAiStateStore.remove(PLATFORM_STATE_ID);
         AgentNodeSessionContainer.clearAllSessions();
         AiToolContext.clear();
+    }
+
+    @Test
+    void localWorkspaceCommandsAreAdministratorOnly() {
+        UserService users = mock(UserService.class);
+        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
+        AiWorkspaceCommandTools commands = new AiWorkspaceCommandTools(
+                mock(AiWorkspaceService.class), mock(AiWorkspaceCommandService.class));
+        for (String role : new String[]{"normal", "leader", "admin"}) {
+            User caller = user("user-1", role);
+            state.setExecutionPolicy(AiExecutionPolicy.from(caller));
+            when(users.getUserById("user-1")).thenReturn(caller);
+
+            Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
+                    AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, commands), PLATFORM_STATE_ID);
+
+            assertEquals("admin".equals(role), tools.containsKey("workspaceExec"));
+            assertEquals("admin".equals(role), tools.containsKey("workspaceExecStatus"));
+            assertEquals("admin".equals(role), tools.containsKey("workspaceExecCancel"));
+        }
+    }
+
+    @Test
+    void withdrawnSharingBlocksAnAlreadyExposedNodeTool() {
+        UserService users = mock(UserService.class);
+        AgentService agents = mock(AgentService.class);
+        User caller = user("reader", "normal");
+        caller.setTeamId("team-a");
+        when(users.getUserById("reader")).thenReturn(caller);
+        Agent host = new Agent();
+        host.setAgentId("host");
+        host.setParentAgentId("root");
+        host.setCreateByUserId("owner");
+        host.setPermission("team");
+        host.setTeamId("team-a");
+        when(agents.findAgentById("host")).thenReturn(host);
+        AgentNodeSession session = new AgentNodeSession();
+        session.setSessionId("session-1");
+        session.setAgentId("host");
+        session.setCreateByUser("reader");
+        session.createAiThread("thread-1", "test").setExecutionPolicy(AiExecutionPolicy.from(caller));
+        AgentNodeSessionContainer.addSession("session-1", session);
+        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
+                users, new AiToolExecutionBoundary(), null, new AiToolCatalog(),
+                new AiRuntimeResolver(), null, new AgentAccessService(agents, users));
+        AiServiceTool tool = providedTools(policy.toolProvider(
+                AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE, new SafeTools()),
+                "session-1:thread-1").get("safeAction");
+        assertTrue(tool != null);
+        host.setPermission("private");
+
+        AiToolErrorHandler errors = new AiToolErrorHandler();
+        ToolExecutionResult result = ToolService.executeWithErrorHandling(
+                request("safeAction"), tool.toolExecutor(), context("session-1:thread-1"),
+                errors::handleArguments, errors::handleExecution);
+
+        assertTrue(result.isError());
+        assertTrue(result.resultText().contains("TOOL_PERMISSION_DENIED"));
     }
 
     @Test

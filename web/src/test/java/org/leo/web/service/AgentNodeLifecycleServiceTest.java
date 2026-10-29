@@ -42,7 +42,7 @@ class AgentNodeLifecycleServiceTest {
     private final AgentNodeLifecycleService lifecycleService = new AgentNodeLifecycleService(
             mock(AgentService.class), nodeFactory, cacheService,
             mock(AgentReconRepository.class), new SessionLifecycleManager(
-                    mock(NetworkProbeWorkflowService.class), mock(NetworkProbeResultStore.class)));
+                    mock(NetworkProbeWorkflowService.class)));
     private final Agent agent = new Agent();
     private final User user = new User();
 
