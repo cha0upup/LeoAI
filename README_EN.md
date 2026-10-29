@@ -24,7 +24,7 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 > **Node naming**: execution nodes use Agent / AgentNode; AI interfaces use NodeAiAgent / PlatformAiAgent. See the [Agent naming and deployment guide](docs/agent-naming.md).
 >
-> **Historical data is incompatible**: redeploy this version with a fresh database path or data directory to rebuild the database. Existing databases are not upgrade inputs; the first startup creates tables from the current `schema.sql` and initializes seed data.
+> **Development baseline**: this version is not officially released. Only the current `schema.sql` is maintained; no old-database migrations are bundled. Use a fresh database path or data directory after schema changes. Startup does not delete existing databases or VFS files.
 
 ---
 
@@ -47,7 +47,7 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 ## v3.0.0 Highlights
 
-v3.0.0 is a major update spanning runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and uses a fresh database baseline that is incompatible with historical data.
+The current v3.0.0 development baseline spans runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and maintains only the current database structure.
 
 | Area | What changed in v3.0.0 |
 |------|-------------------------|
@@ -55,8 +55,8 @@ v3.0.0 is a major update spanning runtimes, components, platform services, the w
 | **Dual-runtime architecture** | Java and PHP use the same `AgentRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
 | **Component reliability** | Java/PHP Components now use bounded tasks, TTLs, resource deregistration, cache limits, and unified lifecycle cleanup; Java artifacts also remove redundant debug metadata and constants |
 | **Console and AI** | Agent routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
-| **Fresh database baseline** | `schema.sql` and `data.sql` create the final v3.0.0 structure directly, followed by base configuration and administrator bootstrap |
-| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.0`; the release artifact is `LeoAi-3.0.0.jar` and the initial administrator password must be changed after login |
+| **Database baseline** | `schema.sql` creates the current structure directly; `data.sql` idempotently seeds base configuration, while web setup creates the administrator and its team in one transaction |
+| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.0`; the release artifact is `LeoAi-3.0.0.jar` and a fresh deployment sets its administrator password through web setup |
 
 > **Installation baseline:** v3.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
 
@@ -259,7 +259,7 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 
 ### Step 1: Get the JAR
 
-> **Historical data is incompatible; redeploy and rebuild the database.** Stop the old service and back it up, then deploy this version in a fresh working directory or with a new SQLite path. The first startup creates the current database structure; business data and node configurations need to be recreated.
+> Validate this development version as a fresh installation. Use a new working directory or SQLite path; startup creates the current schema directly without adding columns to old databases or migrating them.
 >
 > For Docker, use a fresh persistent data volume or data directory. Restarting or rebuilding a container still reuses its existing data volume and does not rebuild the database.
 
@@ -270,6 +270,8 @@ LeoAi-3.0.0.jar
 ```
 
 ### Step 2: Launch
+
+Launch directly without configuring an administrator password in the environment. A fresh database opens the web initialization wizard on the first visit. Existing installations retain their login flow and credentials.
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
@@ -290,10 +292,14 @@ http://localhost:8082
 On first launch, the system automatically:
 
 1. Initializes the SQLite database (creates `data.db` in the working directory)
-2. Creates the default administrator account
-3. Initializes base configuration
+2. Initializes VFS, built-in resources and base configuration; restarts preserve configured values
+3. Creates the administrator and its team transactionally after the password is set through web setup
 
-**Initial account**: `admin`, initial password: `54ikun`. The console requires a password change on first login.
+**Administrator account**: `admin`. Set and confirm its password on the first web visit, then sign in with that password; no additional forced password change is needed. Setup closes permanently after completion, including across restarts and account renames or removals. Existing credentials are preserved. Restrict network access until setup is complete and use HTTPS for remote deployments.
+
+Startup resolves one absolute VFS path (blank configuration uses `root` under the working directory), creates it and probes actual reads/writes. Fingerprints only fill missing files. Managed bundled Skill paths synchronize by content, retain timestamps when unchanged, and leave custom Skill directories untouched. Complete resources are published from same-directory temporary files; storage must support atomic replacement and hard links. Required resource failures stop startup instead of marking the service ready.
+
+APIs return HTTP 503 until database initialization, resource synchronization and startup listeners finish. Failed browser status checks display a retry page rather than assuming setup is complete.
 
 ---
 
@@ -341,6 +347,8 @@ From the project root (where `Dockerfile` and `docker-compose.yml` live):
 docker compose up -d --build
 ```
 
+Start the container directly, then set the admin password through the web initialization page. No password environment variable is required.
+
 Flags explained:
 - `up`: start services
 - `-d`: detached mode (background) — closing the terminal won't stop the container
@@ -360,7 +368,7 @@ The first launch pulls the base image, downloads the JAR, and installs runtime d
 http://localhost:8082
 ```
 
-**Initial account**: `admin`, initial password: `54ikun`. The console requires a password change on first login.
+**Administrator account**: `admin`. The first visit opens setup; choose and confirm a password, then return to the login page. Existing installations sign in normally and the setup entry stays closed.
 
 #### Common Commands
 
@@ -430,7 +438,7 @@ LEOAI_PORT=9090 docker compose up -d
 - Usually a GitHub connectivity issue. Use a proxy and retry `docker compose build`, or download the JAR manually and update the `JAR_URL` in the Dockerfile to point to a local mirror
 
 **Forgot the admin password**
-- Run `docker compose down -v` to clear the data volume (⚠️ all data will be lost), then `docker compose up -d --build` to start fresh with the default credentials
+- Recreating the data volume removes its business data. Back up the database and VFS first, then use the web initialization page when provisioning a fresh volume; normal password changes use user management.
 
 **Inspect files inside the container**
 - Run `docker compose exec leoai sh` to enter the container; data is in `/app/data`
@@ -525,7 +533,11 @@ After entering a node, use the available tool modules:
 - **Network Asset Discovery**: Reachability, port scanning, service identification and component fingerprints; selectable stages, rule snapshots, incremental results and task history
 - **HTTP Requester**: Repeater for single requests, Fuzzer for bulk fuzzing
 
+Bundled HTTP fingerprints cover Nacos, Shiro, Spring Boot Actuator, and GeoServer. The GeoServer rule requests `/geoserver/web/` and `/web/` to cover the default context, root deployments, and application prefixes in an input URL. A single response must provide HTTP 200, a GeoServer page title, and a GeoServer-specific Wicket resource marker. Response bodies are limited to 8 KiB; the rule does not infer an exact version or vulnerability status. New seeds are added to VFS on startup. Existing scans retain their rule snapshots, so start a new scan or supplemental component scan to use the new rule.
+
 Discovery distinguishes confirmed responses, unconfirmed probes, and explicit DNS/routing failures. Successful or refused TCP connections confirm a responding host; sampled timeouts do not exclude it from port scanning. Backlogged result pages are drained immediately and acknowledged after database commit; idle polling waits only when there is no backlog. Workflow failures stop active child tasks, and Java cancellation closes registered sockets. Java/PHP HTTP probes connect to the planned IP/port while retaining the application hostname for Host/TLS SNI, with separate header/body limits, chunk decoding, and bounded gzip decoding. UI throughput counts completed probes rather than hosts. Update node components and recreate scan tasks together. Java node artifacts remain single-class and Java 6 API compatible; HTTPS capabilities depend on the node JVM's TLS support.
+
+Discovery no longer applies per-task business quotas to hosts, input entries, endpoint combinations, reachability/fingerprint requests, or supplemental asset selections. More than 10,000 hosts and other advisory thresholds produce preview warnings only; they do not prevent starting or truncate targets. Execution still uses node batches of at most 1,024 targets with concurrency, timeout, and backpressure controls. Plans are still expanded in server memory, so reserve resources for large inputs; address ranges must remain representable by Java collection indices, and node protocol/rule format validation is unchanged.
 
 Discovery uses per-task, layered backpressure (`MiB = 1024²` bytes):
 
@@ -614,6 +626,8 @@ tags:
 
 ### AI Assistant
 
+On interruption, failure, or orphaned-run recovery, partial user-visible replies stay in `ai_messages.content`. Plans, tool progress, and resume instructions are stored separately in the internal `recovery_context` column and used only to rebuild model memory; history responses do not expose this field. Legacy recovery blocks embedded in message bodies are separated on read without rewriting original history, while tool timelines and failure reasons remain visible. Startup adds the missing column to existing message tables. Restart the backend and refresh history after upgrading; model TLS connection failures remain a separate issue.
+
 **Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
 
 The console's skill quick-launch panel provides 5 pre-configured agent-node Skills for launching complete scenario tasks with one click:
@@ -691,7 +705,7 @@ Troubleshoot in order:
 
 **Q: How to reset the admin password**
 
-Stop the application → delete (or back up) `data.db` → restart → log in as `admin` with the initial password `54ikun`.
+Use another administrator account to reset the password in user management. If all administrator credentials are lost, stop the service and back up the database and VFS before provisioning a separate fresh database. The web setup wizard only initializes fresh installations; it does not reset existing accounts.
 
 ---
 
@@ -716,7 +730,7 @@ By default it's in the JAR's working directory. Specify a custom path via a star
 **Deployment Security**
 
 - Deploy in a trusted intranet or VPN environment; do not expose the management port to the public internet
-- Complete the required administrator password change after first login
+- Set a unique administrator password through web setup on a fresh deployment
 - Back up the `data.db` file regularly
 - Restrict access sources using a firewall or IP allowlist
 
