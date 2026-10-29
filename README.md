@@ -14,7 +14,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Agent 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v3.0.0 引入平等的 Java/PHP Agent 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Node AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
+LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Agent 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v3.0.1 引入平等的 Java/PHP Agent 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Node AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
 
 <img src="docs/images/screenshot-dashboard.png" alt="主界面截图" width="800" />
 
@@ -30,7 +30,7 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 ## 目录
 
-- [v3.0.0 版本亮点](#v300-版本亮点)
+- [v3.0.1 版本亮点](#v301-版本亮点)
 - [Java/PHP 双运行时](#javaphp-双运行时)
 - [功能特性](#功能特性)
 - [工作方式](#工作方式)
@@ -46,20 +46,20 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 ---
 
-## v3.0.0 版本亮点
+## v3.0.1 版本亮点
 
-v3.0.0 当前开发基线覆盖运行时、组件、平台服务、Web 控制台和部署方式，统一 Agent 语义命名，数据库仅维护当前结构。
+v3.0.1 当前开发基线覆盖运行时、组件、平台服务、Web 控制台和部署方式，统一 Agent 语义命名，数据库仅维护当前结构。
 
-| 方向 | v3.0.0 主要变化 |
+| 方向 | v3.0.1 主要变化 |
 |------|----------------|
 | **PHP Agent** | 新增 PHP 5.6+ 单文件入口、HTTP RPC、按需 Component 与运行时能力注册；覆盖命令、文件、终端、数据库、网络、代理隧道和基础系统管理 |
 | **双运行时架构** | Java 与 PHP 通过同一 `AgentRuntimeModule` SPI、Capability 契约和 RPC 响应协议接入，上层服务按能力工作，而非绑定具体运行时 |
 | **Component 稳定性** | Java/PHP Component 加入有界任务、TTL、资源注销、缓存上限和生命周期清理；Java 构建产物同步精简调试元数据与冗余常量 |
 | **控制台与 AI** | Agent 路由、插件、文件传输、SQL、代理、后台任务和 AI SSE 统一到共享服务边界；界面按 Runtime Profile 展示可用功能 |
 | **数据库基线** | `schema.sql` 直接建立当前结构，`data.sql` 幂等补齐基础配置；管理员及其团队由 Web 初始化页面事务创建 |
-| **发布与部署** | Maven 模块、前端、Docker 和制品统一使用 `3.0.0`；正式制品为 `LeoAi-3.0.0.jar`，首次部署通过 Web 页面设置管理员密码 |
+| **发布与部署** | Maven 模块、前端、Docker 和制品统一使用 `3.0.1`；正式制品为 `LeoAi-3.0.1.jar`，首次部署通过 Web 页面设置管理员密码 |
 
-> **安装基线**：v3.0.0 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
+> **安装基线**：v3.0.1 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
 
 ---
 
@@ -318,7 +318,7 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-3.0.0.jar
+LeoAi-3.0.1.jar
 ```
 
 ### 第二步：启动
@@ -326,7 +326,7 @@ LeoAi-3.0.0.jar
 直接启动即可，无需预先配置管理员密码。新库首次访问 Web 页面时进入初始化向导；已有账号的部署保持原登录流程和凭据。
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -507,7 +507,7 @@ LEOAI_PORT=9090 docker compose up -d
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-3.0.0.jar --server.port=9090
+  LeoAi-3.0.1.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -516,7 +516,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-3.0.0.jar \
+  LeoAi-3.0.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -747,7 +747,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Java Web Runtime 检�
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 ```
 
 ---

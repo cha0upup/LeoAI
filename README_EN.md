@@ -14,7 +14,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v3.0.0 introduces equal Java and PHP Agent runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
+LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v3.0.1 introduces equal Java and PHP Agent runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
 
 <img src="docs/images/screenshot-dashboard.png" alt="Dashboard Screenshot" width="800" />
 
@@ -30,7 +30,7 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 ## Table of Contents
 
-- [v3.0.0 Highlights](#v300-highlights)
+- [v3.0.1 Highlights](#v301-highlights)
 - [Java/PHP Dual Runtime](#javaphp-dual-runtime)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
@@ -45,20 +45,20 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 ---
 
-## v3.0.0 Highlights
+## v3.0.1 Highlights
 
-The current v3.0.0 development baseline spans runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and maintains only the current database structure.
+The current v3.0.1 development baseline spans runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and maintains only the current database structure.
 
-| Area | What changed in v3.0.0 |
+| Area | What changed in v3.0.1 |
 |------|-------------------------|
 | **PHP Agent** | Adds a PHP 5.6+ single-file entry point, HTTP RPC, on-demand Components, and runtime capability registration for commands, files, terminals, databases, networking, tunnels, and core system administration |
 | **Dual-runtime architecture** | Java and PHP use the same `AgentRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
 | **Component reliability** | Java/PHP Components now use bounded tasks, TTLs, resource deregistration, cache limits, and unified lifecycle cleanup; Java artifacts also remove redundant debug metadata and constants |
 | **Console and AI** | Agent routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
 | **Database baseline** | `schema.sql` creates the current structure directly; `data.sql` idempotently seeds base configuration, while web setup creates the administrator and its team in one transaction |
-| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.0`; the release artifact is `LeoAi-3.0.0.jar` and a fresh deployment sets its administrator password through web setup |
+| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.1`; the release artifact is `LeoAi-3.0.1.jar` and a fresh deployment sets its administrator password through web setup |
 
-> **Installation baseline:** v3.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
+> **Installation baseline:** v3.0.1 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
 
 ---
 
@@ -266,7 +266,7 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-3.0.0.jar
+LeoAi-3.0.1.jar
 ```
 
 ### Step 2: Launch
@@ -274,7 +274,7 @@ LeoAi-3.0.0.jar
 Launch directly without configuring an administrator password in the environment. A fresh database opens the web initialization wizard on the first visit. Existing installations retain their login flow and credentials.
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -453,7 +453,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-3.0.0.jar --server.port=9090
+  LeoAi-3.0.1.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -462,7 +462,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
-  LeoAi-3.0.0.jar \
+  LeoAi-3.0.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -677,7 +677,7 @@ The console's skill quick-launch panel provides 5 pre-configured agent-node Skil
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.0.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 ```
 
 ---
