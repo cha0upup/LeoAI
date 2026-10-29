@@ -55,15 +55,6 @@ public class AgentWebRuntimeRepository {
         }
     }
 
-    public Map<String, Object> load(String sessionId) {
-        try {
-            AgentNodeSession session = requireSession(sessionId);
-            return load(session.getCreateByUser(), session.resolveAgentId(), session.getCurrentHostId());
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private AgentNodeSession requireSession(String sessionId) {
         AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
         if (session == null || session.resolveAgentId() == null) {

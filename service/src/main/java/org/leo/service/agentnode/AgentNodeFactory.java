@@ -44,13 +44,11 @@ public class AgentNodeFactory implements AgentNodeCreationContext {
 
     private static final Logger logger = LoggerFactory.getLogger(AgentNodeFactory.class);
     private static final int PROXY_ENABLED = 1;
-    private final AgentService agentService;
     private final AgentRouteResolver routeResolver;
     private final Map<AgentRuntime, AgentRuntimeModule> runtimeModules;
 
     public AgentNodeFactory(AgentService agentService,
                              List<AgentRuntimeModule> runtimeModules) {
-        this.agentService = agentService;
         this.routeResolver = new AgentRouteResolver(agentService);
         this.runtimeModules = indexRuntimeModules(runtimeModules);
     }

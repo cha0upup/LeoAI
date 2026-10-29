@@ -443,14 +443,6 @@ public class AiModelConfigService {
         return getActive();
     }
 
-    public AiModelConfig requireActive() {
-        AiModelConfig active = getActive();
-        if (active == null) {
-            throw new IllegalStateException("未配置激活的 AI 模型，请先在设置中添加并激活一条");
-        }
-        return active;
-    }
-
     /** 返回指定模型的实际上下文硬上限，线程级选模必须使用该方法。 */
     public int getContextWindowTokens(AiModelConfig config) {
         if (config == null) return 32_768;

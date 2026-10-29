@@ -298,10 +298,6 @@ public class AuditPolicyService {
         return normalizedMode;
     }
 
-    public boolean shouldRecord(String operationType) {
-        return shouldRecord(operationType, false);
-    }
-
     public boolean shouldRecord(String operationType, boolean forceRecord) {
         if (forceRecord) {
             return true;

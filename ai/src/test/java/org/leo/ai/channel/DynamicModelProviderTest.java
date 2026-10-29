@@ -102,9 +102,9 @@ class DynamicModelProviderTest {
         AiModelConfig config = config("https://example.test/v1", "chat_completions");
         DynamicModelProvider provider = provider(configs);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(65_536, true));
-        String first = provider.plannedRuntimeCacheKey(config);
+        String first = provider.plannedRuntimeCacheKey(config, null);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(8_192, true));
-        String second = provider.plannedRuntimeCacheKey(config);
+        String second = provider.plannedRuntimeCacheKey(config, null);
         assertNotEquals(first, second);
         var runtime = provider.buildRuntime(config);
         assertEquals(8_192, runtime.contextWindowTokens());

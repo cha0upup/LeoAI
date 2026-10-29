@@ -96,10 +96,6 @@ public class ApiResponse {
         return error(CODE_CONFLICT, message);
     }
 
-    public static HashMap<String, Object> tooManyRequests(String message) {
-        return error(CODE_TOO_MANY_REQUESTS, message);
-    }
-
     private static HashMap<String, Object> createResponse(int code, String message, Object data) {
         HashMap<String, Object> result = new HashMap<>();
         result.put(FIELD_CODE, code);

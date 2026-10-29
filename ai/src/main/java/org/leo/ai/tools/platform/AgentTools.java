@@ -99,8 +99,6 @@ public class AgentTools {
                                          @P(value = "代理端口", required = false) Integer proxyPort,
                                          @P(value = "最大请求总数，1-10", required = false) Integer maxReqCount,
                                          @P(value = "可见范围：private/team/public；省略时使用默认范围", required = false) String permission,
-                                         @P(value = "最后心跳时间", required = false) String lastHeartbeat,
-                                         @P(value = "心跳间隔", required = false) Integer heartbeatInterval,
                                          @P(value = "备注", required = false) String remark,
                                          @P(value = "Agent ID；省略时自动生成", required = false) String agentId,
                                          @P(value = "URL 策略 JSON", required = false) String urlStrategy,
@@ -153,12 +151,6 @@ public class AgentTools {
             agent.setMaxReqCount(maxReqCount);
         }
         agent.setPermission(effectivePermission);
-        if (lastHeartbeat != null) {
-            agent.setLastHeartbeat(trimToNull(lastHeartbeat));
-        }
-        if (heartbeatInterval != null) {
-            agent.setHeartbeatInterval(heartbeatInterval);
-        }
         agent.setRemark(trimToNull(remark));
         agent.setUrlStrategy(trimToNull(urlStrategy));
         agent.setPaddingStrategy(trimToNull(paddingStrategy));
@@ -189,8 +181,6 @@ public class AgentTools {
                                             @P(value = "新代理端口", required = false) Integer proxyPort,
                                             @P(value = "最大请求总数，1-10", required = false) Integer maxReqCount,
                                             @P(value = "新可见范围：private/team/public", required = false) String permission,
-                                            @P(value = "最后心跳时间", required = false) String lastHeartbeat,
-                                            @P(value = "心跳间隔", required = false) Integer heartbeatInterval,
                                             @P(value = "新备注", required = false) String remark,
                                             @P(value = "新 URL 策略 JSON", required = false) String urlStrategy,
                                             @P(value = "新 Padding 策略 JSON", required = false) String paddingStrategy,
@@ -258,12 +248,6 @@ public class AgentTools {
                 throw new SecurityException("只有管理员可以设置公开 Agent");
             }
             existing.setPermission(effectivePermission);
-        }
-        if (lastHeartbeat != null) {
-            existing.setLastHeartbeat(trimToNull(lastHeartbeat));
-        }
-        if (heartbeatInterval != null) {
-            existing.setHeartbeatInterval(heartbeatInterval);
         }
         if (remark != null) {
             existing.setRemark(trimToNull(remark));

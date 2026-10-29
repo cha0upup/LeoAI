@@ -86,11 +86,11 @@ class AgentNodeSqlServiceExternalDatabaseContractTest {
                     .get("affectedRows")).intValue());
 
             Map<String, Object> remaining = service.executeSql(
-                    php, connection, "SELECT COUNT(*) AS total FROM " + qualifiedTable);
+                    php, connection, "SELECT COUNT(*) AS total FROM " + qualifiedTable, null);
             assertEquals(1, ((Number) ((Map<?, ?>) ((List<?>) remaining.get("rows")).get(0))
                     .get("total")).intValue());
         } finally {
-            service.executeSql(php, connection, "DROP TABLE IF EXISTS " + qualifiedTable);
+            service.executeSql(php, connection, "DROP TABLE IF EXISTS " + qualifiedTable, null);
         }
     }
 

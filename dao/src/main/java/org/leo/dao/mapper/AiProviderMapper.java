@@ -20,9 +20,6 @@ public interface AiProviderMapper {
     @Select("SELECT * FROM ai_providers WHERE id = #{id}")
     AiProvider findById(@Param("id") Integer id);
 
-    @Select("SELECT COUNT(*) FROM ai_model_configs WHERE provider_id = #{providerId}")
-    int countModels(@Param("providerId") Integer providerId);
-
     @Insert("INSERT INTO ai_providers (name, provider_key, api_key, base_url, protocol, completions_path, "
             + "headers_json, enabled, create_time, update_time, remark) "
             + "VALUES (#{name}, #{providerKey}, #{apiKey}, #{baseUrl}, #{protocol}, #{completionsPath}, "

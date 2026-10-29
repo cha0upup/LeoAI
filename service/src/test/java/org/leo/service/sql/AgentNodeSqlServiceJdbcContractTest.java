@@ -124,7 +124,7 @@ class AgentNodeSqlServiceJdbcContractTest {
         assertEquals(1, ((Number) service.deleteRows(jdbc, connection, tableRef,
                 Map.of("type", "pk", "values", Map.of("id", 2))).get("affectedRows")).intValue());
         Map<String, Object> remaining = service.executeSql(jdbc, connection,
-                "SELECT COUNT(*) AS total FROM \"order details\"");
+                "SELECT COUNT(*) AS total FROM \"order details\"", null);
         assertEquals(1, ((Number) ((Map<?, ?>) ((List<?>) remaining.get("rows")).get(0))
                 .get("total")).intValue());
     }

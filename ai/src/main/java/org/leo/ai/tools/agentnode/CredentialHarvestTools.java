@@ -3,8 +3,6 @@ package org.leo.ai.tools.agentnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.AgentNodeSessionUtils;
 import org.leo.core.agent.capability.CredentialHarvestCapable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
@@ -27,8 +25,6 @@ import java.util.Map;
         operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
         parallelizable = true)
 public class CredentialHarvestTools {
-
-    private static final Logger log = LoggerFactory.getLogger(CredentialHarvestTools.class);
 
     private static final String CACHE_KEY_ALL = "credential-harvest:all";
 

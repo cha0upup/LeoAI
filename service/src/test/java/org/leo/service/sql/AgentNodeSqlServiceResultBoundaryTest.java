@@ -26,7 +26,7 @@ class AgentNodeSqlServiceResultBoundaryTest {
         assertThrows(SqlExecutionException.class,
                 () -> service.executeSql(agent,
                         Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"),
-                        "SELECT 1"));
+                        "SELECT 1", null));
     }
 
     @Test
@@ -108,7 +108,7 @@ class AgentNodeSqlServiceResultBoundaryTest {
 
         Map<String, Object> result = service.executeSql(agent,
                 Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"),
-                "SELECT value");
+                "SELECT value", null);
 
         assertEquals(1, result.get("rowCount"));
         assertEquals("42", result.get("generatedKey"));
@@ -257,7 +257,7 @@ class AgentNodeSqlServiceResultBoundaryTest {
         SqlExecutionException error = assertThrows(SqlExecutionException.class,
                 () -> service.executeSql(agent,
                         Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"),
-                        "SELECT 1"));
+                        "SELECT 1", null));
 
         assertEquals(504, error.getStatusCode());
         assertEquals("QUERY_TIMEOUT", error.details().get("errorCategory"));

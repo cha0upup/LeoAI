@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Converts execution envelopes to their runtime-neutral wire maps. */
+/** Maps outgoing client requests and incoming node responses. */
 public final class AgentRpcEnvelopeMapper {
 
     private AgentRpcEnvelopeMapper() {
@@ -18,31 +18,6 @@ public final class AgentRpcEnvelopeMapper {
         putIfNotNull(result, "component", request.component());
         putIfNotNull(result, "action", request.action());
         result.put("params", new LinkedHashMap<>(request.params()));
-        return result;
-    }
-
-    public static AgentRpcRequest requestFromMap(Map<String, Object> envelope) {
-        if (envelope == null) throw new IllegalArgumentException("envelope不能为空");
-        Object operation = envelope.get("operation");
-        if (operation == null) throw new IllegalArgumentException("operation不能为空");
-        return new AgentRpcRequest(
-                string(envelope.get("requestId")),
-                AgentOperation.valueOf(String.valueOf(operation).trim()),
-                string(envelope.get("hostId")),
-                string(envelope.get("component")),
-                string(envelope.get("action")),
-                map(envelope.get("params")));
-    }
-
-    public static Map<String, Object> toMap(AgentRpcResponse response) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("requestId", response.requestId());
-        result.put("code", response.code());
-        if (response.isSuccess()) {
-            result.put("data", response.data());
-        } else {
-            result.put("error", new LinkedHashMap<>(response.error()));
-        }
         return result;
     }
 
@@ -62,23 +37,6 @@ public final class AgentRpcEnvelopeMapper {
                 status,
                 success ? content : null,
                 success ? Map.of() : content);
-    }
-
-    /** Wraps the result produced by a component or core operation. */
-    public static AgentRpcResponse responseFromResult(
-            String requestId, Map<String, Object> operationResult) {
-        if (operationResult == null) throw new IllegalArgumentException("operationResult不能为空");
-        Map<String, Object> source = new LinkedHashMap<>(operationResult);
-        Object codeValue = source.remove("code");
-        if (!(codeValue instanceof Number)) throw new IllegalArgumentException("code必须为数字");
-        int code = ((Number) codeValue).intValue();
-        if (code >= 200 && code < 300) {
-            return new AgentRpcResponse(requestId, code, source, Map.of());
-        }
-        Map<String, Object> error = new LinkedHashMap<>(source);
-        Object message = error.remove("msg");
-        if (message != null) error.put("message", message);
-        return new AgentRpcResponse(requestId, code, null, error);
     }
 
     /** Restores the result shape exposed by existing component service APIs. */

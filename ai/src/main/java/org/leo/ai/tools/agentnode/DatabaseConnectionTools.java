@@ -68,7 +68,7 @@ public final class DatabaseConnectionTools {
             Java: runtimeOptions.java={"driverClass":"厂商 JDBC Driver 类","jdbcUrl":"厂商 JDBC URL"}；或
             PHP: runtimeOptions.php={"pdoDriver":"PDO Driver","dsn":"厂商 DSN"}。
             generic 可配置 dialectOptions.testSql，仅支持连接测试和原始 querySql/execSql，不支持结构化库表管理。
-            config 还可包含 connectionName、description、remark、status、maxConnections、timeoutSeconds。
+            config 还可包含 connectionName、description、remark、status、timeoutSeconds。
             返回可供 querySql/execSql 使用的 connectionId，响应不会回显密码。
             """)
     public Map<String, Object> createDatabaseConnection(Map<String, Object> config) {
@@ -80,7 +80,7 @@ public final class DatabaseConnectionTools {
 
     @Tool("""
             编辑当前 Agent 的数据库连接配置。connectionId 必填；patch 只传需要修改的字段，
-            可修改 connectionName、description、remark、status、maxConnections、timeoutSeconds，
+            可修改 connectionName、description、remark、status、timeoutSeconds，
             以及 patch.connection 中的 host、port、database、username、password 等连接字段。
             修改 dialect、connectionMode、variant 或 runtimeOptions 前先调用 getDatabaseDialectCatalog；禁止使用目录之外的方言。
             未传字段保持原值；不修改密码时不要传 password，返回内容不会回显密码。

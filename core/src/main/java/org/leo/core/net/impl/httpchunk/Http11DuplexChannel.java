@@ -77,10 +77,8 @@ public final class Http11DuplexChannel implements Closeable {
     private volatile State state = State.NEW;
     private volatile boolean userClosed;
     private volatile Socket socket;
-    private volatile DataInputStream frameInput;
     private volatile DataOutputStream frameOutput;
     private volatile HttpChunkedBodyOutputStream chunkedOutput;
-    private volatile Thread readerThread;
     private volatile Thread heartbeatThread;
 
     public Http11DuplexChannel(String url, String method, Map<String, String> headers, Proxy proxy)
@@ -267,7 +265,6 @@ public final class Http11DuplexChannel implements Closeable {
                     new BufferedOutputStream(bodyOutput, 64 * 1024));
 
             socket = openedSocket;
-            frameInput = newFrameInput;
             frameOutput = newFrameOutput;
             chunkedOutput = bodyOutput;
             lastActivity.set(System.currentTimeMillis());
@@ -376,7 +373,6 @@ public final class Http11DuplexChannel implements Closeable {
             }
         }, "Http11DuplexChannel-Reader");
         thread.setDaemon(true);
-        readerThread = thread;
         thread.start();
     }
 
@@ -523,7 +519,6 @@ public final class Http11DuplexChannel implements Closeable {
     private void closeSocketOnly() {
         Socket current = socket;
         socket = null;
-        frameInput = null;
         frameOutput = null;
         chunkedOutput = null;
         closeQuietly(current);

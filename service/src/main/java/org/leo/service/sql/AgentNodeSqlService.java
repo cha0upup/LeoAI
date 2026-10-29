@@ -215,10 +215,6 @@ public class AgentNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> executeSql(SqlCapable agentNode, Map<String, Object> connection, String sql) throws Exception {
-        return executeSql(agentNode, connection, sql, null);
-    }
-
     public Map<String, Object> executeSql(SqlCapable agentNode,
                                           Map<String, Object> connection,
                                           String sql,

@@ -21,32 +21,23 @@ class AgentRpcEnvelopeMapperTest {
 
         Map<String, Object> envelope = AgentRpcEnvelopeMapper.toMap(request);
 
-        assertEquals("request-1", envelope.get("requestId"));
-        assertEquals("COMPONENT_INVOKE", envelope.get("operation"));
-        assertEquals("host-1", envelope.get("hostId"));
-        assertEquals("ExecCommand", envelope.get("component"));
-        assertEquals("exec", envelope.get("action"));
-        assertEquals(Map.of("cmd", "whoami"), envelope.get("params"));
-        assertFalse(envelope.containsKey("protocol"));
-        assertFalse(envelope.containsKey("version"));
-        assertFalse(envelope.containsKey("protocolVersion"));
-        assertEquals(request, AgentRpcEnvelopeMapper.requestFromMap(envelope));
+        assertEquals(Map.of(
+                "requestId", "request-1", "operation", "COMPONENT_INVOKE", "hostId", "host-1",
+                "component", "ExecCommand", "action", "exec", "params", Map.of("cmd", "whoami")), envelope);
     }
 
     @Test
     void mapsSuccessAndErrorResponsesBackToExistingServiceShape() {
-        AgentRpcResponse success = new AgentRpcResponse(
-                "request-3", 200, Map.of("data", "ok", "exitCode", 0), Map.of());
-        Map<String, Object> successMap = AgentRpcEnvelopeMapper.toMap(success);
+        Map<String, Object> successMap = Map.of("requestId", "request-3", "code", 200,
+                "data", Map.of("data", "ok", "exitCode", 0));
         assertTrue(AgentRpcEnvelopeMapper.isEnvelopeResponse(successMap, "request-3"));
+        assertFalse(AgentRpcEnvelopeMapper.isEnvelopeResponse(successMap, "another-request"));
         assertEquals(Map.of("code", 200, "data", "ok", "exitCode", 0),
                 AgentRpcEnvelopeMapper.toResultMap(
                         AgentRpcEnvelopeMapper.responseFromMap(successMap)));
 
-        AgentRpcResponse failure = new AgentRpcResponse(
-                "request-4", 424, null,
-                Map.of("type", "COMPONENT_NOT_FOUND", "message", "missing"));
-        Map<String, Object> failureMap = AgentRpcEnvelopeMapper.toMap(failure);
+        Map<String, Object> failureMap = Map.of("requestId", "request-4", "code", 424,
+                "error", Map.of("type", "COMPONENT_NOT_FOUND", "message", "missing"));
         AgentRpcResponse parsed = AgentRpcEnvelopeMapper.responseFromMap(failureMap);
         assertNull(parsed.data());
         assertEquals(Map.of("code", 424, "type", "COMPONENT_NOT_FOUND", "msg", "missing"),
@@ -58,7 +49,7 @@ class AgentRpcEnvelopeMapperTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentRpcRequest(" ", AgentOperation.PING, null, null, null, Map.of()));
         assertThrows(IllegalArgumentException.class,
-                () -> AgentRpcEnvelopeMapper.requestFromMap(Map.of("requestId", "r")));
+                () -> new AgentRpcRequest("r", null, null, null, null, Map.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> AgentRpcEnvelopeMapper.responseFromMap(Map.of("requestId", "r", "code", "200")));
         assertThrows(IllegalArgumentException.class,
@@ -68,7 +59,7 @@ class AgentRpcEnvelopeMapperTest {
                 () -> AgentRpcEnvelopeMapper.responseFromMap(
                         Map.of("requestId", "r", "code", 500, "error", "old-error")));
         assertThrows(IllegalArgumentException.class,
-                () -> AgentRpcEnvelopeMapper.responseFromResult("r", Map.of("legacy", "result")));
+                () -> AgentRpcEnvelopeMapper.responseFromMap(Map.of("requestId", "r", "data", Map.of())));
     }
 
     @Test

@@ -38,7 +38,7 @@ class Http11DuplexChannelTest {
     void reusesOneHttpConnectionForHeartbeatAndConcurrentRequests() throws Exception {
         try (EchoDuplexServer server = new EchoDuplexServer(false)) {
             HttpChunkedCommunication communication = new HttpChunkedCommunication(
-                    server.url(), "POST", null, Proxy.NO_PROXY);
+                    server.url(), null, null, null);
             ExecutorService executor = Executors.newFixedThreadPool(4);
             try {
                 assertArrayEquals(new byte[]{1, 2, 3},
@@ -77,13 +77,14 @@ class Http11DuplexChannelTest {
             Proxy proxy = new Proxy(Proxy.Type.HTTP,
                     new InetSocketAddress("127.0.0.1", proxyServer.serverSocket.getLocalPort()));
             HttpChunkedCommunication communication = new HttpChunkedCommunication(
-                    "http://example.invalid:8080/channel?q=1", "POST", headers, proxy);
+                    "http://example.invalid:8080/channel?q=1", "post", headers, proxy);
             try {
                 assertArrayEquals(new byte[]{9}, communication.sendRequest(new byte[]{9}));
                 String requestHead = proxyServer.lastRequestHead.get();
                 assertTrue(requestHead.startsWith(
                         "POST http://example.invalid:8080/channel?q=1 HTTP/1.1\r\n"));
                 assertTrue(requestHead.contains("Proxy-Authorization: Basic dGVzdA==\r\n"));
+                assertEquals(1, headers.size(), "transport defaults must not mutate caller headers");
             } finally {
                 communication.close();
             }

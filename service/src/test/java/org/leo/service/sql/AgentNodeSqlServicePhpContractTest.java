@@ -92,7 +92,7 @@ class AgentNodeSqlServicePhpContractTest {
                 Map.of("type", "pk", "values", Map.of("id", 1)),
                 Map.of("quantity", 9)).get("affectedRows")).intValue());
         Map<String, Object> query = service.executeSql(php, connection,
-                "SELECT quantity FROM inventory WHERE id = 1");
+                "SELECT quantity FROM inventory WHERE id = 1", null);
         assertEquals(9, ((Number) ((Map<?, ?>) ((List<?>) query.get("rows")).get(0)).get("quantity")).intValue());
 
         assertEquals(1, ((Number) service.deleteRows(php, connection, tableRef,

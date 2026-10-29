@@ -174,10 +174,6 @@ public class DynamicModelProvider {
                 runtime.contextWindowTokens());
     }
 
-    public String plannedRuntimeCacheKey(AiModelConfig config) {
-        return plannedRuntimeCacheKey(config, null);
-    }
-
     public String plannedRuntimeCacheKey(AiModelConfig config, String reasoningEffortOverride) {
         if (config == null) return "";
         String baseUrl = ModelEndpoint.apiRoot(config);

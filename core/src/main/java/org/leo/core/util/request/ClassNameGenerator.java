@@ -121,11 +121,6 @@ public class ClassNameGenerator {
         "apply", "invoke", "execute", "refresh", "resolve",
         "convert", "format", "validate", "prepare", "dispatch"
     };
-    public static String randomMethodName() {
-        Random random = GenerationRandom.current();
-        return METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)];
-    }
-
     /** 生成一个不在 used 集合中的方法名，并将其加入 used */
     public static String randomMethodName(Set<String> used) {
         Random random = GenerationRandom.current();
@@ -167,18 +162,6 @@ public class ClassNameGenerator {
                     "package", "interface", "extends", "implements", "this",
                     "super", "null", "true", "false", "instanceof"
             )));
-
-    /**
-     * 生成紧凑的业务字段名。
-     */
-    public static String randomFieldName() {
-        Random random = GenerationRandom.current();
-        String name;
-        do {
-            name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
-        } while (RESERVED_FIELD_NAMES.contains(name));
-        return name;
-    }
 
     /** 生成一个不在 used 集合中的字段名，并将其加入 used */
     public static String randomFieldName(Set<String> used) {
