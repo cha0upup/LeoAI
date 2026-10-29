@@ -87,23 +87,6 @@ CREATE TABLE IF NOT EXISTS system_configs (
     update_time DATETIME NOT NULL
 );
 
--- 5. 会话管理表
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id VARCHAR(100) PRIMARY KEY,
-    user_id VARCHAR(50) NOT NULL,
-    agent_id VARCHAR(50) NOT NULL,
-    session_data TEXT, -- JSON格式存储会话数据
-    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:活跃 0:过期
-    create_time DATETIME NOT NULL,
-    last_access_time DATETIME NOT NULL,
-    expire_time DATETIME
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
-
-
 -- =====================================================
 -- 数据库连接信息表
 -- =====================================================
@@ -171,23 +154,6 @@ CREATE TABLE IF NOT EXISTS project_agents (
 
 CREATE INDEX IF NOT EXISTS idx_project_agents_agent ON project_agents(agent_id);
 
--- 实时对象仍由 AgentNodeSessionContainer 管理；此表预留项目化会话索引和历史。
-CREATE TABLE IF NOT EXISTS agent_sessions (
-    session_id VARCHAR(100) PRIMARY KEY,
-    project_id VARCHAR(50),
-    agent_id VARCHAR(50) NOT NULL,
-    user_id VARCHAR(50) NOT NULL,
-    session_mode VARCHAR(20) NOT NULL DEFAULT 'live' CHECK (session_mode IN ('live', 'cache')),
-    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'expired')),
-    create_time DATETIME NOT NULL,
-    last_active_time DATETIME NOT NULL,
-    close_time DATETIME
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_status
-    ON agent_sessions(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent
-    ON agent_sessions(agent_id);
 -- 7. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id VARCHAR(50) PRIMARY KEY,

@@ -13,6 +13,7 @@ import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
 import org.leo.service.user.PasswordPolicy;
+import org.leo.service.user.SystemInitializationService;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.Map;
@@ -36,20 +37,25 @@ class LoginControllerTest {
     private final PermissionService permissionService = mock(PermissionService.class);
     private final LoginAttemptService loginAttemptService = mock(LoginAttemptService.class);
     private final PasswordPolicy passwordPolicy = mock(PasswordPolicy.class);
+    private final SystemInitializationService initialization = mock(SystemInitializationService.class);
     private final LoginController controller = new LoginController(
-            userService, teamService, permissionService, loginAttemptService, passwordPolicy);
+            userService, teamService, permissionService, loginAttemptService, passwordPolicy, initialization);
 
     @Test
     void statusKeepsItsPublicFieldsAndBooleanPasswordChangeFlag() {
         MockHttpServletRequest request = new MockHttpServletRequest();
-        assertEquals(Map.of("isLoggedIn", false), controller.status(request).get("data"));
+        when(initialization.isInitializationRequired()).thenReturn(true);
+        when(passwordPolicy.getMinimumLength()).thenReturn(12);
+        assertEquals(Map.of("isLoggedIn", false, "initializationRequired", true,
+                "passwordMinLength", 12, "passwordMaxLength", 256), controller.status(request).get("data"));
         User user = new User("user-1", "alice", "stored-hash", "normal", "2026-09-01");
         user.setPasswordChangeRequired(1);
         when(permissionService.getCurrentUser(request)).thenReturn(user);
 
         Map<?, ?> data = (Map<?, ?>) controller.status(request).get("data");
 
-        assertEquals(Set.of("isLoggedIn", "userId", "userName", "privilege", "teamId", "passwordChangeRequired"), data.keySet());
+        assertEquals(Set.of("isLoggedIn", "initializationRequired", "passwordMinLength", "passwordMaxLength",
+                "userId", "userName", "privilege", "teamId", "passwordChangeRequired"), data.keySet());
         assertEquals(true, data.get("isLoggedIn"));
         assertEquals(true, data.get("passwordChangeRequired"));
         assertFalse(data.containsKey("password"));
@@ -103,6 +109,28 @@ class LoginControllerTest {
     }
 
     @Test
+    void rejectsCredentialChangesBetweenVerificationAndLoginCompletion() {
+        User authenticated = new User();
+        authenticated.setUserId("user-1");
+        authenticated.setStatus(1);
+        authenticated.setPassword(PasswordUtil.hash("secret"));
+        User changed = new User();
+        changed.setUserId("user-1");
+        changed.setStatus(1);
+        changed.setPassword(PasswordUtil.hash("replacement"));
+        when(userService.getUserByName("alice")).thenReturn(authenticated);
+        when(userService.recordSuccessfulLogin("user-1")).thenReturn(changed);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> controller.login(request, new LoginRequest("alice", "secret")));
+
+        assertEquals(401, error.getCode());
+        assertNull(request.getSession(false));
+        verify(loginAttemptService, org.mockito.Mockito.never()).recordSuccess("alice", "127.0.0.1");
+    }
+
+    @Test
     void clearsRequiredPasswordChangeAfterSuccessfulUpdate() {
         User sessionUser = new User();
         sessionUser.setUserId("admin");
@@ -115,12 +143,15 @@ class LoginControllerTest {
         when(userService.updateUser(storedUser)).thenReturn(true);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession(true).setAttribute("user", sessionUser);
+        String previousSessionId = request.getSession(false).getId();
 
         var response = controller.changePassword(request,
                 new ChangePasswordRequest("54ikun", "new-password"));
 
         assertEquals(200, response.get("code"));
         assertEquals(0, storedUser.getPasswordChangeRequired());
+        assertFalse(previousSessionId.equals(request.getSession(false).getId()));
+        assertSame(storedUser, request.getSession(false).getAttribute("user"));
         assertTrue(PasswordUtil.verify("new-password", storedUser.getPassword()));
         verify(passwordPolicy).validate("new-password");
         verify(userService).updateUser(storedUser);

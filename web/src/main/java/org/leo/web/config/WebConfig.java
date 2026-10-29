@@ -1,6 +1,7 @@
 package org.leo.web.config;
 
 import org.leo.web.interceptor.LoginInterceptor;
+import org.leo.web.interceptor.BootstrapReadinessInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -14,12 +15,14 @@ import java.util.Arrays;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
     private final LoginInterceptor loginInterceptor;
+    private final BootstrapReadinessInterceptor readinessInterceptor;
     private final String[] allowedOrigins;
 
-    public WebConfig(LoginInterceptor loginInterceptor,
+    public WebConfig(LoginInterceptor loginInterceptor, BootstrapReadinessInterceptor readinessInterceptor,
                      @Value("${leo.web.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}")
                      String allowedOrigins) {
         this.loginInterceptor = loginInterceptor;
+        this.readinessInterceptor = readinessInterceptor;
         this.allowedOrigins = parseAllowedOrigins(allowedOrigins);
     }
 
@@ -47,11 +50,14 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(readinessInterceptor)
+                .addPathPatterns("/platform/**", "/agent-node/**");
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/platform/**", "/agent-node/**")
                 .excludePathPatterns(
                         "/platform/user/login",
-                        "/platform/user/status"
+                        "/platform/user/status",
+                        "/platform/setup"
                 );
     }
 

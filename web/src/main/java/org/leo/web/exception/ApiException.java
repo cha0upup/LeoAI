@@ -78,6 +78,14 @@ public class ApiException extends RuntimeException {
         return new ApiException(ApiResponse.CODE_NOT_FOUND, HttpStatus.NOT_FOUND, message);
     }
 
+    public static ApiException conflict(String message) {
+        return new ApiException(409, HttpStatus.CONFLICT, message);
+    }
+
+    public static ApiException serviceUnavailable(String message) {
+        return new ApiException(503, HttpStatus.SERVICE_UNAVAILABLE, message);
+    }
+
     public static ApiException tooManyRequests(String message) {
         return new ApiException(ApiResponse.CODE_TOO_MANY_REQUESTS,
                 HttpStatus.TOO_MANY_REQUESTS, message);

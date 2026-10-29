@@ -180,6 +180,10 @@ public class UserController {
             if (!sameTeam(caller, target)) {
                 return ApiResponse.forbidden("只能修改本团队成员");
             }
+            if (params.containsKey("teamId") && !Objects.equals(
+                    normalizeNullableId(getString(params, "teamId")), normalizeNullableId(target.getTeamId()))) {
+                return ApiResponse.forbidden("成员团队调动仅限管理员操作");
+            }
         } else if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权修改用户");
         }
@@ -194,7 +198,7 @@ public class UserController {
             target.setUserName(newName);
         }
 
-        String newPwd = getString(params, "password");
+        String newPwd = getRawString(params, "password");
         if (newPwd != null && !newPwd.isEmpty()) {
             try {
                 passwordPolicy.validate(newPwd);
@@ -256,7 +260,7 @@ public class UserController {
         if (userId == null) userId = getString(params, "id");
         if (userId == null) return ApiResponse.badRequest("userId不能为空");
 
-        String newPassword = getString(params, "newPassword");
+        String newPassword = getRawString(params, "newPassword");
         if (newPassword == null || newPassword.isEmpty()) return ApiResponse.badRequest("新密码不能为空");
         try {
             passwordPolicy.validate(newPassword);
@@ -325,8 +329,13 @@ public class UserController {
     }
 
     private String getString(HashMap<String, Object> params, String key) {
+        String value = getRawString(params, key);
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String getRawString(HashMap<String, Object> params, String key) {
         Object val = params.get(key);
-        return val == null ? null : val.toString().isBlank() ? null : val.toString().trim();
+        return val == null ? null : val.toString();
     }
 
     private boolean exceeds(String value, int maxLength) {

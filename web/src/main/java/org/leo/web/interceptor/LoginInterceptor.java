@@ -21,7 +21,7 @@ import java.util.Map;
 
 /**
  * 登录与权限拦截器，仅作用于 /platform/** API 路径。
- * 路径级别的排除（login/status）由 WebConfig 中的 excludePathPatterns 控制。
+ * 路径级别的排除（login/status/setup）由 WebConfig 中的 excludePathPatterns 控制。
  */
 @Component
 public class LoginInterceptor implements HandlerInterceptor {
@@ -52,7 +52,7 @@ public class LoginInterceptor implements HandlerInterceptor {
 
         String requestPath = request.getRequestURI().substring(request.getContextPath().length());
         if (user.requiresPasswordChange() && !isPasswordChangePath(requestPath)) {
-            HashMap<String, Object> body = ApiResponse.forbidden("首次登录需先修改密码");
+            HashMap<String, Object> body = ApiResponse.forbidden("请先更新密码后继续使用");
             body.put("data", Map.of("passwordChangeRequired", true));
             writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, body);
             return false;

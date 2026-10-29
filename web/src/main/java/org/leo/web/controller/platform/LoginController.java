@@ -8,6 +8,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.PasswordPolicy;
+import org.leo.service.user.SystemInitializationService;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
 import org.leo.web.dto.platform.user.ChangePasswordRequest;
@@ -52,14 +53,17 @@ public class LoginController {
     private final PermissionService permissionService;
     private final LoginAttemptService loginAttemptService;
     private final PasswordPolicy passwordPolicy;
+    private final SystemInitializationService initialization;
 
     public LoginController(UserService userService, TeamService teamService, PermissionService permissionService,
-                           LoginAttemptService loginAttemptService, PasswordPolicy passwordPolicy) {
+                           LoginAttemptService loginAttemptService, PasswordPolicy passwordPolicy,
+                           SystemInitializationService initialization) {
         this.userService = userService;
         this.teamService = teamService;
         this.permissionService = permissionService;
         this.loginAttemptService = loginAttemptService;
         this.passwordPolicy = passwordPolicy;
+        this.initialization = initialization;
     }
 
     /** 用户登录。 */
@@ -67,7 +71,7 @@ public class LoginController {
     public Map<String, Object> login(HttpServletRequest request,
                                      @RequestBody LoginRequest body) {
         String username = requireText(body != null ? body.username() : null, "username不能为空");
-        String password = requireText(body != null ? body.password() : null, "password不能为空");
+        String password = requirePassword(body != null ? body.password() : null, "password不能为空");
         if (username.length() > MAX_USERNAME_LENGTH || password.length() > MAX_PASSWORD_LENGTH) {
             throw ApiException.badRequest("用户名或密码长度超出限制");
         }
@@ -89,7 +93,11 @@ public class LoginController {
         }
 
         User refreshed = userService.recordSuccessfulLogin(user.getUserId());
-        if (refreshed != null) user = refreshed;
+        if (refreshed == null || !Integer.valueOf(1).equals(refreshed.getStatus())
+                || !java.util.Objects.equals(user.getPassword(), refreshed.getPassword())) {
+            throw ApiException.unauthorized("账号凭据已更新，请重新登录");
+        }
+        user = refreshed;
         loginAttemptService.recordSuccess(username, remoteAddress);
 
         HttpSession session = request.getSession(true);
@@ -123,6 +131,9 @@ public class LoginController {
         User user = permissionService.getCurrentUser(request);
         HashMap<String, Object> data = new HashMap<>();
         data.put("isLoggedIn", user != null);
+        data.put("initializationRequired", initialization.isInitializationRequired());
+        data.put("passwordMinLength", passwordPolicy.getMinimumLength());
+        data.put("passwordMaxLength", PasswordPolicy.MAX_LENGTH);
         if (user != null) {
             data.putAll(UserViews.authentication(user));
         }
@@ -182,8 +193,8 @@ public class LoginController {
     public Map<String, Object> changePassword(HttpServletRequest request,
                                               @RequestBody ChangePasswordRequest body) {
         User sessionUser = permissionService.requireLogin(request);
-        String oldPassword = requireText(body != null ? body.oldPassword() : null, "oldPassword不能为空");
-        String newPassword = requireText(body != null ? body.newPassword() : null, "newPassword不能为空");
+        String oldPassword = requirePassword(body != null ? body.oldPassword() : null, "oldPassword不能为空");
+        String newPassword = requirePassword(body != null ? body.newPassword() : null, "newPassword不能为空");
         passwordPolicy.validate(newPassword);
 
         // 与资料更新相同，验证和修改使用独立对象，成功后才替换 Session 用户。
@@ -200,6 +211,7 @@ public class LoginController {
         }
 
         // 更新 Session 中的用户信息
+        request.changeSessionId();
         request.getSession().setAttribute(SESSION_ATTR_USER, user);
         logger.info("密码修改成功，userId: {}", user.getUserId());
         return ApiResponse.success("密码修改成功");
@@ -210,6 +222,14 @@ public class LoginController {
             throw ApiException.badRequest(message);
         }
         return value.trim();
+    }
+
+    /** Password characters are significant; normalization is reserved for identifiers. */
+    private String requirePassword(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw ApiException.badRequest(message);
+        }
+        return value;
     }
 
     private Map<String, Object> profileView(User user) {

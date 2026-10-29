@@ -1,6 +1,9 @@
 package org.leo.web.controller.platform.admin;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.service.user.UserService;
 import org.leo.service.user.PasswordPolicy;
@@ -16,8 +19,75 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.any;
 
 class UserControllerTest {
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"team-2", "missing-team"})
+    void leaderCannotMoveMembersAcrossTeamBoundaries(String newTeam) {
+        UserService service = mock(UserService.class);
+        User target = account("member", "normal", "team-1");
+        when(service.getUserById("member")).thenReturn(target);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", account("leader", "leader", "team-1"));
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("userId", "member");
+        params.put("userName", "changed-name");
+        params.put("teamId", newTeam);
+
+        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request, params);
+
+        assertEquals(403, result.get("code"));
+        assertEquals("team-1", target.getTeamId());
+        assertEquals("member", target.getUserName());
+        verify(service, never()).updateUser(any());
+    }
+
+    @Test
+    void leaderCanEditMembersWithoutChangingTheirTeam() {
+        UserService service = mock(UserService.class);
+        User target = account("member", "normal", "team-1");
+        when(service.getUserById("member")).thenReturn(target);
+        when(service.updateUser(target)).thenReturn(true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", account("leader", "leader", "team-1"));
+        HashMap<String, Object> params = new HashMap<>(Map.of(
+                "userId", "member", "teamId", " team-1 ", "remark", "updated"));
+
+        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request, params);
+
+        assertEquals(200, result.get("code"));
+        assertEquals("team-1", target.getTeamId());
+        assertEquals("updated", target.getRemark());
+    }
+
+    @Test
+    void administratorRetainsTeamTransferAccess() {
+        UserService service = mock(UserService.class);
+        User target = account("member", "normal", "team-1");
+        when(service.getUserById("member")).thenReturn(target);
+        when(service.updateUser(target)).thenReturn(true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", account("manager", "admin", null));
+
+        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request,
+                new HashMap<>(Map.of("userId", "member", "teamId", "team-2")));
+
+        assertEquals(200, result.get("code"));
+        assertEquals("team-2", target.getTeamId());
+    }
+
+    private static User account(String id, String role, String team) {
+        User user = new User();
+        user.setUserId(id);
+        user.setUserName(id);
+        user.setPrivilege(role);
+        user.setTeamId(team);
+        return user;
+    }
 
     @Test
     void unassignedUserListingUsesTheSharedFilterAndRequiresAdmin() {

@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 public class PasswordPolicy {
 
     private static final int DEFAULT_MIN_LENGTH = 8;
-    private static final int ABSOLUTE_MAX_LENGTH = 256;
+    public static final int MAX_LENGTH = 256;
     private final SystemConfigService configService;
 
     public PasswordPolicy(SystemConfigService configService) {
@@ -19,12 +19,16 @@ public class PasswordPolicy {
         if (password == null || password.isBlank()) {
             throw new IllegalArgumentException("密码不能为空");
         }
-        int minLength = configService.getInt("security.password.min.length", DEFAULT_MIN_LENGTH, 6, 64);
+        int minLength = getMinimumLength();
         if (password.length() < minLength) {
             throw new IllegalArgumentException("密码长度不能少于 " + minLength + " 位");
         }
-        if (password.length() > ABSOLUTE_MAX_LENGTH) {
-            throw new IllegalArgumentException("密码长度不能超过 " + ABSOLUTE_MAX_LENGTH + " 位");
+        if (password.length() > MAX_LENGTH) {
+            throw new IllegalArgumentException("密码长度不能超过 " + MAX_LENGTH + " 位");
         }
+    }
+
+    public int getMinimumLength() {
+        return configService.getInt("security.password.min.length", DEFAULT_MIN_LENGTH, 6, 64);
     }
 }

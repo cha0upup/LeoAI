@@ -30,42 +30,22 @@ public class DatabaseInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        rejectLegacyNodeNaming();
         enableWalMode();
         validateSchema();
-        if (needsSeedData()) {
-            log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
-            executeScript("sql/data.sql");
-        }
-    }
-
-    /** 历史数据库不兼容，明确要求重新部署并重建数据库。 */
-    private void rejectLegacyNodeNaming() throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement();
-             ResultSet result = statement.executeQuery(
-                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='puppets'")) {
-            if (result.next()) {
-                throw new IllegalStateException(
-                        "检测到旧节点命名数据库，本版本不兼容历史数据。"
-                                + "请停止旧服务并备份，重新部署到全新的数据库路径或数据目录，以重建数据库。");
-            }
-        }
+        executeScript("sql/data.sql");
     }
 
     private void executeScript(String resource) throws SQLException {
         try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource(resource));
-        }
-    }
-
-    private boolean needsSeedData() {
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement();
-             ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM users")) {
-            return !result.next() || result.getLong(1) == 0;
-        } catch (SQLException error) {
-            throw new IllegalStateException("检查数据库初始化状态失败", error);
+            connection.setAutoCommit(false);
+            try {
+                ScriptUtils.executeSqlScript(connection, new ClassPathResource(resource));
+                connection.commit();
+            } catch (SQLException | RuntimeException error) {
+                try { connection.rollback(); }
+                catch (SQLException rollback) { error.addSuppressed(rollback); }
+                throw error;
+            }
         }
     }
 
