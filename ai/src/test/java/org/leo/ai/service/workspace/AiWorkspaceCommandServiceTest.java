@@ -5,7 +5,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.ai.config.AiWorkspaceProperties;
+import org.leo.ai.agent.AiToolContext;
 import org.leo.core.config.LeoConfig;
+import org.leo.core.entity.AiExecutionPolicy;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
@@ -36,11 +38,13 @@ class AiWorkspaceCommandServiceTest {
         workspaceService = new AiWorkspaceService(new AiWorkspaceProperties());
         commandService = new AiWorkspaceCommandService(workspaceService);
         workspace = workspaceService.open("user1", "0123456789abcdef0123456789abcdef");
+        AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user1", "admin", "admin"));
     }
 
     @AfterEach
     void tearDown() {
         commandService.shutdown();
+        AiToolContext.clear();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
     }
 
@@ -67,6 +71,28 @@ class AiWorkspaceCommandServiceTest {
                         && "CREATED".equals(change.get("change"))));
         assertTrue(Files.isRegularFile(workspace.filesRoot()
                 .resolve(String.valueOf(completed.get("logPath")))));
+    }
+
+    @Test
+    void rejectsOrdinaryUsersBeforeStartingLocalProcesses() {
+        AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user1", "user1", "normal"));
+
+        assertThrows(SecurityException.class, () -> commandService.start(workspace, "echo denied", 10));
+        assertEquals(0, workspaceService.list(workspace, ".", 1, 10).get("returned"));
+    }
+
+    @Test
+    void rejectsCommandsWithoutAnExecutionIdentity() {
+        AiToolContext.clear();
+
+        assertThrows(SecurityException.class, () -> commandService.start(workspace, "echo denied", 10));
+    }
+
+    @Test
+    void rejectsAdministratorsUsingAnotherUsersWorkspace() {
+        AiToolContext.setExecutionPolicy(new AiExecutionPolicy("other-admin", "admin", "admin"));
+
+        assertThrows(SecurityException.class, () -> commandService.start(workspace, "echo denied", 10));
     }
 
     @Test

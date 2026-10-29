@@ -11,14 +11,14 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class DisguiseManager {
 
     private static final Logger logger = LoggerFactory.getLogger(DisguiseManager.class);
     private static final DisguiseManager INSTANCE = new DisguiseManager();
-    private final Map<String, Disguise> disguises = new HashMap<>();
+    private final Map<String, Disguise> disguises = new ConcurrentHashMap<>();
 
     public static DisguiseManager getInstance() {
         return INSTANCE;
@@ -29,7 +29,7 @@ public class DisguiseManager {
     /**
      * 初始化并加载指定目录下的disguise插件
      */
-    public void init(String disguisePath, String pluginEncryptKey) {
+    public synchronized void init(String disguisePath, String pluginEncryptKey) {
         if (disguisePath == null || disguisePath.isBlank()) {
             logger.warn("disguise路径为空，跳过disguise加载");
             return;
@@ -38,8 +38,10 @@ public class DisguiseManager {
         File disguiseDir = new File(disguisePath);
 
         // 创建目录（如果不存在）
-        if (!disguiseDir.exists() && !disguiseDir.mkdirs()) {
-            logger.warn("disguise目录创建失败: {}", disguisePath);
+        try {
+            Files.createDirectories(disguiseDir.toPath());
+        } catch (java.io.IOException error) {
+            logger.warn("disguise目录创建失败: {}", disguisePath, error);
             return;
         }
 
@@ -97,22 +99,36 @@ public class DisguiseManager {
      */
     public boolean installDisguise(Disguise disguise) {
         try {
-            DisguiseProtocol.requireCurrent(disguise);
-            disguise.init();
-            disguises.put(disguise.getDisguiseId(), disguise);
+            installDisguise(disguise, () -> { });
             return true;
         } catch (Exception e) {
-            logger.error("安装disguise失败: {}", disguise.getDisguiseId(), e);
+            logger.error("安装disguise失败: {}", disguise == null ? null : disguise.getDisguiseId(), e);
             return false;
         }
     }
 
-    public Disguise getDisguiseById(String disguiseId) {
-        return disguises.get(disguiseId);
+    @FunctionalInterface
+    public interface Persistence {
+        void save() throws Exception;
     }
 
-    public void unload(String disguiseId) {
-        disguises.remove(disguiseId);
+    /** Prepare privately, persist, then publish. A failed step leaves the installed instance intact. */
+    public synchronized void installDisguise(Disguise disguise, Persistence persistence) throws Exception {
+        if (disguise == null || disguise.getDisguiseId() == null || disguise.getDisguiseId().isBlank()) {
+            throw new IllegalArgumentException("disguiseId 为空");
+        }
+        DisguiseProtocol.requireCurrent(disguise);
+        disguise.init();
+        persistence.save();
+        disguises.put(disguise.getDisguiseId(), disguise);
+    }
+
+    public Disguise getDisguiseById(String disguiseId) {
+        return disguiseId == null ? null : disguises.get(disguiseId);
+    }
+
+    public synchronized void unload(String disguiseId) {
+        if (disguiseId != null) disguises.remove(disguiseId);
     }
 
     public ArrayList<Disguise> getDisguises() {

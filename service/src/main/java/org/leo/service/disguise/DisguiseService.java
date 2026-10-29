@@ -6,6 +6,8 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.User;
 import org.leo.core.manager.DisguiseManager;
+import org.leo.core.repository.session.AtomicFileStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
@@ -16,9 +18,12 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -26,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -37,10 +43,19 @@ public class DisguiseService {
     private static final String FILE_SUFFIX = ".disguise";
 
     private final DisguiseManager disguiseManager;
+    private final AtomicFileStore fileStore;
     private final List<DisguiseRuntimeValidator> runtimeValidators;
 
     public DisguiseService(DisguiseManager disguiseManager,
                            List<DisguiseRuntimeValidator> runtimeValidators) {
+        this(disguiseManager, runtimeValidators, new AtomicFileStore());
+    }
+
+    @Autowired
+    public DisguiseService(DisguiseManager disguiseManager,
+                           List<DisguiseRuntimeValidator> runtimeValidators,
+                           AtomicFileStore fileStore) {
+        this.fileStore = fileStore;
         this.disguiseManager = disguiseManager;
         this.runtimeValidators = runtimeValidators == null ? List.of() : List.copyOf(runtimeValidators);
     }
@@ -50,7 +65,7 @@ public class DisguiseService {
         addDisguise(params, user.getUserId());
     }
 
-    public void addDisguise(HashMap<String, Object> params, String userId) throws Exception {
+    public synchronized void addDisguise(HashMap<String, Object> params, String userId) throws Exception {
         requireNonBlank(userId, "用户未登录");
         String disguiseName = requireString(params, "disguiseName");
         String trafficEncodeBody = requireString(params, "trafficEncodeBody");
@@ -89,7 +104,7 @@ public class DisguiseService {
         updateDisguise(params);
     }
 
-    public void updateDisguise(HashMap<String, Object> params) throws Exception {
+    public synchronized void updateDisguise(HashMap<String, Object> params) throws Exception {
         String disguiseId = requireString(params, "disguiseId");
         Disguise existingDisguise = getDisguiseById(disguiseId);
         Disguise disguise = (Disguise) JsonUtil.fromJsonString(existingDisguise.toString(), Disguise.class);
@@ -129,7 +144,7 @@ public class DisguiseService {
         deleteDisguise(disguiseId);
     }
 
-    public void deleteDisguise(String disguiseId) {
+    public synchronized void deleteDisguise(String disguiseId) {
         getDisguiseById(disguiseId);
 
         File disguiseFile = resolveDisguiseFile(disguiseId);
@@ -181,9 +196,8 @@ public class DisguiseService {
             throw new IllegalArgumentException("disguise不存在: " + disguiseId);
         }
         File file = resolveDisguiseFile(disguiseId);
-        if (file.exists()) {
-            return Files.readAllBytes(file.toPath());
-        }
+        String stored = fileStore.readText(file);
+        if (stored != null) return stored.getBytes(StandardCharsets.UTF_8);
         // 内置伪装没有 VFS 文件，实时序列化+加密
         String encrypted = AesUtil.encrypt(disguise.toString(), LeoConfig.getPluginEncryptKey());
         return encrypted.getBytes(StandardCharsets.UTF_8);
@@ -197,15 +211,11 @@ public class DisguiseService {
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
             for (String disguiseId : disguiseIds) {
                 if (isBlank(disguiseId)) continue;
-                try {
-                    byte[] data = exportDisguise(disguiseId);
-                    String entryName = getSafeFileName(disguiseId) + FILE_SUFFIX;
-                    zos.putNextEntry(new ZipEntry(entryName));
-                    zos.write(data);
-                    zos.closeEntry();
-                } catch (Exception e) {
-                    // 跳过单条失败，不中断整体
-                }
+                byte[] data = exportDisguise(disguiseId);
+                String entryName = getSafeFileName(disguiseId) + FILE_SUFFIX;
+                zos.putNextEntry(new ZipEntry(entryName));
+                zos.write(data);
+                zos.closeEntry();
             }
         }
         return baos.toByteArray();
@@ -240,7 +250,7 @@ public class DisguiseService {
     /**
      * 导入 .disguise 或 .zip 文件，按冲突策略处理，返回逐条结果。
      */
-    public List<ImportResult> importDisguises(MultipartFile file, ConflictPolicy policy, User user) throws Exception {
+    public synchronized List<ImportResult> importDisguises(MultipartFile file, ConflictPolicy policy, User user) throws Exception {
         ensureLoggedIn(user);
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("文件不能为空");
         String fname = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
@@ -292,24 +302,23 @@ public class DisguiseService {
 
         // 保留原始 disguiseId，按冲突策略处理
         String disguiseId = disguise.getDisguiseId();
-        boolean exists = disguiseManager.getDisguiseById(disguiseId) != null;
+        boolean exists;
+        try {
+            exists = disguiseExists(disguiseId);
+        } catch (IOException error) {
+            return new ImportResult(disguiseId, disguise.getDisguiseName(), "failed", "检查已有伪装文件失败");
+        }
 
         if (exists) {
             switch (policy) {
                 case SKIP:
                     return new ImportResult(disguiseId, disguise.getDisguiseName(), "skipped", "已存在，已跳过");
                 case RENAME:
-                    disguiseId = disguiseId + "_import_" + System.currentTimeMillis();
+                    disguiseId = disguiseId + "_import_" + UUID.randomUUID();
                     disguise.setDisguiseId(disguiseId);
                     exists = false;
                     break;
                 case OVERWRITE:
-                    // 先卸载旧的
-                    try {
-                        File oldFile = resolveDisguiseFile(disguise.getDisguiseId());
-                        if (oldFile.exists()) oldFile.delete();
-                        disguiseManager.unload(disguise.getDisguiseId());
-                    } catch (Exception ignored) {}
                     exists = true;
                     break;
             }
@@ -328,33 +337,15 @@ public class DisguiseService {
     }
 
     private void installAndPersist(Disguise disguise) throws Exception {
-        boolean installed = disguiseManager.installDisguise(disguise);
-        if (!installed) {
-            throw new IllegalStateException("安装disguise失败: " + disguise.getDisguiseId());
-        }
-
-        try {
-            saveDisguise(disguise);
-        } catch (Exception e) {
-            disguiseManager.unload(disguise.getDisguiseId());
-            throw e;
-        }
+        disguiseManager.installDisguise(disguise, () -> saveDisguise(disguise));
     }
 
     private void saveDisguise(Disguise disguise) throws Exception {
         if (disguise == null || isBlank(disguise.getDisguiseId())) {
             throw new IllegalArgumentException("disguise或disguiseId不能为空");
         }
-        File disguiseDir = resolveDisguiseDir();
-        if (!disguiseDir.exists() && !disguiseDir.mkdirs()) {
-            throw new IllegalStateException("创建disguise目录失败: " + disguiseDir.getAbsolutePath());
-        }
-        File disguiseFile = new File(disguiseDir, getSafeFileName(disguise.getDisguiseId()) + FILE_SUFFIX);
-        try (FileOutputStream fileOutputStream = new FileOutputStream(disguiseFile)) {
-            String encrypted = AesUtil.encrypt(disguise.toString(), LeoConfig.getPluginEncryptKey());
-            fileOutputStream.write(encrypted.getBytes(StandardCharsets.UTF_8));
-            fileOutputStream.flush();
-        }
+        String encrypted = AesUtil.encrypt(disguise.toString(), LeoConfig.getPluginEncryptKey());
+        fileStore.writeText(resolveDisguiseFile(disguise.getDisguiseId()), encrypted);
     }
 
     private File resolveDisguiseDir() {
@@ -366,8 +357,18 @@ public class DisguiseService {
         return new File(resolveDisguiseDir(), getSafeFileName(disguiseId) + FILE_SUFFIX);
     }
 
-    private void ensureDisguiseIdNotExists(String disguiseId) {
-        if (disguiseManager.getDisguiseById(disguiseId) != null) {
+    private boolean disguiseExists(String disguiseId) throws IOException {
+        if (disguiseManager.getDisguiseById(disguiseId) != null) return true;
+        try {
+            Files.readAttributes(resolveDisguiseFile(disguiseId).toPath(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return true;
+        } catch (NoSuchFileException missing) {
+            return false;
+        }
+    }
+
+    private void ensureDisguiseIdNotExists(String disguiseId) throws IOException {
+        if (disguiseExists(disguiseId)) {
             throw new IllegalArgumentException("disguiseId已存在: " + disguiseId);
         }
     }

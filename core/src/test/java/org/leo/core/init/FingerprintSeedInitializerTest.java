@@ -2,7 +2,6 @@ package org.leo.core.init;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.config.LeoConfig;
 import org.leo.core.repository.session.AtomicFileStore;
 
 import java.nio.file.Files;
@@ -11,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.*;
 
 class FingerprintSeedInitializerTest {
     @TempDir Path directory;
@@ -34,9 +33,10 @@ class FingerprintSeedInitializerTest {
         Path broken = fingerprints.resolve("broken.json");
         Files.writeString(broken, "not json");
 
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            FingerprintSeedInitializer initializer = new FingerprintSeedInitializer();
+        {
+            VFSInitializer vfs = mock(VFSInitializer.class);
+            when(vfs.getRoot()).thenReturn(directory);
+            FingerprintSeedInitializer initializer = new FingerprintSeedInitializer(vfs, new SeedResourceStore());
             initializer.run();
             for (String id : List.of("nacos_any", "custom_any")) {
                 Map<String, Object> stored = store.readJsonMap(fingerprints.resolve(id + ".json").toFile());
@@ -51,6 +51,19 @@ class FingerprintSeedInitializerTest {
             assertEquals(first, Files.readString(fingerprints.resolve("nacos_any.json")));
             assertEquals("not json", Files.readString(broken));
             assertTrue(Files.exists(fingerprints.resolve("shiro_1_x.json")));
+            Map<String, Object> geoserver = store.readJsonMap(fingerprints.resolve("geoserver_any.json").toFile());
+            assertEquals("geoserver_any", geoserver.get("fingerprintId"));
+            assertEquals("geoserver", geoserver.get("name"));
+            assertEquals("http", geoserver.get("protocol"));
         }
+    }
+
+    @Test
+    void seedWriteFailureIsFatalRatherThanReportedAsSuccessfulStartup() throws Exception {
+        var vfs = mock(VFSInitializer.class);
+        when(vfs.getRoot()).thenReturn(directory);
+        var store = mock(SeedResourceStore.class);
+        when(store.sync(any(), anyString(), any(), eq(false))).thenThrow(new java.io.IOException("fixture"));
+        assertThrows(java.io.IOException.class, () -> new FingerprintSeedInitializer(vfs, store).run());
     }
 }

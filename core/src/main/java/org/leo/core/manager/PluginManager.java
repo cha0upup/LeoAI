@@ -32,8 +32,10 @@ public class PluginManager {
             return;
         }
         File directory = new File(path);
-        if (!directory.exists() && !directory.mkdirs()) {
-            logger.warn("插件目录创建失败: {}", path);
+        try {
+            Files.createDirectories(directory.toPath());
+        } catch (java.io.IOException error) {
+            logger.warn("插件目录创建失败: {}", path, error);
             return;
         }
         File[] files = directory.listFiles(File::isFile);

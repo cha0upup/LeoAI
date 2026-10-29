@@ -3,6 +3,11 @@ package org.leo.service.fingerprint;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
 import org.leo.core.fingerprint.FingerprintMetadata;
+import org.leo.core.repository.session.AtomicFileStore;
+import org.leo.core.repository.session.FileStoreException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
@@ -11,8 +16,13 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -29,19 +39,30 @@ public class FingerprintManageService {
     private static final String DEFAULT_VERSION = "1.0";
     private static final String SAFE_ID_REGEX = "[^A-Za-z0-9_\\-]";
 
+    private static final Logger logger = LoggerFactory.getLogger(FingerprintManageService.class);
+    private final AtomicFileStore fileStore;
+
+    public FingerprintManageService() {
+        this(new AtomicFileStore());
+    }
+
+    @Autowired
+    public FingerprintManageService(AtomicFileStore fileStore) {
+        this.fileStore = fileStore;
+    }
+
     public List<Map<String, Object>> listFingerprints() {
         File fingerprintDir = resolveFingerprintDir();
-        if (!fingerprintDir.exists() || !fingerprintDir.isDirectory()) {
-            return new ArrayList<>();
-        }
-        File[] files = fingerprintDir.listFiles((dir, name) -> name != null && name.endsWith(FINGERPRINT_FILE_SUFFIX));
         ArrayList<Map<String, Object>> list = new ArrayList<>();
-        if (files == null) {
+        try (var files = Files.list(fingerprintDir.toPath())) {
+            for (var path : files.filter(path -> path.getFileName().toString().endsWith(FINGERPRINT_FILE_SUFFIX)).toList()) {
+                Map<String, Object> summary = toFingerprintSummary(path.toFile());
+                if (isHttpFingerprint(summary)) list.add(summary);
+            }
+        } catch (NoSuchFileException missing) {
             return list;
-        }
-        for (File file : files) {
-            Map<String, Object> summary = toFingerprintSummary(file);
-            if (isHttpFingerprint(summary)) list.add(summary);
+        } catch (IOException error) {
+            throw new FileStoreException(FileStoreException.Reason.READ_FAILED, fingerprintDir.toPath(), error);
         }
         return list;
     }
@@ -58,7 +79,7 @@ public class FingerprintManageService {
         return content;
     }
 
-    public HashMap<String, Object> saveFingerprint(HashMap<String, Object> params, User user) throws Exception {
+    public synchronized HashMap<String, Object> saveFingerprint(HashMap<String, Object> params, User user) throws Exception {
         ensureLoggedIn(user);
         String name = requireString(params, "name");
         Object protocol = params.get("protocol");
@@ -77,7 +98,7 @@ public class FingerprintManageService {
         return saveFingerprintContent(name, rule, params.get("info"), params.get("tags"), version);
     }
 
-    public void deleteFingerprint(User user, String fingerprintId) {
+    public synchronized void deleteFingerprint(User user, String fingerprintId) {
         ensureLoggedIn(user);
         String normalizedFingerprintId = requireNonBlank(fingerprintId, "fingerprintId 不能为空");
         File fingerprintFile = resolveFingerprintFile(normalizedFingerprintId);
@@ -123,11 +144,7 @@ public class FingerprintManageService {
         content.put("info", info);
 
         File fingerprintDir = resolveFingerprintDir();
-        if (!fingerprintDir.exists() && !fingerprintDir.mkdirs()) {
-            throw new IllegalStateException("创建指纹目录失败: " + fingerprintDir.getAbsolutePath());
-        }
-        Files.write(new File(fingerprintDir, safeName + FINGERPRINT_FILE_SUFFIX).toPath(),
-                JsonUtil.toJsonString(content).getBytes(StandardCharsets.UTF_8));
+        fileStore.writeJson(new File(fingerprintDir, safeName + FINGERPRINT_FILE_SUFFIX), content);
 
         HashMap<String, Object> data = new HashMap<>();
         data.put("fingerprintId", fingerprintId);
@@ -246,7 +263,8 @@ public class FingerprintManageService {
                 }
                 return item;
             }
-        } catch (Exception ignored) {
+        } catch (IllegalArgumentException invalid) {
+            logger.warn("跳过旧格式或无效指纹 {}: {}", fileId, invalid.getMessage());
         }
         item.put("fingerprintId", fileId);
         return item;
@@ -256,16 +274,10 @@ public class FingerprintManageService {
         return fingerprint != null && "http".equalsIgnoreCase(String.valueOf(fingerprint.get("protocol")));
     }
 
-    private HashMap<String, Object> loadFingerprintFile(String safeFileName) throws Exception {
+    private HashMap<String, Object> loadFingerprintFile(String safeFileName) {
         File fingerprintFile = new File(resolveFingerprintDir(), safeFileName + FINGERPRINT_FILE_SUFFIX);
-        if (!fingerprintFile.exists() || !fingerprintFile.isFile()) {
-            return null;
-        }
-        String json = new String(Files.readAllBytes(fingerprintFile.toPath()), StandardCharsets.UTF_8);
-        Object parsed = JsonUtil.fromJsonString(json, Object.class);
-        if (!(parsed instanceof Map<?, ?> parsedMap)) {
-            throw new IllegalArgumentException("指纹文件格式无效: " + safeFileName);
-        }
+        Map<String, Object> parsedMap = fileStore.readJsonMap(fingerprintFile);
+        if (parsedMap == null) return null;
         HashMap<String, Object> content = new HashMap<>(FingerprintMetadata.normalize(parsedMap));
         if (content.get("fingerprintId") == null || isBlank(String.valueOf(content.get("fingerprintId")))
                 || isBlank(extractVersion(content))) {
@@ -400,37 +412,29 @@ public class FingerprintManageService {
      *   <li>.zip（内含若干 .json，格式同上）</li>
      * </ul>
      */
-    public List<ImportResult> importFingerprints(MultipartFile file,
+    public synchronized List<ImportResult> importFingerprints(MultipartFile file,
                                                   ConflictPolicy policy,
                                                   User user) throws Exception {
         ensureLoggedIn(user);
         String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
         List<Map<String, Object>> records;
+        List<ImportResult> results = new ArrayList<>();
 
         if (filename.endsWith(".zip")) {
-            records = parseZip(file.getInputStream());
+            records = parseZip(file.getInputStream(), results);
         } else if (filename.endsWith(".json")) {
             records = parseJson(file.getBytes());
         } else {
             throw new IllegalArgumentException("仅支持 .json 或 .zip 文件");
         }
 
-        // 获取现有 ID 集合用于冲突检测
-        java.util.Set<String> existingIds = new java.util.HashSet<>();
-        for (Map<String, Object> item : listFingerprints()) {
-            Object id = item.get("fingerprintId");
-            if (id != null) existingIds.add(String.valueOf(id));
-        }
-
-        List<ImportResult> results = new ArrayList<>();
         for (Map<String, Object> rec : records) {
-            results.add(importOneRecord(rec, existingIds, policy));
+            results.add(importOneRecord(rec, policy));
         }
         return results;
     }
 
     private ImportResult importOneRecord(Map<String, Object> rec,
-                                          java.util.Set<String> existingIds,
                                           ConflictPolicy policy) {
         // 基本校验
         String name = rec.get("name") != null ? String.valueOf(rec.get("name")).trim() : null;
@@ -449,23 +453,22 @@ public class FingerprintManageService {
         }
 
         String fingerprintId = generateFingerprintId(name, version);
-        boolean conflict = existingIds.contains(fingerprintId);
-
-        if (conflict) {
-            switch (policy) {
-                case SKIP:
-                    return new ImportResult(name, fingerprintId, "skipped", "已存在，跳过");
-                case RENAME:
-                    version = version + "_imported_" + System.currentTimeMillis();
-                    fingerprintId = generateFingerprintId(name, version);
-                    // saveFingerprintContent 会把新版本写入 info，无需修改导入记录。
-                    break;
-                case OVERWRITE:
-                    break; // 直接覆盖
-            }
-        }
-
         try {
+            boolean conflict = fingerprintExists(fingerprintId);
+            if (conflict) {
+                switch (policy) {
+                    case SKIP:
+                        return new ImportResult(name, fingerprintId, "skipped", "已存在，跳过");
+                    case RENAME:
+                        do {
+                            version = extractVersion(rec) + "_imported_" + UUID.randomUUID();
+                            fingerprintId = generateFingerprintId(name, version);
+                        } while (fingerprintExists(fingerprintId));
+                        break;
+                    case OVERWRITE:
+                        break;
+                }
+            }
             saveFingerprintContent(
                     name,
                     rec.get("rule"),
@@ -473,7 +476,6 @@ public class FingerprintManageService {
                     rec.get("tags"),
                     version
             );
-            existingIds.add(fingerprintId);
             String status = conflict
                     ? (policy == ConflictPolicy.OVERWRITE ? "overwritten" : "renamed")
                     : "imported";
@@ -483,14 +485,30 @@ public class FingerprintManageService {
         }
     }
 
+    private boolean fingerprintExists(String fingerprintId) throws IOException {
+        try {
+            Files.readAttributes(resolveFingerprintFile(fingerprintId).toPath(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return true;
+        } catch (NoSuchFileException missing) {
+            return false;
+        }
+    }
+
     private List<Map<String, Object>> parseJson(byte[] bytes) throws Exception {
-        String text = new String(bytes, StandardCharsets.UTF_8).trim();
+        String text;
+        try {
+            text = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString().trim();
+        } catch (java.nio.charset.CharacterCodingException error) {
+            throw new IllegalArgumentException("JSON 文件的 UTF-8 内容无效", error);
+        }
         Object parsed = JsonUtil.fromJsonString(text, Object.class);
         if (parsed instanceof List<?> list) {
             List<Map<String, Object>> result = new ArrayList<>();
             for (Object item : list) {
                 if (item instanceof Map<?, ?> m) {
                     result.add(copyStringKeyMap(m));
+                } else {
+                    throw new IllegalArgumentException("指纹数组中的条目应为对象");
                 }
             }
             return result;
@@ -508,7 +526,7 @@ public class FingerprintManageService {
         return copy;
     }
 
-    private List<Map<String, Object>> parseZip(InputStream inputStream) throws Exception {
+    private List<Map<String, Object>> parseZip(InputStream inputStream, List<ImportResult> failures) throws Exception {
         List<Map<String, Object>> records = new ArrayList<>();
         SafeZipReader.forEach(
                 inputStream,
@@ -517,8 +535,8 @@ public class FingerprintManageService {
                 (name, bytes) -> {
                     try {
                         records.addAll(parseJson(bytes));
-                    } catch (Exception ignored) {
-                        // 单个文件解析失败不中断整体
+                    } catch (Exception error) {
+                        failures.add(new ImportResult(name, null, "failed", "JSON 解析失败"));
                     }
                 }
         );

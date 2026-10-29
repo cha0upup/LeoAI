@@ -1,6 +1,7 @@
 package org.leo.ai.service.workspace;
 
 import jakarta.annotation.PreDestroy;
+import org.leo.ai.agent.AiToolContext;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -20,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,6 +52,10 @@ public class AiWorkspaceCommandService {
 
     public Map<String, Object> start(AiWorkspaceService.Workspace workspace,
                                      String command, Integer timeoutSeconds) {
+        var policy = AiToolContext.requireExecutionPolicy();
+        if (!policy.isAdmin() || !Objects.equals(policy.getUserId(), workspace.userId())) {
+            throw new SecurityException("本地命令仅限管理员在本人工作空间中执行");
+        }
         String safeCommand = requireCommand(command);
         int safeTimeout = timeoutSeconds == null
                 ? DEFAULT_TIMEOUT_SECONDS

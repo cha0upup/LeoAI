@@ -116,10 +116,6 @@ public class SkillRegistryService {
         return content;
     }
 
-    public boolean isSkillEnabled(String scope, String name) {
-        return getEnabledSkillContent(scope, name) != null;
-    }
-
     public void invalidate() {
         metaCache.clear();
         inspectionCache.clear();

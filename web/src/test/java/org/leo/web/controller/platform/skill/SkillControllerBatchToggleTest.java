@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -42,8 +44,8 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertEquals(1, data.get("changed"));
         assertEquals(0, data.get("unchanged"));
         assertEquals(2, data.get("failed"));
-        assertTrue(registry.isSkillEnabled("agent-node", "published-skill"));
-        assertFalse(registry.isSkillEnabled("agent-node", "draft-skill"));
+        assertNotNull(registry.getEnabledSkillContent("agent-node", "published-skill"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "draft-skill"));
     }
 
     @Test
@@ -175,7 +177,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         }
         assertEquals(400, controller.toggleBatch(new HashMap<>(Map.of(
                 "scope", "unknown", "names", List.of("keep-disabled"), "enabled", true))).get("code"));
-        assertFalse(registry.isSkillEnabled("agent-node", "keep-disabled"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "keep-disabled"));
         verify(registry, never()).invalidate();
     }
 

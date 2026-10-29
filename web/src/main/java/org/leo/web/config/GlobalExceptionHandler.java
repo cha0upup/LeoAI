@@ -2,12 +2,15 @@ package org.leo.web.config;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.util.ApiResponse;
+import org.leo.core.repository.session.FileStoreException;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotWritableException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -31,7 +34,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<HashMap<String, Object>> handleApiException(ApiException e) {
-        if (e.getHttpStatus().is5xxServerError()) {
+        if (e.getHttpStatus().is5xxServerError() && e.getHttpStatus() != HttpStatus.SERVICE_UNAVAILABLE) {
             logger.error("API业务异常: {}", e.getMessage(), e);
         } else {
             logger.warn("API业务异常: {}", e.getMessage());
@@ -49,6 +52,27 @@ public class GlobalExceptionHandler {
         logger.warn("请求参数错误: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.badRequest(e.getMessage()));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<HashMap<String, Object>> handleInvalidJson(HttpMessageNotReadableException error) {
+        return ResponseEntity.badRequest().body(ApiResponse.badRequest("请求 JSON 格式不正确"));
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<HashMap<String, Object>> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException error) {
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(ApiResponse.error(415, "请使用 application/json 提交请求"));
+    }
+
+    @ExceptionHandler(FileStoreException.class)
+    public ResponseEntity<HashMap<String, Object>> handleFileStore(FileStoreException error) {
+        String traceId = UUID.randomUUID().toString();
+        logger.error("存储读取异常 traceId={}, reason={}, path={}", traceId, error.getReason(), error.getPath(), error);
+        HashMap<String, Object> body = ApiResponse.error(error.getMessage());
+        body.put("traceId", traceId);
+        body.put("storageError", error.getReason().name());
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
     /** Missing static files are normal 404s, including stale hashed chunks requested by old tabs. */

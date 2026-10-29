@@ -21,7 +21,6 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
 
@@ -30,11 +29,14 @@ import java.util.regex.Pattern;
 public class AiWorkspaceService {
 
     private static final String TASKS_DIR = "ai-tasks";
+    private static final int LOCK_STRIPES = 256;
     private final AiWorkspaceProperties properties;
-    private final ConcurrentHashMap<String, ReentrantReadWriteLock> locks = new ConcurrentHashMap<>();
+    // Fixed stripes stay valid for every Workspace handle, including queued commands.
+    private final ReentrantReadWriteLock[] locks = new ReentrantReadWriteLock[LOCK_STRIPES];
 
     public AiWorkspaceService(AiWorkspaceProperties properties) {
         this.properties = properties;
+        for (int index = 0; index < locks.length; index++) locks[index] = new ReentrantReadWriteLock();
     }
 
     public Workspace workspaceFromContext() {
@@ -67,9 +69,9 @@ public class AiWorkspaceService {
         } catch (IOException e) {
             throw new IllegalStateException("无法初始化 AI 工作空间", e);
         }
-        return new Workspace(userId, workspaceId, userRoot, base, files, internal,
-                locks.computeIfAbsent(userId + ":" + workspaceId,
-                        ignored -> new ReentrantReadWriteLock()));
+        int hash = (userId + ":" + workspaceId).hashCode();
+        ReentrantReadWriteLock lock = locks[(hash ^ (hash >>> 16)) & (LOCK_STRIPES - 1)];
+        return new Workspace(userId, workspaceId, userRoot, base, files, internal, lock);
     }
 
     public Map<String, Object> list(Workspace workspace, String relativePath,

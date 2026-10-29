@@ -131,7 +131,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         assertEquals("imported", result(response, "alpha").get("status"));
         assertEquals("failed", result(response, "broken").get("status"));
         assertFalse(Files.exists(skillDir("broken")));
-        assertFalse(registry.isSkillEnabled("agent-node", "alpha"));
+        assertNull(registry.getEnabledSkillContent("agent-node", "alpha"));
     }
 
     @Test

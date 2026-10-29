@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -42,8 +43,6 @@ class SkillRegistryServiceTest {
         writeSkill("agent-node", "enabled-skill", true, "enabled body");
         writeSkill("agent-node", "disabled-skill", false, "disabled body");
 
-        assertTrue(registry.isSkillEnabled("agent-node", "enabled-skill"));
-        assertFalse(registry.isSkillEnabled("agent-node", "disabled-skill"));
         assertEquals("enabled body\n", SkillRegistryService.stripFrontmatter(
                 registry.getEnabledSkillContent("agent-node", "enabled-skill")));
         assertNull(registry.getEnabledSkillContent("agent-node", "disabled-skill"));
@@ -98,11 +97,10 @@ class SkillRegistryServiceTest {
     @Test
     void activationReadsCurrentEnabledFlagWithoutWaitingForMetadataCache() throws Exception {
         writeSkill("agent-node", "mutable-skill", true, "first body");
-        assertTrue(registry.isSkillEnabled("agent-node", "mutable-skill"));
+        assertNotNull(registry.getEnabledSkillContent("agent-node", "mutable-skill"));
 
         writeSkill("agent-node", "mutable-skill", false, "second body");
 
-        assertFalse(registry.isSkillEnabled("agent-node", "mutable-skill"));
         assertNull(registry.getEnabledSkillContent("agent-node", "mutable-skill"));
     }
 
@@ -121,7 +119,6 @@ class SkillRegistryServiceTest {
         Files.writeString(skillDir.resolve("manifest.yaml"), manifest(
                 "mismatched-skill", "agent-node", true));
 
-        assertFalse(registry.isSkillEnabled("agent-node", "mismatched-skill"));
         assertNull(registry.getEnabledSkillContent("agent-node", "mismatched-skill"));
     }
 

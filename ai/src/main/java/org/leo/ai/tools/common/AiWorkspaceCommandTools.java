@@ -3,6 +3,7 @@ package org.leo.ai.tools.common;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolKind;
+import org.leo.ai.agent.AiToolAccess;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.service.workspace.AiWorkspaceCommandService;
@@ -13,6 +14,7 @@ import java.util.Map;
 
 /** 当前 Agent 任务工作空间中的直接命令执行工具。 */
 @Component
+@AiToolAccess(AiToolAccess.Level.ADMIN)
 public class AiWorkspaceCommandTools {
 
     private final AiWorkspaceService workspaceService;

@@ -4,6 +4,7 @@ package org.leo.core.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import jakarta.annotation.PostConstruct;
+import java.nio.file.Path;
 
 
 @Component
@@ -13,8 +14,8 @@ public class LeoConfig {
     public static final String DEFAULT_PLUGIN_ENCRYPT_KEY = "ikunikunikunikun";
 
     // 静态全局变量
-    private static String VFS_PATH;
-    private static String PLUGIN_ENCRYPT_KEY;
+    private static volatile String VFS_PATH;
+    private static volatile String PLUGIN_ENCRYPT_KEY;
 
     // 注入非静态变量
     @Value("${VfsPath:" + DEFAULT_VFS_PATH + "}")
@@ -26,6 +27,8 @@ public class LeoConfig {
     // 初始化静态变量
     @PostConstruct
     public void init() {
+        vfsPath = Path.of(vfsPath == null || vfsPath.isBlank() ? DEFAULT_VFS_PATH : vfsPath)
+                .toAbsolutePath().normalize().toString();
         VFS_PATH = this.vfsPath;
         PLUGIN_ENCRYPT_KEY = this.pluginEncryptKey;
     }
