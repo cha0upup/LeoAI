@@ -24,9 +24,7 @@ import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.agent.capability.UserAccountCapable;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.core.agent.database.SqlCommand;
-import org.leo.core.rpc.AgentRpcEnvelopeMapper;
 import org.leo.core.rpc.AgentOperation;
-import org.leo.core.rpc.AgentRpcRequest;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 import org.leo.phpcore.component.PhpComponentVariantBuilder;
 import org.leo.phpcore.rpc.PhpRpcClient;
@@ -65,10 +63,10 @@ class PhpAgentNodeTest {
         String alias = new PhpComponentVariantBuilder().alias("BasicInfoComponent", host);
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
-            if (decoded.request().operation() == AgentOperation.PING) {
+            if (decoded.operation() == AgentOperation.PING) {
                 return response(decoded, Map.of("code", 200, "hostId", host, "components", List.of(alias)));
             }
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(decoded.execution());
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(decoded.execution());
             return response(decoded, Map.of("code", 200));
         };
         PhpAgentNode node = node(communication, portable);
@@ -89,7 +87,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200));
         };
         PhpAgentNode node = node(communication, portable);
@@ -129,7 +127,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200));
         };
         PhpAgentNode node = node(communication, portable);
@@ -169,7 +167,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200));
         };
         PhpAgentNode node = node(communication, portable);
@@ -200,7 +198,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            AgentOperation operation = decoded.request().operation();
+            AgentOperation operation = decoded.operation();
             methods.add(operation);
             String componentKey = String.valueOf(request.get("componentKey"));
             if (operation == AgentOperation.COMPONENT_LOAD) {
@@ -235,7 +233,7 @@ class PhpAgentNodeTest {
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
-            AgentOperation operation = decoded.request().operation();
+            AgentOperation operation = decoded.operation();
             methods.add(operation);
             if (operation == AgentOperation.COMPONENT_INVOKE && invokes.getAndIncrement() == 1) {
                 return response(decoded, Map.of("code", 424));
@@ -258,7 +256,7 @@ class PhpAgentNodeTest {
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
-            methods.add(decoded.request().operation());
+            methods.add(decoded.operation());
             return response(decoded, Map.of("code", 200, "hostId", "php-host",
                     "components", List.of("FileComponent")));
         };
@@ -279,7 +277,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200));
         };
         PhpAgentNode node = node(communication, portable);
@@ -319,7 +317,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200, "statusCode", 202,
                     "bodyType", "text", "body", "accepted"));
         };
@@ -353,7 +351,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of("code", 200, "columns", List.of(), "rows", List.of(),
                     "rowCount", 0, "affectedRows", 1));
         };
@@ -384,7 +382,7 @@ class PhpAgentNodeTest {
         List<Map<String, Object>> invokes = new ArrayList<>();
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) {
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) {
                 invokes.add(decoded.execution());
             }
             return response(decoded, Map.of("code", 200, "columns", List.of(), "rows", List.of(),
@@ -409,7 +407,7 @@ class PhpAgentNodeTest {
         Communication communication = bytes -> {
             DecodedRequest decoded = decodeRequest(bytes);
             Map<String, Object> request = decoded.execution();
-            if (decoded.request().operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
+            if (decoded.operation() == AgentOperation.COMPONENT_INVOKE) invokes.add(request);
             return response(decoded, Map.of(
                     "code", 200,
                     "runtime", "php",
@@ -438,15 +436,16 @@ class PhpAgentNodeTest {
         return new PhpAgentNode(client, new PhpComponentArtifactRegistry());
     }
 
+    @SuppressWarnings("unchecked")
     private DecodedRequest decodeRequest(byte[] bytes) {
         try {
             Map<String, Object> wire = new PhpPayloadCodec(KEY).decode(bytes);
-            AgentRpcRequest request = AgentRpcEnvelopeMapper.requestFromMap(wire);
-            Map<String, Object> execution = new LinkedHashMap<>(request.params());
-            if (request.component() != null) execution.put("componentName", request.component());
-            if (request.action() != null) execution.put("action", request.action());
-            if (request.hostId() != null) execution.put("hostId", request.hostId());
-            return new DecodedRequest(execution, request);
+            Map<String, Object> execution = new LinkedHashMap<>((Map<String, Object>) wire.get("params"));
+            if (wire.containsKey("component")) execution.put("componentName", wire.get("component"));
+            if (wire.containsKey("action")) execution.put("action", wire.get("action"));
+            if (wire.containsKey("hostId")) execution.put("hostId", wire.get("hostId"));
+            return new DecodedRequest(execution, (String) wire.get("requestId"),
+                    AgentOperation.valueOf((String) wire.get("operation")));
         } catch (Exception e) {
             throw new IllegalStateException("PHP payload decode failed", e);
         }
@@ -454,14 +453,22 @@ class PhpAgentNodeTest {
 
     private byte[] response(DecodedRequest request, Map<String, Object> data) {
         try {
-            return new PhpPayloadCodec(KEY).encode(AgentRpcEnvelopeMapper.toMap(
-                    AgentRpcEnvelopeMapper.responseFromResult(request.request().requestId(), data)));
+            // The simulated server builds wire data independently of the client mapper.
+            Map<String, Object> payload = new LinkedHashMap<>(data);
+            int code = ((Number) payload.remove("code")).intValue();
+            String payloadKey = code >= 200 && code < 300 ? "data" : "error";
+            if ("error".equals(payloadKey)) {
+                Object message = payload.remove("msg");
+                if (message != null) payload.put("message", message);
+            }
+            return new PhpPayloadCodec(KEY).encode(Map.of(
+                    "requestId", request.requestId(), "code", code, payloadKey, payload));
         } catch (Exception e) {
             throw new IllegalStateException("PHP payload encode failed", e);
         }
     }
 
-    private record DecodedRequest(Map<String, Object> execution, AgentRpcRequest request) { }
+    private record DecodedRequest(Map<String, Object> execution, String requestId, AgentOperation operation) { }
 
     private static final class PortableDisguise extends Disguise {
         private PortableDisguise() {

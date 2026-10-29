@@ -4,7 +4,7 @@
 #
 # 用法:
 #   cd LeoAI/javacore && bash compile-components.sh          # 审计并更新 payload
-#   cd LeoAI/javacore && bash compile-components.sh --check  # 仅审计，不写 resources
+#   cd LeoAI/javacore && bash compile-components.sh --check  # 只读检查，忽略源码/行号/局部变量调试表
 #
 # 优先使用可工作的 Java 8 javac；也支持在当前 JDK 上运行 ECJ 3.27，
 # ECJ 制品缺失时通过 Maven 本地仓库解析。
@@ -202,7 +202,7 @@ echo "=== 检查 Java 6 API 兼容性 ==="
     org.codehaus.mojo:animal-sniffer-maven-plugin:1.27:check
 
 if [ "$MODE" = "--check" ]; then
-    echo "=== 检查已提交 payload 与源码一致性 ==="
+    echo "=== 检查已提交 payload 与源码运行字节码一致性（忽略调试表） ==="
     payload_count=$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.payload' | wc -l | tr -d ' ')
     if [ "$payload_count" -ne "$source_count" ]; then
         echo "错误: 源文件数为 ${source_count}，但 resources 中有 ${payload_count} 个 payload。" >&2
@@ -217,11 +217,19 @@ if [ "$MODE" = "--check" ]; then
             echo "错误: 缺少已提交 payload: $committed" >&2
             exit 1
         fi
-        if ! cmp -s "$generated" "$committed"; then
-            echo "错误: ${class_name}.payload 与当前源码不一致；请运行 bash compile-components.sh 更新。" >&2
-            exit 1
-        fi
     done
+
+    ASM_VERSION=9.5
+    ASM_JAR="$HOME/.m2/repository/org/ow2/asm/asm/$ASM_VERSION/asm-$ASM_VERSION.jar"
+    if [ ! -f "$ASM_JAR" ]; then
+        "$REPO_DIR/mvnw" -q org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
+            -Dartifact="org.ow2.asm:asm:$ASM_VERSION"
+    fi
+    mkdir -p "$TMP_DIR/comparator"
+    "${JAVAP_HOME:+$JAVAP_HOME/bin/}javac" -cp "$ASM_JAR" -d "$TMP_DIR/comparator" \
+        "$REPO_DIR/tools/ComponentClassComparator.java"
+    "${JAVAP_HOME:+$JAVAP_HOME/bin/}java" -cp "$TMP_DIR/comparator:$ASM_JAR" \
+        ComponentClassComparator "$CLASS_DIR" "$OUT_DIR"
 
     for payload in "$OUT_DIR"/*.payload; do
         class_name=$(basename "$payload" .payload)
