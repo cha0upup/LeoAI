@@ -1,0 +1,1 @@
+import{Dn as e}from"./vendor-element-plus-CMivgVpY.js";function t(t){function n(n={}){return{sessionId:e(t),...n}}return{withSession:n}}export{t};

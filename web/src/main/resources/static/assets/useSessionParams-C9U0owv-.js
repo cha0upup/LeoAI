@@ -1,1 +1,0 @@
-import{Dn as e}from"./vendor-element-plus-CMivgVpY.js";function t(t){let n=()=>e(t);function r(e={}){return{sessionId:n(),...e}}return{withSession:r,sessionId:n}}export{t};
