@@ -139,6 +139,27 @@ class AiToolCatalogContractTest {
         return tools.stream().filter(tool -> name.equals(tool.name())).findFirst().orElseThrow();
     }
 
+    @Test
+    void agentWriteSchemasExcludeRetiredSchedulingAndServerOwnedConnectionTimestamps() {
+        List<AiServiceTool> tools = ToolService.findTools(mock(AgentTools.class));
+        for (String name : List.of("addAgent", "updateAgent")) {
+            JsonObjectSchema schema = namedTool(tools, name).toolSpecification().parameters();
+            assertFalse(schema.properties().containsKey("heartbeatInterval"));
+            assertFalse(schema.properties().containsKey("lastConnectedAt"));
+            assertTrue(schema.properties().containsKey("maxReqCount"));
+        }
+    }
+
+    @Test
+    void databaseProfileToolDescriptionsOnlyAdvertiseImplementedSettings() {
+        List<AiServiceTool> tools = ToolService.findTools(mock(DatabaseConnectionTools.class));
+        for (String name : List.of("createDatabaseConnection", "updateDatabaseConnection")) {
+            String schema = namedTool(tools, name).toolSpecification().toJson();
+            assertFalse(schema.contains("maxConnections"));
+            assertTrue(schema.contains("timeoutSeconds"));
+        }
+    }
+
     private static List<Declaration> declarations() {
         List<Declaration> result = new ArrayList<>();
         for (Class<?> type : TOOL_CLASSES) {

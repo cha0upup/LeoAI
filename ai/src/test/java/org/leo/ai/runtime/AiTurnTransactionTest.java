@@ -48,7 +48,10 @@ class AiTurnTransactionTest {
                 eq(fixture.persistedTurn), eq("done"), any(), any(), any(), eq(0));
         verify(fixture.failover).recordSuccess(7);
         verify(fixture.store, never()).discardTurn(
-                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(),
+                any(), any(), anyInt(),
+                any(), any(), any(),
+                any());
     }
 
     @Test
@@ -66,7 +69,9 @@ class AiTurnTransactionTest {
         assertEquals("network", first.classification().category());
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("network"),
-                any(), eq("network down"), eq(0), eq(""), eq(List.of()), eq(null));
+                any(), eq("network down"), eq(0),
+                eq(""), eq(List.of()), eq(null),
+                eq(""));
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
         verify(fixture.failover).recordFailure(eq(7), any());
     }
@@ -76,7 +81,10 @@ class AiTurnTransactionTest {
         Fixture fixture = fixture();
         doThrow(new IllegalStateException("db unavailable"))
                 .when(fixture.store).discardTurn(
-                        any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(),
+                any(), any(), anyInt(),
+                any(), any(), any(),
+                any());
 
         assertThrows(IllegalStateException.class,
                 () -> fixture.session().discard(new AiTurnFailure(
@@ -97,7 +105,10 @@ class AiTurnTransactionTest {
 
         assertFalse(recovered);
         verify(fixture.store, never()).discardTurn(
-                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(),
+                any(), any(), anyInt(),
+                any(), any(), any(),
+                any());
     }
 
     @Test
@@ -126,9 +137,24 @@ class AiTurnTransactionTest {
         assertEquals("用户停止", failed.message());
         verify(fixture.store).discardTurn(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
-                eq("用户停止"), eq("用户停止"), eq(0), eq(""), eq(List.of()), eq(null));
+                eq("用户停止"), eq("用户停止"), eq(0),
+                eq(""), eq(List.of()), eq(null),
+                eq(""));
         verify(fixture.failover, never()).recordFailure(any(), any());
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+    }
+
+    @Test
+    void planOnlyFailureNeverPersistsTheRecoverySnapshotAsVisibleText() {
+        Fixture fixture = fixture();
+        var plan = Map.of("kind", "plan", "step", "fixture step");
+        var events = List.of(new AiSseEvent("node", plan));
+        fixture.session().discard(new AiTurnFailure(new RuntimeException("network down"), AiTurnOutcome.FAILED, null), events, plan);
+        verify(fixture.store).discardTurn(
+                eq(fixture.persistedTurn), eq("failed"), eq("network"),
+                any(), any(), eq(0),
+                eq(""), any(), eq(plan),
+                eq(AiTurnRecoveryContext.build(events, plan)));
     }
 
     @Test
@@ -150,9 +176,9 @@ class AiTurnTransactionTest {
         verify(fixture.store).discardTurn(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
+                eq("停止前内容"), any(), eq(null),
                 eq("停止前内容\n\n[执行在此处中断；以下是可用于继续任务的已完成进度]"
-                        + "\n后续收到“继续”时，从上述进度衔接，不重复已经完成的步骤。"),
-                any(), eq(null));
+                        + "\n后续收到“继续”时，从上述进度衔接，不重复已经完成的步骤。"));
     }
 
     @Test
@@ -172,7 +198,8 @@ class AiTurnTransactionTest {
         verify(fixture.store, times(1)).discardTurn(
                 eq(fixture.persistedTurn), eq("failed"), eq("persistence"),
                 eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
-                eq(""), eq(List.of()), eq(null));
+                eq(""), eq(List.of()), eq(null),
+                eq(""));
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
     }
 
@@ -191,7 +218,10 @@ class AiTurnTransactionTest {
         assertFalse(fixture.session().recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream")));
         verify(fixture.store, never()).discardTurn(
-                any(), any(), any(), any(), any(), anyInt(), any(), any(), any());
+                any(), any(), any(),
+                any(), any(), anyInt(),
+                any(), any(), any(),
+                any());
     }
 
     private Fixture fixture() {

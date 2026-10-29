@@ -38,9 +38,6 @@ public class AiThreadQueryService {
                 ? sequence.longValue() : null;
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("messages", page);
-        data.put("total", conversationStore.countMessages(threadId));
-        data.put("offset", offset);
-        data.put("limit", limit);
         data.put("nextBeforeSequence", cursor);
         data.put("hasMore", cursor != null && conversationStore.hasMessagesBefore(threadId, cursor));
         return data;

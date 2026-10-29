@@ -6,6 +6,7 @@ public class AiThreadRecord {
     private String scope;
     private String userId;
     private String agentId;
+    private String hostId;
     private String sessionId;
     private String title;
     private Integer configId;
@@ -25,8 +26,6 @@ public class AiThreadRecord {
     private String contextSummary;
     /** 上下文摘要对应的可恢复边界元数据 JSON。 */
     private String contextCheckpointJson;
-    /** 当前活跃 plan 的 ID（可为 null）。 */
-    private String rootPlanId;
 
     public String getThreadId() { return threadId; }
     public void setThreadId(String threadId) { this.threadId = threadId; }
@@ -39,6 +38,9 @@ public class AiThreadRecord {
 
     public String getAgentId() { return agentId; }
     public void setAgentId(String agentId) { this.agentId = agentId; }
+
+    public String getHostId() { return hostId; }
+    public void setHostId(String hostId) { this.hostId = hostId; }
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
@@ -94,6 +96,4 @@ public class AiThreadRecord {
         this.contextCheckpointJson = contextCheckpointJson;
     }
 
-    public String getRootPlanId() { return rootPlanId; }
-    public void setRootPlanId(String rootPlanId) { this.rootPlanId = rootPlanId; }
 }

@@ -67,7 +67,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "ai_threads",
-                    Set.of("thread_id", "context_summary", "context_checkpoint_json"));
+                    Set.of("thread_id", "host_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",
                     Set.of("turn_id", "thread_id", "status", "created_at", "completed_at",
                             "protocol_status", "dispatch_status", "command_scope",
@@ -81,7 +81,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "trace_id", "trace_json", "lease_token"));
             requireColumns(connection, "ai_messages",
                     Set.of("message_id", "thread_id", "turn_id", "run_id",
-                            "message_seq", "status", "role"));
+                            "message_seq", "status", "role", "recovery_context"));
             requireNullableColumn(connection, "ai_messages", "run_id");
             requireColumns(connection, "ai_events",
                     Set.of("event_id", "thread_id", "run_id", "turn_id", "item_id",
@@ -96,11 +96,6 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "allow_free_text", "action_summary", "tool_name",
                             "arguments_hash", "risk", "status", "answer",
                             "created_at", "answered_at", "confirmation_consumed_at", "expires_at"));
-            requireColumns(connection, "ai_operation_assessments",
-                    Set.of("assessment_id", "user_id", "thread_id", "tool_name",
-                            "arguments_json", "arguments_hash", "risk_level",
-                            "requires_confirmation", "reason", "impact", "rollback",
-                            "status", "created_at", "expires_at", "consumed_at"));
             requireColumns(connection, "scan_tasks",
                     Set.of("task_id", "session_id", "user_id", "agent_id", "host_id", "project_id", "status", "outcome",
                             "error_message", "stage_json"));

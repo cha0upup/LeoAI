@@ -3,6 +3,7 @@ package org.leo.core.init;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.core.io.ClassPathResource;
@@ -13,6 +14,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,29 +25,6 @@ class DatabaseInitializerFreshStartTest {
 
     @TempDir
     Path tempDir;
-
-    @Test
-    void rejectsLegacyNamingEvenWhenNewTablesWereCreated() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-naming.db"));
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            statement.executeUpdate("CREATE TABLE puppets (puppet_id TEXT PRIMARY KEY)");
-            statement.executeUpdate("INSERT INTO puppets VALUES ('existing-node')");
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
-        IllegalStateException error = assertThrows(IllegalStateException.class,
-                () -> new DatabaseInitializer(dataSource).run());
-        assertTrue(error.getMessage().contains("不兼容历史数据"));
-        assertTrue(error.getMessage().contains("重新部署"));
-        assertTrue(error.getMessage().contains("重建数据库"));
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM puppets WHERE puppet_id='existing-node'"));
-            assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM users"));
-        }
-    }
 
     @Test
     void createsCurrentSchemaAndCanRunTwice() throws Exception {
@@ -58,6 +38,7 @@ class DatabaseInitializerFreshStartTest {
         initializer.run();
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
+            statement.executeUpdate("UPDATE system_configs SET config_value='write' WHERE config_key='audit.mode'");
             statement.executeUpdate("""
                     INSERT INTO users
                       (user_id, user_name, password, privilege, status,
@@ -117,7 +98,8 @@ class DatabaseInitializerFreshStartTest {
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='uk_users_user_name_nocase'"));
             assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM system_configs WHERE config_key='system.version' AND config_value='1.0.0'"));
+                    "SELECT COUNT(*) FROM system_configs WHERE config_key='audit.mode' AND config_value='write'"));
+            assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM teams"));
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM agents WHERE agent_id='team-agent' AND team_id='team-a'"));
 
@@ -133,12 +115,70 @@ class DatabaseInitializerFreshStartTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"sessions", "agent_sessions", "ai_operation_assessments"})
+    void freshInstallOmitsUnusedTables(String table) throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("unused-tables.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+
+        new DatabaseInitializer(dataSource).run();
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            assertEquals(0, scalar(statement,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + table + "'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_user_input_requests'"));
+        }
+    }
+
+    @Test
+    void seedsOnlyConsumedRuntimeConfiguration() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("runtime-config.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+        }
+
+        new DatabaseInitializer(dataSource).run();
+
+        Set<String> keys = new HashSet<>();
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT config_key FROM system_configs")) {
+            while (result.next()) keys.add(result.getString(1));
+        }
+        assertEquals(Set.of("audit.mode", "max.file.upload.size.mb", "security.password.min.length",
+                "security.login.max.attempts", "security.login.lock.seconds"), keys);
+    }
+
+    @Test
+    void freshSchemaOmitsRetiredThreadProfileAndSessionScopedScanIndexes() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("retired-design.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+            try (Statement statement = connection.createStatement()) {
+                assertEquals(0, scalar(statement,
+                        "SELECT COUNT(*) FROM pragma_table_info('ai_threads') WHERE name='profile'"));
+                assertEquals(0, scalar(statement,
+                        "SELECT COUNT(*) FROM sqlite_master WHERE name IN "
+                                + "('idx_scan_tasks_session_cursor','idx_scan_tasks_active_cursor')"));
+                assertEquals(2, scalar(statement,
+                        "SELECT COUNT(*) FROM sqlite_master WHERE name IN "
+                                + "('idx_scan_tasks_owner_cursor','idx_scan_tasks_owner_active_cursor')"));
+            }
+        }
+    }
+
+    @ParameterizedTest
     @CsvSource({
             "ai_threads, context_checkpoint_json",
             "ai_turns, answer_to_question_id",
             "ai_user_input_requests, confirmation_consumed_at",
             "agents, payload_key",
-            "ai_operation_assessments, arguments_json",
             "scan_tasks, error_message",
             "scan_tasks, stage_json",
             "scan_endpoint_results, fingerprint_json",

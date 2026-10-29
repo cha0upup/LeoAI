@@ -1,7 +1,6 @@
 package org.leo.ai.thread;
 
 import org.leo.ai.runtime.AiTurnRecoveryContext;
-import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiOrphanedRunRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadLeaseRecord;
@@ -18,7 +17,6 @@ import java.util.Map;
 @Repository
 public class AiExecutionLeaseRepository {
 
-    private static final String MESSAGE_DISCARDED = AiConversationStoreService.MESSAGE_DISCARDED;
     private final AiConversationMapper mapper;
     private final AiEventJournalRepository eventJournal;
 
@@ -93,14 +91,11 @@ public class AiExecutionLeaseRepository {
 
     private void persistRecoveryContext(AiOrphanedRunRecord run) {
         if (run == null || blank(run.getAssistantMessageId())) return;
-        String output = AiTurnRecoveryContext.build(
-                eventJournal.listByRun(run.getRunId()), null);
-        if (output.isBlank()) return;
-        AiMessageRecord assistant = new AiMessageRecord();
-        assistant.setMessageId(run.getAssistantMessageId());
-        assistant.setStatus(MESSAGE_DISCARDED);
-        assistant.setContent(output);
-        mapper.updateMessage(assistant);
+        List<AiSseEvent> events = eventJournal.listByRun(run.getRunId());
+        String recoveryContext = AiTurnRecoveryContext.build(events, null);
+        if (recoveryContext.isBlank()) return;
+        mapper.updateMessageRecovery(run.getAssistantMessageId(),
+                AiTurnRecoveryContext.visibleOutput(events), recoveryContext);
     }
 
     private static boolean blank(String value) {

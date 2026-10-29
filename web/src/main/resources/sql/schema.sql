@@ -383,6 +383,7 @@ CREATE TABLE IF NOT EXISTS ai_threads (
     scope VARCHAR(32) NOT NULL,
     user_id VARCHAR(50),
     agent_id VARCHAR(50),
+    host_id TEXT,
     session_id VARCHAR(100),
     title VARCHAR(200) NOT NULL,
     config_id INTEGER,
@@ -397,15 +398,15 @@ CREATE TABLE IF NOT EXISTS ai_threads (
     message_count INTEGER NOT NULL DEFAULT 0,
     run_status VARCHAR(32) NOT NULL DEFAULT 'idle',
     parent_thread_id VARCHAR(64),
-    profile VARCHAR(64) NOT NULL DEFAULT 'default',
     context_summary TEXT,
     context_checkpoint_json TEXT,
-    root_plan_id VARCHAR(64),
     FOREIGN KEY (parent_thread_id) REFERENCES ai_threads(thread_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_threads_scope
     ON ai_threads(scope, user_id, agent_id, last_active_at);
+CREATE INDEX IF NOT EXISTS idx_ai_threads_host_scope
+    ON ai_threads(scope, user_id, agent_id, host_id, last_active_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ai_threads_parent
     ON ai_threads(parent_thread_id);
@@ -475,9 +476,6 @@ CREATE TABLE IF NOT EXISTS ai_runs (
 CREATE INDEX IF NOT EXISTS idx_ai_runs_thread_time
     ON ai_runs(thread_id, started_at);
 
-CREATE INDEX IF NOT EXISTS idx_ai_runs_turn
-    ON ai_runs(turn_id);
-
 -- 12. AI 对话消息
 CREATE TABLE IF NOT EXISTS ai_messages (
     message_id VARCHAR(64) PRIMARY KEY,
@@ -490,10 +488,9 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     role VARCHAR(32) NOT NULL
         CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content TEXT,
+    recovery_context TEXT,
     timestamp INTEGER NOT NULL,
     attachments_json TEXT,
-    thinking_logs_json TEXT,
-    tool_calls_json TEXT,
     nodes_json TEXT,
     review_json TEXT,
     plan_json TEXT,
@@ -532,9 +529,6 @@ CREATE TABLE IF NOT EXISTS ai_events (
     UNIQUE (thread_id, event_seq)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
-    ON ai_events(thread_id, event_seq);
-
 CREATE INDEX IF NOT EXISTS idx_ai_events_run_seq
     ON ai_events(run_id, event_seq);
 
@@ -556,17 +550,13 @@ CREATE INDEX IF NOT EXISTS idx_ai_thread_leases_expiry
 CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
     invocation_id VARCHAR(64) PRIMARY KEY,
     parent_thread_id VARCHAR(64) NOT NULL,
-    parent_message_id VARCHAR(64),
     child_thread_id VARCHAR(64),
-    profile VARCHAR(64) NOT NULL,
     task TEXT NOT NULL,
-    input_json TEXT,
     summary TEXT,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL,
     completed_at INTEGER,
     FOREIGN KEY (parent_thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
-    FOREIGN KEY (parent_message_id) REFERENCES ai_messages(message_id) ON DELETE SET NULL,
     FOREIGN KEY (child_thread_id) REFERENCES ai_threads(thread_id) ON DELETE SET NULL
 );
 
@@ -606,30 +596,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
 
 CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
     ON ai_user_input_requests(thread_id, created_at);
-
--- 17. Agent 业务操作语义评估：与确认请求分开持久化，但同样绑定用户、线程和参数哈希
-CREATE TABLE IF NOT EXISTS ai_operation_assessments (
-    assessment_id VARCHAR(64) PRIMARY KEY,
-    user_id VARCHAR(64) NOT NULL,
-    thread_id VARCHAR(64) NOT NULL,
-    tool_name VARCHAR(128) NOT NULL,
-    arguments_json TEXT NOT NULL,
-    arguments_hash VARCHAR(128) NOT NULL,
-    risk_level VARCHAR(32) NOT NULL,
-    requires_confirmation INTEGER NOT NULL DEFAULT 0,
-    reason TEXT,
-    impact TEXT,
-    rollback TEXT,
-    status VARCHAR(32) NOT NULL DEFAULT 'PENDING'
-        CHECK (status IN ('PENDING', 'CONSUMED', 'EXPIRED')),
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER,
-    consumed_at INTEGER,
-    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_ai_operation_assessment_lookup
-    ON ai_operation_assessments(user_id, thread_id, tool_name, arguments_hash, status);
 
 -- Component identification evaluations; task deletion also removes the evidence history.
 CREATE TABLE IF NOT EXISTS scan_fingerprint_results (

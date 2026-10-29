@@ -1,5 +1,8 @@
 package org.leo.core.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.alibaba.fastjson.annotation.JSONField;
+
 public class AiMessageRecord {
 
     private String messageId;
@@ -15,6 +18,7 @@ public class AiMessageRecord {
     private String status;
     private String role;
     private String content;
+    private String recoveryContext;
     private Long timestamp;
     private String attachmentsJson;
     private String nodesJson;
@@ -62,6 +66,12 @@ public class AiMessageRecord {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    /** Internal model memory, never part of the user-visible message projection. */
+    @JsonIgnore
+    @JSONField(serialize = false)
+    public String getRecoveryContext() { return recoveryContext; }
+    public void setRecoveryContext(String recoveryContext) { this.recoveryContext = recoveryContext; }
 
     public Long getTimestamp() { return timestamp; }
     public void setTimestamp(Long timestamp) { this.timestamp = timestamp; }

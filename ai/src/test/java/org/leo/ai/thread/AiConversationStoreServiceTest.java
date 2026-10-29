@@ -122,7 +122,9 @@ class AiConversationStoreServiceTest {
         AiMessageRecord recovery = new AiMessageRecord();
         recovery.setMessageSeq(8L);
         recovery.setRole("assistant");
-        recovery.setContent("[执行在此处中断；以下是可用于继续任务的已完成进度]");
+        recovery.setStatus("discarded");
+        recovery.setContent("");
+        recovery.setRecoveryContext("[执行在此处中断；以下是可用于继续任务的已完成进度]");
         when(mapper.recentContextMessages("thread-1", 20))
                 .thenReturn(List.of(user, recovery));
         when(mapper.findContextMessageBySequence("thread-1", 8L))
@@ -134,6 +136,8 @@ class AiConversationStoreServiceTest {
         assertEquals(2, context.size());
         assertEquals("收集系统信息", context.get(0).content());
         assertEquals(8L, service.contextMessage("thread-1", 8L).sequence());
+        assertEquals(recovery.getRecoveryContext(), context.get(1).content());
+        assertEquals(recovery.getRecoveryContext(), service.contextMessage("thread-1", 8L).content());
     }
 
     @Test
@@ -247,8 +251,9 @@ class AiConversationStoreServiceTest {
     @Test
     void completesTurnByCommittingBothMessagesAndFinishingRun() {
         when(mapper.updateMessageFenced(
-                anyString(), anyString(), anyString(), anyString(),
-                anyString(), isNull(), anyString(), anyLong())).thenReturn(1);
+                anyString(), anyString(), anyString(),
+                isNull(), anyString(), anyString(),
+                isNull(), anyString(), anyLong())).thenReturn(1);
         when(mapper.updateTurnMessageStatusFenced(
                 anyString(), anyString(), anyString(), anyString(), anyLong()))
                 .thenReturn(2);
@@ -264,9 +269,9 @@ class AiConversationStoreServiceTest {
 
         ArgumentCaptor<AiMessageRecord> messageCaptor = ArgumentCaptor.forClass(AiMessageRecord.class);
         verify(mapper).updateMessageFenced(
-                eq(turn.assistantMessageId()),
-                eq(AiConversationStoreService.MESSAGE_COMMITTED),
-                eq("answer"), any(), any(), any(), eq("lease-1"), anyLong());
+                eq(turn.assistantMessageId()), eq(AiConversationStoreService.MESSAGE_COMMITTED), eq("answer"),
+                isNull(), any(), any(),
+                any(), eq("lease-1"), anyLong());
         verify(mapper).updateTurnMessageStatusFenced(
                 eq("thread-1"), eq("turn-1"),
                 eq(AiConversationStoreService.MESSAGE_COMMITTED),
@@ -286,8 +291,9 @@ class AiConversationStoreServiceTest {
     @Test
     void discardsFailedTurnWithoutReturningItAsCommittedHistory() {
         when(mapper.updateMessageFenced(
-                anyString(), anyString(), anyString(), isNull(),
-                isNull(), isNull(), anyString(), anyLong())).thenReturn(1);
+                anyString(), anyString(), anyString(),
+                isNull(), isNull(), isNull(),
+                isNull(), anyString(), anyLong())).thenReturn(1);
         when(mapper.updateTurnMessageStatusFenced(
                 anyString(), anyString(), anyString(), anyString(), anyLong()))
                 .thenReturn(2);
@@ -298,8 +304,11 @@ class AiConversationStoreServiceTest {
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "lease-1");
 
-        service.discardTurn(turn, AiRunStatus.CANCELLED, "cancelled",
-                "用户取消", "用户取消", 0, "", List.of(), null);
+        service.discardTurn(
+                turn, AiRunStatus.CANCELLED, "cancelled",
+                "用户取消", "用户取消", 0,
+                "", List.of(), null,
+                "");
 
         verify(mapper).updateTurnMessageStatusFenced(
                 eq("thread-1"), eq("turn-1"),
@@ -444,13 +453,11 @@ class AiConversationStoreServiceTest {
         assertEquals("item-1", event.itemId());
         assertEquals("run-1", event.runId());
         verify(mapper).discardRunMessages("run-1");
-        ArgumentCaptor<AiMessageRecord> partial =
-                ArgumentCaptor.forClass(AiMessageRecord.class);
-        verify(mapper).updateMessage(partial.capture());
-        assertTrue(partial.getValue().getContent().startsWith("partial"));
-        assertTrue(partial.getValue().getContent().contains("可用于继续任务"));
-        assertTrue(partial.getValue().getContent().contains("getBasicInfo"));
-        assertTrue(partial.getValue().getContent().contains("os=linux"));
+        ArgumentCaptor<String> recovery = ArgumentCaptor.forClass(String.class);
+        verify(mapper).updateMessageRecovery(eq("item-1"), eq("partial"), recovery.capture());
+        assertTrue(recovery.getValue().contains("可用于继续任务"));
+        assertTrue(recovery.getValue().contains("getBasicInfo"));
+        assertTrue(recovery.getValue().contains("os=linux"));
         verify(mapper).discardOrphanedTurn("turn-1", 1_000L);
         verify(mapper).failOrphanedThread("thread-1", 1_000L);
         verify(mapper).insertEvent(
@@ -462,8 +469,9 @@ class AiConversationStoreServiceTest {
     @Test
     void rejectsTerminalWriteWhenLeaseTokenIsStale() {
         when(mapper.updateMessageFenced(
-                anyString(), anyString(), anyString(), any(), any(), any(),
-                eq("stale-token"), anyLong())).thenReturn(0);
+                anyString(), anyString(), anyString(),
+                isNull(), any(), any(),
+                any(), eq("stale-token"), anyLong())).thenReturn(0);
         var turn = new AiConversationStoreService.PersistedTurn(
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "stale-token");

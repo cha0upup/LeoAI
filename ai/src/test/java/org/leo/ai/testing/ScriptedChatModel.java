@@ -27,10 +27,6 @@ public final class ScriptedChatModel implements ChatModel {
         return this;
     }
 
-    public ScriptedChatModel thenText(String text) {
-        return then(request -> response(AiMessage.from(text)));
-    }
-
     public ScriptedChatModel thenToolCall(String id, String name, String arguments) {
         return then(request -> response(AiMessage.from(
                 ToolExecutionRequest.builder()

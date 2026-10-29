@@ -12,13 +12,17 @@ import org.leo.core.runtime.CapabilitySet;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class AiToolExposurePolicyTest {
 
@@ -45,17 +49,14 @@ class AiToolExposurePolicyTest {
                 new AiRuntimeResolver(), registry);
         PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
 
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "parentAction"));
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "dependencyAction"));
+        List<String> candidates = List.of("parentAction", "dependencyAction");
+        assertTrue(policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                PLATFORM_STATE_ID, candidates).isEmpty());
 
         state.activateSkill("parent-skill");
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "parentAction"));
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "dependencyAction"));
+        assertEquals(Set.copyOf(candidates), policy.visibleToolNames(
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, PLATFORM_STATE_ID, candidates));
     }
 
     @Test
@@ -70,8 +71,8 @@ class AiToolExposurePolicyTest {
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AiRuntimeResolver(), registry);
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "workspaceReadText"));
+        assertEquals(Set.of("workspaceReadText"), policy.visibleToolNames(
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, PLATFORM_STATE_ID, List.of("workspaceReadText")));
     }
 
     @Test
@@ -91,10 +92,9 @@ class AiToolExposurePolicyTest {
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AiRuntimeResolver(), registry);
 
-        assertTrue(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
-                "capability-session", "getBasicInfo"));
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
-                "capability-session", "getClassBytecode"));
+        assertEquals(Set.of("getBasicInfo"), policy.visibleToolNames(
+                AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
+                "capability-session", List.of("getBasicInfo", "getClassBytecode")));
     }
 
     @Test
@@ -107,8 +107,34 @@ class AiToolExposurePolicyTest {
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AiRuntimeResolver(), registry);
 
-        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
-                PLATFORM_STATE_ID, "disabledAction"));
+        assertTrue(policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                PLATFORM_STATE_ID, List.of("disabledAction")).isEmpty());
+    }
+
+    @Test
+    void ignoresBlankToolNamesAndReadsEachSkillCatalogOnlyOncePerBatch() {
+        SkillRegistryService registry = mock(SkillRegistryService.class);
+        AiToolExposurePolicy policy = new AiToolExposurePolicy(new AiRuntimeResolver(), registry);
+
+        assertEquals(Set.of("workspaceReadText", "getDisguises"), policy.visibleToolNames(
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, PLATFORM_STATE_ID,
+                Arrays.asList(null, "", " ", "workspaceReadText", "getDisguises", "workspaceReadText")));
+
+        verify(registry).listSkills(SkillRegistryService.SCOPE_PLATFORM);
+        verify(registry).listAllSkills(SkillRegistryService.SCOPE_PLATFORM);
+    }
+
+    @Test
+    void emptyBatchesDoNotResolveRuntimeOrReadTheSkillCatalog() {
+        SkillRegistryService registry = mock(SkillRegistryService.class);
+        AiRuntimeResolver resolver = mock(AiRuntimeResolver.class);
+        AiToolExposurePolicy policy = new AiToolExposurePolicy(resolver, registry);
+
+        assertTrue(policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                PLATFORM_STATE_ID, null).isEmpty());
+        assertTrue(policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                PLATFORM_STATE_ID, List.of()).isEmpty());
+        verifyNoInteractions(registry, resolver);
     }
 
     private static SkillMeta skill(String name, List<String> requiredTools,

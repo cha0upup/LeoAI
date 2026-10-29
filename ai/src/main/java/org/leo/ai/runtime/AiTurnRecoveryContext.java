@@ -12,7 +12,8 @@ import java.util.Set;
 /**
  * 将未完成 Turn 中已经产生的可见输出、工具结果和计划快照整理成可恢复上下文。
  *
- * <p>该文本会随 discarded assistant 消息持久化，并在后续重建 ChatMemory 时重新载入。
+ * <p>该文本仅写入 discarded assistant 的内部 recovery_context，不作为聊天正文展示；
+ * 后续重建 ChatMemory 时重新载入。
  * 只提取用户已经可见的执行事件，不保存 thinking 内容。
  */
 public final class AiTurnRecoveryContext {
@@ -128,7 +129,8 @@ public final class AiTurnRecoveryContext {
         progress.add(truncateInline(item.toString(), MAX_PROGRESS_ITEM_CHARS));
     }
 
-    private static String visibleOutput(List<AiSseEvent> eventLog) {
+    /** Actual narration only; excludes plans, tool payloads and internal recovery instructions. */
+    public static String visibleOutput(List<AiSseEvent> eventLog) {
         if (eventLog == null || eventLog.isEmpty()) return "";
         StringBuilder deltas = new StringBuilder();
         for (AiSseEvent event : eventLog) {

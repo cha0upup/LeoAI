@@ -134,7 +134,8 @@ public class AiTurnTransaction {
                     : classification.message();
             String status = cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED;
             List<Object> assistantNodes = artifacts.assistantNodes(eventLog, true);
-            String partialOutput = AiTurnRecoveryContext.build(
+            String partialOutput = AiTurnRecoveryContext.visibleOutput(eventLog);
+            String recoveryContext = AiTurnRecoveryContext.build(
                     eventLog, planSnapshot);
             int toolCallCount = artifacts.toolCallCount(eventLog);
             try {
@@ -145,7 +146,7 @@ public class AiTurnTransaction {
                 conversationStore.discardTurn(
                         context.persistedTurn(), status, category,
                         message, rawMessage, toolCallCount,
-                        partialOutput, assistantNodes, planSnapshot);
+                        partialOutput, assistantNodes, planSnapshot, recoveryContext);
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(failure.outcome(), status, message, classification);
                 if (!cancelled && recordModelFailure) {
@@ -183,7 +184,7 @@ public class AiTurnTransaction {
                         AiConversationStoreService.ERROR_PERSISTENCE,
                         message,
                         terminalError != null ? terminalError.getMessage() : message,
-                        0, "", List.of(), null);
+                        0, "", List.of(), null, "");
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(
                         AiTurnOutcome.FAILED, AiRunStatus.FAILED,

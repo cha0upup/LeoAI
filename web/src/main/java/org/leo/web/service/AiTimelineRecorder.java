@@ -11,9 +11,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 累积 LangChain4j 流式回调中的可见 token、思考 token、工具/Plan/子任务等事件，
  * 在 thinking / tool / complete 等边界把待发缓冲落成 SSE timeline 节点事件。
  *
- * <p>四块缓冲：
+ * <p>三块缓冲：
  * <ul>
- *   <li>{@code reply}        — 完整可见回复文本，给 finishRun / persistMessage 用</li>
  *   <li>{@code delta}        — 自上次 {@link #flushDelta()} 以来的可见 token，攒批后以
  *                              {@code delta} 事件下发，只服务于前端直播，不入 eventLog</li>
  *   <li>{@code textSegment}  — 自上次 {@link #finalizeTextSegment()} 以来的可见 token，
@@ -39,7 +38,6 @@ public final class AiTimelineRecorder {
     }
 
     private final Sink sink;
-    private final StringBuilder reply       = new StringBuilder();
     private final StringBuilder delta       = new StringBuilder();
     private final StringBuilder thinking    = new StringBuilder();
     private final StringBuilder textSegment = new StringBuilder();
@@ -54,11 +52,6 @@ public final class AiTimelineRecorder {
         return eventLog;
     }
 
-    /** 完整可见回复文本，用于 audit / finishRun / persistAssistantMessage。 */
-    public String reply() {
-        return reply.toString();
-    }
-
     public boolean hasPendingThinking() {
         return thinking.length() > 0;
     }
@@ -67,12 +60,11 @@ public final class AiTimelineRecorder {
 
     /**
      * 进入文本流。若仍有未 flush 的 thinking，先 {@link #flushThinking()} 保证事件顺序为
-     * thinking → text；之后 token 同时进入 reply / delta / textSegment 三个缓冲。
+     * thinking → text；之后 token 进入直播 delta 和持久化 textSegment 缓冲。
      */
     public void appendVisibleDelta(String text) {
         if (text == null || text.isEmpty()) return;
         if (thinking.length() > 0) flushThinking();
-        reply.append(text);
         delta.append(text);
         textSegment.append(text);
     }

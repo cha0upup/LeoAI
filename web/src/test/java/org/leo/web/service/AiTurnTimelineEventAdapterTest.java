@@ -36,7 +36,7 @@ class AiTurnTimelineEventAdapterTest {
 
         assertEquals(1, thinkingStarted.get());
         assertEquals(1, toolCompleted.get());
-        assertEquals("答案", recorder.reply());
+        assertEquals("答案", org.leo.ai.runtime.AiTurnRecoveryContext.visibleOutput(recorder.eventLog()));
         assertEquals(List.of("node", "node", "node", "patch"),
                 recorder.eventLog().stream().map(event -> event.name()).toList());
     }

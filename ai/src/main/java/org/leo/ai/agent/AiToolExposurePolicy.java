@@ -49,12 +49,6 @@ public class AiToolExposurePolicy {
         this.skillRegistry = skillRegistry;
     }
 
-    public boolean isVisible(AiToolAuthorizationPolicy.AiAgentScope scope,
-                             Object memoryId, String toolName) {
-        if (toolName == null || toolName.isBlank()) return false;
-        return visibleToolNames(scope, memoryId, List.of(toolName)).contains(toolName);
-    }
-
     /** 单次模型调用批量计算可见工具，避免为每个 Schema 重复读取 Skill 目录。 */
     public Set<String> visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope scope,
                                         Object memoryId, Collection<String> toolNames) {

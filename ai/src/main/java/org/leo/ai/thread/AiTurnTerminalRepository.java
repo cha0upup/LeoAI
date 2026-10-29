@@ -25,7 +25,7 @@ public class AiTurnTerminalRepository {
                          int toolCallCount) {
         if (turn == null) return;
         updateAssistantMessage(turn, AiConversationStoreService.MESSAGE_COMMITTED,
-                output, nodes, review, planSnapshot);
+                output, null, nodes, review, planSnapshot);
         updateTurnMessageStatus(turn, AiConversationStoreService.MESSAGE_COMMITTED);
         finishTurn(turn, AiConversationStoreService.MESSAGE_COMMITTED);
         finishRun(turn.runId(), AiRunStatus.COMPLETED, turn.startedAt(), output,
@@ -36,10 +36,10 @@ public class AiTurnTerminalRepository {
                         String runStatus, String errorCategory,
                         String errorMessage, String rawErrorMessage,
                         int toolCallCount, String partialOutput,
-                        List<Object> partialNodes, Object planSnapshot) {
+                        List<Object> partialNodes, Object planSnapshot, String recoveryContext) {
         if (turn == null) return;
         updateAssistantMessage(turn, AiConversationStoreService.MESSAGE_DISCARDED,
-                partialOutput, partialNodes, null, planSnapshot);
+                partialOutput, recoveryContext, partialNodes, null, planSnapshot);
         updateTurnMessageStatus(turn, AiConversationStoreService.MESSAGE_DISCARDED);
         finishTurn(turn, AiConversationStoreService.MESSAGE_DISCARDED);
         finishRun(turn.runId(), runStatus, turn.startedAt(), null, errorCategory,
@@ -47,7 +47,7 @@ public class AiTurnTerminalRepository {
     }
 
     private void updateAssistantMessage(AiConversationStoreService.PersistedTurn turn,
-                                         String status, String content,
+                                         String status, String content, String recoveryContext,
                                          List<Object> nodes,
                                          Map<String, Object> review,
                                          Object planSnapshot) {
@@ -55,6 +55,7 @@ public class AiTurnTerminalRepository {
         assistant.setMessageId(turn.assistantMessageId());
         assistant.setStatus(status);
         assistant.setContent(content != null ? content : "");
+        assistant.setRecoveryContext(emptyToNull(recoveryContext));
         assistant.setNodesJson(AiMessageRepository.toJsonOrNull(nodes));
         assistant.setReviewJson(AiMessageRepository.toJsonOrNull(review));
         assistant.setPlanJson(AiMessageRepository.toJsonOrNull(planSnapshot));
@@ -64,7 +65,7 @@ public class AiTurnTerminalRepository {
         }
         requireFencedWrite(mapper.updateMessageFenced(
                         assistant.getMessageId(), assistant.getStatus(),
-                        assistant.getContent(), assistant.getNodesJson(),
+                        assistant.getContent(), assistant.getRecoveryContext(), assistant.getNodesJson(),
                         assistant.getReviewJson(), assistant.getPlanJson(),
                         turn.leaseToken(), System.currentTimeMillis()),
                 "Assistant 消息", assistant.getMessageId());

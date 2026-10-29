@@ -47,7 +47,7 @@ class NodeAiThreadServiceTest {
         assertSame(thread, session.getActiveThread());
         assertEquals("对话 1", thread.getTitle());
         verify(fixture.conversationStore).createAgentThread(
-                eq("user-1"), eq("agent-1"), eq("session-1"), same(thread), isNull());
+                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), isNull());
         verify(fixture.conversationStore).attachEventJournal(thread.getThreadId(), thread);
         verify(fixture.sessionWarmupService).warmupAsync("session-1");
     }
@@ -65,7 +65,7 @@ class NodeAiThreadServiceTest {
         assertSame(initialThread, resolution.thread());
         assertNull(resolution.errorMessage());
         verify(fixture.conversationStore).createAgentThread(
-                eq("user-1"), eq("agent-1"), eq("session-1"), same(initialThread), isNull());
+                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(initialThread), isNull());
         verify(fixture.sessionWarmupService).warmupAsync("session-1");
     }
 
@@ -83,7 +83,7 @@ class NodeAiThreadServiceTest {
         assertSame(thread, resolution.thread());
         assertNull(resolution.errorMessage());
         verify(fixture.conversationStore, never()).createAgentThread(
-                eq("user-1"), eq("agent-1"), eq("session-1"), same(thread), isNull());
+                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), isNull());
     }
 
     @Test
@@ -95,7 +95,9 @@ class NodeAiThreadServiceTest {
         record.setScope(AiConversationStoreService.SCOPE_AGENT);
         record.setUserId("user-1");
         record.setAgentId("agent-1");
+        record.setHostId("host-1");
         record.setTitle("历史对话");
+        record.setSessionId("previous-connection");
         record.setCreatedAt(10L);
         record.setLastActiveAt(20L);
         record.setParentThreadId("parent-thread");
@@ -113,7 +115,7 @@ class NodeAiThreadServiceTest {
         assertEquals(20L, thread.getLastActiveAt());
         assertEquals("parent-thread", thread.getParentThreadId());
         verify(fixture.conversationStore, never()).createAgentThread(
-                eq("user-1"), eq("agent-1"), eq("session-1"), same(thread), isNull());
+                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), isNull());
     }
 
     @Test
@@ -162,27 +164,28 @@ class NodeAiThreadServiceTest {
     }
 
     @Test
-    void historyKeepsExistingPaginationShape() {
+    void historyUsesTheCurrentCursorPageContract() {
         Fixture fixture = fixture();
         when(fixture.conversationStore.findThread("thread-1")).thenReturn(ownedRecord("thread-1"));
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L));
         when(fixture.conversationStore.listMessages("thread-1", 0, 50))
                 .thenReturn(messages);
-        when(fixture.conversationStore.countMessages("thread-1")).thenReturn(1);
 
-        assertEquals(Map.of("messages", messages, "total", 1, "offset", 0, "limit", 50,
+        assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),
                 fixture.service.threadMessages(cacheSession(), "thread-1", -2, null, null));
     }
 
     @ParameterizedTest
     @CsvSource({
-            "agent,other-agent,user-1",
-            "agent,agent-1,other-user",
-            "platform,agent-1,user-1",
-            "agent,agent-1,"
+            "agent,other-agent,user-1,host-1",
+            "agent,agent-1,other-user,host-1",
+            "platform,agent-1,user-1,host-1",
+            "agent,agent-1,,host-1",
+            "agent,agent-1,user-1,host-other",
+            "agent,agent-1,user-1,"
     })
-    void rejectsForeignThreadsForEveryEntryEvenWhenCached(String scope, String agentId, String userId) {
+    void rejectsForeignThreadsForEveryEntryEvenWhenCached(String scope, String agentId, String userId, String hostId) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
         AiThread cached = session.createAiThread("foreign", "original");
@@ -190,6 +193,7 @@ class NodeAiThreadServiceTest {
         record.setScope(scope);
         record.setAgentId(agentId);
         record.setUserId(userId);
+        record.setHostId(hostId);
         when(fixture.conversationStore.findThread("foreign")).thenReturn(record);
 
         List<Runnable> operations = List.of(
@@ -226,6 +230,7 @@ class NodeAiThreadServiceTest {
         record.setThreadId(threadId);
         record.setScope(AiConversationStoreService.SCOPE_AGENT);
         record.setAgentId("agent-1");
+        record.setHostId("host-1");
         record.setUserId("user-1");
         return record;
     }
@@ -250,7 +255,7 @@ class NodeAiThreadServiceTest {
         assertEquals("older", second.get("threadId"));
         assertEquals(4, second.get("messageCount"));
         assertFalse(first.containsKey("hasCheckpoint"));
-        verify(fixture.conversationStore, never()).listAgentThreads(anyString(), anyString());
+        verify(fixture.conversationStore, never()).listAgentThreads(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -269,7 +274,7 @@ class NodeAiThreadServiceTest {
         stored.setThreadId("stored-only");
         stored.setTitle("stored title");
         stored.setLastActiveAt(200L);
-        when(fixture.conversationStore.listAgentThreads("user-1", "agent-1"))
+        when(fixture.conversationStore.listAgentThreads("user-1", "agent-1", "host-1"))
                 .thenReturn(List.of(shared, stored));
 
         List<?> threads = (List<?>) fixture.service.listThreads(session).get("threads");
@@ -299,7 +304,32 @@ class NodeAiThreadServiceTest {
         session.setCreateByUser("user-1");
         session.setCacheMode(true);
         session.setAgentId("agent-1");
+        session.bindHostId("host-1");
         return session;
+    }
+
+    @Test
+    void missingHostIsRejectedBeforeCreatingAnyThread() {
+        Fixture fixture = fixture();
+        AgentNodeSession session = new AgentNodeSession();
+        session.setCreateByUser("user-1");
+        session.setAgentId("agent-1");
+        assertThrows(ApiException.class, () -> fixture.service.createThread(session, null, null));
+        assertEquals(0, session.listAiThreads().size());
+        org.mockito.Mockito.verifyNoInteractions(fixture.sessionWarmupService);
+    }
+
+    @Test
+    void childThreadCreationChecksItsParentHostBeforeMutatingRuntime() {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        AiThreadRecord foreign = ownedRecord("parent");
+        foreign.setHostId("host-other");
+        when(fixture.conversationStore.findThread("parent")).thenReturn(foreign);
+        assertThrows(ApiException.class,
+                () -> fixture.service.createChildThread(session, "child", null, "parent"));
+        assertEquals(0, session.listAiThreads().size());
+        org.mockito.Mockito.verifyNoInteractions(fixture.sessionWarmupService);
     }
 
     private static Fixture fixture() {

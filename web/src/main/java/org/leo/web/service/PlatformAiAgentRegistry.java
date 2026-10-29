@@ -77,10 +77,6 @@ public class PlatformAiAgentRegistry {
         });
     }
 
-    public AiRuntime find(String stateId) {
-        return stateId != null ? aiRuntimes.get(stateId) : null;
-    }
-
     public void evict(String stateId) {
         if (stateId != null) aiRuntimes.remove(stateId);
     }

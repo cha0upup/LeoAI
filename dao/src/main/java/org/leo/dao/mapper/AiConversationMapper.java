@@ -15,7 +15,6 @@ import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.core.entity.AiOrphanedRunRecord;
-import org.leo.core.entity.AiOperationAssessment;
 
 import java.util.List;
 
@@ -29,56 +28,29 @@ public interface AiConversationMapper {
             + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
             + "WHERE m.thread_id = #{threadId} ";
 
-    @Insert("INSERT INTO ai_operation_assessments (assessment_id, user_id, thread_id, tool_name, arguments_json, arguments_hash, "
-            + "risk_level, requires_confirmation, reason, impact, rollback, status, created_at, expires_at, consumed_at) "
-            + "VALUES (#{assessmentId}, #{userId}, #{threadId}, #{toolName}, #{argumentsJson}, #{argumentsHash}, #{riskLevel}, "
-            + "#{requiresConfirmation}, #{reason}, #{impact}, #{rollback}, #{status}, #{createdAt}, #{expiresAt}, #{consumedAt})")
-    int insertOperationAssessment(AiOperationAssessment row);
-
-    @Select("SELECT * FROM ai_operation_assessments WHERE user_id = #{userId} AND thread_id = #{threadId} "
-            + "AND tool_name = #{toolName} AND arguments_hash = #{argumentsHash} AND status = 'PENDING' "
-            + "AND (expires_at IS NULL OR expires_at > #{now}) ORDER BY created_at DESC LIMIT 1")
-    AiOperationAssessment findPendingOperationAssessment(@Param("userId") String userId,
-                                                          @Param("threadId") String threadId,
-                                                          @Param("toolName") String toolName,
-                                                          @Param("argumentsHash") String argumentsHash,
-                                                          @Param("now") long now);
-
-    @Update("UPDATE ai_operation_assessments SET status = 'EXPIRED' WHERE status = 'PENDING' "
-            + "AND expires_at IS NOT NULL AND expires_at <= #{now}")
-    int expireOperationAssessments(@Param("now") long now);
-
-    @Update("UPDATE ai_operation_assessments SET status = 'CONSUMED', consumed_at = #{consumedAt} "
-            + "WHERE assessment_id = #{assessmentId} AND status = 'PENDING' "
-            + "AND (expires_at IS NULL OR expires_at > #{consumedAt})")
-    int consumeOperationAssessment(@Param("assessmentId") String assessmentId,
-                                   @Param("consumedAt") long consumedAt);
-
     @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
-            + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
+            + "AND host_id = #{hostId} AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listThreads(@Param("scope") String scope,
                                      @Param("userId") String userId,
-                                     @Param("agentId") String agentId);
+                                     @Param("agentId") String agentId,
+                                     @Param("hostId") String hostId);
 
     @Select("SELECT * FROM ai_threads WHERE scope = 'platform' AND user_id = #{userId} "
             + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listPlatformThreads(@Param("userId") String userId);
 
-    @Select("SELECT * FROM ai_threads WHERE parent_thread_id = #{parentThreadId} ORDER BY created_at ASC")
-    List<AiThreadRecord> listChildThreads(@Param("parentThreadId") String parentThreadId);
-
     @Select("SELECT * FROM ai_threads WHERE thread_id = #{threadId}")
     AiThreadRecord findThread(@Param("threadId") String threadId);
 
-    @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, agent_id, session_id, title, config_id, "
+    @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, agent_id, host_id, session_id, title, config_id, "
             + "config_name, config_protocol, config_model, config_base_url, config_completions_path, "
             + "config_max_output_tokens, created_at, last_active_at, message_count, run_status, "
-            + "parent_thread_id, profile, context_summary, context_checkpoint_json, root_plan_id) "
-            + "VALUES (#{threadId}, #{scope}, #{userId}, #{agentId}, #{sessionId}, #{title}, #{configId}, "
+            + "parent_thread_id, context_summary, context_checkpoint_json) "
+            + "VALUES (#{threadId}, #{scope}, #{userId}, #{agentId}, #{hostId}, #{sessionId}, #{title}, #{configId}, "
             + "#{configName}, #{configProtocol}, #{configModel}, #{configBaseUrl}, #{configCompletionsPath}, "
             + "#{configMaxOutputTokens}, #{createdAt}, #{lastActiveAt}, #{messageCount}, #{runStatus}, "
-            + "#{parentThreadId}, 'default', "
-            + "#{contextSummary}, #{contextCheckpointJson}, #{rootPlanId})")
+            + "#{parentThreadId}, "
+            + "#{contextSummary}, #{contextCheckpointJson})")
     int insertThread(AiThreadRecord row);
 
     @Update("UPDATE ai_threads SET title = #{title}, last_active_at = #{lastActiveAt} WHERE thread_id = #{threadId}")
@@ -318,11 +290,11 @@ public interface AiConversationMapper {
                    @Param("leaseToken") String leaseToken);
 
     @Insert("INSERT INTO ai_messages (message_id, thread_id, turn_id, run_id, message_seq, status, "
-            + "role, content, timestamp, attachments_json, nodes_json, review_json, plan_json) "
+            + "role, content, recovery_context, timestamp, attachments_json, nodes_json, review_json, plan_json) "
             + "VALUES (#{messageId}, #{threadId}, #{turnId}, #{runId}, "
             + "COALESCE(#{messageSeq}, (SELECT COALESCE(MAX(message_seq), 0) + 1 "
             + "FROM ai_messages WHERE thread_id = #{threadId})), "
-            + "#{status}, #{role}, #{content}, #{timestamp}, #{attachmentsJson}, "
+            + "#{status}, #{role}, #{content}, #{recoveryContext}, #{timestamp}, #{attachmentsJson}, "
             + "#{nodesJson}, #{reviewJson}, #{planJson})")
     int insertMessage(AiMessageRecord row);
 
@@ -366,7 +338,8 @@ public interface AiConversationMapper {
             + "SELECT 1 FROM ai_messages progress WHERE progress.turn_id = m.turn_id "
             + "AND progress.role = 'assistant' "
             + "AND progress.status = 'discarded' "
-            + "AND TRIM(COALESCE(progress.content, '')) <> ''))) "
+            + "AND (TRIM(COALESCE(progress.recovery_context, '')) <> '' "
+            + "OR TRIM(COALESCE(progress.content, '')) <> '')))) "
             + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}) "
             + "ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> recentContextMessages(@Param("threadId") String threadId,
@@ -377,7 +350,8 @@ public interface AiConversationMapper {
             + "OR (m.status = 'discarded' AND EXISTS (SELECT 1 FROM ai_messages progress "
             + "WHERE progress.turn_id = m.turn_id AND progress.role = 'assistant' "
             + "AND progress.status = 'discarded' "
-            + "AND TRIM(COALESCE(progress.content, '')) <> ''))) LIMIT 1")
+            + "AND (TRIM(COALESCE(progress.recovery_context, '')) <> '' "
+            + "OR TRIM(COALESCE(progress.content, '')) <> '')))) LIMIT 1")
     AiMessageRecord findContextMessageBySequence(@Param("threadId") String threadId,
                                                  @Param("messageSeq") long messageSeq);
 
@@ -399,12 +373,12 @@ public interface AiConversationMapper {
                                       @Param("leaseToken") String leaseToken,
                                       @Param("writeAt") long writeAt);
 
-    @Update("UPDATE ai_messages SET content = #{content}, nodes_json = #{nodesJson}, "
+    @Update("UPDATE ai_messages SET content = #{content}, recovery_context = #{recoveryContext}, nodes_json = #{nodesJson}, "
             + "review_json = #{reviewJson}, plan_json = #{planJson}, status = #{status} "
             + "WHERE message_id = #{messageId}")
     int updateMessage(AiMessageRecord row);
 
-    @Update("UPDATE ai_messages SET content = #{content}, nodes_json = #{nodesJson}, "
+    @Update("UPDATE ai_messages SET content = #{content}, recovery_context = #{recoveryContext}, nodes_json = #{nodesJson}, "
             + "review_json = #{reviewJson}, plan_json = #{planJson}, status = #{status} "
             + "WHERE message_id = #{messageId} AND EXISTS "
             + "(SELECT 1 FROM ai_runs r JOIN ai_thread_leases l ON l.thread_id = r.thread_id "
@@ -413,11 +387,19 @@ public interface AiConversationMapper {
     int updateMessageFenced(@Param("messageId") String messageId,
                             @Param("status") String status,
                             @Param("content") String content,
+                            @Param("recoveryContext") String recoveryContext,
                             @Param("nodesJson") String nodesJson,
                             @Param("reviewJson") String reviewJson,
                             @Param("planJson") String planJson,
                             @Param("leaseToken") String leaseToken,
                             @Param("writeAt") long writeAt);
+
+    /** Recovery changes neither the existing timeline nor its review/plan snapshots. */
+    @Update("UPDATE ai_messages SET content = #{content}, recovery_context = #{recoveryContext} "
+            + "WHERE message_id = #{messageId}")
+    int updateMessageRecovery(@Param("messageId") String messageId,
+                              @Param("content") String content,
+                              @Param("recoveryContext") String recoveryContext);
 
     @Insert("INSERT INTO ai_runs (run_id, thread_id, turn_id, status, started_at, finished_at, duration_ms, "
             + "config_id, input, output, error_message, error_category, raw_error_message, "
@@ -585,10 +567,10 @@ public interface AiConversationMapper {
                            @Param("finishedAt") long finishedAt);
 
     // ── 子 Agent 调用记录 ─────────────────────────────────────────────────────
-    @Insert("INSERT INTO ai_subagent_invocations (invocation_id, parent_thread_id, parent_message_id, "
-            + "child_thread_id, profile, task, input_json, summary, status, created_at, completed_at) "
-            + "VALUES (#{invocationId}, #{parentThreadId}, #{parentMessageId}, #{childThreadId}, "
-            + "'default', #{task}, #{inputJson}, #{summary}, #{status}, #{createdAt}, #{completedAt})")
+    @Insert("INSERT INTO ai_subagent_invocations (invocation_id, parent_thread_id, "
+            + "child_thread_id, task, summary, status, created_at, completed_at) "
+            + "VALUES (#{invocationId}, #{parentThreadId}, #{childThreadId}, "
+            + "#{task}, #{summary}, #{status}, #{createdAt}, #{completedAt})")
     int insertSubagentInvocation(AiSubagentInvocation row);
 
     @Update("UPDATE ai_subagent_invocations SET child_thread_id = #{childThreadId}, status = #{status}, "

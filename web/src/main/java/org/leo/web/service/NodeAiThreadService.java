@@ -117,7 +117,7 @@ public class NodeAiThreadService {
         }
         if (agentId != null) {
             for (AiThreadRecord record :
-                    conversationStore.listAgentThreads(userId, agentId)) {
+                    conversationStore.listAgentThreads(userId, agentId, session.getCurrentHostId())) {
                 AiThread thread = memoryById.remove(record.getThreadId());
                 Map<String, Object> item = thread != null
                         ? threadToMap(thread, safeMessageCount(record.getMessageCount()))
@@ -159,6 +159,8 @@ public class NodeAiThreadService {
     private Map<String, Object> createThread(
             AgentNodeSession session, String requestedTitle, Integer configId,
             String parentThreadId) {
+        requireHostId(session);
+        if (parentThreadId != null) requireOwnedThread(session, parentThreadId);
         String threadId = UUID.randomUUID().toString();
         String title = requestedTitle != null && !requestedTitle.isBlank()
                 ? requestedTitle : "对话 " + (session.listAiThreads().size() + 1);
@@ -173,7 +175,7 @@ public class NodeAiThreadService {
         String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
         if (agentId != null) {
             conversationStore.createAgentThread(
-                    session.getCreateByUser(), agentId,
+                    session.getCreateByUser(), agentId, session.getCurrentHostId(),
                     session.getSessionId(), thread, config);
             conversationStore.attachEventJournal(threadId, thread);
         }
@@ -314,7 +316,9 @@ public class NodeAiThreadService {
         String userId = session.getCreateByUser();
         return AiConversationStoreService.SCOPE_AGENT.equals(record.getScope())
                 && agentId != null && agentId.equals(record.getAgentId())
-                && userId != null && userId.equals(record.getUserId());
+                && userId != null && userId.equals(record.getUserId())
+                && session.getCurrentHostId() != null
+                && session.getCurrentHostId().equals(record.getHostId());
     }
 
     /** 持久化记录始终校验归属；未落库的线程仅允许其所属内存 Session 访问。 */
@@ -333,20 +337,27 @@ public class NodeAiThreadService {
         if (session == null || thread == null || persisted != null) return null;
         String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
         if (agentId == null) return null;
+        requireHostId(session);
         try {
             conversationStore.createAgentThread(
-                    session.getCreateByUser(), agentId,
+                    session.getCreateByUser(), agentId, session.getCurrentHostId(),
                     session.getSessionId(), thread, config);
             return null;
         } catch (RuntimeException createError) {
             try {
-                if (conversationStore.findThread(thread.getThreadId()) != null) return null;
+                if (ownsPersistedThread(session, conversationStore.findThread(thread.getThreadId()))) return null;
             } catch (RuntimeException lookupError) {
                 createError.addSuppressed(lookupError);
             }
             logger.warn("初始化 AI 线程持久化失败, sessionId={}, threadId={}: {}",
                     session.getSessionId(), thread.getThreadId(), createError.getMessage());
             return "初始化对话存储失败，请稍后重试";
+        }
+    }
+
+    private void requireHostId(AgentNodeSession session) {
+        if (session == null || session.getCurrentHostId() == null || session.getCurrentHostId().isBlank()) {
+            throw ApiException.badRequest("请先选择主机再创建 AI 对话");
         }
     }
 

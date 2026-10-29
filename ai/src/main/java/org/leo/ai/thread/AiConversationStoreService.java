@@ -63,11 +63,11 @@ public class AiConversationStoreService {
         this.checkpoints = checkpoints;
     }
 
-    public List<AiThreadRecord> listAgentThreads(String userId, String agentId) {
-        if (isBlank(agentId)) {
+    public List<AiThreadRecord> listAgentThreads(String userId, String agentId, String hostId) {
+        if (isBlank(userId) || isBlank(agentId) || isBlank(hostId)) {
             return List.of();
         }
-        return mapper.listThreads(SCOPE_AGENT, userId, agentId);
+        return mapper.listThreads(SCOPE_AGENT, userId, agentId, hostId);
     }
 
     public List<AiThreadRecord> listPlatformThreads(String userId) {
@@ -84,13 +84,17 @@ public class AiConversationStoreService {
         return mapper.findThread(threadId);
     }
 
-    public void createAgentThread(String userId, String agentId, String sessionId,
+    public void createAgentThread(String userId, String agentId, String hostId, String sessionId,
                                    AiThread thread, AiModelConfig config) {
+        if (isBlank(userId) || isBlank(agentId) || isBlank(hostId)) {
+            throw new IllegalArgumentException("AI 线程缺少用户、Agent 或 HostId");
+        }
         AiThreadRecord row = new AiThreadRecord();
         row.setThreadId(thread.getThreadId());
         row.setScope(SCOPE_AGENT);
         row.setUserId(userId);
         row.setAgentId(agentId);
+        row.setHostId(hostId);
         row.setSessionId(sessionId);
         row.setTitle(thread.getTitle());
         applyConfig(row, config);
@@ -517,8 +521,8 @@ public class AiConversationStoreService {
 
     /**
      * 中断/失败时保存已经产生的 assistant Item，状态仍为 discarded。
-     * 当内容包含实际执行进度时，后续上下文查询会连同原始 user Item
-     * 一起载入，供“继续”任务衔接。
+     * 可见正文与内部 recoveryContext 分别保存；存在实际执行进度时，
+     * 模型上下文会连同原始 user Item 一起载入，供“继续”任务衔接。
      */
     @Transactional
     public void discardTurn(PersistedTurn turn,
@@ -529,10 +533,11 @@ public class AiConversationStoreService {
                             int toolCallCount,
                             String partialOutput,
                             List<Object> partialNodes,
-                            Object planSnapshot) {
+                            Object planSnapshot,
+                            String recoveryContext) {
         turnTerminal.discard(turn, runStatus, errorCategory, errorMessage,
                 rawErrorMessage, toolCallCount, partialOutput, partialNodes,
-                planSnapshot);
+                planSnapshot, recoveryContext);
     }
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
@@ -555,7 +560,7 @@ public class AiConversationStoreService {
         return mapper.recentContextMessages(
                         threadId, Math.max(1, Math.min(limit, 200))).stream()
                 .map(record -> new ConversationMessage(
-                        record.getMessageSeq(), record.getRole(), record.getContent()))
+                        record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record)))
                 .toList();
     }
 
@@ -563,7 +568,7 @@ public class AiConversationStoreService {
         AiMessageRecord record = mapper.findContextMessageBySequence(
                 threadId, messageSequence);
         return record == null ? null : new ConversationMessage(
-                record.getMessageSeq(), record.getRole(), record.getContent());
+                record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record));
     }
 
     public int countMessages(String threadId) {
