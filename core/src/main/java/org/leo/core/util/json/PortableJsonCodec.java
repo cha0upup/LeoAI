@@ -18,7 +18,7 @@ import java.util.Map;
  */
 public final class PortableJsonCodec {
 
-    public static final String BINARY_MARKER = "$leoBinary";
+    private static final String BINARY_MARKER = "$leoBinary";
 
     private PortableJsonCodec() {
     }
@@ -40,7 +40,7 @@ public final class PortableJsonCodec {
         return (Map<String, Object>) map;
     }
 
-    public static Object toWireValue(Object value) {
+    private static Object toWireValue(Object value) {
         if (value == null || value instanceof String || value instanceof Number || value instanceof Boolean) {
             return value;
         }
@@ -73,7 +73,7 @@ public final class PortableJsonCodec {
         return String.valueOf(value);
     }
 
-    public static Object fromWireValue(Object value) {
+    private static Object fromWireValue(Object value) {
         if (value instanceof Map<?, ?> map) {
             if (map.size() == 1 && map.containsKey(BINARY_MARKER)) {
                 Object encoded = map.get(BINARY_MARKER);

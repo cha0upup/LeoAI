@@ -259,7 +259,7 @@ public class NodeAiThreadService {
         updateThreadConfig(session, thread, config);
     }
 
-    public void updateThreadMeta(AgentNodeSession session, AiThread thread) {
+    private void updateThreadMeta(AgentNodeSession session, AiThread thread) {
         try {
             conversationStore.updateRuntime(session.getSessionId(), thread, null);
         } catch (Exception error) {
