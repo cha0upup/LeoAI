@@ -1,0 +1,1 @@
+import{Ft as e}from"./vendor-element-plus-CMivgVpY.js";function t(t,n,r=`modelValue`,i){let a=i||`update:${r}`;return e({get:()=>!!t[r],set:e=>n(a,!!e)})}export{t};

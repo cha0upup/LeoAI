@@ -1,1 +1,0 @@
-import{Rt as e}from"./vendor-element-plus-J6WGVLy5.js";function t(t,n,r=`modelValue`,i){let a=i||`update:${r}`;return e({get:()=>!!t[r],set:e=>n(a,!!e)})}export{t};

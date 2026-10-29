@@ -1,1 +1,0 @@
-import{On as e}from"./vendor-element-plus-J6WGVLy5.js";function t(t){let n=()=>e(t);function r(e={}){return{sessionId:n(),...e}}return{withSession:r,sessionId:n}}export{t};
