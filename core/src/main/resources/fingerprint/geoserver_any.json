@@ -1,0 +1,44 @@
+{
+  "fingerprintId": "geoserver_any",
+  "name": "geoserver",
+  "protocol": "http",
+  "tags": ["middleware", "java", "gis", "geospatial"],
+  "info": {
+    "version": "any",
+    "author": "leo-seed",
+    "description": "通过 GeoServer Web 管理页的产品标题与专属 Wicket 资源标识识别，覆盖默认 /geoserver 上下文及根路径部署。",
+    "remark": "每个候选路径独立校验 HTTP 200 与两项页面特征；仅识别产品，不推断具体版本或漏洞状态。"
+  },
+  "rule": {
+    "requests": [
+      {
+        "method": "GET",
+        "path": "/geoserver/web/",
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 8192
+      },
+      {
+        "method": "GET",
+        "path": "/web/",
+        "timeout": 5000,
+        "charset": "UTF-8",
+        "maxBodyBytes": 8192
+      }
+    ],
+    "match": {
+      "any": [
+        {"all": [
+          {"request": 0, "field": "status", "operator": "equals", "value": 200},
+          {"request": 0, "field": "body", "operator": "contains", "value": "<title>GeoServer"},
+          {"request": 0, "field": "body", "operator": "contains", "value": "wicket/resource/org.geoserver.web."}
+        ]},
+        {"all": [
+          {"request": 1, "field": "status", "operator": "equals", "value": 200},
+          {"request": 1, "field": "body", "operator": "contains", "value": "<title>GeoServer"},
+          {"request": 1, "field": "body", "operator": "contains", "value": "wicket/resource/org.geoserver.web."}
+        ]}
+      ]
+    }
+  }
+}
