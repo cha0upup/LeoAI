@@ -46,7 +46,7 @@ public class PluginManager {
         for (File file : files) {
             try {
                 String json = AesUtil.decrypt(Files.readString(file.toPath()), pluginEncryptKey);
-                installPlugin((Plugin) JsonUtil.fromJsonString(json, Plugin.class));
+                installPlugin(JsonUtil.fromJsonString(json, Plugin.class));
                 logger.debug("插件加载成功: {}", file.getName());
             } catch (Exception e) {
                 logger.error("插件加载异常: {}", file.getName(), e);

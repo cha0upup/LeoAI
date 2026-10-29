@@ -68,8 +68,8 @@ public class DisguiseManager {
 
                 // 解密并反序列化
                 String json = AesUtil.decrypt(encryptedContent, pluginEncryptKey);
-                DisguiseProtocol.requireCurrentMetadata((Map<?, ?>) JsonUtil.fromJsonString(json, Map.class));
-                Disguise disguise = (Disguise) JsonUtil.fromJsonString(json, Disguise.class);
+                DisguiseProtocol.requireCurrentMetadata(JsonUtil.fromJsonString(json, Map.class));
+                Disguise disguise = JsonUtil.fromJsonString(json, Disguise.class);
                 if (disguise.getDisguiseId() == null || disguise.getDisguiseId().isBlank()) {
                     throw new IllegalArgumentException("disguiseId不能为空");
                 }

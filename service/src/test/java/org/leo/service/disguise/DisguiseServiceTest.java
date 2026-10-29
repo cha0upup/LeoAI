@@ -129,7 +129,7 @@ class DisguiseServiceTest {
                 assertEquals("original", previous.getRemark());
                 assertEquals("replacement", manager.getDisguiseById(id).getRemark());
                 String saved = AesUtil.decrypt(Files.readString(directory.resolve("disguise/" + id + ".disguise")), key);
-                assertEquals("replacement", ((Map<?, ?>) JsonUtil.fromJsonString(saved, Map.class)).get("remark"));
+                assertEquals("replacement", (JsonUtil.fromJsonString(saved, Map.class)).get("remark"));
             } finally { manager.unload(id); }
         }
     }
@@ -240,7 +240,7 @@ class DisguiseServiceTest {
         String oldId = "old_" + UUID.randomUUID();
         Disguise old = JavaBuiltinDisguiseCatalog.createPresets().get(0);
         old.setDisguiseId(oldId);
-        Map<?, ?> source = (Map<?, ?>) JsonUtil.fromJsonString(old.toString(), Map.class);
+        Map<?, ?> source = JsonUtil.fromJsonString(old.toString(), Map.class);
         Map<Object, Object> definition = new LinkedHashMap<>(source);
         definition.put("protocolVersion", 2);
         byte[] bytes = AesUtil.encrypt(JsonUtil.toJsonString(definition), key).getBytes(StandardCharsets.UTF_8);

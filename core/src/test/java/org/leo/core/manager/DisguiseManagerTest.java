@@ -29,7 +29,7 @@ class DisguiseManagerTest {
         current.setDisguiseId(currentId);
         writeProfile("current.disguise", current.toString(), key);
 
-        Map<?, ?> source = (Map<?, ?>) JsonUtil.fromJsonString(current.toString(), Map.class);
+        Map<?, ?> source = JsonUtil.fromJsonString(current.toString(), Map.class);
         Map<Object, Object> old = new LinkedHashMap<>(source);
         old.put("disguiseId", oldId);
         old.remove("schemaVersion");

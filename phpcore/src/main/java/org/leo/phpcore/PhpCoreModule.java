@@ -75,19 +75,19 @@ public final class PhpCoreModule implements AgentRuntimeModule {
     private void applyStrategies(Agent agent, PhpRpcClient client) {
         try {
             if (agent.getUrlStrategy() != null && !agent.getUrlStrategy().isBlank()) {
-                client.setUrlStrategy((UrlStrategy) JsonUtil.fromJsonString(
+                client.setUrlStrategy(JsonUtil.fromJsonString(
                         agent.getUrlStrategy(), UrlStrategy.class));
             }
         } catch (Exception ignored) { }
         try {
             if (agent.getPaddingStrategy() != null && !agent.getPaddingStrategy().isBlank()) {
-                client.setPaddingStrategy((PaddingStrategy) JsonUtil.fromJsonString(
+                client.setPaddingStrategy(JsonUtil.fromJsonString(
                         agent.getPaddingStrategy(), PaddingStrategy.class));
             }
         } catch (Exception ignored) { }
         try {
             if (agent.getHeaderNoiseStrategy() != null && !agent.getHeaderNoiseStrategy().isBlank()) {
-                client.setHeaderNoiseStrategy((HeaderNoiseStrategy) JsonUtil.fromJsonString(
+                client.setHeaderNoiseStrategy(JsonUtil.fromJsonString(
                         agent.getHeaderNoiseStrategy(), HeaderNoiseStrategy.class));
             }
         } catch (Exception ignored) { }

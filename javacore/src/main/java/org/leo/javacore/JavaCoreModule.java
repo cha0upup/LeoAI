@@ -62,7 +62,7 @@ public final class JavaCoreModule implements AgentRuntimeModule {
         String json = agent.getUrlStrategy();
         if (json == null || json.isBlank()) return;
         try {
-            UrlStrategy strategy = (UrlStrategy) JsonUtil.fromJsonString(json, UrlStrategy.class);
+            UrlStrategy strategy = JsonUtil.fromJsonString(json, UrlStrategy.class);
             if (strategy != null) node.setUrlStrategy(strategy);
         } catch (Exception e) {
             logger.warn("解析 Java URL 随机化策略失败, agentId={}: {}",
@@ -74,7 +74,7 @@ public final class JavaCoreModule implements AgentRuntimeModule {
         String json = agent.getPaddingStrategy();
         if (json == null || json.isBlank()) return;
         try {
-            PaddingStrategy strategy = (PaddingStrategy) JsonUtil.fromJsonString(json, PaddingStrategy.class);
+            PaddingStrategy strategy = JsonUtil.fromJsonString(json, PaddingStrategy.class);
             if (strategy != null) node.setPaddingStrategy(strategy);
         } catch (Exception e) {
             logger.warn("解析 Java Padding 策略失败, agentId={}: {}",
@@ -86,7 +86,7 @@ public final class JavaCoreModule implements AgentRuntimeModule {
         String json = agent.getHeaderNoiseStrategy();
         if (json == null || json.isBlank()) return;
         try {
-            HeaderNoiseStrategy strategy = (HeaderNoiseStrategy) JsonUtil.fromJsonString(json, HeaderNoiseStrategy.class);
+            HeaderNoiseStrategy strategy = JsonUtil.fromJsonString(json, HeaderNoiseStrategy.class);
             if (strategy != null) node.setHeaderNoiseStrategy(strategy);
         } catch (Exception e) {
             logger.warn("解析 Java Header 噪声策略失败, agentId={}: {}",
@@ -98,7 +98,7 @@ public final class JavaCoreModule implements AgentRuntimeModule {
         String json = agent.getComponentClassNameStrategy();
         if (json == null || json.isBlank()) return;
         try {
-            ComponentClassNameStrategy strategy = (ComponentClassNameStrategy) JsonUtil.fromJsonString(
+            ComponentClassNameStrategy strategy = JsonUtil.fromJsonString(
                     json, ComponentClassNameStrategy.class);
             if (strategy != null) node.setComponentClassNameStrategy(strategy);
         } catch (Exception e) {

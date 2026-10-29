@@ -107,7 +107,7 @@ public class DisguiseService {
     public synchronized void updateDisguise(HashMap<String, Object> params) throws Exception {
         String disguiseId = requireString(params, "disguiseId");
         Disguise existingDisguise = getDisguiseById(disguiseId);
-        Disguise disguise = (Disguise) JsonUtil.fromJsonString(existingDisguise.toString(), Disguise.class);
+        Disguise disguise = JsonUtil.fromJsonString(existingDisguise.toString(), Disguise.class);
 
         if (params.containsKey("disguiseName")) {
             disguise.setDisguiseName(optionalString(params, "disguiseName"));
@@ -281,8 +281,8 @@ public class DisguiseService {
         Disguise disguise;
         try {
             String decrypted = AesUtil.decrypt(new String(data, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
-            DisguiseProtocol.requireCurrentMetadata((Map<?, ?>) JsonUtil.fromJsonString(decrypted, Map.class));
-            disguise = (Disguise) JsonUtil.fromJsonString(decrypted, Disguise.class);
+            DisguiseProtocol.requireCurrentMetadata(JsonUtil.fromJsonString(decrypted, Map.class));
+            disguise = JsonUtil.fromJsonString(decrypted, Disguise.class);
         } catch (Exception e) {
             return new ImportResult(null, null, "failed", "文件解析失败: " + e.getMessage());
         }

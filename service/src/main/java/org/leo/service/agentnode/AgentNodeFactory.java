@@ -237,7 +237,7 @@ public class AgentNodeFactory implements AgentNodeCreationContext {
             return;
         }
         try {
-            TlsFingerprintStrategy strategy = (TlsFingerprintStrategy) JsonUtil.fromJsonString(tlsJson, TlsFingerprintStrategy.class);
+            TlsFingerprintStrategy strategy = JsonUtil.fromJsonString(tlsJson, TlsFingerprintStrategy.class);
             if (strategy != null && strategy.isEnabled()) {
                 ((HttpCommunication) comm).setTlsFingerprintStrategy(strategy);
             }

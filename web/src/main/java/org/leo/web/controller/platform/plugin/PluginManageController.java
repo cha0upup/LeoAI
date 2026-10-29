@@ -402,7 +402,7 @@ public class PluginManageController {
         Plugin plugin;
         try {
             String decrypted = AesUtil.decrypt(new String(pluginBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
-            plugin = (Plugin) JsonUtil.fromJsonString(decrypted, Plugin.class);
+            plugin = JsonUtil.fromJsonString(decrypted, Plugin.class);
         } catch (Exception e) {
             return importResult(null, null, "failed", "文件解析失败: " + e.getMessage());
         }

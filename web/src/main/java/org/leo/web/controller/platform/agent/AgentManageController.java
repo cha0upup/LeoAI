@@ -461,7 +461,7 @@ public class AgentManageController {
             return new ComponentClassNameStrategy();
         }
         try {
-            ComponentClassNameStrategy strategy = (ComponentClassNameStrategy) JsonUtil.fromJsonString(
+            ComponentClassNameStrategy strategy = JsonUtil.fromJsonString(
                     json, ComponentClassNameStrategy.class);
             if (strategy == null) {
                 throw new IllegalArgumentException("类名画像配置为空");
