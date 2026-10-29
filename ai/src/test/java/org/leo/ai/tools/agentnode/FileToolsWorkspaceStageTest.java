@@ -93,6 +93,7 @@ class FileToolsWorkspaceStageTest {
                 "task-1", "input/browser/history.sqlite");
 
         assertTrue((Boolean) result.get("staged"));
+        org.junit.jupiter.api.Assertions.assertFalse(result.containsKey("meta"));
         @SuppressWarnings("unchecked")
         Map<String, Object> workspaceFile = (Map<String, Object>) result.get("workspaceFile");
         assertEquals("input/browser/history.sqlite", workspaceFile.get("path"));

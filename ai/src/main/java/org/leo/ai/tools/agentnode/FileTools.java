@@ -162,8 +162,7 @@ public class FileTools {
         auditParams.put("taskId", taskId);
         auditParams.put("workspacePath", workspacePath);
         try {
-            Map<String, Object> task = flattenPersistedDownloadSnapshot(
-                    downloadEngineService.progress(userId, taskId));
+            Map<String, Object> task = downloadEngineService.progress(userId, taskId);
             Map<String, Object> result = finalizeWorkspaceStage(
                     task, userId, sessionId, workspacePath);
             if (Boolean.TRUE.equals(result.get("staged"))) {
@@ -407,19 +406,6 @@ public class FileTools {
         result.put("workspaceFile", workspaceFile);
         result.put("staged", true);
         result.put("nextAction", "使用 workspaceList、workspaceReadText、workspaceSearch 或 workspaceExec 分析该文件");
-        return result;
-    }
-
-    private Map<String, Object> flattenPersistedDownloadSnapshot(Map<String, Object> snapshot) {
-        Map<String, Object> result = new HashMap<>(snapshot == null ? Map.of() : snapshot);
-        Object meta = result.get("meta");
-        if (meta instanceof Map<?, ?> persisted) {
-            persisted.forEach((key, value) -> {
-                if (key instanceof String stringKey) {
-                    result.putIfAbsent(stringKey, value);
-                }
-            });
-        }
         return result;
     }
 

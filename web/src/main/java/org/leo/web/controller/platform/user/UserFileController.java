@@ -1,12 +1,12 @@
 package org.leo.web.controller.platform.user;
 
-import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.web.service.UserArtifactService;
+import org.leo.web.util.FileDownloadResponse;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -18,7 +18,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -188,18 +187,7 @@ public class UserFileController {
             if (downloadName == null || downloadName.isEmpty()) {
                 downloadName = target.getFileName().toString();
             }
-            String encoded = URLEncoder.encode(downloadName, StandardCharsets.UTF_8.name()).replaceAll("\\+", "%20");
-
-            response.setStatus(200);
-            response.setContentType("application/octet-stream");
-            response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
-            response.setHeader("Content-Length", String.valueOf(Files.size(target)));
-
-            try (InputStream in = Files.newInputStream(target);
-                 ServletOutputStream out = response.getOutputStream()) {
-                in.transferTo(out);
-                out.flush();
-            }
+            FileDownloadResponse.write(target, downloadName, response);
         } catch (IllegalArgumentException e) {
             response.setStatus(400);
         } catch (Exception e) {

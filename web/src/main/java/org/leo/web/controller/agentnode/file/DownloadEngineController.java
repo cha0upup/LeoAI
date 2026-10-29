@@ -81,6 +81,8 @@ public class DownloadEngineController {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
             Map<String, Object> data = downloadEngineService.progress(userId, taskId);
             return ApiResponse.success(data);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             return ApiResponse.error("查询下载进度失败: " + e.getMessage());
         }

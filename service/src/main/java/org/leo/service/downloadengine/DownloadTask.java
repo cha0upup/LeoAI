@@ -10,7 +10,6 @@ import java.io.FileInputStream;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
 import java.security.MessageDigest;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
@@ -592,7 +591,6 @@ public class DownloadTask {
         meta.put("startAtMs", startAtMs);
         meta.put("endAtMs", endAtMs);
         meta.put("updatedAtMs", updatedAtMs);
-        meta.put("lastUpdate", Instant.now().toString());
         if (lastError != null) {
             meta.put("lastError", lastError);
         }

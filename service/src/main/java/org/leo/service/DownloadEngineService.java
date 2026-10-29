@@ -17,7 +17,6 @@ import java.security.MessageDigest;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -177,21 +176,14 @@ public class DownloadEngineService {
             return task.snapshot();
         }
 
-        if (userId != null && !userId.isBlank()) {
-            DownloadStore store = new DownloadStore(userId, taskId);
-            if (store.getTaskDir().exists()) {
-                try {
-                    Map<String, Object> meta = store.readMeta();
-                    Map<String, Object> out = new HashMap<>();
-                    out.put("taskId", taskId);
-                    out.put("state", meta == null ? "UNKNOWN" : meta.get("state"));
-                    out.put("meta", sanitizeMetaForFrontend(store, meta));
-                    return out;
-                } catch (Exception ignored) {
-                }
-            }
+        DownloadStore store = new DownloadStore(userId, taskId);
+        try {
+            Map<String, Object> snapshot = readStoredSnapshot(store, taskId);
+            if (snapshot != null) return snapshot;
+        } catch (Exception error) {
+            throw new IllegalStateException("读取下载任务状态失败", error);
         }
-        return Collections.singletonMap("taskId", taskId);
+        throw new IllegalArgumentException("任务不存在: " + taskId);
     }
 
     public Map<String, Object> listBySessionId(String userId, String sessionId) {
@@ -223,19 +215,10 @@ public class DownloadEngineService {
                 }
                 try {
                     DownloadStore store = new DownloadStore(userId, taskId);
-                    Map<String, Object> meta = store.readMeta();
-                    if (meta == null) {
-                        continue;
+                    Map<String, Object> item = readStoredSnapshot(store, taskId);
+                    if (item != null && sessionId.equals(item.get("sessionId"))) {
+                        tasks.add(item);
                     }
-                    if (!sessionId.equals(String.valueOf(meta.get("sessionId")))) {
-                        continue;
-                    }
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("taskId", taskId);
-                    item.put("sessionId", meta.get("sessionId"));
-                    item.put("state", meta.get("state"));
-                    item.put("meta", sanitizeMetaForFrontend(store, meta));
-                    tasks.add(item);
                 } catch (Exception ignored) {
                 }
             }
@@ -248,29 +231,33 @@ public class DownloadEngineService {
         return result;
     }
 
-    private static Map<String, Object> sanitizeMetaForFrontend(DownloadStore store, Map<String, Object> meta) {
-        if (meta == null) {
-            return null;
+    private static final List<String> STORED_SNAPSHOT_FIELDS = List.of(
+            "sessionId", "filePath", "currentStage", "threads", "chunkSize", "expectedLength",
+            "expectedMd5", "doneChunks", "totalChunks", "downloadedBytes", "lastError", "errorStage",
+            "createAtMs", "startAtMs", "endAtMs", "updatedAtMs");
+
+    /** Disk metadata is private storage, not a second response format. Reads never resume workers. */
+    private static Map<String, Object> readStoredSnapshot(DownloadStore store, String taskId) throws Exception {
+        Map<String, Object> meta = store.readMeta();
+        if (meta == null) return null;
+        Map<String, Object> snapshot = new HashMap<>();
+        for (String field : STORED_SNAPSHOT_FIELDS) {
+            if (meta.containsKey(field)) snapshot.put(field, meta.get(field));
         }
-        Map<String, Object> safe = new HashMap<>(meta);
-        safe.remove("userId");
-        // Remove absolute paths
-        Object finalPath = safe.remove("finalPath");
-        Object tempPath = safe.remove("tempPath");
-        // Provide relative paths if possible
-        if (finalPath != null) {
-            String rel = store.toUserRelativePath(new java.io.File(String.valueOf(finalPath)));
-            if (rel != null) {
-                safe.put("downloadPath", rel);
+        TransferTaskState state = TransferTaskState.valueOf(String.valueOf(meta.get("state")));
+        snapshot.put("taskId", taskId);
+        snapshot.put("state", state == TransferTaskState.RUNNING ? "PAUSED" : state.name());
+        snapshot.put("speedBytesPerSec", 0L);
+        for (String field : List.of("finalPath", "tempPath")) {
+            Object path = meta.get(field);
+            if (path != null) {
+                String relative = store.toUserRelativePath(new File(String.valueOf(path)));
+                if (relative != null) {
+                    snapshot.put("finalPath".equals(field) ? "downloadPath" : "taskTempPath", relative);
+                }
             }
         }
-        if (tempPath != null) {
-            String rel = store.toUserRelativePath(new java.io.File(String.valueOf(tempPath)));
-            if (rel != null) {
-                safe.put("taskTempPath", rel);
-            }
-        }
-        return safe;
+        return snapshot;
     }
 
     /**

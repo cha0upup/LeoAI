@@ -7,6 +7,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
+import org.leo.web.util.FileDownloadResponse;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.core.repository.session.AgentSessionFileRepository;
 import org.slf4j.Logger;
@@ -16,15 +17,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.File;
-import java.io.InputStream;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Base64;
@@ -120,13 +116,6 @@ public class AgentNodeFileController {
             }
 
             String downloadName = (filename != null && !filename.isBlank()) ? filename.trim() : f.getName();
-            String encoded = URLEncoder.encode(downloadName, StandardCharsets.UTF_8.name()).replaceAll("\\+", "%20");
-
-            response.setStatus(200);
-            response.setContentType("application/octet-stream");
-            response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
-            response.setHeader("Content-Length", String.valueOf(f.length()));
-
             Map<String, Object> auditParams = new HashMap<>();
             auditParams.put("path", path);
             auditParams.put("filename", downloadName);
@@ -135,15 +124,7 @@ public class AgentNodeFileController {
                     ApiResponse.CODE_SUCCESS, "下载本地文件", "SUCCESS", null,
                     AuditLogUtil.getClientIp(request), false);
 
-            try (InputStream in = Files.newInputStream(resolved);
-                 ServletOutputStream out = response.getOutputStream()) {
-                byte[] buf = new byte[64 * 1024];
-                int n;
-                while ((n = in.read(buf)) >= 0) {
-                    out.write(buf, 0, n);
-                }
-                out.flush();
-            }
+            FileDownloadResponse.write(resolved, downloadName, response);
         } catch (Exception e) {
             logger.warn("下载本地文件失败: {}", e.getMessage());
             try {

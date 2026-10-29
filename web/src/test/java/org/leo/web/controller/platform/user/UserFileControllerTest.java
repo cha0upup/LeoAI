@@ -168,6 +168,35 @@ class UserFileControllerTest {
                 .andExpect(jsonPath("$.data.count").value(1)).andExpect(jsonPath("$.data.fileList[0].metadata.title").value("Review"));
     }
 
+    @Test
+    void downloadsWorkspaceFilesWithTheSharedResponseWriter() throws Exception {
+        controller.createFile(authenticatedRequest(), "notes/file.txt", "hello 世界", false);
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        controller.download(authenticatedRequest(), "notes/file.txt", "中文 报告.txt", response);
+        assertEquals(200, response.getStatus());
+        assertEquals("hello 世界", new String(response.getContentAsByteArray(), java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("中文 报告.txt", org.springframework.http.ContentDisposition
+                .parse(response.getHeader("Content-Disposition")).getFilename());
+    }
+
+    @Test
+    void workspaceDownloadsDoNotReachSiblingTaskStorage() throws Exception {
+        Path downloads = artifacts.root(userId).getParent().resolve("downloads");
+        Files.createDirectories(downloads);
+        Files.writeString(downloads.resolve("fixture.txt"), "private task data");
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        controller.download(authenticatedRequest(), "../downloads/fixture.txt", null, response);
+        assertEquals(400, response.getStatus());
+        assertEquals(0, response.getContentAsByteArray().length);
+    }
+
+    @Test
+    void workspaceDownloadsStillRequireLogin() {
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        controller.download(new MockHttpServletRequest(), "notes/file.txt", null, response);
+        assertEquals(401, response.getStatus());
+    }
+
     private MockHttpServletRequest authenticatedRequest() {
         User user = new User();
         user.setUserId(userId);
