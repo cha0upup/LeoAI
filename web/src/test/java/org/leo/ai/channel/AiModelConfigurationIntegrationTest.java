@@ -27,6 +27,8 @@ import org.sqlite.SQLiteDataSource;
 import javax.sql.DataSource;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -195,18 +197,85 @@ class AiModelConfigurationIntegrationTest {
     void catalogRefreshUpdatesSystemLimitsAndPreservesManualOverrides() {
         jdbc.update("UPDATE ai_model_capabilities SET context_window_tokens=1 WHERE model_name='deepseek-flash'");
         AiModelCapability manual = configs.listModelCapabilities().stream()
-                .filter(row -> row.getModelName().equals("mimo-v2.5")).findFirst().orElseThrow();
+                .filter(row -> row.getModelName().equals("mimo-v2.6-pro")).findFirst().orElseThrow();
         manual.setContextWindowTokens(65_536);
         configs.updateCapability(manual.getModelName(), manual);
         initializeSchema();
         assertEquals(1_000_000, configs.capabilitiesForModel(null, "deepseek-flash").contextWindowTokens());
-        assertEquals(65_536, configs.capabilitiesForModel(null, "mimo-v2.5").contextWindowTokens());
-        assertEquals("manual", configs.capabilitiesForModel(null, "mimo-v2.5").source());
+        assertEquals(65_536, configs.capabilitiesForModel(null, "mimo-v2.6-pro").contextWindowTokens());
+        assertEquals("manual", configs.capabilitiesForModel(null, "mimo-v2.6-pro").source());
         assertFalse(configs.capabilitiesForModel(null, "gpt5.5").recognized());
     }
 
     private void initializeSchema() {
         new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(dataSource);
+    }
+
+    @Test
+    void refreshedCatalogCoversCurrentChatModelsAndDropsRetiredMimoSystemRows() {
+        Set<String> expected = Set.of(
+                "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna",
+                "deepseek-flash", "deepseek-v4-pro",
+                "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6",
+                "qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus",
+                "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "glm-5.3-flashx-legal",
+                "gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
+                "mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed");
+        jdbc.update("INSERT INTO ai_model_capabilities(model_name,source,context_window_tokens,max_output_tokens) VALUES('mimo-v2.5','system',1000000,128000)");
+        initializeSchema();
+        assertEquals(expected, configs.listModelCapabilities().stream()
+                .map(AiModelCapability::getModelName).collect(Collectors.toSet()));
+        for (String name : expected) {
+            var caps = configs.capabilitiesForModel(null, name);
+            assertTrue(caps.recognized(), name);
+            assertTrue(caps.supportsStreaming(), name);
+            assertTrue(caps.supportsFunctionCalling(), name);
+            assertTrue(caps.maxOutputTokens() > 0, name);
+        }
+        assertFalse(configs.capabilitiesForModel(null, "mimo-v2.5").recognized());
+        assertFalse(configs.capabilitiesForModel(null, "mimo-v2.5-pro").recognized());
+        assertEquals(1_050_000, configs.capabilitiesForModel("openai", "gpt-6.1-sol").contextWindowTokens());
+        AiModelConfig inputBudget = new AiModelConfig();
+        inputBudget.setProviderKey("openai");
+        inputBudget.setModel("gpt-6.1-sol");
+        assertEquals(922_000, configs.getContextWindowTokens(inputBudget));
+        inputBudget.setContextWindowTokens(65_536);
+        assertEquals(65_536, configs.getContextWindowTokens(inputBudget));
+        assertEquals(65_536, configs.capabilitiesForModel("gemini", "gemini-4-argon").maxOutputTokens());
+    }
+
+    @Test
+    void kimiCatalogResolvesBothProviderPrefixesAndCreatesAnActiveModel() {
+        Map<String, Integer> windows = Map.of(
+                "kimi-k3.1-pro", 1_048_576, "kimi-k3.1-pro-highspeed", 1_048_576, "kimi-k3", 1_048_576,
+                "kimi-k2.7-code", 262_144, "kimi-k2.7-code-highspeed", 262_144, "kimi-k2.6", 262_144);
+        windows.forEach((model, window) -> {
+            var caps = configs.capabilitiesForModel("kimi", model);
+            assertTrue(caps.recognized(), model);
+            assertTrue(caps.supportsReasoning(), model);
+            assertTrue(caps.supportsStreaming(), model);
+            assertTrue(caps.supportsFunctionCalling(), model);
+            assertEquals(window.intValue(), caps.contextWindowTokens(), model);
+            assertEquals(model.startsWith("kimi-k3") ? 1_048_576 : 32_768, caps.maxOutputTokens(), model);
+            assertEquals(caps, configs.capabilitiesForModel("custom", "kimi/" + model));
+            assertEquals(caps, configs.capabilitiesForModel("custom", "moonshot/" + model));
+        });
+        AiProvider provider = new AiProvider();
+        provider.setName("Kimi");
+        provider.setProviderKey("kimi");
+        provider.setBaseUrl("https://api.moonshot.cn/v1");
+        provider.setApiKey("test-key");
+        provider.setProtocol("chat_completions");
+        provider.setCompletionsPath("/chat/completions");
+        provider = configs.createProvider(provider);
+        AiModelConfig draft = draft(provider, "Kimi K3.1 Pro");
+        draft.setModel("kimi-k3.1-pro");
+        AiModelConfig saved = configs.create(draft);
+
+        assertEquals(saved.getId(), configs.getActive().getId());
+        assertEquals("kimi", saved.getProviderKey());
+        assertEquals("https://api.moonshot.cn/v1", saved.getBaseUrl());
+        assertNotNull(chat.getDelegate());
     }
 
     private AiProvider provider(String name) {

@@ -9,6 +9,7 @@ import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.channel.ModelEndpoint;
+import org.leo.ai.channel.ModelRequestOptions;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
@@ -217,6 +218,8 @@ public class AiModelConfigController {
                 DynamicModelProvider.PROTOCOL_RESPONSES, models(catalog, "gpt-")));
         list.add(provider("DeepSeek", "deepseek", "https://api.deepseek.com",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "deepseek-")));
+        list.add(provider("Kimi (Moonshot)", "kimi", "https://api.moonshot.cn/v1",
+                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "kimi-")));
         list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "qwen")));
         list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas/v4",
@@ -356,7 +359,8 @@ public class AiModelConfigController {
         m.put("capabilityModelName", configService.capabilityModelName(c));
         m.put("capabilityContextWindowTokens", capabilities.contextWindowTokens());
         m.put("capabilityMaxOutputTokens", capabilities.maxOutputTokens());
-        m.put("effectiveContextWindowTokens", clampPositive(c.getContextWindowTokens(), capabilities.contextWindowTokens()));
+        m.put("effectiveContextWindowTokens", ModelRequestOptions.inputWindow(c.getProviderKey(), c.getModel(),
+                clampPositive(c.getContextWindowTokens(), capabilities.contextWindowTokens())));
         m.put("effectiveMaxOutputTokens", clampPositive(c.getMaxOutputTokens(), capabilities.maxOutputTokens()));
         m.put("supportsTextGeneration", capabilities.supportsTextGeneration());
         m.put("supportsReasoning", capabilities.supportsReasoning());
@@ -365,6 +369,7 @@ public class AiModelConfigController {
         m.put("supportsStructuredOutput", capabilities.supportsStructuredOutput());
         m.put("supportsWebSearch", capabilities.supportsWebSearch());
         m.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
+        m.put("requestOptions", ModelRequestOptions.forModel(c.getProviderKey(), c.getModel()));
         m.put("defaultMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("createTime", c.getCreateTime());
         m.put("updateTime", c.getUpdateTime());
@@ -387,6 +392,7 @@ public class AiModelConfigController {
         m.put("supportsStructuredOutput", c.getSupportsStructuredOutput());
         m.put("supportsWebSearch", c.getSupportsWebSearch());
         m.put("supportsParallelToolCalls", c.getSupportsParallelToolCalls());
+        m.put("requestOptions", ModelRequestOptions.forModel(null, c.getModelName()));
         m.put("createTime", c.getCreateTime());
         m.put("updateTime", c.getUpdateTime());
         m.put("remark", c.getRemark());

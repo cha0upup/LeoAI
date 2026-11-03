@@ -538,8 +538,23 @@ LeoAI 的 AI 功能从管理后台读取 Provider 与模型配置：
 | OpenAI | `https://api.openai.com/v1` |
 | 通义千问（阿里） | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | DeepSeek | `https://api.deepseek.com` |
+| Kimi（Moonshot） | `https://api.moonshot.cn/v1` |
+| 智谱（GLM） | `https://open.bigmodel.cn/api/paas/v4` |
+| Gemini（OpenAI 兼容） | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| 小米 MiMo | `https://api.xiaomimimo.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
 | Ollama（本地） | `http://localhost:11434/v1` |
 | 其他兼容接口 | 根据文档填写对应地址 |
+
+Kimi 预设使用 Chat Completions，支持获取模型和手动添加模型。内置能力库收录 K3.1 Pro、K3、K2.7 Code 和 K2.6 系列；系统按模型处理思考参数与固定采样参数。国际站可将 Base URL 调整为 `https://api.moonshot.ai/v1`，并使用对应站点的 API Key。参数约束见 [Kimi 官方文档](https://platform.kimi.com/docs/api/models-overview)。
+
+内置对话能力库于 2026-11-03 核对，共收录 26 个当前型号：OpenAI GPT-6 Astra / GPT-6.1 Sol / GPT-6.1 Terra / GPT-6 Luna、DeepSeek Flash / V4 Pro、Kimi K3.1 / K3 / K2.7 / K2.6、Qwen3.8 Max / Flash 与 Qwen3.7 Plus、GLM-5.3 系列、Gemini 4 Argon / 3.8 Flash / 3.6 Flash / 3.5 Flash-Lite、MiMo V2.6 Pro / Flash / Pro Ultraspeed。能力行的备注保留核对日期与官方来源；音频、图像生成等专用模型不作为聊天模型预置。
+
+选择供应商后可勾选预设候选模型，也可「获取模型」按实际账号或本地部署的返回列表导入。OpenRouter、Ollama 与自定义网关不预置固定型号。模型可用性受地区、账户及服务开通情况影响；Kimi K2 系列目前仅对已有账号开放，MiMo Ultraspeed 需申请定制服务。MiMo V2.5 文本模型已下线，预设已更新为 V2.6；系统不自动改写已保存模型的 ID、API Key 或手工能力覆盖。
+
+Ollama 本地服务不校验 API Key；当前统一配置表单可填写占位值 `ollama`，实际模型以本地已安装列表为准。
+
+思考模式、等级和固定采样约束由后端统一提供，前端只展示对应模型允许的选项。GPT-6 工具调用优先使用 Responses API，输入预算另受 922K 上限约束；Gemini 4 当前采用同步输出上限，不启用 long decode。官方依据：[OpenAI](https://developers.openai.com/api/docs/models)、[DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/)、[Qwen](https://help.aliyun.com/en/model-studio/text-generation-model/)、[GLM](https://docs.bigmodel.cn/cn/guide/start/model-overview)、[Gemini](https://aistudio.google.com/docs/models)、[MiMo](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)。
 
 ### 主要配置项参考
 

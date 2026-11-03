@@ -12,6 +12,8 @@ class ModelEndpointTest {
     @CsvSource({
             "https://api.xiaomimimo.com/v1,/chat/completions,chat_completions,https://api.xiaomimimo.com/v1",
             "https://api.deepseek.com,/chat/completions,chat_completions,https://api.deepseek.com",
+            "https://api.moonshot.cn/v1,/chat/completions,chat_completions,https://api.moonshot.cn/v1",
+            "https://api.moonshot.ai/v1,/chat/completions,chat_completions,https://api.moonshot.ai/v1",
             "https://dashscope.aliyuncs.com/compatible-mode/v1,/chat/completions,chat_completions,https://dashscope.aliyuncs.com/compatible-mode/v1",
             "https://open.bigmodel.cn/api/paas/v4,/chat/completions,chat_completions,https://open.bigmodel.cn/api/paas/v4",
             "https://generativelanguage.googleapis.com/v1beta/openai,/chat/completions,chat_completions,https://generativelanguage.googleapis.com/v1beta/openai",

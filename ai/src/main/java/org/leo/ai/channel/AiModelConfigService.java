@@ -449,9 +449,10 @@ public class AiModelConfigService {
         ProviderCapabilities capabilities = capabilitiesForModel(config);
         Integer custom = config.getContextWindowTokens();
         if (custom != null && custom > 0) {
-            return Math.min(custom, capabilities.contextWindowTokens());
+            return ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(),
+                    Math.min(custom, capabilities.contextWindowTokens()));
         }
-        return capabilities.contextWindowTokens();
+        return ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(), capabilities.contextWindowTokens());
     }
 
     private static boolean flag(Integer value) {

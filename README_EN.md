@@ -484,8 +484,21 @@ Compatible with any service that follows the OpenAI API format:
 | OpenAI | `https://api.openai.com/v1` |
 | Qwen (Alibaba) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | DeepSeek | `https://api.deepseek.com` |
+| Kimi (Moonshot) | `https://api.moonshot.cn/v1` |
+| GLM (Zhipu) | `https://open.bigmodel.cn/api/paas/v4` |
+| Gemini (OpenAI compatible) | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Xiaomi MiMo | `https://api.xiaomimimo.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
 | Ollama (local) | `http://localhost:11434/v1` |
 | Other compatible APIs | Use the corresponding URL from their documentation |
+
+The Kimi preset uses Chat Completions with model discovery and manual model entry. Its built-in capability catalog covers K3.1 Pro, K3, K2.7 Code, and K2.6, with model-specific thinking and sampling parameters. For the international platform, use `https://api.moonshot.ai/v1` and an API key from that platform. See the [official parameter reference](https://platform.kimi.com/docs/api/models-overview).
+
+The chat capability catalog was checked on 2026-11-03 and contains 26 current models across OpenAI GPT-6, DeepSeek, Kimi, Qwen, GLM-5.3, Gemini 4/3, and MiMo V2.6. Each system row records its verification date and official source; audio and image-generation-only models are not seeded as chat models. Provider presets offer unchecked model candidates; model discovery uses the account's actual API response. OpenRouter, Ollama, and custom gateways keep dynamic model lists.
+
+For a local Ollama service, enter the placeholder `ollama` in the shared API Key field; local Ollama does not validate this value. Its model list depends on locally installed models.
+
+Availability varies by account and region: Kimi K2 is limited to existing accounts, and MiMo Ultraspeed requires a custom service agreement. Retired MiMo V2.5 text models are replaced by V2.6 in the system catalog, without rewriting saved model IDs, credentials, or manual capability overrides. Request constraints are shared by the backend and UI. Use Responses for GPT-6 reasoning with tools; its input budget is capped at 922K. Gemini 4 uses the synchronous output limit rather than long decode. Sources: [OpenAI](https://developers.openai.com/api/docs/models), [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/), [Qwen](https://help.aliyun.com/en/model-studio/text-generation-model/), [GLM](https://docs.bigmodel.cn/cn/guide/start/model-overview), [Gemini](https://aistudio.google.com/docs/models), [MiMo](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model).
 
 ### Key Configuration Reference
 

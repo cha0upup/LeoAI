@@ -246,6 +246,9 @@ public class DynamicModelProvider {
         String modelName = config.getModel();
         String providerKey = config.getProviderKey();
         String modelKey = ProviderCapabilities.normalizeModelName(providerKey, modelName);
+        ModelRequestOptions options = ModelRequestOptions.forModel(providerKey, modelName);
+        boolean openRouter = "openrouter".equalsIgnoreCase(providerKey);
+        boolean ollama = "ollama".equalsIgnoreCase(providerKey);
         ProviderCapabilities caps = configService.capabilitiesForModel(config);
         if (!probe && !caps.supportsTextGeneration()) {
             throw new IllegalArgumentException("模型不支持文本生成，不能用于对话调用: " + modelName);
@@ -259,9 +262,9 @@ public class DynamicModelProvider {
                 ? reasoningEffortOverride : config.getReasoningEffort();
         boolean wantsReasoning = userIntent != null ? userIntent : caps.supportsReasoning();
 
-        boolean requiresReasoning = modelKey.startsWith("glm-5.3") || modelKey.startsWith("gemini-3.");
+        boolean requiresReasoning = options.thinkingRequired();
         if (!probe && requiresReasoning && Boolean.FALSE.equals(userIntent)) {
-            throw new IllegalArgumentException(modelName + " 不支持关闭思考，请使用 auto 或 low 推理强度");
+            throw new IllegalArgumentException(modelName + " 始终开启思考，请保留模型默认设置");
         }
         boolean doReasoning = requiresReasoning || wantsReasoning && (forceReasoning || caps.supportsReasoning());
         if (!probe && wantsReasoning && !caps.supportsReasoning()) {
@@ -275,26 +278,40 @@ public class DynamicModelProvider {
         if (effectiveMaxTokens <= 0) throw new IllegalArgumentException("模型最大输出长度必须大于 0");
         String effectiveReasoningEffort = doReasoning && reasoningEffort != null
                 && !reasoningEffort.isBlank() && !"auto".equalsIgnoreCase(reasoningEffort)
-                ? normalizeReasoningEffortForModel(modelKey, reasoningEffort)
+                ? normalizeReasoningEffortForModel(modelKey, reasoningEffort, options)
                 : null;
-        if (probe && requiresReasoning) effectiveReasoningEffort = "low";
-        if (!doReasoning && caps.supportsReasoning() && useResponsesApi(config)) effectiveReasoningEffort = "none";
-        Map<String, Object> customParameters = chatCustomParameters(modelKey, doReasoning);
+        if (probe && requiresReasoning && !options.reasoningEfforts().isEmpty()) effectiveReasoningEffort = "low";
+        if (!doReasoning && caps.supportsReasoning()
+                && (useResponsesApi(config) || modelKey.startsWith("gpt-6") || ollama)) effectiveReasoningEffort = "none";
+        boolean toolsNeedResponses = options.responsesRequiredForTools()
+                && !(modelKey.startsWith("gpt-6-luna") && !doReasoning);
+        if (!probe && toolsNeedResponses && caps.supportsFunctionCalling() && !useResponsesApi(config)) {
+            throw new IllegalArgumentException(modelName + " 的工具调用请使用 Responses API");
+        }
+        Map<String, Object> customParameters = openRouter
+                ? Map.of("reasoning", !doReasoning ? Map.of("enabled", false)
+                        : effectiveReasoningEffort == null ? Map.of("enabled", true) : Map.of("effort", effectiveReasoningEffort))
+                : ollama ? Map.of() : chatCustomParameters(modelKey, doReasoning);
+        if (openRouter && !useResponsesApi(config)) effectiveReasoningEffort = null;
         boolean sendThinking = doReasoning && (modelKey.startsWith("deepseek-") || modelKey.startsWith("glm-")
-                || modelKey.startsWith("mimo-") || modelKey.startsWith("qwen"));
+                || modelKey.startsWith("mimo-") || modelKey.startsWith("qwen") || modelKey.startsWith("kimi-"));
         boolean parallelToolCalls = !probe && caps.supportsFunctionCalling()
                 && caps.supportsParallelToolCalls();
         boolean accumulateToolCallId = !usesRepeatedToolCallId(providerKey, modelName);
-        Double temperature = probe || (doReasoning && (modelKey.startsWith("deepseek-") || modelKey.startsWith("mimo-")))
+        Double temperature = probe || !options.temperatureConfigurable()
+                || (doReasoning && (modelKey.startsWith("deepseek-") || modelKey.startsWith("mimo-")
+                        || modelKey.startsWith("gpt-6")))
                 ? null
                 : config.getTemperature();
         return new ModelPlan(modelName, effectiveMaxTokens, doReasoning,
                 effectiveReasoningEffort, temperature, ModelEndpoint.headers(config.getHeadersJson()),
                 customParameters, sendThinking, accumulateToolCallId,
                 caps.supportsFunctionCalling(), parallelToolCalls,
-                config.getContextWindowTokens() != null && config.getContextWindowTokens() > 0
-                        ? Math.min(config.getContextWindowTokens(), caps.contextWindowTokens()) : caps.contextWindowTokens(),
-                modelKey.startsWith("mimo-"), probe);
+                ModelRequestOptions.inputWindow(providerKey, modelName,
+                        config.getContextWindowTokens() != null && config.getContextWindowTokens() > 0
+                                ? Math.min(config.getContextWindowTokens(), caps.contextWindowTokens()) : caps.contextWindowTokens()),
+                !openRouter && !ollama && (modelKey.startsWith("mimo-") || modelKey.startsWith("kimi-k3")
+                        || modelKey.startsWith("gpt-6")), probe);
     }
 
     private static String normalizeReasoningEffortOverride(String value) {
@@ -393,23 +410,18 @@ public class DynamicModelProvider {
         return plan.probe ? Duration.ofSeconds(30) : streaming ? STREAMING_TIMEOUT : BLOCKING_TIMEOUT;
     }
 
-    private static String normalizeReasoningEffortForModel(String model, String reasoningEffort) {
+    private static String normalizeReasoningEffortForModel(String model, String reasoningEffort, ModelRequestOptions options) {
         String effort = normalizeReasoningEffortOverride(reasoningEffort);
-        if ((model.startsWith("deepseek-") || model.startsWith("glm-5.3"))
-                && !java.util.Set.of("low", "high", "max").contains(effort)) {
-            throw new IllegalArgumentException(model + " 的推理强度只支持 auto/low/high/max");
-        }
-        if (model.startsWith("gemini-3.") && !java.util.Set.of("minimal", "low", "medium", "high").contains(effort)) {
-            throw new IllegalArgumentException(model + " 的推理强度只支持 auto/minimal/low/medium/high");
-        }
-        if (model.startsWith("mimo-") || model.startsWith("qwen")) {
-            throw new IllegalArgumentException(model + " 请使用 auto 推理强度，通过 thinkingEnabled 控制思考开关");
+        if (!options.reasoningEfforts().contains(effort)) {
+            throw new IllegalArgumentException(model + " 的推理强度只支持 auto"
+                    + (options.reasoningEfforts().isEmpty() ? "" : "/" + String.join("/", options.reasoningEfforts())));
         }
         return effort;
     }
 
     private static Map<String, Object> chatCustomParameters(String model, boolean doReasoning) {
-        if (model.startsWith("deepseek-") || model.startsWith("mimo-") || model.startsWith("glm-5.3")) {
+        if (model.startsWith("deepseek-") || model.startsWith("mimo-") || model.startsWith("glm-5.3")
+                || model.startsWith("kimi-k2.6")) {
             return Map.of("thinking", Map.of("type", doReasoning ? "enabled" : "disabled"));
         }
         if (model.startsWith("qwen")) return Map.of("enable_thinking", doReasoning);

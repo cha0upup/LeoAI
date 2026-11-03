@@ -351,15 +351,32 @@ INSERT OR IGNORE INTO ai_model_capabilities
  supports_text_generation, supports_reasoning, supports_streaming, supports_function_calling,
  supports_structured_output, supports_web_search, supports_parallel_tool_calls, remark)
 VALUES
-('deepseek-flash', 'system', 1000000, 384000, 1, 1, 1, 1, 1, 0, 0, '2026-09-20 核对: https://api-docs.deepseek.com/quick_start/pricing'),
-('deepseek-v4-pro', 'system', 1000000, 384000, 1, 1, 1, 1, 1, 0, 0, '2026-09-20 核对: https://api-docs.deepseek.com/quick_start/pricing'),
-('glm-5.3', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-09-20 核对: https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3'),
-('glm-5.3-flash', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-09-20 核对: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'),
-('glm-5.3-flashx', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-09-20 核对: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'),
-('mimo-v2.5-pro', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-09-20 核对: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model'),
-('mimo-v2.5', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-09-20 核对: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model'),
-('qwen3.8-max', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 0, '2026-09-20 核对: https://bailian.console.aliyun.com/cn-beijing/model/market/detail/qwen3.8-max'),
-('gemini-3.8-flash', 'system', 1048576, 65536, 1, 1, 1, 1, 1, 1, 0, '2026-09-20 核对: https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash');
+('gpt-6-astra', 'system', 1050000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://developers.openai.com/api/docs/models/gpt-6-astra；思考与工具组合使用 Responses API，最大输入 922000'),
+('gpt-6.1-sol', 'system', 1050000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://developers.openai.com/api/docs/models/gpt-6.1-sol；思考与工具组合使用 Responses API，最大输入 922000'),
+('gpt-6.1-terra', 'system', 1050000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://developers.openai.com/api/docs/models/gpt-6.1-terra；思考与工具组合使用 Responses API，最大输入 922000'),
+('gpt-6-luna', 'system', 1050000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://developers.openai.com/api/docs/models/gpt-6-luna；思考与工具组合使用 Responses API，最大输入 922000'),
+('deepseek-flash', 'system', 1000000, 384000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://api-docs.deepseek.com/quick_start/pricing；当前指向 DeepSeek-V4.1-Flash-1017'),
+('deepseek-v4-pro', 'system', 1000000, 384000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://api-docs.deepseek.com/quick_start/pricing；当前指向 DeepSeek-V4-Pro-0813'),
+('kimi-k3.1-pro', 'system', 1048576, 1048576, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart'),
+('kimi-k3.1-pro-highspeed', 'system', 1048576, 1048576, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart'),
+('kimi-k3', 'system', 1048576, 1048576, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k3-quickstart'),
+('kimi-k2.7-code', 'system', 262144, 32768, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart；输出采用官方默认 32K'),
+('kimi-k2.7-code-highspeed', 'system', 262144, 32768, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart；输出采用官方默认 32K'),
+('kimi-k2.6', 'system', 262144, 32768, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart；输出采用官方默认 32K'),
+('glm-5.3', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3'),
+('glm-5.3-flash', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'),
+('glm-5.3-flashx', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'),
+('glm-5.3-flashx-legal', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 0, 0, '2026-11-03 核对: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'),
+('mimo-v2.6-pro', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model；V2.5 文本模型已下线'),
+('mimo-v2.6-flash', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model；V2.5 文本模型已下线'),
+('mimo-v2.6-pro-ultraspeed', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 1, '2026-11-03 核对: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model；定制服务，需申请开通'),
+('qwen3.8-max', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://help.aliyun.com/en/model-studio/text-generation-model/'),
+('qwen3.8-flash', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://help.aliyun.com/en/model-studio/text-generation-model/'),
+('qwen3.7-plus', 'system', 1000000, 128000, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://help.aliyun.com/en/model-studio/text-generation-model/'),
+('gemini-4-argon', 'system', 1048576, 65536, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://aistudio.google.com/docs/models/gemini-4-argon；采用同步输出上限，不启用 long decode'),
+('gemini-3.8-flash', 'system', 1048576, 65536, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://aistudio.google.com/docs/models/gemini-3.8-flash'),
+('gemini-3.6-flash', 'system', 1048576, 65536, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://aistudio.google.com/docs/models/gemini-3.6-flash'),
+('gemini-3.5-flash-lite', 'system', 1048576, 65536, 1, 1, 1, 1, 1, 1, 0, '2026-11-03 核对: https://aistudio.google.com/docs/models/gemini-3.5-flash-lite');
 
 -- Probe evidence is scoped to one connection and does not overwrite the model catalog.
 CREATE TABLE IF NOT EXISTS ai_model_capability_observations (

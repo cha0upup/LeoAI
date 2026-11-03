@@ -37,7 +37,7 @@ public record ProviderCapabilities(
 
     private static boolean isKnownProvider(String key) {
         return switch (key) {
-            case "openai", "deepseek", "qwen", "dashscope", "mimo", "gemini", "moonshot", "zhipu" -> true;
+            case "openai", "deepseek", "qwen", "dashscope", "mimo", "gemini", "kimi", "moonshot", "zhipu" -> true;
             default -> false;
         };
     }
