@@ -1,11 +1,9 @@
 package org.leo.web.controller.platform;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,14 +26,12 @@ import org.leo.web.controller.platform.admin.UserController;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.LoginAttemptService;
 import org.leo.web.security.PermissionService;
-import org.springframework.core.io.ClassPathResource;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -62,14 +58,8 @@ class PasswordRoundTripIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        SQLiteConfig sqlite = new SQLiteConfig();
-        sqlite.enforceForeignKeys(true);
-        SQLiteDataSource source = new SQLiteDataSource(sqlite);
-        source.setUrl("jdbc:sqlite:" + temp.resolve("passwords.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
-        Configuration configuration = new Configuration(new Environment(
-                "test", new JdbcTransactionFactory(), source));
-        configuration.setMapUnderscoreToCamelCase(true);
+        SQLiteDataSource source = SqliteTestDatabase.create(temp.resolve("passwords.db"));
+        Configuration configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(UserMapper.class);
         configuration.addMapper(SystemConfigMapper.class);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);

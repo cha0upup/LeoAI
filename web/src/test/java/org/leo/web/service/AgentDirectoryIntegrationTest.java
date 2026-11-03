@@ -1,11 +1,9 @@
 package org.leo.web.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,11 +20,9 @@ import org.leo.web.controller.platform.project.ProjectController;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectChildrenRequest;
 import org.leo.web.security.PermissionService;
-import org.springframework.core.io.ClassPathResource;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -52,14 +48,9 @@ class AgentDirectoryIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        SQLiteConfig sqlite = new SQLiteConfig();
-        sqlite.enforceForeignKeys(true);
-        SQLiteDataSource source = new SQLiteDataSource(sqlite);
-        source.setUrl("jdbc:sqlite:" + temp.resolve("directory.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
+        SQLiteDataSource source = SqliteTestDatabase.create(temp.resolve("directory.db"));
         jdbc = new JdbcTemplate(source);
-        Configuration config = new Configuration(new Environment("test", new JdbcTransactionFactory(), source));
-        config.setMapUnderscoreToCamelCase(true);
+        Configuration config = SqliteTestDatabase.myBatisConfiguration(source);
         config.addMapper(AgentMapper.class);
         config.addMapper(ProjectMapper.class);
         session = new SqlSessionFactoryBuilder().build(config).openSession(true);

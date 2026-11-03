@@ -2,7 +2,6 @@ package org.leo.web.controller.platform.project;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.ibatis.executor.statement.StatementHandler;
-import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.plugin.Intercepts;
 import org.apache.ibatis.plugin.Invocation;
@@ -10,7 +9,6 @@ import org.apache.ibatis.plugin.Signature;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,13 +25,11 @@ import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
 import org.leo.web.service.AgentDirectoryService;
-import org.springframework.core.io.ClassPathResource;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
-import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -58,15 +54,9 @@ class ProjectListIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        SQLiteConfig sqlite = new SQLiteConfig();
-        sqlite.enforceForeignKeys(true);
-        SQLiteDataSource dataSource = new SQLiteDataSource(sqlite);
-        dataSource.setUrl("jdbc:sqlite:" + temp.resolve("projects.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(dataSource);
+        SQLiteDataSource dataSource = SqliteTestDatabase.create(temp.resolve("projects.db"));
         jdbc = new JdbcTemplate(dataSource);
-        Configuration configuration = new Configuration(new Environment(
-                "test", new JdbcTransactionFactory(), dataSource));
-        configuration.setMapUnderscoreToCamelCase(true);
+        Configuration configuration = SqliteTestDatabase.myBatisConfiguration(dataSource);
         configuration.addMapper(ProjectMapper.class);
         configuration.addInterceptor(queries);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);

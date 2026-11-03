@@ -1,12 +1,10 @@
 package org.leo.web.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,9 +19,7 @@ import org.leo.service.AgentService;
 import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.security.DatabaseCredentialCryptoService;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.sqlite.SQLiteConfig;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -42,13 +38,8 @@ class ConfigurationPersistenceTest {
 
     @BeforeEach
     void setUp() {
-        SQLiteConfig sqlite = new SQLiteConfig();
-        sqlite.enforceForeignKeys(true);
-        SQLiteDataSource source = new SQLiteDataSource(sqlite);
-        source.setUrl("jdbc:sqlite:" + temp.resolve("configuration.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
-        Configuration config = new Configuration(new Environment("test", new JdbcTransactionFactory(), source));
-        config.setMapUnderscoreToCamelCase(true);
+        SQLiteDataSource source = SqliteTestDatabase.create(temp.resolve("configuration.db"));
+        Configuration config = SqliteTestDatabase.myBatisConfiguration(source);
         config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         config.addMapper(AgentMapper.class);
         config.addMapper(AgentDatabaseConnectionMapper.class);

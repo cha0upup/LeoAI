@@ -10,16 +10,14 @@ import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.dao.mapper.AiConversationMapper;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
-import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -37,11 +35,7 @@ class AiConversationPersistenceIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        SQLiteConfig config = new SQLiteConfig();
-        config.enforceForeignKeys(true);
-        SQLiteDataSource dataSource = new SQLiteDataSource(config);
-        dataSource.setUrl("jdbc:sqlite:" + temp.resolve("conversations.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(dataSource);
+        SQLiteDataSource dataSource = SqliteTestDatabase.create(temp.resolve("conversations.db"));
         jdbc = new JdbcTemplate(dataSource);
         SqlSessionFactoryBean factory = new SqlSessionFactoryBean();
         factory.setDataSource(dataSource);
