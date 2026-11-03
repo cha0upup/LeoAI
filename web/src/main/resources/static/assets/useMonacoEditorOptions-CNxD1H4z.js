@@ -1,1 +1,0 @@
-function e(e={}){let{value:t=``,language:n=`plaintext`,theme:r=`vs`,readOnly:i=!1,automaticLayout:a=!0,scrollBeyondLastLine:o=!1,minimapEnabled:s=!1,fontSize:c=14,lineNumbers:l=`on`,wordWrap:u=`off`,...d}=e;return{value:t,language:n,theme:r,readOnly:i,automaticLayout:a,scrollBeyondLastLine:o,minimap:{enabled:s},fontSize:c,lineNumbers:l,wordWrap:u,...d}}export{e as t};
