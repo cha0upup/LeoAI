@@ -78,6 +78,24 @@ class SessionResourceAccessTest {
     }
 
     @Test
+    void overlappingRefreshRequestsKeepTheSameLoginAndConnectionValid() throws Exception {
+        when(users.getUserById("reader")).thenAnswer(invocation -> user("team-a"));
+        MockHttpServletRequest first = new MockHttpServletRequest("POST", "/agent-node/network-probe/workflow/tasks");
+        authenticate(first);
+        for (int refresh = 0; refresh < 3; refresh++) {
+            MockHttpServletRequest parallel = new MockHttpServletRequest("POST", "/agent-node/basic-info");
+            parallel.setSession(first.getSession(false));
+            authenticate(parallel);
+
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(first));
+            assertSame(session, ControllerUtil.getAgentNodeSession("connection"));
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(parallel));
+            assertSame(session, ControllerUtil.getAgentNodeSession("connection"));
+            assertFalse(((org.springframework.mock.web.MockHttpSession) first.getSession(false)).isInvalid());
+        }
+    }
+
+    @Test
     void aSessionAttributeAloneDoesNotReplaceRequestVerification() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", reader);

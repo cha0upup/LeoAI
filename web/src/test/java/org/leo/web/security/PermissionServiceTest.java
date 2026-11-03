@@ -57,6 +57,38 @@ class PermissionServiceTest {
     }
 
     @Test
+    void aParallelRefreshDoesNotBypassCredentialRevocation() {
+        UserService users = mock(UserService.class);
+        PermissionService permissions = new PermissionService(mock(AgentService.class), users);
+        MockHttpServletRequest request = requestWithUser("user-1");
+        User fresh = activeUser("user-1");
+        User revoked = activeUser("user-1");
+        revoked.setPassword("new-password-hash");
+        when(users.getUserById("user-1")).thenReturn(fresh, revoked);
+        permissions.requireLogin(request);
+        MockHttpSession session = (MockHttpSession) request.getSession(false);
+        session.setAttribute("user", activeUser("user-1"));
+
+        assertNull(PermissionService.forVerifiedRequest(request));
+        assertTrue(session.isInvalid());
+        verify(users, times(2)).getUserById("user-1");
+    }
+
+    @Test
+    void verifiedRequestsDoNotFollowAnotherLoginIdentity() {
+        UserService users = mock(UserService.class);
+        PermissionService permissions = new PermissionService(mock(AgentService.class), users);
+        MockHttpServletRequest request = requestWithUser("user-1");
+        when(users.getUserById("user-1")).thenReturn(activeUser("user-1"));
+        permissions.requireLogin(request);
+        request.getSession(false).setAttribute("user", activeUser("user-2"));
+
+        assertNull(PermissionService.forVerifiedRequest(request));
+        verify(users).getUserById("user-1");
+        verify(users, times(0)).getUserById("user-2");
+    }
+
+    @Test
     void refreshesActiveUserFromDatabase() {
         UserService users = mock(UserService.class);
         PermissionService service = new PermissionService(mock(AgentService.class), users);

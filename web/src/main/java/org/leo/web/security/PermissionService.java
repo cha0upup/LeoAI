@@ -75,9 +75,16 @@ public class PermissionService {
         HttpSession session = request.getSession(false);
         Object verified = request.getAttribute(REQUEST_ATTR_VERIFIED_USER);
         if (session != null && verified instanceof VerifiedUser snapshot
-                && snapshot.session() == session && snapshot.user() == session.getAttribute(SESSION_ATTR_USER)
-                && Objects.equals(snapshot.userId(), snapshot.user().getUserId())) {
-            return snapshot.verifier();
+                && snapshot.session() == session
+                && session.getAttribute(SESSION_ATTR_USER) instanceof User current
+                && Objects.equals(snapshot.userId(), current.getUserId())) {
+            // Parallel requests refresh the same login with separate User instances.
+            // Reverify a replaced instance instead of reporting a spurious 401;
+            // getCurrentUser still checks account status and the stored credential.
+            User user = snapshot.verifier().getCurrentUser(request);
+            if (user != null && Objects.equals(snapshot.userId(), user.getUserId())) {
+                return snapshot.verifier();
+            }
         }
         return null;
     }
