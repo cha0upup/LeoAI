@@ -7,9 +7,11 @@ import java.util.HashMap;
  * 所有接口统一使用此格式返回数据
  * 
  * @author LeoSpring
- * @version 2.0
  */
-public class ApiResponse {
+public final class ApiResponse {
+
+    private ApiResponse() {
+    }
     
     // 状态码常量
     public static final int CODE_SUCCESS = 200;
