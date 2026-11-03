@@ -21,10 +21,15 @@ target/
 
 ### NetBeans ###
 /nbproject/private/
+/*/nbproject/private/
 /nbbuild/
+/*/nbbuild/
 /dist/
+/*/dist/
 /nbdist/
+/*/nbdist/
 /.nb-gradle/
+/*/.nb-gradle/
 build/
 !**/src/main/**/build/
 !**/src/test/**/build/
@@ -33,13 +38,24 @@ build/
 .vscode/
 
 ### Local runtime data ###
-data.db
-data.db-shm
-data.db-wal
-data.db-wal-*
+*.db
+*.db-shm
+*.db-wal
+*.db-wal-*
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
 .leo/
 /root/users/
 /root/skills/
+*.log
+*.log.*
+hs_err_pid*
+replay_pid*
+*.hprof
 
 ### Internal dev docs (not for public repo) ###
 CODE_QUALITY_AUDIT.md
@@ -47,13 +63,15 @@ CODE_QUALITY_AUDIT.md
 ### Stale Spring Initializr scaffold ###
 /src/
 
-### Frontend build output ###
-
 ### Environment ###
 .env
+.env.*
+!.env.example
+!.env.*.example
 .claude/
 PROJECT_QUICKREF.md
 .DS_Store
 .workbuddy
 outputs/
-tools/__pycache__/
+__pycache__/
+*.pyc

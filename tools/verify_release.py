@@ -3,12 +3,38 @@
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
+
+
+def assert_version_alignment(backend, frontend):
+    project = ET.parse(backend / 'pom.xml').getroot()
+    version = project.findtext('{*}version')
+    if not version:
+        raise ValueError('Missing application version in pom.xml')
+    for module in project.findall('{*}modules/{*}module'):
+        path = backend / module.text.strip() / 'pom.xml'
+        child = ET.parse(path).getroot()
+        for field in ['{*}parent/{*}version', '{*}version']:
+            declared = child.findtext(field)
+            if declared is not None and declared != version:
+                raise ValueError('Module version differs from ' + version + ': ' + str(path))
+    package = json.loads((frontend / 'package.json').read_text(encoding='utf-8'))
+    lock = json.loads((frontend / 'package-lock.json').read_text(encoding='utf-8'))
+    versions = {
+        'package.json': package.get('version'),
+        'package-lock.json': lock.get('version'),
+        'package-lock.json root package': lock.get('packages', {}).get('', {}).get('version')
+    }
+    for source, declared in versions.items():
+        if declared != version:
+            raise ValueError(source + ' version differs from application version ' + version)
 
 
 def asset_manifest(root):
@@ -61,6 +87,7 @@ def verify_release(backend, frontend, install=True):
     for required in [backend / 'pom.xml', frontend / 'package.json', frontend / 'package-lock.json']:
         if not required.is_file():
             raise ValueError('Missing release input: ' + str(required))
+    assert_version_alignment(backend, frontend)
     npm = shutil.which('npm.cmd' if os.name == 'nt' else 'npm')
     if not npm:
         raise ValueError('npm is required for release verification')
@@ -98,7 +125,7 @@ def main(argv=None):
         verify_release(backend, args.frontend.resolve(), install=not args.skip_install)
     except subprocess.CalledProcessError as error:
         return error.returncode
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, ET.ParseError) as error:
         print('Release check failed: ' + str(error), file=sys.stderr)
         return 1
     return 0

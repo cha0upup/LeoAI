@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 import tempfile
 import unittest
@@ -19,8 +20,30 @@ class ReleaseGateTest(unittest.TestCase):
         for folder in [self.built, self.bundled]:
             folder.mkdir(parents=True)
             (folder / 'index.html').write_text('fixture')
-        for path in [self.backend / 'pom.xml', self.frontend / 'package.json', self.frontend / 'package-lock.json']:
-            path.write_text('{}')
+        (self.backend / 'pom.xml').write_text('<project><version>3.0.1</version>'
+                                            '<modules><module>core</module></modules></project>')
+        (self.backend / 'core').mkdir()
+        (self.backend / 'core/pom.xml').write_text('<project><parent><version>3.0.1</version></parent></project>')
+        (self.frontend / 'package.json').write_text(json.dumps({'version': '3.0.1'}))
+        (self.frontend / 'package-lock.json').write_text(json.dumps({
+            'version': '3.0.1', 'packages': {'': {'version': '3.0.1'}}
+        }))
+
+    def test_aligned_versions_pass(self):
+        verify_release.assert_version_alignment(self.backend, self.frontend)
+
+    def test_version_drift_stops_the_gate_before_installing_or_building(self):
+        for path in [self.backend / 'core/pom.xml', self.frontend / 'package.json',
+                     self.frontend / 'package-lock.json']:
+            original = path.read_text()
+            with self.subTest(source=path.name), patch('verify_release.run_command') as run:
+                path.write_text(original.replace('3.0.1', '3.0.0'))
+                try:
+                    with self.assertRaises(ValueError):
+                        verify_release.verify_release(self.backend, self.frontend)
+                    run.assert_not_called()
+                finally:
+                    path.write_text(original)
 
     def test_matching_trees_pass_without_changing_any_file(self):
         before = verify_release.asset_manifest(self.bundled)
