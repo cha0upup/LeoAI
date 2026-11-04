@@ -27,22 +27,42 @@ import static org.mockito.Mockito.*;
 
 class DynamicModelProviderTest {
     @ParameterizedTest
+    @ValueSource(strings = {"auto", " AUTO ", "", "  "})
+    void automaticChatEffortInheritsTheSavedModelSettingInsteadOfForcingMedium(String effort) {
+        AiModelConfig config = config("https://example.test/v1", "chat_completions");
+        config.setModel("glm-5.3");
+        config.setReasoningEffort("high");
+        AiModelConfigService configs = mock(AiModelConfigService.class);
+        when(configs.capabilitiesForModel(config)).thenReturn(reasoningCaps());
+        DynamicModelProvider provider = provider(configs);
+        var runtime = provider.buildRuntime(config, effort);
+        assertEquals("high", runtime.reasoningEffort());
+        assertEquals(DynamicModelProvider.runtimeCacheKey(config, runtime), provider.plannedRuntimeCacheKey(config, effort));
+        assertEquals("high", config.getReasoningEffort());
+    }
+
+    @ParameterizedTest
     @CsvSource({
-            "deepseek-flash,,max,thinking,enabled,max_tokens,true",
+            "deepseek-flash,,max,,,max_tokens,true",
+            "deepseek-flash,1,max,thinking,enabled,max_tokens,true",
             "deepseek-flash,0,,thinking,disabled,max_tokens,false",
-            "glm-5.3,,low,thinking,enabled,max_tokens,true",
-            "mimo-v2.6-pro,,,thinking,enabled,max_completion_tokens,true",
+            "glm-5.3,,low,,,max_tokens,true",
+            "glm-5.3,1,low,thinking,enabled,max_tokens,true",
+            "mimo-v2.6-pro,,,,,max_completion_tokens,true",
+            "mimo-v2.6-pro,1,,thinking,enabled,max_completion_tokens,true",
             "mimo-v2.6-flash,0,,thinking,disabled,max_completion_tokens,false",
-            "mimo-v2.6-pro-ultraspeed,,,thinking,enabled,max_completion_tokens,true",
-            "qwen3.8-max,,,enable_thinking,true,max_tokens,true",
+            "mimo-v2.6-pro-ultraspeed,,,,,max_completion_tokens,true",
+            "qwen3.8-max,,,,,max_tokens,true",
+            "qwen3.8-max,1,,enable_thinking,true,max_tokens,true",
             "qwen3.8-max,0,,enable_thinking,false,max_tokens,false",
-            "qwen3.8-flash,,,enable_thinking,true,max_tokens,true",
+            "qwen3.8-flash,,,,,max_tokens,true",
             "qwen3.7-plus,0,,enable_thinking,false,max_tokens,false",
             "gemini-4-argon,,low,,,max_tokens,true",
             "gemini-3.6-flash,,medium,,,max_tokens,true",
             "gemini-3.5-flash-lite,,minimal,,,max_tokens,true",
-            "glm-5.3-flashx-legal,,high,thinking,enabled,max_tokens,true",
-            "kimi-k2.6,,,thinking,enabled,max_tokens,true",
+            "glm-5.3-flashx-legal,,high,,,max_tokens,true",
+            "kimi-k2.6,,,,,max_tokens,true",
+            "kimi-k2.6,1,,thinking,enabled,max_tokens,true",
             "kimi-k2.6,0,,thinking,disabled,max_tokens,false",
             "kimi-k2.7-code,,,,,max_tokens,true",
             "kimi-k2.7-code-highspeed,,,,,max_tokens,true",
@@ -79,6 +99,10 @@ class DynamicModelProviderTest {
                     UserMessage.from("First"), AiMessage.builder().text("Previous").thinking("previous reasoning").build(),
                     UserMessage.from("Next")).build());
             JSONObject sent = body.get();
+            ModelRequestPlan.Preview preview = ModelRequestPlan.preview(config, reasoningCaps());
+            assertTrue(preview.valid());
+            preview.requestParameters().forEach((key, value) -> assertEquals(JSON.toJSONString(value),
+                    JSON.toJSONString(sent.get(key)), "Preview and inference differ at " + key));
             if (parameter == null) {
                 assertFalse(sent.containsKey("thinking"));
                 assertFalse(sent.containsKey("enable_thinking"));
@@ -181,8 +205,7 @@ class DynamicModelProviderTest {
             assertEquals("OK", response.aiMessage().text());
             assertEquals("reasoned", response.aiMessage().thinking());
             assertEquals("previous reasoning", body.get().getJSONArray("messages").getJSONObject(1).getString("reasoning_content"));
-            assertEquals(model.equals("kimi-k2.6") ? "enabled" : null,
-                    body.get().getJSONObject("thinking") == null ? null : body.get().getJSONObject("thinking").getString("type"));
+            assertFalse(body.get().containsKey("thinking"));
         } finally {
             server.stop(0);
         }

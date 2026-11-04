@@ -8,8 +8,12 @@ import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelDiscoveryService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
+import org.leo.ai.channel.ModelRequestPlan;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
+import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.ProviderCapabilities;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
@@ -18,11 +22,38 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AiModelConfigControllerTest {
+    @Test
+    void draftPreviewReturnsTypedFieldErrorsWithoutBuildingOrCallingARuntime() throws Exception {
+        AiModelConfigService configs = mock(AiModelConfigService.class);
+        DynamicModelProvider runtime = mock(DynamicModelProvider.class);
+        AiModelConfig draft = new AiModelConfig();
+        draft.setModel("mimo-v2.6-pro");
+        draft.setThinkingEnabled(2);
+        ProviderCapabilities caps = new ProviderCapabilities(true, "recognized", "system", 1_000_000, 128_000,
+                true, true, true, true, true, true, true);
+        when(configs.previewRequest(any())).thenReturn(ModelRequestPlan.preview(draft, caps));
+        AiModelConfigController controller = new AiModelConfigController(configs, runtime,
+                mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
+                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/admin/ai-models/request-preview").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerId\":1,\"model\":\"mimo-v2.6-pro\",\"thinkingEnabled\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.valid").value(false))
+                .andExpect(jsonPath("$.data.errors[0].field").value("thinkingEnabled"))
+                .andExpect(jsonPath("$.data.contract.parameters.temperature.maximum").value(1.5))
+                .andExpect(jsonPath("$.data.requestParameters").isEmpty());
+        verifyNoInteractions(runtime);
+    }
+
     @Test
     void capabilityEndpointSerializesTheRequestContractUsedByTheUi() throws Exception {
         AiModelConfigService configs = mock(AiModelConfigService.class);

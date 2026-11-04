@@ -2,6 +2,7 @@ package org.leo.web.controller.platform.ai;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.ModelRequestOptions;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.core.entity.AiExecutionPolicy;
@@ -118,6 +119,9 @@ public class PlatformAiController {
                 ? Math.min(config.getMaxOutputTokens(), capabilities.maxOutputTokens())
                 : capabilities.maxOutputTokens());
         item.put("supportsReasoning", capabilities.supportsReasoning());
+        item.put("thinkingEnabled", config.getThinkingEnabled());
+        item.put("reasoningEffort", config.getReasoningEffort());
+        item.put("requestOptions", ModelRequestOptions.forConfiguration(config, capabilities));
         item.put("supportsFunctionCalling", capabilities.supportsFunctionCalling());
         item.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
         return item;

@@ -108,7 +108,7 @@ public class DynamicModelProvider {
 
     /** 构建带有单次会话推理强度覆盖的运行时，不修改持久化模型配置。 */
     public ModelRuntime buildRuntime(AiModelConfig config, String reasoningEffortOverride) {
-        return buildRuntime(config, false, normalizeReasoningEffortOverride(reasoningEffortOverride), false);
+        return buildRuntime(config, false, reasoningEffortOverride, false);
     }
 
     /**
@@ -126,7 +126,7 @@ public class DynamicModelProvider {
         }
         boolean responsesApi = useResponsesApi(config);
         String baseUrl = ModelEndpoint.apiRoot(config);
-        ModelPlan plan = plan(config, forceReasoning, reasoningEffortOverride, probe);
+        ModelRequestPlan plan = plan(config, forceReasoning, reasoningEffortOverride, probe);
         StreamingChatModel streaming = responsesApi
                 ? buildResponsesStreaming(apiKey, baseUrl, plan)
                 : buildChatStreaming(apiKey, baseUrl, plan);
@@ -134,9 +134,9 @@ public class DynamicModelProvider {
                 ? buildResponsesBlocking(apiKey, baseUrl, plan)
                 : buildChatBlocking(apiKey, baseUrl, plan);
         return new ModelRuntime(streaming, blocking, resolveProtocol(config),
-                config.getProviderKey(), baseUrl, plan.modelName, plan.maxTokens,
-                plan.doReasoning, plan.reasoningEffort,
-                plan.supportsFunctionCalling, plan.parallelToolCalls, plan.contextWindowTokens);
+                config.getProviderKey(), baseUrl, plan.modelName(), plan.maxTokens(),
+                plan.doReasoning(), plan.reasoningEffort(),
+                plan.supportsFunctionCalling(), plan.parallelToolCalls(), plan.contextWindowTokens());
     }
 
     public static String runtimeCacheKey(AiModelConfig config) {
@@ -177,17 +177,17 @@ public class DynamicModelProvider {
     public String plannedRuntimeCacheKey(AiModelConfig config, String reasoningEffortOverride) {
         if (config == null) return "";
         String baseUrl = ModelEndpoint.apiRoot(config);
-        ModelPlan plan = plan(config, false, normalizeReasoningEffortOverride(reasoningEffortOverride), false);
+        ModelRequestPlan plan = plan(config, false, reasoningEffortOverride, false);
         return runtimeCacheKey(config,
                 resolveProtocol(config),
                 config.getProviderKey(),
                 baseUrl,
-                plan.modelName,
-                plan.maxTokens,
-                plan.doReasoning,
-                plan.reasoningEffort,
-                plan.supportsFunctionCalling,
-                plan.parallelToolCalls, plan.contextWindowTokens);
+                plan.modelName(),
+                plan.maxTokens(),
+                plan.doReasoning(),
+                plan.reasoningEffort(),
+                plan.supportsFunctionCalling(),
+                plan.parallelToolCalls(), plan.contextWindowTokens());
     }
 
     private static String runtimeCacheKey(AiModelConfig config,
@@ -242,200 +242,90 @@ public class DynamicModelProvider {
 
     // ── 计划构造 ──────────────────────────────────────────────────────────
 
-    private ModelPlan plan(AiModelConfig config, boolean forceReasoning, String reasoningEffortOverride, boolean probe) {
-        String modelName = config.getModel();
-        String providerKey = config.getProviderKey();
-        String modelKey = ProviderCapabilities.normalizeModelName(providerKey, modelName);
-        ModelRequestOptions options = ModelRequestOptions.forModel(providerKey, modelName);
-        boolean openRouter = "openrouter".equalsIgnoreCase(providerKey);
-        boolean ollama = "ollama".equalsIgnoreCase(providerKey);
+    private ModelRequestPlan plan(AiModelConfig config, boolean forceReasoning, String reasoningEffortOverride, boolean probe) {
         ProviderCapabilities caps = configService.capabilitiesForModel(config);
-        if (!probe && !caps.supportsTextGeneration()) {
-            throw new IllegalArgumentException("模型不支持文本生成，不能用于对话调用: " + modelName);
+        if (!probe && (!caps.supportsTextGeneration() || !caps.supportsStreaming())) {
+            throw new IllegalArgumentException("当前模型未确认支持文本及流式对话: " + config.getModel());
         }
-        if (!probe && !caps.supportsStreaming()) {
-            throw new IllegalArgumentException("模型不支持流式输出，不能用于当前对话通道: " + modelName);
-        }
-
-        Boolean userIntent = probe ? Boolean.valueOf(forceReasoning) : toBoolean(config.getThinkingEnabled());
-        String reasoningEffort = probe ? null : reasoningEffortOverride != null
-                ? reasoningEffortOverride : config.getReasoningEffort();
-        boolean wantsReasoning = userIntent != null ? userIntent : caps.supportsReasoning();
-
-        boolean requiresReasoning = options.thinkingRequired();
-        if (!probe && requiresReasoning && Boolean.FALSE.equals(userIntent)) {
-            throw new IllegalArgumentException(modelName + " 始终开启思考，请保留模型默认设置");
-        }
-        boolean doReasoning = requiresReasoning || wantsReasoning && (forceReasoning || caps.supportsReasoning());
-        if (!probe && wantsReasoning && !caps.supportsReasoning()) {
-            log.warn("模型 {} 不支持 reasoning_content，配置将被忽略", modelName);
-        }
-
-        Integer maxTokens = positive(config.getMaxOutputTokens());
-        int effectiveMaxTokens = probe ? (doReasoning ? 1024 : 256) : maxTokens != null
-                ? Math.min(maxTokens, caps.maxOutputTokens())
-                : caps.maxOutputTokens();
-        if (effectiveMaxTokens <= 0) throw new IllegalArgumentException("模型最大输出长度必须大于 0");
-        String effectiveReasoningEffort = doReasoning && reasoningEffort != null
-                && !reasoningEffort.isBlank() && !"auto".equalsIgnoreCase(reasoningEffort)
-                ? normalizeReasoningEffortForModel(modelKey, reasoningEffort, options)
-                : null;
-        if (probe && requiresReasoning && !options.reasoningEfforts().isEmpty()) effectiveReasoningEffort = "low";
-        if (!doReasoning && caps.supportsReasoning()
-                && (useResponsesApi(config) || modelKey.startsWith("gpt-6") || ollama)) effectiveReasoningEffort = "none";
-        boolean toolsNeedResponses = options.responsesRequiredForTools()
-                && !(modelKey.startsWith("gpt-6-luna") && !doReasoning);
-        if (!probe && toolsNeedResponses && caps.supportsFunctionCalling() && !useResponsesApi(config)) {
-            throw new IllegalArgumentException(modelName + " 的工具调用请使用 Responses API");
-        }
-        Map<String, Object> customParameters = openRouter
-                ? Map.of("reasoning", !doReasoning ? Map.of("enabled", false)
-                        : effectiveReasoningEffort == null ? Map.of("enabled", true) : Map.of("effort", effectiveReasoningEffort))
-                : ollama ? Map.of() : chatCustomParameters(modelKey, doReasoning);
-        if (openRouter && !useResponsesApi(config)) effectiveReasoningEffort = null;
-        boolean sendThinking = doReasoning && (modelKey.startsWith("deepseek-") || modelKey.startsWith("glm-")
-                || modelKey.startsWith("mimo-") || modelKey.startsWith("qwen") || modelKey.startsWith("kimi-"));
-        boolean parallelToolCalls = !probe && caps.supportsFunctionCalling()
-                && caps.supportsParallelToolCalls();
-        boolean accumulateToolCallId = !usesRepeatedToolCallId(providerKey, modelName);
-        Double temperature = probe || !options.temperatureConfigurable()
-                || (doReasoning && (modelKey.startsWith("deepseek-") || modelKey.startsWith("mimo-")
-                        || modelKey.startsWith("gpt-6")))
-                ? null
-                : config.getTemperature();
-        return new ModelPlan(modelName, effectiveMaxTokens, doReasoning,
-                effectiveReasoningEffort, temperature, ModelEndpoint.headers(config.getHeadersJson()),
-                customParameters, sendThinking, accumulateToolCallId,
-                caps.supportsFunctionCalling(), parallelToolCalls,
-                ModelRequestOptions.inputWindow(providerKey, modelName,
-                        config.getContextWindowTokens() != null && config.getContextWindowTokens() > 0
-                                ? Math.min(config.getContextWindowTokens(), caps.contextWindowTokens()) : caps.contextWindowTokens()),
-                !openRouter && !ollama && (modelKey.startsWith("mimo-") || modelKey.startsWith("kimi-k3")
-                        || modelKey.startsWith("gpt-6")), probe);
-    }
-
-    private static String normalizeReasoningEffortOverride(String value) {
-        if (value == null || value.isBlank() || "auto".equalsIgnoreCase(value)) return null;
-        String normalized = value.trim().toLowerCase();
-        return switch (normalized) {
-            case "minimal", "low", "medium", "high", "xhigh", "max" -> normalized;
-            default -> throw new IllegalArgumentException("reasoningEffort 只支持 auto/minimal/low/medium/high/xhigh/max");
-        };
+        return ModelRequestPlan.resolve(config, caps, reasoningEffortOverride, forceReasoning, probe);
     }
 
     // ── SDK builder ─────────────────────────────────────────────────────
 
-    private StreamingChatModel buildResponsesStreaming(String apiKey, String baseUrl, ModelPlan plan) {
+    private StreamingChatModel buildResponsesStreaming(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiResponsesStreamingChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders, timeout(plan, true)))
+                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, true)))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
-                .modelName(plan.modelName)
+                .modelName(plan.modelName())
                 .store(false)
                 .strictTools(false)
-                .maxOutputTokens(plan.maxTokens);
-        if (!plan.probe && plan.supportsFunctionCalling) builder.parallelToolCalls(plan.parallelToolCalls);
-        if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
-        if (plan.doReasoning) builder.reasoningSummary("auto");
-        if (plan.temperature != null) builder.temperature(plan.temperature);
+                .maxOutputTokens(plan.maxTokens());
+        if (!plan.probe() && plan.supportsFunctionCalling()) builder.parallelToolCalls(plan.parallelToolCalls());
+        if (plan.reasoningEffort() != null) builder.reasoningEffort(plan.reasoningEffort());
+        if (plan.doReasoning()) builder.reasoningSummary("auto");
+        if (plan.temperature() != null) builder.temperature(plan.temperature());
         return builder.build();
     }
 
-    private ChatModel buildResponsesBlocking(String apiKey, String baseUrl, ModelPlan plan) {
+    private ChatModel buildResponsesBlocking(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiResponsesChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders, timeout(plan, false)))
+                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, false)))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
-                .modelName(plan.modelName)
+                .modelName(plan.modelName())
                 .store(false)
                 .strictTools(false)
-                .maxOutputTokens(plan.maxTokens);
-        if (!plan.probe && plan.supportsFunctionCalling) builder.parallelToolCalls(plan.parallelToolCalls);
-        if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
-        if (plan.doReasoning) builder.reasoningSummary("auto");
-        if (plan.temperature != null) builder.temperature(plan.temperature);
+                .maxOutputTokens(plan.maxTokens());
+        if (!plan.probe() && plan.supportsFunctionCalling()) builder.parallelToolCalls(plan.parallelToolCalls());
+        if (plan.reasoningEffort() != null) builder.reasoningEffort(plan.reasoningEffort());
+        if (plan.doReasoning()) builder.reasoningSummary("auto");
+        if (plan.temperature() != null) builder.temperature(plan.temperature());
         return builder.build();
     }
 
-    private StreamingChatModel buildChatStreaming(String apiKey, String baseUrl, ModelPlan plan) {
+    private StreamingChatModel buildChatStreaming(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiStreamingChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders, timeout(plan, true)))
+                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, true)))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
-                .modelName(plan.modelName)
-                .maxTokens(plan.useMaxCompletionTokens ? null : plan.maxTokens)
-                .maxCompletionTokens(plan.useMaxCompletionTokens ? plan.maxTokens : null)
+                .modelName(plan.modelName())
+                .maxTokens(plan.useMaxCompletionTokens() ? null : plan.maxTokens())
+                .maxCompletionTokens(plan.useMaxCompletionTokens() ? plan.maxTokens() : null)
                 .timeout(timeout(plan, true))
-                .returnThinking(plan.doReasoning)
-                .sendThinking(plan.sendThinking)
-                .accumulateToolCallId(plan.accumulateToolCallId);
-        if (!plan.probe && plan.supportsFunctionCalling) builder.parallelToolCalls(plan.parallelToolCalls);
-        if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
-        if (plan.temperature != null) builder.temperature(plan.temperature);
-        if (!plan.customParameters.isEmpty()) builder.customParameters(plan.customParameters);
+                .returnThinking(plan.returnThinking())
+                .sendThinking(plan.sendThinking())
+                .accumulateToolCallId(plan.accumulateToolCallId());
+        if (!plan.probe() && plan.supportsFunctionCalling()) builder.parallelToolCalls(plan.parallelToolCalls());
+        if (plan.reasoningEffort() != null) builder.reasoningEffort(plan.reasoningEffort());
+        if (plan.temperature() != null) builder.temperature(plan.temperature());
+        if (!plan.customParameters().isEmpty()) builder.customParameters(plan.customParameters());
         return builder.build();
     }
 
-    private ChatModel buildChatBlocking(String apiKey, String baseUrl, ModelPlan plan) {
+    private ChatModel buildChatBlocking(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders, timeout(plan, false)))
-                .maxRetries(plan.probe ? 0 : 2)
+                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, false)))
+                .maxRetries(plan.probe() ? 0 : 2)
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
-                .modelName(plan.modelName)
-                .maxTokens(plan.useMaxCompletionTokens ? null : plan.maxTokens)
-                .maxCompletionTokens(plan.useMaxCompletionTokens ? plan.maxTokens : null)
+                .modelName(plan.modelName())
+                .maxTokens(plan.useMaxCompletionTokens() ? null : plan.maxTokens())
+                .maxCompletionTokens(plan.useMaxCompletionTokens() ? plan.maxTokens() : null)
                 .timeout(timeout(plan, false))
-                .returnThinking(plan.doReasoning)
-                .sendThinking(plan.sendThinking);
-        if (!plan.probe && plan.supportsFunctionCalling) builder.parallelToolCalls(plan.parallelToolCalls);
-        if (plan.reasoningEffort != null) builder.reasoningEffort(plan.reasoningEffort);
-        if (plan.temperature != null) builder.temperature(plan.temperature);
-        if (!plan.customParameters.isEmpty()) builder.customParameters(plan.customParameters);
+                .returnThinking(plan.returnThinking())
+                .sendThinking(plan.sendThinking());
+        if (!plan.probe() && plan.supportsFunctionCalling()) builder.parallelToolCalls(plan.parallelToolCalls());
+        if (plan.reasoningEffort() != null) builder.reasoningEffort(plan.reasoningEffort());
+        if (plan.temperature() != null) builder.temperature(plan.temperature());
+        if (!plan.customParameters().isEmpty()) builder.customParameters(plan.customParameters());
         return builder.build();
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────
 
-    private static Boolean toBoolean(Integer flag) {
-        if (flag == null) return null;
-        return flag > 0;
-    }
-
-    private static Integer positive(Integer value) {
-        return value != null && value > 0 ? value : null;
-    }
-
-    private static Duration timeout(ModelPlan plan, boolean streaming) {
-        return plan.probe ? Duration.ofSeconds(30) : streaming ? STREAMING_TIMEOUT : BLOCKING_TIMEOUT;
-    }
-
-    private static String normalizeReasoningEffortForModel(String model, String reasoningEffort, ModelRequestOptions options) {
-        String effort = normalizeReasoningEffortOverride(reasoningEffort);
-        if (!options.reasoningEfforts().contains(effort)) {
-            throw new IllegalArgumentException(model + " 的推理强度只支持 auto"
-                    + (options.reasoningEfforts().isEmpty() ? "" : "/" + String.join("/", options.reasoningEfforts())));
-        }
-        return effort;
-    }
-
-    private static Map<String, Object> chatCustomParameters(String model, boolean doReasoning) {
-        if (model.startsWith("deepseek-") || model.startsWith("mimo-") || model.startsWith("glm-5.3")
-                || model.startsWith("kimi-k2.6")) {
-            return Map.of("thinking", Map.of("type", doReasoning ? "enabled" : "disabled"));
-        }
-        if (model.startsWith("qwen")) return Map.of("enable_thinking", doReasoning);
-        return Map.of();
-    }
-
-    private static boolean usesRepeatedToolCallId(String providerKey, String modelName) {
-        String provider = providerKey == null ? "" : providerKey.toLowerCase();
-        String model = modelName == null ? "" : modelName.toLowerCase();
-        return provider.contains("deepseek")
-                || provider.contains("qwen")
-                || provider.contains("dashscope")
-                || model.contains("deepseek")
-                || model.contains("qwen");
+    private static Duration timeout(ModelRequestPlan plan, boolean streaming) {
+        return plan.probe() ? Duration.ofSeconds(30) : streaming ? STREAMING_TIMEOUT : BLOCKING_TIMEOUT;
     }
 
     public static boolean useResponsesApi(AiModelConfig config) {
@@ -458,18 +348,6 @@ public class DynamicModelProvider {
     public static String defaultPathForProtocol(String protocol) {
         return PROTOCOL_RESPONSES.equals(normalizeProtocol(protocol)) ? RESPONSES_PATH : CHAT_COMPLETIONS_PATH;
     }
-
-    private record ModelPlan(String modelName,
-                             int maxTokens,
-                             boolean doReasoning,
-                             String reasoningEffort,
-                             Double temperature,
-                             Map<String, String> customHeaders,
-                             Map<String, Object> customParameters,
-                             boolean sendThinking,
-                             boolean accumulateToolCallId,
-                             boolean supportsFunctionCalling,
-                             boolean parallelToolCalls, int contextWindowTokens, boolean useMaxCompletionTokens, boolean probe) {}
 
     public record ModelRuntime(StreamingChatModel streamingModel,
                                ChatModel chatModel,

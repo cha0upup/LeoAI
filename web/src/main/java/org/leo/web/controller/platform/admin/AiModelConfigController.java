@@ -85,6 +85,16 @@ public class AiModelConfigController {
         }
     }
 
+    /** Local draft evaluation: no vendor requests, writes, credentials or request headers in the response. */
+    @RequestMapping(value = "/request-preview", method = RequestMethod.POST)
+    public HashMap<String, Object> requestPreview(@RequestBody AiModelConfig body) {
+        try {
+            return ApiResponse.success(configService.previewRequest(body));
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        }
+    }
+
     @RequestMapping(value = "/{id}", method = RequestMethod.PUT)
     public HashMap<String, Object> update(@PathVariable("id") Integer id,
                                           @RequestBody AiModelConfig patch) {
@@ -369,7 +379,7 @@ public class AiModelConfigController {
         m.put("supportsStructuredOutput", capabilities.supportsStructuredOutput());
         m.put("supportsWebSearch", capabilities.supportsWebSearch());
         m.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
-        m.put("requestOptions", ModelRequestOptions.forModel(c.getProviderKey(), c.getModel()));
+        m.put("requestOptions", ModelRequestOptions.forConfiguration(c, capabilities));
         m.put("defaultMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("createTime", c.getCreateTime());
         m.put("updateTime", c.getUpdateTime());

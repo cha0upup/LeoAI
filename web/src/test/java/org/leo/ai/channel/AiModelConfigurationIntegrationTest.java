@@ -212,6 +212,89 @@ class AiModelConfigurationIntegrationTest {
     }
 
     @Test
+    void previewUsesTheSavedConnectionWithoutWritesOrCredentialDisclosure() {
+        AiProvider provider = provider("preview-provider");
+        AiModelConfig draft = draft(provider, "Preview");
+        draft.setModel("mimo-v2.6-pro");
+        draft.setApiKey("forged-secret");
+        draft.setHeadersJson("{\"Authorization\":\"forged-header\"}");
+        draft.setBaseUrl("https://forged.test/v1");
+        draft.setProtocol("responses");
+        draft.setTemperature(0.7);
+
+        ModelRequestPlan.Preview preview = configs.previewRequest(draft);
+        assertTrue(preview.valid());
+        assertEquals("chat_completions", preview.protocol());
+        assertFalse(preview.requestParameters().containsKey("temperature"));
+        String json = com.alibaba.fastjson.JSON.toJSONString(preview);
+        assertFalse(json.contains("test-key"));
+        assertFalse(json.contains("forged-"));
+        assertFalse(json.contains("Authorization"));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_configs", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_providers", Integer.class));
+        assertNull(chat.getDelegate());
+        assertEquals("test-key", configs.findProviderById(provider.getId()).getApiKey());
+        assertEquals("forged-secret", draft.getApiKey());
+    }
+
+    @Test
+    void invalidImportRollsBackProviderAndDefaultAndTemperatureCanBeCleared() {
+        AiProvider first = provider("primary");
+        AiModelConfig active = model(first, "active");
+        Object delegate = chat.getDelegate();
+        AiProvider invalid = new AiProvider();
+        invalid.setName("Invalid import");
+        invalid.setProviderKey("mimo");
+        invalid.setBaseUrl("https://example.test/v1");
+        invalid.setApiKey("test-key");
+        invalid.setProtocol("chat_completions");
+        AiModelConfig imported = new AiModelConfig();
+        imported.setName("Bad parameters");
+        imported.setModel("mimo-v2.6-pro");
+        imported.setTemperature(2.0);
+        imported.setIsActive(1);
+        invalid.setModels(java.util.List.of(imported));
+
+        assertThrows(ModelRequestPlan.ValidationException.class, () -> configs.createProviderWithModels(invalid));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_providers", Integer.class));
+        assertEquals(active.getId(), configs.getActive().getId());
+        assertSame(delegate, chat.getDelegate());
+
+        AiModelConfig patch = draft(first, "active");
+        patch.setTemperature(0.7);
+        configs.update(active.getId(), patch);
+        assertEquals(0.7, configs.findById(active.getId()).getTemperature());
+        patch.setTemperature(null);
+        configs.update(active.getId(), patch);
+        assertNull(configs.findById(active.getId()).getTemperature());
+        patch.setThinkingEnabled(2);
+        assertThrows(ModelRequestPlan.ValidationException.class, () -> configs.update(active.getId(), patch));
+        assertNull(configs.findById(active.getId()).getThinkingEnabled());
+    }
+
+    @Test
+    void connectionChangesValidateExistingModelsBeforeCommitting() {
+        AiProvider provider = provider("Responses");
+        AiProvider connection = new AiProvider();
+        connection.setProtocol("responses");
+        connection.setCompletionsPath("/responses");
+        provider = configs.updateProvider(provider.getId(), connection);
+        AiModelConfig model = draft(provider, "GPT");
+        model.setModel("gpt-6.1-sol");
+        AiModelConfig active = configs.create(model);
+        Object delegate = chat.getDelegate();
+        AiProvider invalidConnection = new AiProvider();
+        invalidConnection.setProtocol("chat_completions");
+        invalidConnection.setCompletionsPath("/chat/completions");
+        Integer providerId = provider.getId();
+
+        assertThrows(ModelRequestPlan.ValidationException.class, () -> configs.updateProvider(providerId, invalidConnection));
+        assertEquals("responses", configs.findProviderById(providerId).getProtocol());
+        assertEquals("responses", configs.findById(active.getId()).getProtocol());
+        assertSame(delegate, chat.getDelegate());
+    }
+
+    @Test
     void refreshedCatalogCoversCurrentChatModelsAndDropsRetiredMimoSystemRows() {
         Set<String> expected = Set.of(
                 "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna",

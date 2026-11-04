@@ -179,6 +179,13 @@ public class AiModelConfigService {
         if (existing == null) return null;
         validateProvider(patch, false);
         normalizeProvider(patch, existing);
+        if (Integer.valueOf(1).equals(existing.getEnabled())) {
+            for (AiModelConfig model : listAll()) {
+                if (!id.equals(model.getProviderId())) continue;
+                applyProviderSnapshot(model, existing);
+                validateModelParameters(model);
+            }
+        }
         existing.setUpdateTime(nowSqlite());
         withEncryptedProviderSecrets(existing, () -> providerMapper.update(existing));
         syncProviderSnapshot(existing);
@@ -318,6 +325,7 @@ public class AiModelConfigService {
         validateRequired(row);
         normalize(row);
         applyProvider(row);
+        validateModelParameters(row);
         validateFallback(row, null);
         String now = nowSqlite();
         row.setCreateTime(now);
@@ -363,17 +371,13 @@ public class AiModelConfigService {
         if (!isBlank(patch.getCompletionsPath())) {
             existing.setCompletionsPath(patch.getCompletionsPath().trim());
         }
-        existing.setMaxOutputTokens(patch.getMaxOutputTokens() != null && patch.getMaxOutputTokens() > 0
-                ? patch.getMaxOutputTokens() : null);
-        existing.setThinkingEnabled(normalizeTriStateFlag(patch.getThinkingEnabled()));
+        existing.setMaxOutputTokens(patch.getMaxOutputTokens());
+        existing.setThinkingEnabled(patch.getThinkingEnabled());
         if (patch.getReasoningEffort() != null) {
             existing.setReasoningEffort(normalizeReasoningEffort(patch.getReasoningEffort()));
         }
-        existing.setContextWindowTokens(patch.getContextWindowTokens() != null && patch.getContextWindowTokens() > 0
-                ? patch.getContextWindowTokens() : null);
-        if (patch.getTemperature() != null) {
-            existing.setTemperature(normalizeTemperature(patch.getTemperature()));
-        }
+        existing.setContextWindowTokens(patch.getContextWindowTokens());
+        existing.setTemperature(patch.getTemperature());
         if (patch.getHeadersJson() != null) existing.setHeadersJson(blankToNull(patch.getHeadersJson()));
         if (patch.getEnabled() != null) {
             existing.setEnabled(Integer.valueOf(1).equals(patch.getEnabled()) ? 1 : 0);
@@ -394,6 +398,7 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         normalize(existing);
         applyProvider(existing);
+        validateModelParameters(existing);
         validateFallback(existing, id);
         if (activating && !Integer.valueOf(1).equals(existing.getIsActive())) {
             throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
@@ -426,6 +431,7 @@ public class AiModelConfigService {
     public AiModelConfig activate(Integer id) {
         AiModelConfig row = findById(id);
         if (row == null) return null;
+        applyProvider(row);
         assertUsable(row);
         mapper.clearActive();
         mapper.setActiveById(id, nowSqlite());
@@ -476,6 +482,25 @@ public class AiModelConfigService {
 
     // ── 内部工具 ──────────────────────────────────────────────────────────
 
+    /** Read-only draft evaluation. Connection settings always come from the saved provider. */
+    public ModelRequestPlan.Preview previewRequest(AiModelConfig draft) {
+        if (draft == null) throw new IllegalArgumentException("请填写模型参数");
+        AiModelConfig candidate = copyModel(draft);
+        candidate.setName(isBlank(candidate.getName()) ? "参数预览" : candidate.getName());
+        candidate.setProtocol(null);
+        candidate.setApiKey(null);
+        candidate.setBaseUrl(null);
+        candidate.setHeadersJson(null);
+        validateRequired(candidate);
+        normalize(candidate);
+        applyProvider(candidate);
+        return ModelRequestPlan.preview(candidate, capabilitiesForModel(candidate));
+    }
+
+    private void validateModelParameters(AiModelConfig config) {
+        ModelRequestPlan.resolve(config, capabilitiesForModel(config), null, false, false);
+    }
+
     private void validateRequired(AiModelConfig row) {
         if (row == null) throw new IllegalArgumentException("配置不能为空");
         if (isBlank(row.getName())) throw new IllegalArgumentException("name 不能为空");
@@ -501,16 +526,8 @@ public class AiModelConfigService {
         } else {
             row.setCompletionsPath(row.getCompletionsPath().trim());
         }
-        if (row.getMaxOutputTokens() != null && row.getMaxOutputTokens() <= 0) {
-            row.setMaxOutputTokens(null);
-        }
-        if (row.getContextWindowTokens() != null && row.getContextWindowTokens() <= 0) {
-            row.setContextWindowTokens(null);
-        }
         row.setReasoningEffort(normalizeReasoningEffort(row.getReasoningEffort()));
-        row.setTemperature(normalizeTemperature(row.getTemperature()));
         row.setHeadersJson(blankToNull(row.getHeadersJson()));
-        row.setThinkingEnabled(normalizeTriStateFlag(row.getThinkingEnabled()));
     }
 
     private void applyProvider(AiModelConfig row) {
@@ -518,6 +535,10 @@ public class AiModelConfigService {
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
         }
+        applyProviderSnapshot(row, provider);
+    }
+
+    private static void applyProviderSnapshot(AiModelConfig row, AiProvider provider) {
         row.setProviderKey(provider.getProviderKey());
         row.setProviderName(provider.getName());
         row.setBaseUrl(provider.getBaseUrl());
@@ -536,6 +557,7 @@ public class AiModelConfigService {
             throw new IllegalArgumentException("模型未启用，不能设为默认模型");
         }
         ProviderCapabilities capabilities = capabilitiesForModel(row);
+        ModelRequestPlan.resolve(row, capabilities, null, false, false);
         if (!capabilities.supportsTextGeneration()) {
             throw new IllegalArgumentException("模型不支持文本生成，不能设为默认聊天模型");
         }
@@ -745,26 +767,9 @@ public class AiModelConfigService {
         ModelEndpoint.headers(target.getHeadersJson());
     }
 
-    private static Integer normalizeTriStateFlag(Integer v) {
-        if (v == null) return null;
-        return v > 0 ? 1 : 0;
-    }
-
     private static String normalizeReasoningEffort(String value) {
-        if (value == null || value.isBlank()) return "auto";
-        String normalized = value.trim().toLowerCase();
-        return switch (normalized) {
-            case "auto", "minimal", "low", "medium", "high", "xhigh", "max" -> normalized;
-            default -> throw new IllegalArgumentException("reasoningEffort 只支持 auto/minimal/low/medium/high/xhigh/max");
-        };
-    }
-
-    private static Double normalizeTemperature(Double value) {
-        if (value == null) return null;
-        if (value < 0 || value > 2) {
-            throw new IllegalArgumentException("temperature 必须在 0 到 2 之间");
-        }
-        return value;
+        String effort = ModelRequestPlan.normalizedEffort(value);
+        return effort == null ? "auto" : effort;
     }
 
     private static void validateCapability(AiModelCapability row) {
