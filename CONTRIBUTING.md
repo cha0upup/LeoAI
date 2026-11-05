@@ -41,6 +41,8 @@
 - Node.js 24（前端 `.nvmrc` 和发布检查统一使用 24.14.1），使用 `npm ci` 安装 lockfile 依赖
 - Java Component 只读检查使用 Java 8 javac；应用构建使用 JDK 17
 
+更完整的本地构建、运行和前端调试步骤可参考 [开发环境指南](docs/development.md)。
+
 ## 代码规范
 
 - Java 代码遵循项目现有风格
