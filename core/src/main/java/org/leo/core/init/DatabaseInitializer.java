@@ -66,6 +66,10 @@ public class DatabaseInitializer implements CommandLineRunner {
         try (Connection connection = dataSource.getConnection()) {
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
+            requireColumns(connection, "agent_ssh_connections",
+                    Set.of("profile_id", "create_user_id", "agent_id", "version", "name",
+                            "host", "port", "username", "auth_type", "credentials", "fingerprint",
+                            "has_password", "has_private_key", "has_passphrase", "updated_at", "last_connected_at"));
             requireColumns(connection, "ai_threads",
                     Set.of("thread_id", "host_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",

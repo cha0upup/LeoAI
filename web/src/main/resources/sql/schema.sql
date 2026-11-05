@@ -116,6 +116,30 @@ CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id
 CREATE INDEX IF NOT EXISTS idx_database_connections_agent_id
     ON agent_database_connections(agent_id);
 
+-- SSH 连接配置：与数据库连接一致，按 Agent 共享；创建人仅用于记录来源。
+CREATE TABLE IF NOT EXISTS agent_ssh_connections (
+    profile_id VARCHAR(50) PRIMARY KEY,
+    create_user_id VARCHAR(50) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    name VARCHAR(120) NOT NULL,
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    username VARCHAR(120) NOT NULL,
+    auth_type VARCHAR(20) NOT NULL CHECK (auth_type IN ('password', 'privateKey')),
+    credentials TEXT NOT NULL,
+    fingerprint VARCHAR(64) NOT NULL DEFAULT '',
+    has_password INTEGER NOT NULL CHECK (has_password IN (0, 1)),
+    has_private_key INTEGER NOT NULL CHECK (has_private_key IN (0, 1)),
+    has_passphrase INTEGER NOT NULL CHECK (has_passphrase IN (0, 1)),
+    updated_at INTEGER NOT NULL,
+    last_connected_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ssh_connections_agent_recent
+    ON agent_ssh_connections(agent_id, last_connected_at DESC, updated_at DESC, profile_id);
+
 -- =====================================================
 -- 项目工作区与主机关联
 -- =====================================================
