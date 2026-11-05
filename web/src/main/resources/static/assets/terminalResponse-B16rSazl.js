@@ -1,0 +1,1 @@
+function e(e){if(!e||typeof e!=`object`||Array.isArray(e)||typeof e.code!=`number`)throw Error(`终端响应格式无效，请同步更新服务器和节点组件`);if(e.code!==200)throw Error(e.msg||`终端请求失败 (${e.code})`);return e}export{e as t};
