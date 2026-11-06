@@ -157,7 +157,7 @@ class SshTerminalControllerTest {
         var request = new SshProfileConnectRequest("parent", "process", id, 1L, request().fingerprint());
         when(profiles.getForConnection("owner", parent, request)).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", request.fingerprint()));
         when(profiles.resolveConnection("owner", parent, request)).thenReturn(request());
-        doThrow(ApiException.notFound("removed during connect")).when(profiles).recordFingerprint("owner", parent, id, 1L, request.fingerprint());
+        doThrow(ApiException.notFound("removed during connect")).when(profiles).recordFingerprint("owner", parent, id, 1L, request.fingerprint(), request.fingerprint());
         try (var util = mockStatic(ControllerUtil.class)) {
             util.when(() -> ControllerUtil.getAgentNodeSession("parent")).thenReturn(parent);
             util.when(() -> ControllerUtil.getCurrentUser(http)).thenReturn(owner);
@@ -189,7 +189,7 @@ class SshTerminalControllerTest {
             controller.connectProfile(request, http);
             verify(ssh).connect("owner", browser, parent, node, request());
             verify(ssh, never()).probeFingerprint(any(), any(), any(), any(), anyString(), anyInt());
-            verify(profiles).recordFingerprint("owner", parent, id, 1L, request().fingerprint());
+            verify(profiles).recordFingerprint("owner", parent, id, 1L, request().fingerprint(), request().fingerprint());
 
             clearInvocations(ssh, profiles);
             when(profiles.getForConnection("owner", parent, request)).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", ""));
@@ -213,7 +213,7 @@ class SshTerminalControllerTest {
             assertEquals(request().fingerprint(), mismatch.getDetails().get("previousFingerprint"));
             verify(ssh, times(1)).connect(any(), any(), any(), any(), any());
             verify(ssh, never()).probeFingerprint(any(), any(), any(), any(), anyString(), anyInt());
-            verify(profiles, never()).recordFingerprint(any(), any(), any(), anyLong(), any());
+            verify(profiles, never()).recordFingerprint(any(), any(), any(), anyLong(), any(), any());
         }
     }
     @Test void bindsSshResourcesToTheAuthenticatedBrowserAndReleasesThemOnLogout() throws Exception {

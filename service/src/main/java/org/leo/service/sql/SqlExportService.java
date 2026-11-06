@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -68,7 +69,7 @@ public class SqlExportService {
         Path finalPath = resolveUniqueExportPath(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
-                fileName, finalPath, namespace, tableRef.name());
+                finalPath.getFileName().toString(), finalPath, namespace, tableRef.name());
         task.put("objectRef", tableRef.toMap());
         task.put("format", exportFormat);
         task.put("status", "PENDING");
@@ -113,7 +114,7 @@ public class SqlExportService {
         Path finalPath = resolveUniqueExportPath(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
-                fileName, finalPath, namespace, null);
+                finalPath.getFileName().toString(), finalPath, namespace, null);
         task.put("format", exportFormat);
         task.put("status", "PENDING");
         task.put("includeStructure", exportStructure);
@@ -128,23 +129,7 @@ public class SqlExportService {
     }
 
     public Map<String, Object> getTaskStatus(String userId, String taskId) throws Exception {
-        if (isBlank(userId)) {
-            throw new IllegalArgumentException("用户信息无效");
-        }
-        if (isBlank(taskId)) {
-            throw new IllegalArgumentException("taskId 不能为空");
-        }
-        Map<String, Object> task = liveTasks.get(taskId);
-        if (task != null) {
-            return publicTask(task);
-        }
-        Path metaFile = taskMetaFile(userId, taskId);
-        if (!Files.exists(metaFile)) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> meta = (Map<String, Object>) JsonUtil.fromJsonString(new String(Files.readAllBytes(metaFile), StandardCharsets.UTF_8), HashMap.class);
-        return publicTask(meta);
+        return publicTask(loadOwnedTask(userId, taskId));
     }
 
     public Map<String, Object> progress(String userId, String taskId) throws Exception {
@@ -229,12 +214,9 @@ public class SqlExportService {
                         return;
                     }
                     try {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> task = (Map<String, Object>) JsonUtil.fromJsonString(
-                                new String(Files.readAllBytes(meta), StandardCharsets.UTF_8), HashMap.class);
+                        Map<String, Object> task = loadOwnedTask(userId, path.getFileName().toString());
                         if (sessionId.equals(String.valueOf(task.get("sessionId")))) {
-                            Map<String, Object> live = liveTasks.get(String.valueOf(task.get("taskId")));
-                            tasks.add(publicTask(live != null ? live : task));
+                            tasks.add(publicTask(task));
                         }
                     } catch (Exception ignored) {
                     }
@@ -266,6 +248,7 @@ public class SqlExportService {
             taskExecutor.submitSqlExport(new Runnable() {
                 @Override
                 public void run() {
+                    if (liveControls.get(taskId) != newControl) return;
                     String type = String.valueOf(task.get("taskType"));
                     Path finalPath = new File(String.valueOf(task.get("finalPath"))).toPath();
                     try {
@@ -340,6 +323,7 @@ public class SqlExportService {
             return;
         }
         try {
+            if (checkPausedOrCancelled(task, control)) return;
             updateTask(task, "RUNNING", 1, null);
             Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
                     agentNode, connection, tableRef);
@@ -391,6 +375,7 @@ public class SqlExportService {
         }
         Path workDir = taskWorkDir(String.valueOf(task.get("userId")), taskId);
         try {
+            if (checkPausedOrCancelled(task, control)) return;
             updateTask(task, "RUNNING", 1, null);
             Files.createDirectories(workDir);
             List<SqlObjectRef> tables = resolveExportTableRefs(
@@ -700,50 +685,74 @@ public class SqlExportService {
         return data;
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> requireTask(String userId, String taskId) throws Exception {
+        Map<String, Object> task = loadOwnedTask(userId, taskId);
+        Map<String, Object> previous = liveTasks.putIfAbsent(taskId, task);
+        return requireOwner(userId, taskId, previous == null ? task : previous);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> loadOwnedTask(String userId, String taskId) throws Exception {
+        // Validate identifiers even on cache hits; filesystem lookup and cache lookup share one boundary.
+        Path metaFile = taskMetaFile(userId, taskId);
         Map<String, Object> live = liveTasks.get(taskId);
         if (live != null) {
-            return live;
+            return requireOwner(userId, taskId, live);
         }
-        Path metaFile = taskMetaFile(userId, taskId);
-        if (!Files.exists(metaFile)) {
+        if (!Files.isRegularFile(metaFile)) {
             throw new IllegalArgumentException("任务不存在: " + taskId);
         }
         Map<String, Object> task = (Map<String, Object>) JsonUtil.fromJsonString(new String(Files.readAllBytes(metaFile), StandardCharsets.UTF_8), HashMap.class);
-        liveTasks.put(taskId, task);
+        return requireOwner(userId, taskId, task);
+    }
+
+    private Map<String, Object> requireOwner(String userId, String taskId, Map<String, Object> task) {
+        if (task == null || !userId.equals(task.get("userId")) || !taskId.equals(task.get("taskId"))) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
         return task;
     }
 
     private Path taskMetaFile(String userId, String taskId) {
-        return userBaseDir(userId).resolve(EXPORT_DIR).resolve(TASKS_DIR).resolve(taskId).resolve("meta.json");
+        return taskDirectory(userId, taskId).resolve("meta.json");
     }
 
     private Path taskWorkDir(String userId, String taskId) {
-        return userBaseDir(userId).resolve(EXPORT_DIR).resolve(TASKS_DIR).resolve(taskId).resolve("work");
+        return taskDirectory(userId, taskId).resolve("work");
+    }
+
+    private Path taskDirectory(String userId, String taskId) {
+        return userBaseDir(userId).resolve(EXPORT_DIR).resolve(TASKS_DIR).resolve(requirePathSegment(taskId, "taskId"));
     }
 
     private Path resolveUniqueExportPath(String userId, String fileName) throws Exception {
         Path dir = userBaseDir(userId).resolve(EXPORT_DIR);
         Files.createDirectories(dir);
-        Path candidate = dir.resolve(fileName).normalize();
-        if (!Files.exists(candidate)) {
-            return candidate;
-        }
         int dot = fileName.lastIndexOf('.');
         String stem = dot > 0 ? fileName.substring(0, dot) : fileName;
         String ext = dot > 0 ? fileName.substring(dot) : "";
-        for (int i = 1; i <= 9999; i++) {
-            Path alt = dir.resolve(stem + "(" + i + ")" + ext).normalize();
-            if (!Files.exists(alt)) {
-                return alt;
+        for (int i = 0; i <= 9999; i++) {
+            Path candidate = dir.resolve(i == 0 ? fileName : stem + "(" + i + ")" + ext).normalize();
+            try {
+                return Files.createFile(candidate);
+            } catch (FileAlreadyExistsException occupied) {
+                // Reserve atomically before scheduling; another queued export may not have opened its file yet.
             }
         }
-        return dir.resolve(stem + "_" + System.currentTimeMillis() + ext).normalize();
+        return Files.createTempFile(dir, stem + "_", ext);
     }
 
     private Path userBaseDir(String userId) {
-        return new File(new File(AgentNodeSessionWorkDirUtil.getRootDir(), "users"), userId).toPath().toAbsolutePath().normalize();
+        return AgentNodeSessionWorkDirUtil.getRootDir().toPath().toAbsolutePath().normalize()
+                .resolve("users").resolve(requirePathSegment(userId, "userId"));
+    }
+
+    private String requirePathSegment(String value, String name) {
+        if (isBlank(value) || value.length() > 128 || value.equals(".") || value.equals("..")
+                || value.chars().anyMatch(c -> c == '/' || c == '\\' || c == ':' || Character.isISOControl(c))) {
+            throw new IllegalArgumentException(name + " 标识无效");
+        }
+        return value;
     }
 
     private String toUserRelativePath(String userId, Path path) {

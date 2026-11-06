@@ -136,7 +136,7 @@ class SshConnectionProfilesTest {
         assertEquals(id(saved), profiles.get("other", peer, id(saved)).get("profileId"));
         assertPublic(profiles.getForConnection("other", peer, connect(saved)));
         assertEquals("secret", profiles.resolveConnection("other", peer, connect(saved)).password());
-        profiles.recordFingerprint("other", peer, id(saved), version(saved), pin);
+        profiles.recordFingerprint("other", peer, id(saved), version(saved), "", pin);
         var edited = profiles.save("other", peer, update(saved, "ssh.internal", "password", null, null, null));
         assertEquals("owner", stored(edited).getCreateUserId());
         assertEquals("renamed", profiles.get("owner", parent, id(saved)).get("name"));
@@ -163,14 +163,14 @@ class SshConnectionProfilesTest {
     }
     @Test void changesOfEndpointInvalidatePinsAndLateConnectionsNeverResurrectDeletedProfiles() throws Exception {
         Map<String, Object> first = profiles.save("owner", parent, create("password", "secret", null, null));
-        profiles.recordFingerprint("owner", parent, id(first), version(first), pin);
+        profiles.recordFingerprint("owner", parent, id(first), version(first), "", pin);
         Map<String, Object> pinned = profiles.get("owner", parent, id(first));
         assertEquals(pin, pinned.get("fingerprint"));
         Map<String, Object> changed = profiles.save("owner", parent, update(pinned, "different.internal", "password", null, null, null));
         assertEquals("", changed.get("fingerprint"));
-        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(pinned), version(pinned), pin));
+        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(pinned), version(pinned), pin, pin));
         profiles.delete("owner", parent, new SshProfileRequest("parent", id(changed), version(changed)));
-        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(changed), version(changed), pin));
+        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(changed), version(changed), "", pin));
         assertTrue(profiles.list("owner", parent).isEmpty());
     }
     @Test void rejectsAnotherKeySwappedCiphertextAndMetadataTampering() throws Exception {
@@ -203,7 +203,7 @@ class SshConnectionProfilesTest {
         Map<String, Object> second = profiles.save("owner", parent, create("password", "secret", null, null));
         var request = new SshProfileConnectRequest("parent", "child", id(first), version(first), null).normalized();
         assertPublic(profiles.getForConnection("owner", parent, request));
-        profiles.recordFingerprint("owner", parent, id(first), version(first), pin);
+        profiles.recordFingerprint("owner", parent, id(first), version(first), "", pin);
         Map<String, Object> pinned = profiles.get("owner", parent, id(first));
         assertEquals(version(first), version(pinned));
         assertTrue(((Number) pinned.get("lastConnectedAt")).longValue() > 0);
@@ -218,7 +218,7 @@ class SshConnectionProfilesTest {
         var saved = profiles.save("owner", parent, create("password", "secret", null, null));
         var first = stored(saved); var stale = stored(saved);
         String newestPin = "SHA256:" + "B".repeat(43);
-        profiles.recordFingerprint("owner", parent, id(saved), 1L, newestPin);
+        profiles.recordFingerprint("owner", parent, id(saved), 1L, "", newestPin);
         long connectedAt = stored(saved).getLastConnectedAt();
         first.setName("first editor");
         assertEquals(1, mapper.updateIfVersion(first, 1L));
@@ -229,11 +229,40 @@ class SshConnectionProfilesTest {
         assertEquals(2L, version(actual));
         assertEquals(newestPin, actual.get("fingerprint"));
         assertEquals(connectedAt, actual.get("lastConnectedAt"));
-        assertEquals(0, mapper.recordConnectionIfVersion("agent", id(saved), 1L, pin, connectedAt + 1));
+        assertEquals(0, mapper.recordConnectionIfUnchanged("agent", id(saved), 1L, newestPin, pin, connectedAt + 1));
         assertEquals(0, mapper.deleteIfVersion("agent", id(saved), 1L));
         assertEquals(0, mapper.deleteIfVersion("other-agent", id(saved), 2L));
-        assertEquals(0, mapper.recordConnectionIfVersion("other-agent", id(saved), 2L, pin, connectedAt + 1));
+        assertEquals(0, mapper.recordConnectionIfUnchanged("other-agent", id(saved), 2L, newestPin, pin, connectedAt + 1));
         assertNull(mapper.selectById("other-agent", id(saved)));
+    }
+    @Test void lateConnectionsNeverRollBackAConcurrentlyConfirmedHostKey() {
+        var saved = profiles.save("owner", parent, create("password", "secret", null, null));
+        String id = id(saved);
+        String replacement = "SHA256:" + "B".repeat(43);
+        profiles.recordFingerprint("owner", parent, id, 1L, "", pin);
+        // Both connections saw the first pin, but the user confirmed a new host key in the faster one.
+        profiles.recordFingerprint("owner", parent, id, 1L, pin, replacement);
+        long latestConnection = stored(saved).getLastConnectedAt();
+        assertEquals(409, assertThrows(ApiException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, pin)).getCode());
+        assertEquals(replacement, profiles.get("owner", parent, id).get("fingerprint"));
+        assertEquals(latestConnection, stored(saved).getLastConnectedAt());
+        assertEquals(1L, version(profiles.get("owner", parent, id)));
+        // Concurrent connections using the same already confirmed pin remain compatible.
+        profiles.recordFingerprint("owner", parent, id, 1L, pin, replacement);
+        assertEquals(replacement, profiles.get("owner", parent, id).get("fingerprint"));
+    }
+    @Test void competingFirstConfirmationsAndInvalidFingerprintsNeverReplaceTheSavedPin() {
+        var saved = profiles.save("owner", parent, create("password", "secret", null, null));
+        String id = id(saved);
+        profiles.recordFingerprint("owner", parent, id, 1L, "", pin);
+        assertEquals(409, assertThrows(ApiException.class, () -> profiles.recordFingerprint(
+                "owner", parent, id, 1L, "", "SHA256:" + "B".repeat(43))).getCode());
+        assertEquals(400, assertThrows(ApiException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, "invalid")).getCode());
+        assertEquals(400, assertThrows(ApiException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, "invalid", pin)).getCode());
+        assertEquals(pin, profiles.get("owner", parent, id).get("fingerprint"));
     }
     @Test void concurrentCreatesRespectTheDatabaseCapacityLimitAcrossIndependentConnections() throws Exception {
         for (int i = 0; i < 99; i++) profiles.save("owner", parent, create("password", "secret", null, null));

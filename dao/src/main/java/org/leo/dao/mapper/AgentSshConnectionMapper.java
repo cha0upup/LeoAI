@@ -43,9 +43,12 @@ public interface AgentSshConnectionMapper {
     @Delete("DELETE FROM agent_ssh_connections WHERE agent_id=#{agentId} AND profile_id=#{profileId} AND version=#{version}")
     int deleteIfVersion(@Param("agentId") String agentId, @Param("profileId") String profileId, @Param("version") long version);
 
+    // Reject stale pins as well as stale credentials; simultaneous confirmations of the same pin are compatible.
     @Update("UPDATE agent_ssh_connections SET fingerprint=#{fingerprint}, "
             + "last_connected_at=MAX(last_connected_at, #{connectedAt}) WHERE agent_id=#{agentId}"
-            + " AND profile_id=#{profileId} AND version=#{version}")
-    int recordConnectionIfVersion(@Param("agentId") String agentId, @Param("profileId") String profileId, @Param("version") long version,
+            + " AND profile_id=#{profileId} AND version=#{version}"
+            + " AND (fingerprint=#{previousFingerprint} OR fingerprint=#{fingerprint})")
+    int recordConnectionIfUnchanged(@Param("agentId") String agentId, @Param("profileId") String profileId, @Param("version") long version,
+            @Param("previousFingerprint") String previousFingerprint,
             @Param("fingerprint") String fingerprint, @Param("connectedAt") long connectedAt);
 }

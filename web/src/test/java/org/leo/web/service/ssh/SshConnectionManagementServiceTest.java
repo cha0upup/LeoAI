@@ -154,7 +154,7 @@ class SshConnectionManagementServiceTest {
 
     @Test void reportsChangedHostKeysWithoutReplacingThePreviouslyTrustedPin() throws Exception {
         var created = create(); String id = id(created);
-        profiles.recordFingerprint("actor", parent, id, 1L, pin);
+        profiles.recordFingerprint("actor", parent, id, 1L, "", pin);
         String changed = "SHA256:" + "B".repeat(43);
         doThrow(new AgentSshService.HostKeyChangedException(changed)).when(ssh).testConnection(any(), any(), any(), any(), any());
         var result = management.test("actor", sessionId, id, 1L, null);
@@ -215,6 +215,48 @@ class SshConnectionManagementServiceTest {
         assertThrows(SshConnectionException.class, () -> management.delete("actor", sessionId, id(created), 1L));
         assertThrows(SshConnectionException.class, () -> management.test("actor", sessionId, id(created), 1L, pin));
         verifyNoInteractions(ssh);
+    }
+
+    @Test void missingSessionIdsProduceTypedFailuresWithoutReadingUsersOrOpeningConnections() {
+        for (String missing : new String[]{null, "", " "}) {
+            assertEquals(SshConnectionException.Kind.SESSION_EXPIRED, assertThrows(SshConnectionException.class,
+                    () -> management.list("actor", missing)).getKind());
+        }
+        verifyNoInteractions(users, access, ssh);
+    }
+
+    @Test void userLookupStorageErrorsRemainSanitizedApplicationFailures() {
+        when(users.getUserById("actor")).thenThrow(new IllegalStateException("sensitive-storage-fixture"));
+        var error = assertThrows(SshConnectionException.class, () -> management.list("actor", sessionId));
+        assertEquals(SshConnectionException.Kind.PERSISTENCE, error.getKind());
+        assertFalse(error.getMessage().contains("sensitive-storage-fixture"));
+        verifyNoInteractions(access, ssh);
+    }
+
+    @Test void brokenEncryptedCredentialsAreNotMisreportedAsNetworkOrAuthenticationFailures() {
+        var created = create();
+        var row = mapper.selectById("agent", id(created));
+        row.setCredentials("invalid-encrypted-fixture");
+        assertEquals(1, mapper.updateIfVersion(row, 1L));
+        var error = assertThrows(SshConnectionException.class,
+                () -> management.test("actor", sessionId, id(created), 2L, pin));
+        assertEquals(SshConnectionException.Kind.PERSISTENCE, error.getKind());
+        assertFalse(error.getMessage().contains("invalid-encrypted-fixture"));
+        verifyNoInteractions(ssh);
+    }
+
+    @Test void aSuccessfulTestDoesNotOverwriteAHostKeyConfirmedWhileAuthenticationWasInFlight() throws Exception {
+        var created = create(); String id = id(created);
+        profiles.recordFingerprint("actor", parent, id, 1L, "", pin);
+        String replacement = "SHA256:" + "B".repeat(43);
+        doAnswer(invocation -> {
+            profiles.recordFingerprint("actor", parent, id, 1L, pin, replacement);
+            return null;
+        }).when(ssh).testConnection(any(), any(), any(), any(), any());
+        var result = management.test("actor", sessionId, id, 1L, null);
+        assertEquals(true, result.get("connected"));
+        assertEquals(false, result.get("profileSaved"));
+        assertEquals(replacement, management.get("actor", sessionId, id).get("fingerprint"));
     }
 
     private Map<String, Object> create() {

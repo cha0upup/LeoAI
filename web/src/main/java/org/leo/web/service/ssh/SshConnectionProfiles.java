@@ -149,11 +149,15 @@ public class SshConnectionProfiles {
                 secret(envelope, "passphrase"), request.fingerprint() == null ? row.getFingerprint() : request.fingerprint());
     }
 
-    public void recordFingerprint(String user, AgentNodeSession parent, String id, Long version, String fingerprint) {
+    public void recordFingerprint(String user, AgentNodeSession parent, String id, Long version,
+                                   String previousFingerprint, String fingerprint) {
         String agentId = agentId(user, parent);
         id = SshInputValidation.normalizeProfileId(id);
         long expected = SshInputValidation.requireVersion(version);
-        if (mapper.recordConnectionIfVersion(agentId, id, expected,
-                fingerprint, System.currentTimeMillis()) == 0) throw conflict();
+        String previous = previousFingerprint == null ? "" : previousFingerprint;
+        if (!previous.isEmpty()) SshInputValidation.requireFingerprint(previous);
+        String pin = SshInputValidation.requireFingerprint(fingerprint);
+        if (mapper.recordConnectionIfUnchanged(agentId, id, expected,
+                previous, pin, System.currentTimeMillis()) == 0) throw conflict();
     }
 }

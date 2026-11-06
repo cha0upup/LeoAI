@@ -117,7 +117,8 @@ public class SshTerminalController {
             try { ssh.connect(c.user, c.browser, c.parent, c.node, connection); }
             catch (AgentSshService.HostKeyChangedException changed) { throw hostKeyConfirmation(profile, changed.fingerprint()); }
             boolean saved = true;
-            try { profiles.recordFingerprint(c.user, c.parent, request.profileId(), request.version(), connection.fingerprint()); }
+            try { profiles.recordFingerprint(c.user, c.parent, request.profileId(), request.version(),
+                    (String) profile.getOrDefault("fingerprint", ""), connection.fingerprint()); }
             catch (Exception ignored) { saved = false; }
             audit(c, request.processId(), "COMMAND_INIT", Map.of("profileId", request.profileId(), "host", connection.host(),
                     "port", connection.port(), "username", connection.username(), "authType", connection.authType()), null);

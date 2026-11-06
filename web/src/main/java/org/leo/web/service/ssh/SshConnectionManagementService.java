@@ -97,21 +97,24 @@ public final class SshConnectionManagementService implements SshConnectionOperat
                     profileId, version, confirmedFingerprint).normalized();
             Map<String, Object> profile = profiles.getForConnection(userId, scope.parent(), request);
             ComponentInvokeCapable node = (ComponentInvokeCapable) scope.parent().getAgentNode();
+            boolean needsConfirmation = confirmedFingerprint == null
+                    && (!(profile.get("fingerprint") instanceof String pin) || pin.isBlank());
+            // Storage/decryption failures belong to the application boundary, not the transport result.
+            SshConnectionSpec connection = needsConfirmation ? null : profiles.resolveConnection(userId, scope.parent(), request);
             long started = System.nanoTime();
             try {
-                if (confirmedFingerprint == null
-                        && (!(profile.get("fingerprint") instanceof String pin) || pin.isBlank())) {
+                if (needsConfirmation) {
                     String observed = ssh.probeFingerprint(userId, "ai-ssh-test", scope.parent(), node,
                             (String) profile.get("host"), ((Number) profile.get("port")).intValue());
                     return confirmationRequired(profile, observed);
                 }
-                SshConnectionSpec connection = profiles.resolveConnection(userId, scope.parent(), request);
                 ssh.testConnection(userId, "ai-ssh-test", scope.parent(), node, connection);
                 Map<String, Object> result = testResult(profile, true, started);
                 result.put("fingerprint", connection.fingerprint());
                 // A concurrent edit/delete must not be overwritten or reported as an authentication failure.
                 boolean saved = true;
-                try { profiles.recordFingerprint(userId, scope.parent(), profileId, version, connection.fingerprint()); }
+                try { profiles.recordFingerprint(userId, scope.parent(), profileId, version,
+                        (String) profile.getOrDefault("fingerprint", ""), connection.fingerprint()); }
                 catch (Exception ignored) { saved = false; }
                 result.put("profileSaved", saved);
                 return result;
@@ -180,13 +183,19 @@ public final class SshConnectionManagementService implements SshConnectionOperat
     }
 
     private Scope scope(String userId, String sessionId) {
-        AgentNodeSession parent = AgentNodeSessionContainer.getSession(sessionId);
+        AgentNodeSession parent = sessionId == null || sessionId.isBlank() ? null : AgentNodeSessionContainer.getSession(sessionId);
         if (parent == null) throw new SshConnectionException(Kind.SESSION_EXPIRED, "当前 Agent 会话已结束");
-        User user = userId == null || userId.isBlank() ? null : users.getUserById(userId);
-        if (user == null || !Integer.valueOf(1).equals(user.getStatus()) || !access.canAccessSession(parent, user))
-            throw new SshConnectionException(Kind.FORBIDDEN, "当前用户无权访问该 Agent 会话");
-        parent.touchLastActiveTime();
-        return new Scope(user, parent);
+        try {
+            User user = userId == null || userId.isBlank() ? null : users.getUserById(userId);
+            if (user == null || !Integer.valueOf(1).equals(user.getStatus()) || !access.canAccessSession(parent, user))
+                throw new SshConnectionException(Kind.FORBIDDEN, "当前用户无权访问该 Agent 会话");
+            parent.touchLastActiveTime();
+            return new Scope(user, parent);
+        } catch (SshConnectionException error) {
+            throw error;
+        } catch (RuntimeException error) {
+            throw new SshConnectionException(Kind.PERSISTENCE, "读取 SSH 用户或会话权限失败，请检查存储服务");
+        }
     }
 
     private void requireTransport(Scope scope) {
