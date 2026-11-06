@@ -1,7 +1,6 @@
 package org.leo.service.agentnode;
 
 import org.leo.core.entity.Agent;
-import org.leo.service.AgentService;
 
 import java.util.ArrayList;
 import java.util.Collections;

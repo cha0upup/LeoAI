@@ -5,7 +5,7 @@ import dev.langchain4j.model.TokenCountEstimator;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.springframework.beans.factory.annotation.Qualifier;

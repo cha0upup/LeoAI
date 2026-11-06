@@ -71,23 +71,21 @@ public class AiToolExecutionBoundary {
                 && request.id() != null && !request.id().isBlank()
                 ? new CallKey(scope.name(), memoryId, invocationId, request.id()) : null;
 
-        if (key == null) {
-            return runOnce(scope, operation, toolName, delegate, request, context, timeoutMs, false);
-        }
-
-        cleanupExpired();
+        if (key != null) cleanupExpired();
         Invocation created = new Invocation(toolName, arguments(request));
         created.contextSnapshot = AiToolContext.capture();
-        Invocation existing = inFlight.putIfAbsent(key, created);
-        if (existing != null) {
-            if (!Objects.equals(existing.toolName, toolName)
-                    || !Objects.equals(existing.arguments, arguments(request))) {
-                throw AiToolException.modelCorrectable(
-                        "TOOL_CALL_ID_CONFLICT",
-                        "同一 tool-call ID 被用于不同的工具或参数。",
-                        "请为新的工具调用生成全新的 tool-call ID；不要复用冲突 ID。");
+        if (key != null) {
+            Invocation existing = inFlight.putIfAbsent(key, created);
+            if (existing != null) {
+                if (!Objects.equals(existing.toolName, toolName)
+                        || !Objects.equals(existing.arguments, arguments(request))) {
+                    throw AiToolException.modelCorrectable(
+                            "TOOL_CALL_ID_CONFLICT",
+                            "同一 tool-call ID 被用于不同的工具或参数。",
+                            "请为新的工具调用生成全新的 tool-call ID；不要复用冲突 ID。");
+                }
+                return await(existing, operation, toolName, timeoutMs, true);
             }
-            return await(existing, scope, operation, toolName, request, timeoutMs, true);
         }
         return awaitOwner(created, scope, operation, toolName, delegate,
                 request, context, timeoutMs);
@@ -118,21 +116,19 @@ public class AiToolExecutionBoundary {
             try {
                 invocation.result.complete(runDelegate(
                         scope, operation, toolName, delegate, request, context,
-                        timeoutMs, false, snapshot));
+                        timeoutMs, snapshot));
             } catch (Throwable error) {
                 invocation.result.completeExceptionally(error);
             }
         });
         invocation.task = task;
-        return await(invocation, scope, operation, toolName, request, timeoutMs, false);
+        return await(invocation, operation, toolName, timeoutMs, false);
     }
 
     private ToolExecutionResult await(
             Invocation invocation,
-            AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
-            ToolExecutionRequest request,
             long timeoutMs,
             boolean duplicate) {
         try {
@@ -163,21 +159,6 @@ public class AiToolExecutionBoundary {
         }
     }
 
-    private ToolExecutionResult runOnce(
-            AiToolAuthorizationPolicy.AiAgentScope scope,
-            AiToolOperation operation,
-            String toolName,
-            ToolExecutor delegate,
-            ToolExecutionRequest request,
-            InvocationContext context,
-            long timeoutMs,
-            boolean duplicate) {
-        Invocation invocation = new Invocation(toolName, arguments(request));
-        invocation.contextSnapshot = AiToolContext.capture();
-        return awaitOwner(invocation, scope, operation, toolName,
-                delegate, request, context, timeoutMs);
-    }
-
     private ToolExecutionResult runDelegate(
             AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
@@ -186,7 +167,6 @@ public class AiToolExecutionBoundary {
             ToolExecutionRequest request,
             InvocationContext context,
             long timeoutMs,
-            boolean duplicate,
             AiToolContext.Snapshot snapshot) {
         long started = System.nanoTime();
         try {
@@ -196,7 +176,7 @@ public class AiToolExecutionBoundary {
             return normalize(scope, operation, toolName, request, raw,
                     context != null && context.chatMemoryId() != null
                             ? String.valueOf(context.chatMemoryId()) : "<no-memory>",
-                    elapsedMs(started), timeoutMs, duplicate);
+                    elapsedMs(started), timeoutMs);
         } finally {
             AiToolContext.clear();
         }
@@ -210,8 +190,7 @@ public class AiToolExecutionBoundary {
             ToolExecutionResult raw,
             String memoryId,
             long durationMs,
-            long timeoutMs,
-            boolean duplicate) {
+            long timeoutMs) {
         if (raw == null) {
             throw AiToolException.systemRetryable(
                     "TOOL_EMPTY_RESULT", "工具没有返回结果。", null);
@@ -224,7 +203,7 @@ public class AiToolExecutionBoundary {
             // 同时把边界指标放在 attributes 中供事件和 trace 使用。
             return withAttributes(raw, metadata(
                     scope, operation, toolName, request, durationMs,
-                    timeoutMs, false, null, duplicate, -1));
+                    timeoutMs, false, null, -1));
         }
 
         Object rawData = raw.result();
@@ -232,11 +211,8 @@ public class AiToolExecutionBoundary {
         int originalChars = rawText != null ? rawText.length() : 0;
         AiAgentProperties.AiExecutionSettings config = settings(scope);
         int maxChars = Math.max(512, config.getMaxToolResultChars());
-        Map<String, Object> envelope = raw.isError()
-                ? errorEnvelope(scope, operation, toolName, request, rawData,
-                        durationMs, timeoutMs, false, null, duplicate, originalChars)
-                : envelope(scope, operation, toolName, request, rawData,
-                        durationMs, timeoutMs, false, null, duplicate, originalChars);
+        Map<String, Object> envelope = envelope(raw.isError(), scope, operation, toolName, request,
+                rawData, durationMs, timeoutMs, false, null, originalChars);
         String encoded = JsonUtil.toJsonString(envelope);
         boolean truncated = encoded.length() > maxChars;
         String archiveId = null;
@@ -250,32 +226,22 @@ public class AiToolExecutionBoundary {
                     toolName, rawText, archiveMeta, config.getToolArchiveTtlMs());
             int previewChars = Math.max(MIN_PREVIEW_CHARS, maxChars - 1_024);
             do {
-                envelope = raw.isError()
-                        ? errorEnvelope(scope, operation, toolName, request,
-                                preview(rawText, previewChars), durationMs, timeoutMs,
-                                true, archiveId, duplicate, originalChars)
-                        : envelope(scope, operation, toolName, request,
-                                preview(rawText, previewChars), durationMs, timeoutMs,
-                                true, archiveId, duplicate, originalChars);
+                envelope = envelope(raw.isError(), scope, operation, toolName, request,
+                        preview(rawText, previewChars), durationMs, timeoutMs,
+                        true, archiveId, originalChars);
                 encoded = JsonUtil.toJsonString(envelope);
                 previewChars -= 512;
             } while (encoded.length() > maxChars && previewChars >= MIN_PREVIEW_CHARS);
             if (encoded.length() > maxChars) {
-                envelope = raw.isError()
-                        ? errorEnvelope(scope, operation, toolName, request,
-                                "完整结果已归档，请使用 archiveId 分页读取。",
-                                durationMs, timeoutMs, true, archiveId,
-                                duplicate, originalChars)
-                        : envelope(scope, operation, toolName, request,
-                                "完整结果已归档，请使用 archiveId 分页读取。",
-                                durationMs, timeoutMs, true, archiveId,
-                                duplicate, originalChars);
+                envelope = envelope(raw.isError(), scope, operation, toolName, request,
+                        "完整结果已归档，请使用 archiveId 分页读取。",
+                        durationMs, timeoutMs, true, archiveId, originalChars);
                 encoded = JsonUtil.toJsonString(envelope);
             }
         }
         Map<String, Object> metadata = metadata(
                 scope, operation, toolName, request, durationMs, timeoutMs,
-                truncated, archiveId, duplicate, originalChars);
+                truncated, archiveId, originalChars);
         return ToolExecutionResult.builder()
                 .isError(raw.isError())
                 .result(rawData)
@@ -285,6 +251,7 @@ public class AiToolExecutionBoundary {
     }
 
     private Map<String, Object> envelope(
+            boolean error,
             AiToolAuthorizationPolicy.AiAgentScope scope,
             AiToolOperation operation,
             String toolName,
@@ -294,43 +261,17 @@ public class AiToolExecutionBoundary {
             long timeoutMs,
             boolean truncated,
             String archiveId,
-            boolean duplicate,
             int originalChars) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("ok", true);
+        result.put("ok", !error);
         result.put("protocol", "leo.tool.result.v1");
-        result.put("code", "OK");
-        result.put("message", "工具执行成功");
+        result.put("code", error ? "TOOL_EXECUTION_FAILED" : "OK");
+        result.put("message", error ? "工具返回失败结果" : "工具执行成功");
         result.put("data", data);
         result.put("evidence", java.util.List.of());
         result.put("retryable", false);
         result.put("metadata", metadata(scope, operation, toolName, request,
-                durationMs, timeoutMs, truncated, archiveId, duplicate, originalChars));
-        return result;
-    }
-
-    private Map<String, Object> errorEnvelope(
-            AiToolAuthorizationPolicy.AiAgentScope scope,
-            AiToolOperation operation,
-            String toolName,
-            ToolExecutionRequest request,
-            Object data,
-            long durationMs,
-            long timeoutMs,
-            boolean truncated,
-            String archiveId,
-            boolean duplicate,
-            int originalChars) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("ok", false);
-        result.put("protocol", "leo.tool.result.v1");
-        result.put("code", "TOOL_EXECUTION_FAILED");
-        result.put("message", "工具返回失败结果");
-        result.put("data", data);
-        result.put("evidence", java.util.List.of());
-        result.put("retryable", false);
-        result.put("metadata", metadata(scope, operation, toolName, request,
-                durationMs, timeoutMs, truncated, archiveId, duplicate, originalChars));
+                durationMs, timeoutMs, truncated, archiveId, originalChars));
         return result;
     }
 
@@ -343,7 +284,6 @@ public class AiToolExecutionBoundary {
             long timeoutMs,
             boolean truncated,
             String archiveId,
-            boolean duplicate,
             int originalChars) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("scope", scope.name());
@@ -362,7 +302,7 @@ public class AiToolExecutionBoundary {
         metadata.put("timeoutMs", timeoutMs);
         metadata.put("truncated", truncated);
         metadata.put("originalChars", originalChars);
-        metadata.put("deduplicated", duplicate);
+        metadata.put("deduplicated", false);
         if (archiveId != null) metadata.put("archiveId", archiveId);
         return metadata;
     }

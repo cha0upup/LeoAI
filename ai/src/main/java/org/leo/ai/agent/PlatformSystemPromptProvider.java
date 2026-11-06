@@ -1,7 +1,7 @@
 package org.leo.ai.agent;
 
-import org.leo.ai.service.LeoSkillsProvider;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.LeoSkillsProvider;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.springframework.stereotype.Component;
 
 /**

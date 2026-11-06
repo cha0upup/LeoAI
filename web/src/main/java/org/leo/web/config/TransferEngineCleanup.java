@@ -1,7 +1,7 @@
 package org.leo.web.config;
 
-import org.leo.service.DownloadEngineService;
-import org.leo.service.UploadEngineService;
+import org.leo.service.transfer.DownloadEngineService;
+import org.leo.service.transfer.UploadEngineService;
 import org.leo.service.sql.SqlExportService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

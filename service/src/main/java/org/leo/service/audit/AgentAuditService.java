@@ -62,13 +62,33 @@ public class AgentAuditService {
                              String responseMessage,
                              String status,
                              String errorMessage) {
+        logOperationAs(null, sessionId, node, operationType, operationName, operationPath,
+                requestParams, responseCode, responseMessage, status, errorMessage);
+    }
+
+    /** Shared sessions may be operated by a user other than the original node owner. */
+    public void logOperationAs(User actor,
+                               String sessionId,
+                               AbstractAgentNode node,
+                               String operationType,
+                               String operationName,
+                               String operationPath,
+                               Map<String, Object> requestParams,
+                               Integer responseCode,
+                               String responseMessage,
+                               String status,
+                               String errorMessage) {
         try {
             if (!auditPolicyService.shouldRecord(operationType, false)) {
                 return;
             }
             AuditLog auditLog = new AuditLog();
             auditLog.setSessionId(sessionId);
-            fillUser(auditLog, sessionId, node);
+            if (actor == null) fillUser(auditLog, sessionId, node);
+            else {
+                auditLog.setUserId(actor.getUserId());
+                auditLog.setUserName(actor.getUserName());
+            }
             fillAgent(auditLog, node);
             auditLog.setOperationType(operationType);
             auditLog.setOperationName(operationName);

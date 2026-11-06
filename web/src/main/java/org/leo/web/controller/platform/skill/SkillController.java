@@ -1,17 +1,17 @@
 package org.leo.web.controller.platform.skill;
 
-import org.leo.ai.service.SkillExportService.ImportResult;
-import org.leo.ai.service.SkillFileService;
-import org.leo.ai.service.SkillFileService.SkillFileException;
-import org.leo.ai.service.SkillMeta;
-import org.leo.ai.service.SkillInspection;
-import org.leo.ai.service.SkillManifestService;
-import org.leo.ai.service.SkillRegistryService;
-import org.leo.ai.service.SkillValidationIssue;
+import org.leo.ai.service.skill.SkillExportService.ImportResult;
+import org.leo.ai.service.skill.SkillFileService;
+import org.leo.ai.service.skill.SkillFileService.SkillFileException;
+import org.leo.ai.service.skill.SkillMeta;
+import org.leo.ai.service.skill.SkillInspection;
+import org.leo.ai.service.skill.SkillManifestService;
+import org.leo.ai.service.skill.SkillRegistryService;
+import org.leo.ai.service.skill.SkillValidationIssue;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.AdminOnlyEndpoint;
-import org.leo.web.service.SkillManagementService;
+import org.leo.web.service.skill.SkillManagementService;
 import org.leo.web.util.DownloadHeaders;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;

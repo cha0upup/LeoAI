@@ -8,10 +8,10 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
-import org.leo.web.service.AiTurnProtocolService;
-import org.leo.web.service.AiTurnQueueService;
-import org.leo.web.service.PlatformAiThreadService;
-import org.leo.web.util.AiEventSubscriptionService;
+import org.leo.web.service.ai.AiTurnProtocolService;
+import org.leo.web.service.ai.AiTurnQueueService;
+import org.leo.web.service.ai.PlatformAiThreadService;
+import org.leo.web.service.ai.AiEventSubscriptionService;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;

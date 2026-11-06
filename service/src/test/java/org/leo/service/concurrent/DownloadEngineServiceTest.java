@@ -7,7 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.config.LeoConfig;
-import org.leo.service.DownloadEngineService;
+import org.leo.service.transfer.DownloadEngineService;
 import org.leo.service.downloadengine.DownloadStore;
 import org.leo.service.downloadengine.DownloadTask;
 import org.mockito.MockedStatic;
@@ -103,6 +103,25 @@ class DownloadEngineServiceTest {
         assertFalse(snapshot.containsKey("downloadPath"));
         assertFalse(snapshot.containsKey("taskTempPath"));
         assertFalse(snapshot.toString().contains(temp.toString()));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void shutdownUsesTheSamePausePathAndReleasesTheTaskRegistry() {
+        DownloadTask first = mock(DownloadTask.class);
+        DownloadTask second = mock(DownloadTask.class);
+        Map<String, DownloadTask> tasks = (Map<String, DownloadTask>) ReflectionTestUtils.getField(service, "tasksById");
+        assertNotNull(tasks);
+        tasks.put("owner:first", first);
+        tasks.put("owner:second", second);
+
+        service.close();
+
+        verify(first).pause();
+        verify(second).pause();
+        assertTrue(tasks.isEmpty());
+        service.close();
+        verifyNoMoreInteractions(first, second);
     }
 
     private DownloadStore persist(String user, String taskId, String session, String state) throws Exception {

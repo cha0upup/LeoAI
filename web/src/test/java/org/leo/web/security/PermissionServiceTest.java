@@ -2,7 +2,7 @@ package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.mock.web.MockHttpServletRequest;

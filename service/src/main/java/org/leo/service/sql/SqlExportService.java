@@ -278,8 +278,8 @@ public class SqlExportService {
                             runDatabaseExport(taskId, agentNode, connection,
                                     refValue(task.get("objectRef")),
                                     refListValue(task.get("tableRefs")),
-                                    toBoolean(task.get("includeStructure"), true),
-                                    toBoolean(task.get("includeData"), true),
+                                    toBoolean(task.get("includeStructure")),
+                                    toBoolean(task.get("includeData")),
                                     finalPath,
                                     newControl);
                         }
@@ -872,16 +872,17 @@ public class SqlExportService {
         }
     }
 
-    private boolean toBoolean(Object value, boolean defaultValue) {
+    /** Export options default to enabled when omitted or blank. */
+    private boolean toBoolean(Object value) {
         if (value == null) {
-            return defaultValue;
+            return true;
         }
         if (value instanceof Boolean) {
             return ((Boolean) value).booleanValue();
         }
         String text = String.valueOf(value).trim();
         if (text.isEmpty()) {
-            return defaultValue;
+            return true;
         }
         return "true".equalsIgnoreCase(text) || "1".equals(text) || "yes".equalsIgnoreCase(text) || "y".equalsIgnoreCase(text);
     }

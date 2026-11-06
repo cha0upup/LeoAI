@@ -4,11 +4,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
-import org.leo.ai.service.SkillMeta;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillMeta;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.agent.capability.BasicInfoCapable;
+import org.leo.core.agent.capability.ComponentInvokeCapable;
+import org.leo.core.agent.capability.LocalForwardCapable;
 import org.leo.core.runtime.CapabilitySet;
+import org.leo.core.runtime.CapabilityStatus;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 
@@ -95,6 +98,27 @@ class AiToolExposurePolicyTest {
         assertEquals(Set.of("getBasicInfo"), policy.visibleToolNames(
                 AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
                 "capability-session", List.of("getBasicInfo", "getClassBytecode")));
+    }
+
+    @Test
+    void keepsSshConfigurationToolsVisibleAndRequiresBothRelayCapabilitiesForTesting() {
+        SkillRegistryService registry = mock(SkillRegistryService.class);
+        AbstractAgentNode node = mock(AbstractAgentNode.class,
+                withSettings().extraInterfaces(LocalForwardCapable.class, ComponentInvokeCapable.class));
+        when(node.getCapabilitySet()).thenReturn(CapabilitySet.empty());
+        AgentNodeSession session = new AgentNodeSession();
+        session.setSessionId("ssh-capability-session"); session.setAgentNode(node);
+        AgentNodeSessionContainer.addSession(session.getSessionId(), session);
+        AiToolExposurePolicy policy = new AiToolExposurePolicy(new AiRuntimeResolver(), registry);
+        List<String> tools = List.of("listSshConnections", "getSshConnection", "createSshConnection",
+                "updateSshConnection", "deleteSshConnection", "testSshConnection");
+        assertEquals(Set.copyOf(tools), policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE,
+                session.getSessionId(), tools));
+        for (String capability : List.of("localForward", "componentInvoke")) {
+            when(node.getCapabilitySet()).thenReturn(new CapabilitySet(List.of(CapabilityStatus.unavailable(capability, "fixture"))));
+            assertEquals(Set.copyOf(tools.subList(0, 5)), policy.visibleToolNames(
+                    AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE, session.getSessionId(), tools));
+        }
     }
 
     @Test

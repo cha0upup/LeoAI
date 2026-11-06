@@ -15,7 +15,7 @@ import org.leo.ai.memory.ManagedConversationMemory;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.ai.service.AutoReconAppendService;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 

@@ -3,14 +3,18 @@ package org.leo.web.service.ssh;
 import org.leo.core.entity.AgentSshConnection;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.dao.mapper.AgentSshConnectionMapper;
-import org.leo.web.dto.agentnode.command.SshConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.util.SshInputValidation;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 /** Agent-shared SSH profiles, matching database management. The caller must pass session/Agent access checks. */
 @Service
@@ -33,7 +37,7 @@ public class SshConnectionProfiles {
     }
 
     private AgentSshConnection read(String agentId, String id, boolean withCredentials) {
-        id = SshProfileRequest.profileId(id);
+        id = SshInputValidation.normalizeProfileId(id);
         AgentSshConnection row = withCredentials
                 ? mapper.selectById(agentId, id)
                 : mapper.selectMetadataById(agentId, id);
@@ -54,14 +58,14 @@ public class SshConnectionProfiles {
     }
 
     private void requireVersion(AgentSshConnection row, Long expected) {
-        if (row.getVersion() != SshProfileRequest.requireVersion(expected)) throw conflict();
+        if (row.getVersion() != SshInputValidation.requireVersion(expected)) throw conflict();
     }
 
     private ApiException conflict() {
         return ApiException.conflict("SSH 配置已被修改或删除，请刷新连接列表后重试");
     }
 
-    private Map<String, Object> secrets(String agentId, AgentSshConnection row) throws Exception {
+    private Map<String, Object> secrets(String agentId, AgentSshConnection row) {
         Map<String, Object> envelope = crypto.decrypt(row.getCredentials());
         if (!agentId.equals(envelope.get("agentId"))) throw new IllegalStateException("SSH 凭据作用域不匹配");
         for (var field : Map.<String, Object>of("profileId", row.getProfileId(), "host", row.getHost(),
@@ -85,7 +89,7 @@ public class SshConnectionProfiles {
         return view(read(agentId(user, parent), id, false));
     }
 
-    public Map<String, Object> save(String user, AgentNodeSession parent, SshProfileSaveRequest body) throws Exception {
+    public Map<String, Object> save(String user, AgentNodeSession parent, SshProfileSaveRequest body) {
         SshProfileSaveRequest request = body.normalized();
         String agentId = agentId(user, parent);
         AgentSshConnection old = request.profileId() == null ? null : read(agentId, request.profileId(), true);
@@ -96,7 +100,7 @@ public class SshConnectionProfiles {
         String password = keyAuth ? "" : request.password() == null ? secret(previous, "password") : request.password();
         String privateKey = !keyAuth ? "" : request.privateKey() == null ? secret(previous, "privateKey") : request.privateKey();
         String passphrase = !keyAuth ? "" : request.passphrase() == null ? secret(previous, "passphrase") : request.passphrase();
-        SshConnectRequest.validateCredentials(request.authType(), password, privateKey, passphrase);
+        SshInputValidation.validateCredentials(request.authType(), password, privateKey, passphrase);
 
         AgentSshConnection row = new AgentSshConnection();
         row.setProfileId(old == null ? UUID.randomUUID().toString() : old.getProfileId());
@@ -123,8 +127,8 @@ public class SshConnectionProfiles {
 
     public void delete(String user, AgentNodeSession parent, SshProfileRequest request) {
         String agentId = agentId(user, parent);
-        String id = SshProfileRequest.profileId(request.profileId());
-        long version = SshProfileRequest.requireVersion(request.version());
+        String id = SshInputValidation.normalizeProfileId(request.profileId());
+        long version = SshInputValidation.requireVersion(request.version());
         requireVersion(read(agentId, id, false), version);
         if (mapper.deleteIfVersion(agentId, id, version) == 0) throw conflict();
     }
@@ -135,20 +139,20 @@ public class SshConnectionProfiles {
         return view(row);
     }
 
-    public SshConnectRequest resolveConnection(String user, AgentNodeSession parent, SshProfileConnectRequest request) throws Exception {
+    public SshConnectionSpec resolveConnection(String user, AgentNodeSession parent, SshProfileConnectRequest request) {
         String agentId = agentId(user, parent);
         AgentSshConnection row = read(agentId, request.profileId(), true);
         requireVersion(row, request.version());
         Map<String, Object> envelope = secrets(agentId, row);
-        return new SshConnectRequest(request.processId(), row.getHost(), row.getPort(),
+        return new SshConnectionSpec(request.processId(), row.getHost(), row.getPort(),
                 row.getUsername(), row.getAuthType(), secret(envelope, "password"), secret(envelope, "privateKey"),
-                secret(envelope, "passphrase"), request.fingerprint() == null ? row.getFingerprint() : request.fingerprint()).normalized();
+                secret(envelope, "passphrase"), request.fingerprint() == null ? row.getFingerprint() : request.fingerprint());
     }
 
     public void recordFingerprint(String user, AgentNodeSession parent, String id, Long version, String fingerprint) {
         String agentId = agentId(user, parent);
-        id = SshProfileRequest.profileId(id);
-        long expected = SshProfileRequest.requireVersion(version);
+        id = SshInputValidation.normalizeProfileId(id);
+        long expected = SshInputValidation.requireVersion(version);
         if (mapper.recordConnectionIfVersion(agentId, id, expected,
                 fingerprint, System.currentTimeMillis()) == 0) throw conflict();
     }

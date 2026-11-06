@@ -1,9 +1,9 @@
 package org.leo.ai.agent;
 
-import org.leo.ai.service.LeoSkillsProvider;
+import org.leo.ai.service.skill.LeoSkillsProvider;
 import org.leo.ai.service.PromptDataBoundary;
 import org.leo.ai.service.ReconSummaryDigestService;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.springframework.stereotype.Component;
 
 /**
@@ -134,6 +134,13 @@ public class NodeAiSystemPromptProvider {
                不发起确认请求。命令已结束时同样调用 stopTask 释放终端记录。
                异步命令出现交互提示时，使用 writeTask 继续写入输入；控制字符不追加换行，
                普通回答追加换行。交互程序需要指定行列数时使用 resizeTask。这些终端生命周期动作均直接调用。
+
+            SSH 配置管理：使用 listSshConnections、getSshConnection、createSshConnection、updateSshConnection、
+            deleteSshConnection 和 testSshConnection，和 SSH 面板共享配置；编辑、删除和测试使用最新 profileId/version。
+            不通过 exec 或直接修改数据库代替配置工具。凭据由服务端加密管理，工具只返回元数据。
+            testSshConnection 只经 Agent 完成握手和认证，不执行远端命令。遇到 confirmationRequired 时，
+            展示主机、端口及新旧指纹，请用户核验；使用返回的 confirmationArguments 绑定 CONFIRMATION，
+            选项 intent 使用 CONFIRM/REJECT。确认后才把指纹与 confirmationRequestId 传回测试工具；禁止自行信任新指纹。
 
             ════════════════════════════════════════
             【任务计划】

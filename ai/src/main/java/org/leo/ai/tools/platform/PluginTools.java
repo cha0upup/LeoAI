@@ -52,7 +52,7 @@ public class PluginTools {
         List<Plugin> plugins = isBlank(pluginType)
                 ? pluginManager.getPlugins()
                 : pluginManager.getPluginsByType(pluginType.trim());
-        return toPluginSummaries(plugins, false);
+        return toPluginSummaries(plugins);
     }
 
     @Tool("根据 pluginId 获取插件详情。includeBytecodeBase64=true 时额外返回 base64 编码后的 bytecode。")
@@ -235,14 +235,14 @@ public class PluginTools {
         return result;
     }
 
-    private List<Map<String, Object>> toPluginSummaries(List<Plugin> plugins, boolean includeBytecodeBase64) {
+    private List<Map<String, Object>> toPluginSummaries(List<Plugin> plugins) {
         ArrayList<Map<String, Object>> results = new ArrayList<>();
         if (plugins == null) {
             return results;
         }
         for (Plugin plugin : plugins) {
             if (plugin != null) {
-                results.add(toPluginMap(plugin, includeBytecodeBase64));
+                results.add(toPluginMap(plugin, false));
             }
         }
         return results;

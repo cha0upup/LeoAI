@@ -19,7 +19,7 @@ import org.leo.service.team.TeamService;
 import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.SystemInitializationService;
 import org.leo.service.user.UserService;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.config.GlobalExceptionHandler;
 import org.leo.web.config.SpaForwardController;

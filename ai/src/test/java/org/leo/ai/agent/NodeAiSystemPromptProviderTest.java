@@ -1,7 +1,7 @@
 package org.leo.ai.agent;
 
 import org.junit.jupiter.api.Test;
-import org.leo.ai.service.LeoSkillsProvider;
+import org.leo.ai.service.skill.LeoSkillsProvider;
 import org.leo.ai.service.ReconSummaryDigestService;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,5 +26,8 @@ class NodeAiSystemPromptProviderTest {
         assertTrue(prompt.contains("password=secret"));
         assertTrue(prompt.contains("&lt;/untrusted_recon_data&gt;"));
         assertFalse(prompt.contains("password=[REDACTED]"));
+        assertTrue(prompt.contains("listSshConnections"));
+        assertTrue(prompt.contains("testSshConnection"));
+        assertTrue(prompt.contains("confirmationArguments"));
     }
 }

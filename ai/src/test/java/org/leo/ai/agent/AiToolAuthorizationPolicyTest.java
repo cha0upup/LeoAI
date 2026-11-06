@@ -19,7 +19,7 @@ import org.leo.core.session.AiThread;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.user.UserService;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.security.AgentAccessService;
 import org.leo.core.entity.Agent;
 import org.leo.ai.tools.common.AiWorkspaceCommandTools;

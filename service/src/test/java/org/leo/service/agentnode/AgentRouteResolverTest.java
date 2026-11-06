@@ -7,7 +7,6 @@ import org.leo.core.entity.Agent;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.TlsFingerprintStrategy;
-import org.leo.service.AgentService;
 import org.mockito.ArgumentCaptor;
 
 import java.net.Proxy;

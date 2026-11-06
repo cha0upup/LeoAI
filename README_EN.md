@@ -643,6 +643,8 @@ On interruption, failure, or orphaned-run recovery, partial user-visible replies
 
 **Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
 
+**SSH profiles and connection tests**: Node AI can list, inspect, create, partially update, and delete SSH profiles shared with the SSH panel. Connection tests use the current Agent relay and support password/private-key authentication without opening a remote shell. Credentials remain encrypted at rest; first-seen or changed host keys require explicit user confirmation through a question card.
+
 The console's skill quick-launch panel provides 5 pre-configured agent-node Skills for launching complete scenario tasks with one click:
 
 | Category | Skills |

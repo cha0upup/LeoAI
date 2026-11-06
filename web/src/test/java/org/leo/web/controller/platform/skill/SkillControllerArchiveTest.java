@@ -3,9 +3,9 @@ package org.leo.web.controller.platform.skill;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.service.SkillExportService.ConflictPolicy;
-import org.leo.ai.service.SkillExportService.ImportResult;
-import org.leo.ai.service.SkillOperationLock;
+import org.leo.ai.service.skill.SkillExportService.ConflictPolicy;
+import org.leo.ai.service.skill.SkillExportService.ImportResult;
+import org.leo.ai.service.skill.SkillOperationLock;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.ByteArrayInputStream;

@@ -7,7 +7,7 @@ import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

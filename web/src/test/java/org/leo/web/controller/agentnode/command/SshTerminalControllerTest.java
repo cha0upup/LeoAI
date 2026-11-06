@@ -6,14 +6,13 @@ import org.leo.core.agent.capability.LocalForwardCapable;
 import org.leo.core.entity.Agent;
 import org.leo.core.runtime.CapabilitySet;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
 import org.leo.web.security.PermissionService;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.web.dto.agentnode.command.SshConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
 import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
@@ -21,6 +20,7 @@ import org.leo.web.dto.agentnode.SessionIdRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.ssh.AgentSshService;
 import org.leo.web.service.ssh.SshConnectionProfiles;
+import org.leo.web.service.ssh.SshConnectionSpec;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.core.agent.AbstractAgentNode;
@@ -35,11 +35,11 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class SshTerminalControllerTest {
-    SshConnectRequest request() {
-        return new SshConnectRequest("process", "host", 22, "user", "password", "secret",
+    SshConnectionSpec request() {
+        return new SshConnectionSpec("process", "host", 22, "user", "password", "secret",
                 null, null, "SHA256:" + "A".repeat(43));
     }
-    @Test void validatesSavedProfileInputBeforeParentLookupAndDiscardsInactiveCredentials() {
+    @Test void validatesSavedProfileInputBeforeParentLookup() {
         var ssh = mock(AgentSshService.class); var profiles = mock(SshConnectionProfiles.class);
         var controller = new SshTerminalController(ssh, profiles);
         try (var util = mockStatic(ControllerUtil.class)) {
@@ -58,13 +58,6 @@ class SshTerminalControllerTest {
             assertThrows(ApiException.class, () -> controller.profiles(new SessionIdRequest("bad:id"), new MockHttpServletRequest()));
             util.verifyNoInteractions(); verifyNoInteractions(ssh, profiles);
         }
-        var password = new SshConnectRequest("process", "host", null, "user", "password", "secret",
-                "unused-key", "unused-passphrase", request().fingerprint()).normalized();
-        assertEquals(22, password.port());
-        assertEquals("secret", password.password()); assertNull(password.privateKey()); assertNull(password.passphrase());
-        var privateKey = new SshConnectRequest("process", "host", 22, "user", "privateKey", "unused-password",
-                "key", "key-passphrase", request().fingerprint()).normalized();
-        assertNull(privateKey.password()); assertEquals("key-passphrase", privateKey.passphrase());
     }
     @Test void deniesParentAccessBeforeAnySshOrProfileOperation() {
         var ssh = mock(AgentSshService.class); var profiles = mock(SshConnectionProfiles.class);

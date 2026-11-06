@@ -18,7 +18,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
-import org.leo.web.dto.agentnode.command.SshConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
 import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
@@ -27,7 +26,6 @@ import org.leo.web.exception.ApiException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -50,10 +48,11 @@ class AgentSshServiceTest {
     ComponentInvokeCapable node;
     KeyPair identity;
     String fingerprint;
-    AtomicInteger opens, closes, resizes, passwordAttempts;
+    AtomicInteger opens, closes, resizes, passwordAttempts, shells;
 
     @BeforeEach void start() throws Exception {
         opens = new AtomicInteger(); closes = new AtomicInteger(); resizes = new AtomicInteger(); passwordAttempts = new AtomicInteger();
+        shells = new AtomicInteger();
         identity = KeyPairGenerator.getInstance("RSA").generateKeyPair();
         server = SshServer.setUpDefaultServer(); server.setHost("127.0.0.1"); server.setPort(0);
         var hostKeys = new SimpleGeneratorHostKeyProvider(temp.resolve("hostkey"));
@@ -64,7 +63,7 @@ class AgentSshServiceTest {
             return user.equals("fixture") && password.equals("fixture-password");
         });
         server.setPublickeyAuthenticator((user, key, session) -> user.equals("fixture") && key.equals(identity.getPublic()));
-        server.setShellFactory(channel -> new EchoShell()); server.start();
+        server.setShellFactory(channel -> { shells.incrementAndGet(); return new EchoShell(); }); server.start();
         fingerprint = AgentSshService.fingerprint(hostKeys.loadKeys(null).iterator().next().getPublic());
         assertEquals(org.apache.sshd.common.config.keys.KeyUtils.getFingerPrint(
                 org.apache.sshd.common.digest.BuiltinDigests.sha256, hostKeys.loadKeys(null).iterator().next().getPublic()), fingerprint);
@@ -92,9 +91,9 @@ class AgentSshServiceTest {
         AgentNodeSessionContainer.removeSession("ssh-parent");
         if (server != null) server.stop(true);
     }
-    SshConnectRequest request(String process, String password, String key, String pin) {
-        return new SshConnectRequest(process, "agent-only.invalid", server.getPort(), "fixture",
-                key == null ? "password" : "privateKey", password, key, null, pin).normalized();
+    SshConnectionSpec request(String process, String password, String key, String pin) {
+        return new SshConnectionSpec(process, "agent-only.invalid", server.getPort(), "fixture",
+                key == null ? "password" : "privateKey", password, key, null, pin);
     }
     Map<String, Object> command(String process, String type, String cmd) throws Exception {
         return ssh.command("owner", "browser", parent, CommandExecRequest.normalize(
@@ -128,6 +127,31 @@ class AgentSshServiceTest {
         command("one", "stop", ""); command("one", "stop", "");
         assertTrue(read("two").contains("终端就绪"));
         assertEquals(3, opens.get());
+    }
+    @Test void testsPasswordAndPrivateKeyAuthenticationWithoutOpeningShellsOrRetainingSessions() throws Exception {
+        String key = "-----BEGIN PRIVATE KEY-----\n" + Base64.getMimeEncoder(64, new byte[]{10})
+                .encodeToString(identity.getPrivate().getEncoded()) + "\n-----END PRIVATE KEY-----\n";
+        ssh.testConnection("owner", "browser", parent, node, request("test-key", null, key, fingerprint));
+        // More than the per-parent session limit proves completed tests release their reservations.
+        for (int i = 0; i < 9; i++)
+            ssh.testConnection("owner", "browser", parent, node, request("test-password", "fixture-password", null, fingerprint));
+        assertEquals(0, shells.get()); assertEquals(9, passwordAttempts.get()); assertEquals(10, opens.get());
+        for (int i = 0; i < 100 && closes.get() < opens.get(); i++) Thread.sleep(10);
+        assertEquals(opens.get(), closes.get());
+        assertThrows(ApiException.class, () -> command("test-password", "read", ""));
+    }
+    @Test void failedTestsReleaseConnectionsAndNeverSendCredentialsToAMismatchedHostKey() throws Exception {
+        assertThrows(Exception.class, () -> ssh.testConnection("owner", "browser", parent, node,
+                request("failed-test", "wrong", null, fingerprint)));
+        int attempts = passwordAttempts.get();
+        var mismatch = assertThrows(AgentSshService.HostKeyChangedException.class, () ->
+                ssh.testConnection("owner", "browser", parent, node,
+                        request("failed-test", "fixture-password", null, "SHA256:" + "A".repeat(43))));
+        assertEquals(fingerprint, mismatch.fingerprint()); assertEquals(attempts, passwordAttempts.get());
+        ssh.testConnection("owner", "browser", parent, node, request("failed-test", "fixture-password", null, fingerprint));
+        assertEquals(0, shells.get());
+        for (int i = 0; i < 100 && closes.get() < opens.get(); i++) Thread.sleep(10);
+        assertEquals(opens.get(), closes.get());
     }
     @Test void cancelsAnOpenRacingWithBrowserLogoutAndCompensatesTheLateRemoteSocket() throws Exception {
         CountDownLatch opening = new CountDownLatch(1), finish = new CountDownLatch(1);

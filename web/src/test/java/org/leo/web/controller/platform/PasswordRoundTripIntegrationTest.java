@@ -14,7 +14,7 @@ import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
 import org.leo.dao.mapper.SystemConfigMapper;
 import org.leo.dao.mapper.UserMapper;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.config.SystemConfigService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.PasswordPolicy;

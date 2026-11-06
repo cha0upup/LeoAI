@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.NodeAiAgent;
 import org.leo.ai.agent.PlatformAiAgent;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.entity.Agent;
 import org.leo.web.controller.agentnode.ai.NodeAiController;
 import org.leo.web.controller.platform.agent.AgentManageController;

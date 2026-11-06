@@ -14,7 +14,6 @@ import org.leo.core.engine.proxy.ProxySessionResources;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
-import org.leo.web.dto.agentnode.command.SshConnectRequest;
 import org.leo.web.exception.ApiException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -106,15 +105,40 @@ public class AgentSshService {
         } finally { remove(entry); }
     }
     public void connect(String user, String browser, AgentNodeSession parent, ComponentInvokeCapable node,
-                        SshConnectRequest request) throws Exception {
+                        SshConnectionSpec request) throws Exception {
         Entry entry = reserve(user, browser, parent, request.processId());
+        try {
+            SSHClient client = establishAuthenticated(entry, node, request);
+            synchronized (entry) { requireParent(entry); entry.socket.setSoTimeout(0); }
+            Session channel = client.startSession();
+            channel.allocatePTY("xterm-256color", 80, 24, 0, 0, Map.of());
+            Session.Shell shell = channel.startShell();
+            synchronized (entry) {
+                requireParent(entry);
+                entry.terminal = new SshTerminalSession(shell, UUID.randomUUID().toString(), () -> release(entry));
+                entry.terminal.start();
+            }
+        } catch (Exception | Error error) { remove(entry); throw error; }
+    }
+
+    /** Authenticate through the Agent, without allocating a PTY, starting a shell or running a command. */
+    public void testConnection(String user, String browser, AgentNodeSession parent,
+                               ComponentInvokeCapable node, SshConnectionSpec request) throws Exception {
+        Entry entry = reserve(user, browser, parent, request.processId());
+        try {
+            establishAuthenticated(entry, node, request);
+            requireParent(entry);
+        } finally { remove(entry); }
+    }
+
+    private SSHClient establishAuthenticated(Entry entry, ComponentInvokeCapable node, SshConnectionSpec request) throws Exception {
         var observed = new AtomicReference<String>();
         try {
-            String expected = request.fingerprint();
             SSHClient client = establish(entry, node, request.host(), request.port(), fp -> {
                 observed.set(fp);
-                return fp.equals(expected);
+                return fp.equals(request.fingerprint());
             });
+            requireParent(entry);
             if ("privateKey".equals(request.authType())) {
                 char[] passphrase = request.passphrase() == null ? new char[0] : request.passphrase().toCharArray();
                 try { client.authPublickey(request.username(), client.loadKeys(request.privateKey(), null,
@@ -125,21 +149,12 @@ public class AgentSshService {
                 try { client.authPassword(request.username(), password); }
                 finally { java.util.Arrays.fill(password, '\0'); }
             }
-            synchronized (entry) { requireParent(entry); entry.socket.setSoTimeout(0); }
-            Session channel = client.startSession();
-            channel.allocatePTY("xterm-256color", 80, 24, 0, 0, Map.of());
-            Session.Shell shell = channel.startShell();
-            synchronized (entry) {
-                requireParent(entry);
-                entry.terminal = new SshTerminalSession(shell, UUID.randomUUID().toString(), () -> release(entry));
-                entry.terminal.start();
-            }
+            return client;
         } catch (Exception error) {
-            remove(entry);
             if (observed.get() != null && !observed.get().equals(request.fingerprint()))
                 throw new HostKeyChangedException(observed.get());
             throw error;
-        } catch (Error error) { remove(entry); throw error; }
+        }
     }
     public static final class HostKeyChangedException extends Exception {
         private final String fingerprint;

@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
 
 import static org.junit.jupiter.api.Assertions.*;

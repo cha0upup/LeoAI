@@ -5,12 +5,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-public class DmSqlDialect extends AbstractSqlDialect {
+/** DM-specific catalog SQL with shared Oracle-style qualification and pagination. */
+public class DmSqlDialect extends OracleDialect {
 
     public String getType() { return "dm"; }
     public String getName() { return "达梦 DM"; }
     public Integer getDefaultPort() { return 5236; }
-    public List<String> getNamespaceLevels() { return List.of("schema"); }
     public List<Map<String, Object>> getVariants() {
         return Arrays.<Map<String, Object>>asList(
                 variant("default", "达梦 DM", "host", "port", "database", "username", "password", "options"));
@@ -54,15 +54,4 @@ public class DmSqlDialect extends AbstractSqlDialect {
                 "AND acc.COLUMN_NAME = c.COLUMN_NAME) THEN 1 ELSE 0 END AS primary_key FROM ALL_TAB_COLUMNS c " +
                 "WHERE c.OWNER = " + ownerExpr + " AND c.TABLE_NAME = " + formatLiteral(table) + " ORDER BY c.COLUMN_ID";
     }
-    protected String buildQualifiedTable(SqlObjectRef tableRef) {
-        String database = tableRef == null ? null : tableRef.namespace();
-        String table = tableRef == null ? null : tableRef.name();
-        if (isBlank(database)) return escapeIdentifier(table);
-        return escapeIdentifier(database) + "." + escapeIdentifier(table);
-    }
-    protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
-        return "SELECT * FROM (SELECT inner_query.*, ROWNUM rn FROM (" + baseSql + ") inner_query WHERE ROWNUM <= "
-                + (offset + pageSize) + ") WHERE rn > " + offset;
-    }
-    protected String escapeIdentifier(String identifier) { return "\"" + identifier.replace("\"", "\"\"") + "\""; }
 }

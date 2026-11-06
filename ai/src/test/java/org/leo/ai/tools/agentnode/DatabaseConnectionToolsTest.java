@@ -8,7 +8,7 @@ import org.leo.core.entity.User;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.service.DatabaseConnectionProfileService;
+import org.leo.service.sql.DatabaseConnectionProfileService;
 import org.leo.service.audit.AgentAuditService;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 

@@ -7,6 +7,8 @@ import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.config.AiAgentProperties;
 
 import java.util.ArrayList;
@@ -24,6 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AiToolExecutionBoundaryTest {
 
@@ -71,7 +76,43 @@ class AiToolExecutionBoundaryTest {
 
         assertEquals(1, calls.get());
         assertEquals("created-1", json(first.resultText()).get("data"));
+        assertEquals(false, metadata(json(first.resultText())).get("deduplicated"));
+        assertEquals(false, first.attributes().get("deduplicated"));
         assertEquals(true, metadata(json(second.resultText())).get("deduplicated"));
+        assertEquals(true, second.attributes().get("deduplicated"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {32, 5_000})
+    void preservesFailedResultProtocolForInlineAndArchivedContent(int size) {
+        AiToolResultArchive archive = new AiToolResultArchive();
+        AiToolExecutionBoundary boundary = boundary(5_000, 1_024, archive);
+        String failure = "x".repeat(size);
+        ToolExecutor delegate = mock(ToolExecutor.class);
+        when(delegate.executeWithContext(any(), any())).thenReturn(ToolExecutionResult.builder()
+                .isError(true).result(failure).resultText(failure).build());
+
+        ToolExecutionResult result = boundary.execute(
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                descriptor("getFailure", AiToolOperation.READ_ONLY),
+                delegate, request("failed-call", "getFailure"), context("memory-1"));
+
+        Map<String, Object> envelope = json(result.resultText());
+        Map<String, Object> metadata = metadata(envelope);
+        assertTrue(result.isError());
+        assertEquals(false, envelope.get("ok"));
+        assertEquals("TOOL_EXECUTION_FAILED", envelope.get("code"));
+        assertEquals(false, envelope.get("retryable"));
+        assertEquals(false, metadata.get("deduplicated"));
+        assertEquals(size > 1_024, metadata.get("truncated"));
+        if (size > 1_024) {
+            String archiveId = (String) metadata.get("archiveId");
+            assertNotNull(archiveId);
+            assertEquals(failure, archive.page("memory-1", archiveId, 0, size).content());
+            assertTrue(result.resultText().length() <= 1_024);
+        } else {
+            assertEquals(failure, envelope.get("data"));
+        }
     }
 
     @Test

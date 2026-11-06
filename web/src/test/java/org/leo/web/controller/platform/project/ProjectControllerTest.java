@@ -11,7 +11,7 @@ import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
-import org.leo.web.service.AgentDirectoryService;
+import org.leo.web.service.agent.AgentDirectoryService;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.Map;

@@ -5,8 +5,8 @@ import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiRuntimeResolver;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.agent.PlatformSkillAccessPolicy;
-import org.leo.ai.service.SkillDescriptor;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillDescriptor;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.ai.AiRuntimeState;
 
 /**

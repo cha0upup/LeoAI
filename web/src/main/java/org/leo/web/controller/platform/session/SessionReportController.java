@@ -5,7 +5,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
-import org.leo.web.service.SessionReportService;
+import org.leo.web.service.agent.SessionReportService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;

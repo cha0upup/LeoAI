@@ -9,15 +9,16 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.agentnode.SessionIdRequest;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
-import org.leo.web.dto.agentnode.command.SshConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
 import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.ssh.AgentSshService;
 import org.leo.web.service.ssh.SshConnectionProfiles;
+import org.leo.web.service.ssh.SshConnectionSpec;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.util.AuditLogUtil;
+import org.leo.web.util.SshInputValidation;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -59,7 +60,7 @@ public class SshTerminalController {
     @PostMapping("/profiles")
     public Map<String, Object> profiles(@RequestBody SessionIdRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
-        Context c = context(SshConnectRequest.id(body.sessionId()), http);
+        Context c = context(SshInputValidation.requireSessionId(body.sessionId()), http);
         try { return ApiResponse.success(profiles.list(c.user, c.parent)); }
         catch (ApiException error) { throw error; }
         catch (Exception error) { throw ApiException.serverError("读取 SSH 连接配置失败"); }
@@ -90,7 +91,7 @@ public class SshTerminalController {
     public Map<String, Object> deleteProfile(@RequestBody SshProfileRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
         SshProfileRequest request = body.normalized();
-        SshProfileRequest.requireVersion(request.version());
+        SshInputValidation.requireVersion(request.version());
         Context c = context(request.sessionId(), http);
         try {
             profiles.delete(c.user, c.parent, request);
@@ -112,7 +113,7 @@ public class SshTerminalController {
                         (String) profile.get("host"), ((Number) profile.get("port")).intValue());
                 throw hostKeyConfirmation(profile, observed);
             }
-            SshConnectRequest connection = profiles.resolveConnection(c.user, c.parent, request);
+            SshConnectionSpec connection = profiles.resolveConnection(c.user, c.parent, request);
             try { ssh.connect(c.user, c.browser, c.parent, c.node, connection); }
             catch (AgentSshService.HostKeyChangedException changed) { throw hostKeyConfirmation(profile, changed.fingerprint()); }
             boolean saved = true;

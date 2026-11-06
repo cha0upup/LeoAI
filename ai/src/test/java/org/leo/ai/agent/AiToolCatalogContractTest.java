@@ -31,6 +31,7 @@ import org.leo.ai.tools.agentnode.ReverseTunnelTools;
 import org.leo.ai.tools.agentnode.ScanTools;
 import org.leo.ai.tools.agentnode.ScriptTools;
 import org.leo.ai.tools.agentnode.SqlTools;
+import org.leo.ai.tools.agentnode.SshConnectionTools;
 import org.leo.ai.tools.agentnode.WebRuntimeTools;
 import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.ai.service.AiUserInputService;
@@ -61,7 +62,7 @@ class AiToolCatalogContractTest {
             CommandTools.class, CredentialHarvestTools.class,
             DatabaseConnectionTools.class, FileTools.class, HttpRequestTools.class,
             JavaPluginTools.class, ResourceTools.class, ReverseTunnelTools.class,
-            ScanTools.class, ScriptTools.class, SqlTools.class, WebRuntimeTools.class,
+            ScanTools.class, ScriptTools.class, SqlTools.class, SshConnectionTools.class, WebRuntimeTools.class,
             AiToolResultArchiveTools.class
     );
 
@@ -86,6 +87,20 @@ class AiToolCatalogContractTest {
         }
         assertTrue(names.contains("getDatabaseDialectCatalog"),
                 "数据库配置必须暴露权威方言目录，避免模型创造方言 ID");
+    }
+
+    @Test
+    void nodeBundleActuallyRegistersTheSshTools() throws Exception {
+        var constructor = NodeAiToolBundle.class.getConstructors()[0];
+        Object[] dependencies = java.util.Arrays.stream(constructor.getParameterTypes())
+                .map(type -> mock(type)).toArray();
+        NodeAiToolBundle bundle = (NodeAiToolBundle) constructor.newInstance(dependencies);
+        Object sshTools = bundle.tools().stream().filter(SshConnectionTools.class::isInstance)
+                .findFirst().orElseThrow();
+        assertEquals(Set.of("listSshConnections", "getSshConnection", "createSshConnection",
+                        "updateSshConnection", "deleteSshConnection", "testSshConnection"),
+                ToolService.findTools(sshTools).stream().map(AiServiceTool::name)
+                        .collect(java.util.stream.Collectors.toSet()));
     }
 
     @Test

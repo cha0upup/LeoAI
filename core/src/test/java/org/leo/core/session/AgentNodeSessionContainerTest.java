@@ -3,6 +3,11 @@ package org.leo.core.session;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Set;
+import java.util.function.Consumer;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -34,10 +39,18 @@ class AgentNodeSessionContainerTest {
         AgentNodeSessionContainer.addSession("first", first);
         AgentNodeSessionContainer.addSession("second", second);
 
-        AgentNodeSessionContainer.clearAllSessions();
-
-        assertTrue(first.closed);
-        assertTrue(second.closed);
+        var destroyed = new ArrayList<String>();
+        Consumer<String> listener = destroyed::add;
+        AgentNodeSessionContainer.registerDestroyListener(listener);
+        try {
+            AgentNodeSessionContainer.clearAllSessions();
+            assertTrue(first.closed);
+            assertTrue(second.closed);
+            assertEquals(Set.of("first", "second"), Set.copyOf(destroyed));
+            assertEquals(2, destroyed.size());
+        } finally {
+            AgentNodeSessionContainer.unregisterDestroyListener(listener);
+        }
     }
 
     private static final class TrackingSession extends AgentNodeSession {

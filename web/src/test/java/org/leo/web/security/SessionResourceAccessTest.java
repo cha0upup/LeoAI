@@ -7,7 +7,7 @@ import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.leo.web.interceptor.LoginInterceptor;

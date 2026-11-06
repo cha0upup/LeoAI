@@ -257,19 +257,6 @@ public class DownloadTask {
         started.set(false);
     }
 
-    public synchronized void suspendForShutdown() {
-        if (state != TransferTaskState.RUNNING) {
-            return;
-        }
-        cancelled.set(true);
-        state = TransferTaskState.PAUSED;
-        touch();
-        cancelWorkers();
-        persistChunksQuiet();
-        persistMetaQuiet(TransferTaskState.PAUSED);
-        started.set(false);
-    }
-
     public synchronized boolean resetFailedForRetry() {
         if (state != TransferTaskState.FAILED) {
             return false;

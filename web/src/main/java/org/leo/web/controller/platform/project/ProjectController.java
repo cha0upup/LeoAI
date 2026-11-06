@@ -18,7 +18,7 @@ import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionPolicy;
 import org.leo.web.security.PermissionService;
-import org.leo.web.service.AgentDirectoryService;
+import org.leo.web.service.agent.AgentDirectoryService;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

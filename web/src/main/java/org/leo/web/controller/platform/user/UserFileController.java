@@ -4,8 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
-import org.leo.web.service.UserArtifactService;
+import org.leo.web.service.artifact.UserArtifactService;
 import org.leo.web.util.FileDownloadResponse;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -138,7 +137,7 @@ public class UserFileController {
             Path dir = artifacts.resolve(user.getUserId(), relativeDir, true);
             Files.createDirectories(dir);
             Path target = artifacts.resolve(user.getUserId(), toUserRelativePath(user.getUserId(), dir.resolve(uploadName)), true);
-            if (!target.startsWith(getUserWorkspacePath(user.getUserId()))) {
+            if (!target.startsWith(artifacts.root(user.getUserId()))) {
                 return ApiResponse.forbidden("非法路径");
             }
             boolean overwriteExisting = Boolean.TRUE.equals(overwrite);
@@ -178,7 +177,7 @@ public class UserFileController {
                 response.setStatus(401);
                 return;
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, false);
+            Path target = resolveUserPath(user.getUserId(), relativePath);
             if (!Files.exists(target) || !Files.isRegularFile(target)) {
                 response.setStatus(404);
                 return;
@@ -269,7 +268,7 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath, false);
+            Path target = resolveUserPath(user.getUserId(), relativePath);
             if (!Files.exists(target) || !Files.isRegularFile(target)) {
                 return ApiResponse.notFound("文件不存在");
             }
@@ -310,7 +309,7 @@ public class UserFileController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             Path target = artifacts.resolve(user.getUserId(), relativePath, true);
-            if (target.equals(getUserWorkspacePath(user.getUserId()))) return ApiResponse.badRequest("请选择具体成果");
+            if (target.equals(artifacts.root(user.getUserId()))) return ApiResponse.badRequest("请选择具体成果");
             if (!Files.exists(target)) {
                 return ApiResponse.notFound("文件或目录不存在");
             }
@@ -342,22 +341,11 @@ public class UserFileController {
         return (User) request.getSession().getAttribute("user");
     }
 
-    private Path getUserWorkspacePath(String userId) {
-        return AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
-                .toPath()
-                .toAbsolutePath()
-                .normalize();
-    }
-
-    private Path resolveUserPath(String userId, String relativePath, boolean asDirectory) {
+    private Path resolveUserPath(String userId, String relativePath) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户信息无效");
         }
-        Path resolved = artifacts.resolve(userId, relativePath, false);
-        if (asDirectory && Files.exists(resolved) && !Files.isDirectory(resolved)) {
-            throw new IllegalArgumentException("目标路径不是目录");
-        }
-        return resolved;
+        return artifacts.resolve(userId, relativePath, false);
     }
 
     private String sanitizeFileName(String fileName) {
@@ -389,11 +377,11 @@ public class UserFileController {
 
     private Path getParentPath(String userId, Path path) {
         Path parent = path.getParent();
-        return parent == null ? getUserWorkspacePath(userId) : parent;
+        return parent == null ? artifacts.root(userId) : parent;
     }
 
     private String toUserRelativePath(String userId, Path path) {
-        Path base = getUserWorkspacePath(userId);
+        Path base = artifacts.root(userId);
         Path p = path.toAbsolutePath().normalize();
         if (!p.startsWith(base)) {
             return "";

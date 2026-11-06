@@ -2,7 +2,7 @@ package org.leo.web.security;
 
 import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.entity.User;
-import org.leo.service.AgentDatabaseConnectionService;
+import org.leo.service.sql.AgentDatabaseConnectionService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Component;
 

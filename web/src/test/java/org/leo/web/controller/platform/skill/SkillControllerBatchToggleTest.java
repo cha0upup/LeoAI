@@ -3,7 +3,7 @@ package org.leo.web.controller.platform.skill;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.service.SkillInspection;
+import org.leo.ai.service.skill.SkillInspection;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

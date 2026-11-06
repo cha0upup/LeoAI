@@ -5,7 +5,7 @@ import jakarta.servlet.http.HttpSession;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.service.AgentService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.security.AgentAccessService;
 import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;

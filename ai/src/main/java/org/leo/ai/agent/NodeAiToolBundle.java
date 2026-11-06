@@ -18,6 +18,7 @@ import org.leo.ai.tools.agentnode.ReverseTunnelTools;
 import org.leo.ai.tools.agentnode.ScanTools;
 import org.leo.ai.tools.agentnode.ScriptTools;
 import org.leo.ai.tools.agentnode.SqlTools;
+import org.leo.ai.tools.agentnode.SshConnectionTools;
 import org.leo.ai.tools.agentnode.WebRuntimeTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -38,6 +39,7 @@ public class NodeAiToolBundle {
             ScanTools scanTools,
             CredentialHarvestTools credentialHarvestTools,
             DatabaseConnectionTools databaseConnectionTools,
+            SshConnectionTools sshConnectionTools,
             WebRuntimeTools webRuntimeTools,
             JavaPluginTools javaPluginTools,
             HttpRequestTools httpRequestTools,
@@ -53,7 +55,7 @@ public class NodeAiToolBundle {
         this.tools = List.of(
                 commandTools, basicInfoTools, reverseTunnelTools,
                 fileTools, scanTools,
-                credentialHarvestTools, databaseConnectionTools,
+                credentialHarvestTools, databaseConnectionTools, sshConnectionTools,
                 webRuntimeTools, javaPluginTools,
                 httpRequestTools, scriptTools, sqlTools, resourceTools,
                 aiWorkspaceTools, aiWorkspaceCommandTools,

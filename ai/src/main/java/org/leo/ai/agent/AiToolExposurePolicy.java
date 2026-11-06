@@ -1,7 +1,7 @@
 package org.leo.ai.agent;
 
-import org.leo.ai.service.SkillMeta;
-import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.service.skill.SkillMeta;
+import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.agent.capability.AgentNodeCapabilityRegistry;
 import org.leo.core.session.AgentNodeSession;
@@ -35,7 +35,9 @@ public class AiToolExposurePolicy {
             "queryRemoteFileStage", "readTextFile", "searchFileContent",
             "readResources", "getClassBytecode",
             // Agent 管理经常需要先读取 Disguise，保持只读发现能力常驻。
-            "getDisguises", "getDisguiseById"
+            "getDisguises", "getDisguiseById",
+            "listSshConnections", "getSshConnection", "createSshConnection",
+            "updateSshConnection", "deleteSshConnection", "testSshConnection"
     );
 
     private static final Map<String, String> AGENT_CAPABILITIES = capabilityMap();
@@ -81,6 +83,11 @@ public class AiToolExposurePolicy {
     }
 
     private boolean supportsCapability(AgentNodeSession session, String toolName) {
+        if ("testSshConnection".equals(toolName)) {
+            return session != null
+                    && AgentNodeCapabilityRegistry.supports(session.getAgentNode(), "localForward")
+                    && AgentNodeCapabilityRegistry.supports(session.getAgentNode(), "componentInvoke");
+        }
         String capability = AGENT_CAPABILITIES.get(toolName);
         if (capability == null) return true;
         return session != null && AgentNodeCapabilityRegistry.supports(

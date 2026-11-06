@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
-import org.leo.web.service.UserArtifactService;
+import org.leo.web.service.artifact.UserArtifactService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -195,6 +195,28 @@ class UserFileControllerTest {
         var response = new org.springframework.mock.web.MockHttpServletResponse();
         controller.download(new MockHttpServletRequest(), "notes/file.txt", null, response);
         assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void previewKeepsFileLimitsAndPathAccessChecks() throws Exception {
+        var request = authenticatedRequest();
+        controller.createFile(request, "notes/preview.txt", "hello fixture", false);
+
+        var result = controller.preview(request, "notes/preview.txt", 5L);
+        assertEquals(200, result.get("code"));
+        var preview = (Map<String, Object>) result.get("data");
+        assertEquals("hello", preview.get("content"));
+        assertEquals(5, preview.get("previewSize"));
+        assertEquals(true, preview.get("truncated"));
+        assertEquals("notes/preview.txt", preview.get("path"));
+        assertEquals(404, controller.preview(request, "notes", null).get("code"));
+        assertEquals(400, controller.preview(request, "../private.txt", null).get("code"));
+        assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null).get("code"));
+
+        var userWithoutId = new MockHttpServletRequest();
+        userWithoutId.getSession().setAttribute("user", new User());
+        assertEquals(400, controller.preview(userWithoutId, "notes/preview.txt", null).get("code"));
     }
 
     private MockHttpServletRequest authenticatedRequest() {

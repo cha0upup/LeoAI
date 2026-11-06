@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.entity.User;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
-import org.leo.service.AgentDatabaseConnectionService;
+import org.leo.service.sql.AgentDatabaseConnectionService;
 import org.leo.web.exception.ApiException;
 
 import java.util.LinkedHashMap;

@@ -54,4 +54,52 @@ class DomesticSqlDialectTest {
         assertTrue(query.endsWith("LIMIT 25 OFFSET 50"));
         assertThrows(IllegalArgumentException.class, () -> dialect.buildCreateDatabaseSql("warehouse"));
     }
+
+    @Test
+    void sharedQualificationPaginationAndBindingsMatchTheirDialectFamilies() {
+        assertSharedCommands(new KingbaseEsDialect(), new PostgreSqlDialect());
+        assertSharedCommands(new DmSqlDialect(), new OracleDialect());
+        var kingbase = new KingbaseEsDialect();
+        var postgres = new PostgreSqlDialect();
+        assertEquals(postgres.buildTablesSql(null), kingbase.buildTablesSql(null));
+        assertEquals(postgres.buildTableColumnsSql(null), kingbase.buildTableColumnsSql(null));
+        var namespace = SqlObjectRef.schema("Quoted'Schema");
+        assertEquals(postgres.buildTablesSql(namespace), kingbase.buildTablesSql(namespace));
+    }
+
+    @Test
+    void retainsNativeDatabaseIdentityTypesAndCapabilityLimits() {
+        var kingbase = new KingbaseEsDialect();
+        var dm = new DmSqlDialect();
+        assertEquals("kingbasees", kingbase.getType());
+        assertEquals(54321, kingbase.getDefaultPort());
+        assertEquals("dm", dm.getType());
+        assertEquals(5236, dm.getDefaultPort());
+        for (AbstractSqlDialect dialect : List.of(kingbase, dm)) {
+            assertEquals(List.of("schema"), dialect.getNamespaceLevels());
+            assertEquals(Map.of("java", true, "php", false), dialect.getRuntimeSupport());
+            assertFalse(dialect.getCapabilities().createDatabase());
+            assertThrows(IllegalArgumentException.class, () -> dialect.buildCreateDatabaseSql("app"));
+        }
+        assertTrue(kingbase.getDataTypes().stream().anyMatch(type -> type.containsValue("BOOLEAN")));
+        assertTrue(dm.getDataTypes().stream().anyMatch(type -> type.containsValue("VARCHAR2")));
+        assertTrue(kingbase.buildDatabasesSql().contains("'sys_catalog'"));
+        assertTrue(dm.buildDatabasesSql().contains("ALL_TABLES"));
+    }
+
+    private void assertSharedCommands(AbstractSqlDialect dialect, AbstractSqlDialect family) {
+        for (SqlObjectRef table : List.of(
+                SqlObjectRef.table(null, null, "orders"),
+                SqlObjectRef.table(null, "Quoted\"Schema", "Order\"Details"),
+                SqlObjectRef.table("catalog", null, "orders"))) {
+            List<Map<String, Object>> filters = List.of(Map.of("field", "status", "operator", "eq", "value", "active"));
+            assertEquals(family.buildQueryTableCommand(table, 2, 25, List.of("id"),
+                            List.of(Map.of("field", "id", "direction", "DESC")), filters),
+                    dialect.buildQueryTableCommand(table, 2, 25, List.of("id"),
+                            List.of(Map.of("field", "id", "direction", "DESC")), filters));
+            assertEquals(family.buildCountCommand(table, filters), dialect.buildCountCommand(table, filters));
+            assertEquals(family.buildInsertCommand(table, Map.of("status", "active")),
+                    dialect.buildInsertCommand(table, Map.of("status", "active")));
+        }
+    }
 }

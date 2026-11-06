@@ -9,7 +9,7 @@ import org.leo.service.sql.AgentNodeSqlService;
 import org.leo.service.sql.SqlExecutionException;
 import org.leo.service.sql.SqlExportService;
 import org.leo.service.sql.SqlObjectRef;
-import org.leo.service.AgentDatabaseConnectionService;
+import org.leo.service.sql.AgentDatabaseConnectionService;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionPayload;
 import org.leo.web.dto.agentnode.sql.SqlRequests.CreateDatabaseRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.CreateTableRequest;

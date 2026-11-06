@@ -11,7 +11,7 @@ import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.core.runtime.CapabilitySet;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.service.DatabaseConnectionProfileService;
+import org.leo.service.sql.DatabaseConnectionProfileService;
 import org.leo.service.audit.AgentAuditService;
 
 import java.util.Map;

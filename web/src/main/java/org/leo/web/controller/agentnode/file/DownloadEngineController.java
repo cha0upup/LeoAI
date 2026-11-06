@@ -4,7 +4,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.agent.capability.FileCapable;
-import org.leo.service.DownloadEngineService;
+import org.leo.service.transfer.DownloadEngineService;
 import org.leo.web.util.AuditLogUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

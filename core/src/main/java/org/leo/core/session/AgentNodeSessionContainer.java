@@ -19,7 +19,9 @@ import java.util.function.Consumer;
  * @author LeoSpring
  * @version 2.1
  */
-public class AgentNodeSessionContainer {
+public final class AgentNodeSessionContainer {
+
+    private AgentNodeSessionContainer() { }
 
     private static final Logger log = LoggerFactory.getLogger(AgentNodeSessionContainer.class);
 
@@ -54,10 +56,9 @@ public class AgentNodeSessionContainer {
     /**
      * 添加会话。若当前会话数已达上限，先驱逐最久未活跃的会话再添加。
      */
-    public static boolean addSession(String sessionId, AgentNodeSession session) {
+    public static void addSession(String sessionId, AgentNodeSession session) {
         evictIfOverCapacity();
         sessionMap.put(sessionId, session);
-        return true;
     }
 
     /**
@@ -76,8 +77,7 @@ public class AgentNodeSessionContainer {
             if (evicted >= evictCount) break;
             AgentNodeSession removed = sessionMap.remove(entry.getKey());
             if (removed != null) {
-                try { removed.close(); } catch (Exception ignored) {}
-                fireSessionDestroyed(entry.getKey());
+                closeSession(entry.getKey(), removed);
                 evicted++;
             }
         }
@@ -92,10 +92,14 @@ public class AgentNodeSessionContainer {
     public static boolean removeSession(String sessionId) {
         AgentNodeSession session = sessionMap.remove(sessionId);
         if (session != null) {
-            try { session.close(); } catch (Exception ignored) {}
-            fireSessionDestroyed(sessionId);
+            closeSession(sessionId, session);
         }
         return session != null;
+    }
+
+    private static void closeSession(String sessionId, AgentNodeSession session) {
+        try { session.close(); } catch (Exception ignored) { }
+        fireSessionDestroyed(sessionId);
     }
 
     /**
@@ -118,10 +122,7 @@ public class AgentNodeSessionContainer {
     public static void clearAllSessions() {
         Map<String, AgentNodeSession> sessions = Map.copyOf(sessionMap);
         sessionMap.clear();
-        for (Map.Entry<String, AgentNodeSession> entry : sessions.entrySet()) {
-            try { entry.getValue().close(); } catch (Exception ignored) {}
-            fireSessionDestroyed(entry.getKey());
-        }
+        sessions.forEach(AgentNodeSessionContainer::closeSession);
     }
 
 }
