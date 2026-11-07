@@ -41,24 +41,7 @@ public class SqlTools {
             验证连接、枚举库表、查询或提取证据；只读查询优先使用 querySql。
             """)
     public Map<String, Object> execSql(Map<String, Object> connection, String sqlScript) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        SqlCapable node = AgentNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
-        AbstractAgentNode auditNode = AgentNodeSessionUtils.getAgentNode(sessionId);
-        ResolvedConnection resolved = resolveConnection(sessionId, connection);
-        DatabaseConnectionSpec connectionSpec = resolved.spec();
-        Map<String, Object> auditParams = sqlAuditParams(
-                sessionId, resolved.connectionId(), connectionSpec, sqlScript);
-        String operationPath = sqlOperationPath(connectionSpec, sqlScript);
-        try {
-            Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
-            auditService.logSuccess(sessionId, auditNode, "SQL_EXEC", "AI执行SQL", operationPath,
-                    auditParams, "AI执行SQL成功");
-            return result;
-        } catch (Exception e) {
-            auditService.logFailure(sessionId, auditNode, "SQL_EXEC", "AI执行SQL", operationPath,
-                    auditParams, e.getMessage());
-            throw e;
-        }
+        return executeAuditedSql(connection, sqlScript, "SQL_EXEC", "AI执行SQL");
     }
 
     @Tool("""
@@ -74,6 +57,11 @@ public class SqlTools {
         if (violation != null) {
             throw new IllegalArgumentException(violation);
         }
+        return executeAuditedSql(connection, sqlScript, "SQL_QUERY", "AI查询SQL");
+    }
+
+    private Map<String, Object> executeAuditedSql(Map<String, Object> connection, String sqlScript,
+                                                 String operationType, String operationName) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         SqlCapable node = AgentNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
         AbstractAgentNode auditNode = AgentNodeSessionUtils.getAgentNode(sessionId);
@@ -84,11 +72,11 @@ public class SqlTools {
         String operationPath = sqlOperationPath(connectionSpec, sqlScript);
         try {
             Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
-            auditService.logSuccess(sessionId, auditNode, "SQL_QUERY", "AI查询SQL", operationPath,
-                    auditParams, "AI查询SQL成功");
+            auditService.logSuccess(sessionId, auditNode, operationType, operationName, operationPath,
+                    auditParams, operationName + "成功");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, auditNode, "SQL_QUERY", "AI查询SQL", operationPath,
+            auditService.logFailure(sessionId, auditNode, operationType, operationName, operationPath,
                     auditParams, e.getMessage());
             throw e;
         }

@@ -312,36 +312,24 @@ public class CommandTools {
         if (cmd == null) return null;
         String trimmed = cmd.trim().toLowerCase();
 
-        // 环境变量
+        String cacheKey;
         if (trimmed.equals("env") || trimmed.equals("set")) {
-            String cacheKey = "env-vars";
-            Object cached = AgentNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
-            if (cached instanceof Map<?, ?> cachedMap) {
-                return normalizeCachedCommandResult(cmd, cachedMap);
-            }
-            // 未缓存，执行后缓存
-            Map<String, Object> results = execSync(sessionId, cmd, 0);
-            if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
-                AgentNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
-            }
-            return results;
+            cacheKey = "env-vars";
+        } else if (trimmed.contains("grep java") || trimmed.contains("wmic process") && trimmed.contains("java")) {
+            cacheKey = "java-process-args";
+        } else {
+            return null;
         }
 
-        // Java 进程参数
-        if (trimmed.contains("grep java") || trimmed.contains("wmic process") && trimmed.contains("java")) {
-            String cacheKey = "java-process-args";
-            Object cached = AgentNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
-            if (cached instanceof Map<?, ?> cachedMap) {
-                return normalizeCachedCommandResult(cmd, cachedMap);
-            }
-            Map<String, Object> results = execSync(sessionId, cmd, 0);
-            if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
-                AgentNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
-            }
-            return results;
+        Object cached = AgentNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
+        if (cached instanceof Map<?, ?> cachedMap) {
+            return normalizeCachedCommandResult(cmd, cachedMap);
         }
-
-        return null;
+        Map<String, Object> results = execSync(sessionId, cmd, 0);
+        if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
+            AgentNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
+        }
+        return results;
     }
 
     private static Map<String, Object> normalizeCachedCommandResult(String cmd, Map<?, ?> cachedMap) {

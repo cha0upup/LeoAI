@@ -254,20 +254,11 @@ class AiConversationStoreServiceTest {
                 anyString(), anyString(), anyString(),
                 isNull(), anyString(), anyString(),
                 isNull(), anyString(), anyLong())).thenReturn(1);
-        when(mapper.updateTurnMessageStatusFenced(
-                anyString(), anyString(), anyString(), anyString(), anyLong()))
-                .thenReturn(2);
-        when(mapper.finishTurn(
-                anyString(), anyString(), anyLong(), anyString())).thenReturn(1);
-        when(mapper.finishRun(any(AiRunRecord.class))).thenReturn(1);
-        var turn = new AiConversationStoreService.PersistedTurn(
-                "turn-1", "run-1", "thread-1", "message-1",
-                "assistant-1", 100L, "lease-1");
+        var turn = terminalTurnWithSuccessfulWrites();
 
         service.completeTurn(turn, "answer", List.of(Map.of("kind", "text")),
                 Map.of("ok", true), null, 2);
 
-        ArgumentCaptor<AiMessageRecord> messageCaptor = ArgumentCaptor.forClass(AiMessageRecord.class);
         verify(mapper).updateMessageFenced(
                 eq(turn.assistantMessageId()), eq(AiConversationStoreService.MESSAGE_COMMITTED), eq("answer"),
                 isNull(), any(), any(),
@@ -294,15 +285,7 @@ class AiConversationStoreServiceTest {
                 anyString(), anyString(), anyString(),
                 isNull(), isNull(), isNull(),
                 isNull(), anyString(), anyLong())).thenReturn(1);
-        when(mapper.updateTurnMessageStatusFenced(
-                anyString(), anyString(), anyString(), anyString(), anyLong()))
-                .thenReturn(2);
-        when(mapper.finishTurn(
-                anyString(), anyString(), anyLong(), anyString())).thenReturn(1);
-        when(mapper.finishRun(any(AiRunRecord.class))).thenReturn(1);
-        var turn = new AiConversationStoreService.PersistedTurn(
-                "turn-1", "run-1", "thread-1", "message-1",
-                "assistant-1", 100L, "lease-1");
+        var turn = terminalTurnWithSuccessfulWrites();
 
         service.discardTurn(
                 turn, AiRunStatus.CANCELLED, "cancelled",
@@ -497,5 +480,14 @@ class AiConversationStoreServiceTest {
 
         assertThrows(IllegalStateException.class,
                 () -> thread.recordSseEvent("delta", "hello"));
+    }
+
+    private AiConversationStoreService.PersistedTurn terminalTurnWithSuccessfulWrites() {
+        when(mapper.updateTurnMessageStatusFenced(
+                anyString(), anyString(), anyString(), anyString(), anyLong())).thenReturn(2);
+        when(mapper.finishTurn(anyString(), anyString(), anyLong(), anyString())).thenReturn(1);
+        when(mapper.finishRun(any(AiRunRecord.class))).thenReturn(1);
+        return new AiConversationStoreService.PersistedTurn(
+                "turn-1", "run-1", "thread-1", "message-1", "assistant-1", 100L, "lease-1");
     }
 }

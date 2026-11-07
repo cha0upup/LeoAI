@@ -1,14 +1,17 @@
 package org.leo.web.dto.agentnode.command;
 
-import org.leo.web.util.SshInputValidation;
+import org.leo.service.ssh.SshInputValidation;
+import org.leo.service.ssh.SshProfileConnectCommand;
+import org.leo.web.exception.SshApiExceptionMapper;
 
 /** The browser sends identifiers and the confirmed pin, never saved plaintext credentials. */
 public record SshProfileConnectRequest(String sessionId, String processId, String profileId,
                                       Long version, String fingerprint) {
-    public SshProfileConnectRequest normalized() {
-        String pin = SshInputValidation.optionalFingerprint(fingerprint);
-        return new SshProfileConnectRequest(SshInputValidation.requireSessionId(sessionId),
-                SshInputValidation.requireSessionId(processId), SshInputValidation.normalizeProfileId(profileId),
-                SshInputValidation.requireVersion(version), pin);
+    public SshProfileConnectCommand toCommand() {
+        return SshApiExceptionMapper.call(() -> {
+            var command = new SshProfileConnectCommand(processId, profileId, version, fingerprint);
+            SshInputValidation.requireSessionId(sessionId);
+            return command;
+        });
     }
 }

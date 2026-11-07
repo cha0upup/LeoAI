@@ -30,6 +30,16 @@ class SqlObjectRefTest {
 
         assertEquals(SqlObjectRef.table("app", "sales", "orders"), ref);
         assertNull(SqlObjectRef.fromMap(Map.of()));
+        List<SqlObjectRef> refs = List.of(ref, SqlObjectRef.table("app", "crm", "customers"));
+        assertEquals(refs, SqlExportService.refListValue(SqlExportService.toRefMaps(refs)));
+    }
+
+    @Test
+    void includesSchemaInExportEntryNamesToAvoidCollisions() {
+        assertEquals("app_sales_orders", SqlExportService.exportObjectName(
+                SqlObjectRef.table("app", "sales", "orders")));
+        assertEquals("app_crm_orders", SqlExportService.exportObjectName(
+                SqlObjectRef.table("app", "crm", "orders")));
     }
 
     @Test

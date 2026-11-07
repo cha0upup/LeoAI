@@ -78,7 +78,7 @@ public class AgentNodeSession {
     private volatile String agentId;
 
     // ── 会话级 AI 上下文缓存（跨线程共享）────────────────────────────────────
-    private volatile BoundedTtlCache aiContextCache;
+    private volatile BoundedTtlCache<Object> aiContextCache;
 
     /** 最后活跃时间戳（ms），用于 TTL 清理。 */
     private volatile long lastActiveTime = System.currentTimeMillis();
@@ -300,13 +300,13 @@ public class AgentNodeSession {
 
     // ── AI 上下文缓存（会话级，跨线程共享）────────────────────────────────────
 
-    private BoundedTtlCache getAiContextCache() {
-        BoundedTtlCache cache = aiContextCache;
+    private BoundedTtlCache<Object> getAiContextCache() {
+        BoundedTtlCache<Object> cache = aiContextCache;
         if (cache == null) {
             synchronized (this) {
                 cache = aiContextCache;
                 if (cache == null) {
-                    cache = new BoundedTtlCache(200, 10, TimeUnit.MINUTES);
+                    cache = new BoundedTtlCache<>(200, 10, TimeUnit.MINUTES);
                     aiContextCache = cache;
                 }
             }

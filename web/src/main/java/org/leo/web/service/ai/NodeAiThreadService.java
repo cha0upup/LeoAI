@@ -94,14 +94,7 @@ public class NodeAiThreadService {
     }
 
     public AiThread requireThread(AgentNodeSession session, String threadId) {
-        AiThreadRecord persisted = requireOwnedThread(session, threadId);
-        AiThread thread = session.getAiThread(threadId);
-        if (thread == null) {
-            thread = restorePersistedThread(session, threadId, persisted);
-        }
-        if (thread == null) {
-            throw ApiException.notFound("线程不存在，threadId: " + threadId);
-        }
+        AiThread thread = resolveRequiredThread(session, threadId, requireOwnedThread(session, threadId));
         conversationStore.attachEventJournal(threadId, thread);
         return thread;
     }
@@ -223,11 +216,7 @@ public class NodeAiThreadService {
     public Map<String, Object> resetThread(
             AgentNodeSession session, String threadId, Integer requestedConfigId) {
         AiThreadRecord persisted = findPersistedThread(session, threadId);
-        AiThread thread = session.getAiThread(threadId);
-        if (thread == null) thread = restorePersistedThread(session, threadId, persisted);
-        if (thread == null) {
-            throw ApiException.notFound("线程不存在，threadId: " + threadId);
-        }
+        AiThread thread = resolveRequiredThread(session, threadId, persisted);
         AiModelConfig config = channelResolver.optional(
                 resolveConfigId(requestedConfigId, thread, persisted));
         thread.stop();
@@ -247,11 +236,7 @@ public class NodeAiThreadService {
     public void switchChannel(
             AgentNodeSession session, String threadId, Integer requestedConfigId) {
         AiThreadRecord persisted = findPersistedThread(session, threadId);
-        AiThread thread = session.getAiThread(threadId);
-        if (thread == null) thread = restorePersistedThread(session, threadId, persisted);
-        if (thread == null) {
-            throw ApiException.notFound("线程不存在，threadId: " + threadId);
-        }
+        AiThread thread = resolveRequiredThread(session, threadId, persisted);
         AiModelConfig config = channelResolver.optional(
                 resolveConfigId(requestedConfigId, thread, persisted));
         thread.setAiConfigId(config != null ? config.getId() : null);
@@ -266,6 +251,15 @@ public class NodeAiThreadService {
             logger.warn("更新线程运行状态失败, threadId={}: {}",
                     thread.getThreadId(), error.getMessage());
         }
+    }
+
+    private AiThread resolveRequiredThread(AgentNodeSession session, String threadId, AiThreadRecord record) {
+        AiThread thread = session.getAiThread(threadId);
+        if (thread == null) thread = restorePersistedThread(session, threadId, record);
+        if (thread == null) {
+            throw ApiException.notFound("线程不存在，threadId: " + threadId);
+        }
+        return thread;
     }
 
     private AiThread restorePersistedThread(

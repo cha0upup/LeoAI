@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
+import org.leo.core.security.AccessPolicy;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.security.AgentAccessService;
@@ -98,7 +99,7 @@ public class PermissionService {
     }
 
     public void requireAdmin(User user) {
-        if (!PermissionPolicy.isAdmin(user)) {
+        if (!AccessPolicy.isAdmin(user)) {
             throw ApiException.forbidden("管理员权限不足");
         }
     }

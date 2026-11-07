@@ -1,6 +1,8 @@
 package org.leo.service.sql;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.core.agent.database.SqlCommand;
@@ -10,12 +12,64 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentNodeSqlServiceResultBoundaryTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"create", "insert", "update", "delete"})
+    void tableMutationsShareResultShapeWithoutLosingBoundParameters(String operation) throws Exception {
+        AgentNodeSqlService service = new AgentNodeSqlService(new SqlDialectRegistry());
+        SqlObjectRef table = SqlObjectRef.table("main", null, "orders");
+        AtomicReference<SqlCommand> executed = new AtomicReference<>();
+        SqlCapable node = sqlNode((connection, command) -> {
+            executed.set(command);
+            return Map.of("code", 200, "affectedRows", "7");
+        });
+
+        Map<String, Object> result = mutateTable(service, node, table, operation);
+
+        assertEquals(Map.of("objectRef", table.toMap(), "sql", executed.get().sql(), "affectedRows", 7), result);
+        assertEquals(switch (operation) {
+            case "insert" -> List.of("O'Reilly");
+            case "update" -> List.of("O'Reilly", 9);
+            case "delete" -> List.of(9);
+            default -> List.of();
+        }, executed.get().parameters());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"create", "insert", "update", "delete"})
+    void tableMutationsPreserveStructuredExecutionErrors(String operation) {
+        AgentNodeSqlService service = new AgentNodeSqlService(new SqlDialectRegistry());
+        Map<String, Object> failure = Map.of("code", 409, "msg", "constraint conflict",
+                "errorCategory", "CONSTRAINT", "sqlState", "23000", "vendorCode", 19);
+        SqlExecutionException error = assertThrows(SqlExecutionException.class, () -> mutateTable(
+                service, sqlNode((connection, command) -> failure),
+                SqlObjectRef.table("main", null, "orders"), operation));
+        assertEquals(409, error.getStatusCode());
+        assertEquals("constraint conflict", error.getMessage());
+        assertEquals("23000", error.details().get("sqlState"));
+        assertEquals(19, error.details().get("vendorCode"));
+    }
+
+    private static Map<String, Object> mutateTable(AgentNodeSqlService service, SqlCapable node,
+                                                   SqlObjectRef table, String operation) throws Exception {
+        Map<String, Object> connection = Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:");
+        Map<String, Object> where = Map.of("type", "pk", "values", Map.of("id", 9));
+        return switch (operation) {
+            case "create" -> service.createTable(node, connection, table,
+                    List.of(Map.of("name", "name", "type", "TEXT")));
+            case "insert" -> service.insertRow(node, connection, table, Map.of("name", "O'Reilly"));
+            case "update" -> service.updateRows(node, connection, table, where, Map.of("name", "O'Reilly"));
+            case "delete" -> service.deleteRows(node, connection, table, where);
+            default -> throw new IllegalArgumentException(operation);
+        };
+    }
 
     @Test
     void rejectsOldStringStatusCodesFromNodeSqlResults() {

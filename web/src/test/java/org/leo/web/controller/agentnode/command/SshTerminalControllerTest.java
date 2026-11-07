@@ -1,31 +1,35 @@
 package org.leo.web.controller.agentnode.command;
 
 import org.junit.jupiter.api.Test;
+import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.leo.core.agent.capability.LocalForwardCapable;
 import org.leo.core.entity.Agent;
+import org.leo.core.entity.User;
 import org.leo.core.runtime.CapabilitySet;
+import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentService;
+import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.ssh.SshConnectionProfiles;
+import org.leo.service.ssh.SshConnectionSpec;
+import org.leo.service.ssh.SshProfileConnectCommand;
+import org.leo.service.ssh.SshProfileSaveCommand;
+import org.leo.service.ssh.SshTransport;
 import org.leo.service.user.UserService;
-import org.leo.web.security.PermissionService;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
-import org.leo.core.entity.User;
-import org.leo.core.session.AgentNodeSession;
+import org.leo.web.dto.agentnode.SessionIdRequest;
+import org.leo.web.dto.agentnode.command.CommandExecRequest;
+import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
-import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
-import org.leo.web.dto.agentnode.SessionIdRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.security.PermissionService;
 import org.leo.web.service.ssh.AgentSshService;
-import org.leo.web.service.ssh.SshConnectionProfiles;
-import org.leo.web.service.ssh.SshConnectionSpec;
-import org.leo.web.util.ControllerUtil;
 import org.leo.web.util.AuditLogUtil;
-import org.leo.core.agent.AbstractAgentNode;
-import org.leo.web.dto.agentnode.command.CommandExecRequest;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.List;
 import java.util.Map;
@@ -56,6 +60,16 @@ class SshTerminalControllerTest {
             assertThrows(ApiException.class, () -> controller.saveProfile(null, new MockHttpServletRequest()));
             assertThrows(ApiException.class, () -> controller.connectProfile(null, new MockHttpServletRequest()));
             assertThrows(ApiException.class, () -> controller.profiles(new SessionIdRequest("bad:id"), new MockHttpServletRequest()));
+            for (String session : java.util.Arrays.asList(null, "", " bad", "bad:id")) {
+                var save = new SshProfileSaveRequest(session, null, null, "name", "host", 22,
+                        "user", "password", "secret", null, null);
+                var connect = new SshProfileConnectRequest(session, "process", java.util.UUID.randomUUID().toString(),
+                        1L, request().fingerprint());
+                assertEquals(400, assertThrows(ApiException.class,
+                        () -> controller.saveProfile(save, new MockHttpServletRequest())).getCode());
+                assertEquals(400, assertThrows(ApiException.class,
+                        () -> controller.connectProfile(connect, new MockHttpServletRequest())).getCode());
+            }
             util.verifyNoInteractions(); verifyNoInteractions(ssh, profiles);
         }
     }
@@ -134,7 +148,7 @@ class SshTerminalControllerTest {
         String id = java.util.UUID.randomUUID().toString();
         Map<String, Object> metadata = Map.of("profileId", id, "version", 1L, "host", "host", "hasPassword", true);
         when(profiles.get("owner", parent, id)).thenReturn(metadata);
-        when(profiles.save(eq("owner"), eq(parent), any(SshProfileSaveRequest.class))).thenReturn(metadata);
+        when(profiles.save(eq("owner"), eq(parent), any(SshProfileSaveCommand.class))).thenReturn(metadata);
         try (var util = mockStatic(ControllerUtil.class)) {
             util.when(() -> ControllerUtil.getAgentNodeSession("parent")).thenReturn(parent);
             util.when(() -> ControllerUtil.getCurrentUser(http)).thenReturn(owner);
@@ -142,7 +156,20 @@ class SshTerminalControllerTest {
             assertSame(metadata, controller.saveProfile(new SshProfileSaveRequest("parent", null, null, "fixture", "host", 22,
                     "user", "password", "secret", null, null), http).get("data"));
             controller.deleteProfile(new SshProfileRequest("parent", id, 1L), http);
-            verify(profiles).delete("owner", parent, new SshProfileRequest("parent", id, 1L));
+            verify(profiles).delete("owner", parent, id, 1L);
+            when(profiles.get("owner", parent, id)).thenThrow(
+                    new SshConnectionException(SshConnectionException.Kind.NOT_FOUND, "fixture missing"));
+            assertEquals(404, assertThrows(ApiException.class,
+                    () -> controller.getProfile(new SshProfileRequest("parent", id, null), http)).getCode());
+            when(profiles.save(eq("owner"), eq(parent), any(SshProfileSaveCommand.class))).thenThrow(
+                    new SshConnectionException(SshConnectionException.Kind.CAPACITY, "fixture limit"));
+            assertEquals(429, assertThrows(ApiException.class,
+                    () -> controller.saveProfile(new SshProfileSaveRequest("parent", null, null, "fixture", "host", 22,
+                            "user", "password", "secret", null, null), http)).getCode());
+            doThrow(new SshConnectionException(SshConnectionException.Kind.CONFLICT, "fixture version"))
+                    .when(profiles).delete("owner", parent, id, 1L);
+            assertEquals(409, assertThrows(ApiException.class,
+                    () -> controller.deleteProfile(new SshProfileRequest("parent", id, 1L), http)).getCode());
             verifyNoInteractions(ssh);
         }
     }
@@ -155,17 +182,21 @@ class SshTerminalControllerTest {
         ComponentInvokeCapable node = mock(ComponentInvokeCapable.class);
         String id = java.util.UUID.randomUUID().toString();
         var request = new SshProfileConnectRequest("parent", "process", id, 1L, request().fingerprint());
-        when(profiles.getForConnection("owner", parent, request)).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", request.fingerprint()));
-        when(profiles.resolveConnection("owner", parent, request)).thenReturn(request());
-        doThrow(ApiException.notFound("removed during connect")).when(profiles).recordFingerprint("owner", parent, id, 1L, request.fingerprint(), request.fingerprint());
+        when(profiles.getForConnection("owner", parent, request.toCommand())).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", request.fingerprint()));
+        when(profiles.resolveConnection("owner", parent, request.toCommand())).thenReturn(request());
+        doThrow(new SshConnectionException(SshConnectionException.Kind.NOT_FOUND, "removed during connect"))
+                .when(profiles).recordFingerprint("owner", parent, id, 1L, request.fingerprint(), request.fingerprint());
         try (var util = mockStatic(ControllerUtil.class)) {
             util.when(() -> ControllerUtil.getAgentNodeSession("parent")).thenReturn(parent);
             util.when(() -> ControllerUtil.getCurrentUser(http)).thenReturn(owner);
             util.when(() -> ControllerUtil.requireCapability(parent, ComponentInvokeCapable.class)).thenReturn(node);
             Map<?, ?> result = (Map<?, ?>) controller.connectProfile(request, http).get("data");
             verify(ssh).connect("owner", browser, parent, node, request());
+            var command = org.mockito.ArgumentCaptor.forClass(SshProfileConnectCommand.class);
+            verify(profiles).getForConnection(eq("owner"), same(parent), command.capture());
+            verify(profiles).resolveConnection(eq("owner"), same(parent), same(command.getValue()));
             assertEquals(Map.of("profileSaved", false), result);
-            when(profiles.resolveConnection("owner", parent, request)).thenThrow(new IllegalStateException("sensitive fixture value"));
+            when(profiles.resolveConnection("owner", parent, request.toCommand())).thenThrow(new IllegalStateException("sensitive fixture value"));
             assertFalse(assertThrows(ApiException.class, () -> controller.connectProfile(request, http)).getMessage().contains("sensitive"));
             verify(ssh, times(1)).connect(any(), any(), any(), any(), any());
         }
@@ -180,8 +211,8 @@ class SshTerminalControllerTest {
         String id = java.util.UUID.randomUUID().toString();
         var request = new SshProfileConnectRequest("parent", "process", id, 1L, null);
         Map<String, Object> known = Map.of("host", "host", "port", 22, "fingerprint", request().fingerprint());
-        when(profiles.getForConnection("owner", parent, request)).thenReturn(known);
-        when(profiles.resolveConnection("owner", parent, request)).thenReturn(request());
+        when(profiles.getForConnection("owner", parent, request.toCommand())).thenReturn(known);
+        when(profiles.resolveConnection("owner", parent, request.toCommand())).thenReturn(request());
         try (var util = mockStatic(ControllerUtil.class)) {
             util.when(() -> ControllerUtil.getAgentNodeSession("parent")).thenReturn(parent);
             util.when(() -> ControllerUtil.getCurrentUser(http)).thenReturn(owner);
@@ -192,7 +223,7 @@ class SshTerminalControllerTest {
             verify(profiles).recordFingerprint("owner", parent, id, 1L, request().fingerprint(), request().fingerprint());
 
             clearInvocations(ssh, profiles);
-            when(profiles.getForConnection("owner", parent, request)).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", ""));
+            when(profiles.getForConnection("owner", parent, request.toCommand())).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", ""));
             when(ssh.probeFingerprint("owner", browser, parent, node, "host", 22)).thenReturn(request().fingerprint());
             ApiException first = assertThrows(ApiException.class, () -> controller.connectProfile(request, http));
             assertEquals(409, first.getCode());
@@ -202,8 +233,8 @@ class SshTerminalControllerTest {
             verify(ssh, never()).connect(any(), any(), any(), any(), any());
 
             clearInvocations(ssh, profiles);
-            when(profiles.getForConnection("owner", parent, request)).thenReturn(known);
-            var changed = mock(AgentSshService.HostKeyChangedException.class);
+            when(profiles.getForConnection("owner", parent, request.toCommand())).thenReturn(known);
+            var changed = mock(SshTransport.HostKeyChangedException.class);
             String observed = "SHA256:" + "B".repeat(43);
             when(changed.fingerprint()).thenReturn(observed);
             doThrow(changed).when(ssh).connect(any(), any(), any(), any(), any());
@@ -252,8 +283,8 @@ class SshTerminalControllerTest {
         when(ssh.command(any(), any(), any(), any())).thenReturn(Map.of("code", 200));
         String id = java.util.UUID.randomUUID().toString();
         var savedRequest = new SshProfileConnectRequest("parent", "process", id, 1L, null);
-        when(profiles.getForConnection("owner", parent, savedRequest)).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", request().fingerprint()));
-        when(profiles.resolveConnection("owner", parent, savedRequest)).thenReturn(request());
+        when(profiles.getForConnection("owner", parent, savedRequest.toCommand())).thenReturn(Map.of("host", "host", "port", 22, "fingerprint", request().fingerprint()));
+        when(profiles.resolveConnection("owner", parent, savedRequest.toCommand())).thenReturn(request());
         try (var util = mockStatic(ControllerUtil.class); var audit = mockStatic(AuditLogUtil.class)) {
             util.when(() -> ControllerUtil.getAgentNodeSession("parent")).thenReturn(parent);
             util.when(() -> ControllerUtil.getCurrentUser(http)).thenReturn(owner);

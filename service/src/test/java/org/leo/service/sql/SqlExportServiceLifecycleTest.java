@@ -24,6 +24,8 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class SqlExportServiceLifecycleTest {
@@ -32,7 +34,11 @@ class SqlExportServiceLifecycleTest {
     private final ServiceTaskExecutor executor = mock(ServiceTaskExecutor.class);
     private final SqlCapable node = mock(SqlCapable.class);
     private final List<Runnable> queued = new ArrayList<>();
-    private final SqlExportService service = new SqlExportService(sql, executor);
+    private final SqlExportWorkspace workspace = new SqlExportWorkspace();
+    private final SqlExportArtifacts artifacts = new FileSqlExportArtifacts(workspace);
+    private final SqlExportTaskRepository repository = spy(new FileSqlExportTaskRepository(workspace));
+    private final SqlExportService service = new SqlExportService(sql, executor,
+            repository, artifacts, new SqlTableCsvExporter(sql));
     private MockedStatic<LeoConfig> config;
 
     @BeforeEach void setup() {
@@ -100,8 +106,8 @@ class SqlExportServiceLifecycleTest {
     }
 
     @Test void reservesUniqueOutputPathsBeforeWorkersHaveStarted() throws Exception {
-        Path first = ReflectionTestUtils.invokeMethod(service, "resolveUniqueExportPath", "owner", "same.csv");
-        Path second = ReflectionTestUtils.invokeMethod(service, "resolveUniqueExportPath", "owner", "same.csv");
+        Path first = artifacts.reserveOutput("owner", "same.csv");
+        Path second = artifacts.reserveOutput("owner", "same.csv");
         assertNotEquals(first, second);
         assertTrue(Files.isRegularFile(first));
         assertTrue(Files.isRegularFile(second));
@@ -124,6 +130,9 @@ class SqlExportServiceLifecycleTest {
     @CsvSource({"table,pause", "table,stop", "database,pause", "database,stop"})
     void pausedOrCancelledQueuedExportsNeverAccessTheNode(String kind, String operation) throws Exception {
         String id = id(start(kind));
+        var registration = inOrder(repository, executor);
+        registration.verify(repository).save(eq(new SqlExportTaskKey("owner", id)), anyMap());
+        registration.verify(executor).submitSqlExport(any(Runnable.class));
         if (operation.equals("pause")) service.pause("owner", id);
         else service.stop("owner", id);
         queued.get(0).run();

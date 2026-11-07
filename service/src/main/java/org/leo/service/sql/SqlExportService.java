@@ -2,45 +2,42 @@ package org.leo.service.sql;
 
 import jakarta.annotation.PreDestroy;
 import org.leo.core.agent.capability.SqlCapable;
-import org.leo.core.util.json.JsonUtil;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
+/** Coordinates task lifecycle; storage and CSV content generation are separate collaborators. */
 @Service
 public class SqlExportService {
 
-    private static final String TASKS_DIR = ".sql-export-tasks";
-    private static final String EXPORT_DIR = "downloads/sql-export";
-    private static final int PAGE_SIZE = 1000;
     private static final long FINISHED_TASK_RETAIN_MILLIS = 30L * 60L * 1000L;
 
     private final ConcurrentHashMap<String, Map<String, Object>> liveTasks = new ConcurrentHashMap<String, Map<String, Object>>();
     private final ConcurrentHashMap<String, TaskControl> liveControls = new ConcurrentHashMap<String, TaskControl>();
     private final AgentNodeSqlService agentNodeSqlService;
     private final ServiceTaskExecutor taskExecutor;
+    private final SqlExportTaskRepository taskRepository;
+    private final SqlExportArtifacts artifacts;
+    private final SqlTableCsvExporter csvExporter;
 
     public SqlExportService(AgentNodeSqlService agentNodeSqlService,
-                            ServiceTaskExecutor taskExecutor) {
+                            ServiceTaskExecutor taskExecutor,
+                            SqlExportTaskRepository taskRepository,
+                            SqlExportArtifacts artifacts,
+                            SqlTableCsvExporter csvExporter) {
         this.agentNodeSqlService = agentNodeSqlService;
         this.taskExecutor = taskExecutor;
+        this.taskRepository = taskRepository;
+        this.artifacts = artifacts;
+        this.csvExporter = csvExporter;
     }
 
     public Map<String, Object> startTableExport(SqlCapable agentNode,
@@ -66,15 +63,12 @@ public class SqlExportService {
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
         String namespace = tableRef.namespace();
         String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + timestamp() + ".csv");
-        Path finalPath = resolveUniqueExportPath(userId, fileName);
+        Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
                 finalPath.getFileName().toString(), finalPath, namespace, tableRef.name());
         task.put("objectRef", tableRef.toMap());
         task.put("format", exportFormat);
-        task.put("status", "PENDING");
-        persistTask(task);
-        liveTasks.put(taskId, task);
         scheduleTask(task, agentNode, connection);
 
         return publicTask(task);
@@ -111,18 +105,15 @@ public class SqlExportService {
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
         String namespace = namespaceRef.namespace();
         String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + timestamp() + ".zip");
-        Path finalPath = resolveUniqueExportPath(userId, fileName);
+        Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
                 finalPath.getFileName().toString(), finalPath, namespace, null);
         task.put("format", exportFormat);
-        task.put("status", "PENDING");
         task.put("includeStructure", exportStructure);
         task.put("includeData", exportData);
         task.put("objectRef", namespaceRef.toMap());
         task.put("tableRefs", toRefMaps(tableRefs));
-        persistTask(task);
-        liveTasks.put(taskId, task);
         scheduleTask(task, agentNode, connection);
 
         return publicTask(task);
@@ -191,8 +182,6 @@ public class SqlExportService {
             task.put("rowCount", null);
             task.put("fileSize", null);
         }
-        persistTask(task);
-        liveTasks.put(taskId, task);
         scheduleTask(task, agentNode, connection);
         return publicTask(task);
     }
@@ -205,22 +194,12 @@ public class SqlExportService {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
         List<Map<String, Object>> tasks = new ArrayList<Map<String, Object>>();
-        Path root = userBaseDir(userId).resolve(EXPORT_DIR).resolve(TASKS_DIR);
-        if (Files.exists(root)) {
-            try (java.util.stream.Stream<Path> stream = Files.list(root)) {
-                stream.filter(Files::isDirectory).forEach(path -> {
-                    Path meta = path.resolve("meta.json");
-                    if (!Files.exists(meta)) {
-                        return;
-                    }
-                    try {
-                        Map<String, Object> task = loadOwnedTask(userId, path.getFileName().toString());
-                        if (sessionId.equals(String.valueOf(task.get("sessionId")))) {
-                            tasks.add(publicTask(task));
-                        }
-                    } catch (Exception ignored) {
-                    }
-                });
+        for (String taskId : taskRepository.listTaskIds(userId)) {
+            try {
+                Map<String, Object> task = loadOwnedTask(userId, taskId);
+                if (sessionId.equals(String.valueOf(task.get("sessionId")))) tasks.add(publicTask(task));
+            } catch (Exception ignored) {
+                // A missing/corrupt or out-of-scope entry must not expose another task.
             }
         }
         Collections.sort(tasks, (a, b) -> {
@@ -239,6 +218,8 @@ public class SqlExportService {
                               final SqlCapable agentNode,
                               final Map<String, Object> connection) {
         final String taskId = String.valueOf(task.get("taskId"));
+        persistTask(task);
+        liveTasks.put(taskId, task);
         final TaskControl newControl = new TaskControl();
         TaskControl old = liveControls.put(taskId, newControl);
         if (old != null) {
@@ -250,8 +231,9 @@ public class SqlExportService {
                 public void run() {
                     if (liveControls.get(taskId) != newControl) return;
                     String type = String.valueOf(task.get("taskType"));
-                    Path finalPath = new File(String.valueOf(task.get("finalPath"))).toPath();
                     try {
+                        Path finalPath = artifacts.restoreOutput(String.valueOf(task.get("userId")),
+                                String.valueOf(task.get("finalPath")));
                         if ("TABLE_EXPORT".equals(type)) {
                             runTableExport(taskId, agentNode, connection,
                                     refValue(task.get("objectRef")),
@@ -266,6 +248,8 @@ public class SqlExportService {
                                     finalPath,
                                     newControl);
                         }
+                    } catch (Exception error) {
+                        updateTask(task, "FAILED", toInt(task.get("progress")), error.getMessage());
                     } finally {
                         liveControls.remove(taskId, newControl);
                     }
@@ -330,15 +314,9 @@ public class SqlExportService {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
-            Files.createDirectories(finalPath.getParent());
-            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(finalPath.toFile()), StandardCharsets.UTF_8))) {
-                List<String> header = extractColumnNames(columns);
-                if (!header.isEmpty()) {
-                    writer.write(csvLine(header));
-                    writer.newLine();
-                }
-                long total = exportTableDataAsCsv(writer, agentNode, connection,
-                        tableRef, header, task, 10, 95, control);
+            try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
+                long total = csvExporter.write(writer, agentNode, connection, tableRef, columns,
+                        progress(task, 10, 95, control));
                 task.put("rowCount", total);
             }
             if (control.cancelRequested.get() || "CANCELLED".equals(safeString(task.get("status")))) {
@@ -347,7 +325,7 @@ public class SqlExportService {
             if (control.pauseRequested.get() || "PAUSED".equals(safeString(task.get("status")))) {
                 return;
             }
-            task.put("fileSize", Long.valueOf(Files.size(finalPath)));
+            task.put("fileSize", Long.valueOf(artifacts.size(finalPath)));
             updateTask(task, "COMPLETED", 100, null);
         } catch (Exception e) {
             if ("PAUSED".equals(safeString(task.get("status"))) || "CANCELLED".equals(safeString(task.get("status")))) {
@@ -373,21 +351,13 @@ public class SqlExportService {
         if (task == null) {
             return;
         }
-        Path workDir = taskWorkDir(String.valueOf(task.get("userId")), taskId);
+        Path workDir = artifacts.workDirectory(new SqlExportTaskKey(String.valueOf(task.get("userId")), taskId));
         try {
             if (checkPausedOrCancelled(task, control)) return;
             updateTask(task, "RUNNING", 1, null);
-            Files.createDirectories(workDir);
             List<SqlObjectRef> tables = resolveExportTableRefs(
                     agentNode, connection, namespaceRef, selectedTableRefs);
             task.put("tableCount", Integer.valueOf(tables.size()));
-
-            if (includeStructure) {
-                Files.createDirectories(workDir.resolve("structure"));
-            }
-            if (includeData) {
-                Files.createDirectories(workDir.resolve("data"));
-            }
 
             int startIndex = Math.max(0, toInt(task.get("processedTables")));
             for (int i = startIndex; i < tables.size(); i++) {
@@ -409,20 +379,14 @@ public class SqlExportService {
                 List<Map<String, Object>> columns =
                         (List<Map<String, Object>>) columnResult.get("columns");
                 if (includeStructure) {
-                    writeJson(workDir.resolve("structure").resolve(
+                    artifacts.writeJson(workDir.resolve("structure").resolve(
                             sanitizeFileName(entryName) + ".columns.json"), columnResult);
                 }
                 if (includeData) {
                     Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
-                    try (BufferedWriter writer = Files.newBufferedWriter(csvPath, StandardCharsets.UTF_8,
-                            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                        List<String> header = extractColumnNames(columns);
-                        if (!header.isEmpty()) {
-                            writer.write(csvLine(header));
-                            writer.newLine();
-                        }
-                        exportTableDataAsCsv(writer, agentNode, connection, tableRef,
-                                header, task, progressBase, 95, control);
+                    try (BufferedWriter writer = artifacts.openCsv(csvPath)) {
+                        csvExporter.write(writer, agentNode, connection, tableRef, columns,
+                                progress(task, progressBase, 95, control));
                     }
                 }
                 if (checkPausedOrCancelled(task, control)) {
@@ -439,15 +403,14 @@ public class SqlExportService {
             manifest.put("includeData", Boolean.valueOf(includeData));
             manifest.put("exportTime", Instant.now().toString());
             manifest.put("tables", tables.stream().map(SqlObjectRef::toMap).toList());
-            writeJson(workDir.resolve("manifest.json"), manifest);
+            artifacts.writeJson(workDir.resolve("manifest.json"), manifest);
 
-            Files.createDirectories(finalPath.getParent());
-            zipDirectory(workDir, finalPath);
+            artifacts.zipDirectory(workDir, finalPath);
             if (checkPausedOrCancelled(task, control)) {
                 return;
             }
             task.put("processedTables", Integer.valueOf(tables.size()));
-            task.put("fileSize", Long.valueOf(Files.size(finalPath)));
+            task.put("fileSize", Long.valueOf(artifacts.size(finalPath)));
             updateTask(task, "COMPLETED", 100, null);
         } catch (Exception e) {
             if ("PAUSED".equals(safeString(task.get("status"))) || "CANCELLED".equals(safeString(task.get("status")))) {
@@ -460,62 +423,15 @@ public class SqlExportService {
         }
     }
 
-    private long exportTableDataAsCsv(BufferedWriter writer,
-                                      SqlCapable agentNode,
-                                      Map<String, Object> connection,
-                                      SqlObjectRef tableRef,
-                                      List<String> header,
-                                      Map<String, Object> task,
-                                      int startProgress,
-                                      int endProgress,
-                                      TaskControl control) throws Exception {
-        long totalRows = 0L;
-        long expectedTotal = 0L;
-        int page = 1;
-        while (true) {
-            if (checkPausedOrCancelled(task, control)) {
-                return totalRows;
+    private SqlTableCsvExporter.Progress progress(Map<String, Object> task, int start, int end, TaskControl control) {
+        return new SqlTableCsvExporter.Progress() {
+            @Override public boolean stopped() { return checkPausedOrCancelled(task, control); }
+            @Override public void rowsWritten(long rows, long expectedTotal) {
+                if (checkPausedOrCancelled(task, control)) return;
+                int percent = start + (int) Math.min(end - start, (rows * (end - start)) / Math.max(1L, expectedTotal));
+                updateTask(task, "RUNNING", percent, null);
             }
-            Map<String, Object> pageResult = agentNodeSqlService.queryTable(
-                    agentNode, connection, tableRef,
-                    Integer.valueOf(page), Integer.valueOf(PAGE_SIZE),
-                    header, Collections.<Map<String, Object>>emptyList(),
-                    Collections.<Map<String, Object>>emptyList(), Boolean.valueOf(page == 1), null);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> rows = (List<Map<String, Object>>) pageResult.get("rows");
-            @SuppressWarnings("unchecked")
-            Map<String, Object> pagination = (Map<String, Object>) pageResult.get("pagination");
-            if (pagination != null && pagination.get("total") != null) {
-                expectedTotal = toLong(pagination.get("total"));
-            }
-            if (header.isEmpty()) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> columns = (List<Map<String, Object>>) pageResult.get("columns");
-                header.addAll(extractColumnNames(columns));
-                if (!header.isEmpty() && totalRows == 0L) {
-                    writer.write(csvLine(header));
-                    writer.newLine();
-                }
-            }
-            if (rows == null || rows.isEmpty()) {
-                break;
-            }
-            for (Map<String, Object> row : rows) {
-                writer.write(csvLine(valuesForHeader(row, header)));
-                writer.newLine();
-                totalRows++;
-            }
-            if (expectedTotal > 0L) {
-                int progress = startProgress + (int) Math.min(endProgress - startProgress,
-                        (totalRows * (endProgress - startProgress)) / Math.max(1L, expectedTotal));
-                updateTask(task, "RUNNING", progress, null);
-            }
-            if (rows.size() < PAGE_SIZE) {
-                break;
-            }
-            page++;
-        }
-        return totalRows;
+        };
     }
 
     private boolean checkPausedOrCancelled(Map<String, Object> task, TaskControl control) {
@@ -567,6 +483,7 @@ public class SqlExportService {
                                            Path finalPath,
                                            String database,
                                            String table) {
+        String downloadPath = artifacts.relativePath(userId, finalPath);
         Map<String, Object> task = new LinkedHashMap<String, Object>();
         task.put("taskId", taskId);
         task.put("userId", userId);
@@ -581,8 +498,8 @@ public class SqlExportService {
         task.put("startTime", null);
         task.put("endTime", null);
         task.put("error", null);
-        task.put("downloadPath", toUserRelativePath(userId, finalPath));
-        task.put("downloadUrl", buildDownloadUrl(toUserRelativePath(userId, finalPath), fileName));
+        task.put("downloadPath", downloadPath);
+        task.put("downloadUrl", buildDownloadUrl(downloadPath, fileName));
         task.put("finalPath", finalPath.toAbsolutePath().toString());
         task.put("processedTables", Integer.valueOf(0));
         return task;
@@ -628,6 +545,14 @@ public class SqlExportService {
     }
 
     private void updateTask(Map<String, Object> task, String status, int progress, String error) {
+        synchronized (task) {
+            // A late progress/completion callback must not revive a cancelled task.
+            if ("CANCELLED".equals(task.get("status")) && !"CANCELLED".equals(status)) return;
+            applyTaskUpdate(task, status, progress, error);
+        }
+    }
+
+    private void applyTaskUpdate(Map<String, Object> task, String status, int progress, String error) {
         task.put("status", status);
         task.put("progress", Integer.valueOf(Math.max(0, Math.min(100, progress))));
         if ("RUNNING".equals(status) && task.get("startTime") == null) {
@@ -649,10 +574,7 @@ public class SqlExportService {
         try {
             String userId = String.valueOf(task.get("userId"));
             String taskId = String.valueOf(task.get("taskId"));
-            Path metaFile = taskMetaFile(userId, taskId);
-            Files.createDirectories(metaFile.getParent());
-            Files.write(metaFile, JsonUtil.toJsonString(task).getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            taskRepository.save(new SqlExportTaskKey(userId, taskId), task);
         } catch (Exception ignored) {
         }
     }
@@ -688,80 +610,14 @@ public class SqlExportService {
     private Map<String, Object> requireTask(String userId, String taskId) throws Exception {
         Map<String, Object> task = loadOwnedTask(userId, taskId);
         Map<String, Object> previous = liveTasks.putIfAbsent(taskId, task);
-        return requireOwner(userId, taskId, previous == null ? task : previous);
+        return new SqlExportTaskKey(userId, taskId).requireOwner(previous == null ? task : previous);
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> loadOwnedTask(String userId, String taskId) throws Exception {
-        // Validate identifiers even on cache hits; filesystem lookup and cache lookup share one boundary.
-        Path metaFile = taskMetaFile(userId, taskId);
+        // Validate before cache lookup, then verify the owner even when a shared cache entry exists.
+        SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
         Map<String, Object> live = liveTasks.get(taskId);
-        if (live != null) {
-            return requireOwner(userId, taskId, live);
-        }
-        if (!Files.isRegularFile(metaFile)) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
-        }
-        Map<String, Object> task = (Map<String, Object>) JsonUtil.fromJsonString(new String(Files.readAllBytes(metaFile), StandardCharsets.UTF_8), HashMap.class);
-        return requireOwner(userId, taskId, task);
-    }
-
-    private Map<String, Object> requireOwner(String userId, String taskId, Map<String, Object> task) {
-        if (task == null || !userId.equals(task.get("userId")) || !taskId.equals(task.get("taskId"))) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
-        }
-        return task;
-    }
-
-    private Path taskMetaFile(String userId, String taskId) {
-        return taskDirectory(userId, taskId).resolve("meta.json");
-    }
-
-    private Path taskWorkDir(String userId, String taskId) {
-        return taskDirectory(userId, taskId).resolve("work");
-    }
-
-    private Path taskDirectory(String userId, String taskId) {
-        return userBaseDir(userId).resolve(EXPORT_DIR).resolve(TASKS_DIR).resolve(requirePathSegment(taskId, "taskId"));
-    }
-
-    private Path resolveUniqueExportPath(String userId, String fileName) throws Exception {
-        Path dir = userBaseDir(userId).resolve(EXPORT_DIR);
-        Files.createDirectories(dir);
-        int dot = fileName.lastIndexOf('.');
-        String stem = dot > 0 ? fileName.substring(0, dot) : fileName;
-        String ext = dot > 0 ? fileName.substring(dot) : "";
-        for (int i = 0; i <= 9999; i++) {
-            Path candidate = dir.resolve(i == 0 ? fileName : stem + "(" + i + ")" + ext).normalize();
-            try {
-                return Files.createFile(candidate);
-            } catch (FileAlreadyExistsException occupied) {
-                // Reserve atomically before scheduling; another queued export may not have opened its file yet.
-            }
-        }
-        return Files.createTempFile(dir, stem + "_", ext);
-    }
-
-    private Path userBaseDir(String userId) {
-        return AgentNodeSessionWorkDirUtil.getRootDir().toPath().toAbsolutePath().normalize()
-                .resolve("users").resolve(requirePathSegment(userId, "userId"));
-    }
-
-    private String requirePathSegment(String value, String name) {
-        if (isBlank(value) || value.length() > 128 || value.equals(".") || value.equals("..")
-                || value.chars().anyMatch(c -> c == '/' || c == '\\' || c == ':' || Character.isISOControl(c))) {
-            throw new IllegalArgumentException(name + " 标识无效");
-        }
-        return value;
-    }
-
-    private String toUserRelativePath(String userId, Path path) {
-        Path base = userBaseDir(userId);
-        Path target = path.toAbsolutePath().normalize();
-        if (!target.startsWith(base)) {
-            return "";
-        }
-        return base.relativize(target).toString().replace(File.separatorChar, '/');
+        return key.requireOwner(live == null ? taskRepository.load(key) : live);
     }
 
     private String buildDownloadUrl(String relativePath, String fileName) {
@@ -774,66 +630,6 @@ public class SqlExportService {
         } catch (Exception e) {
             return value;
         }
-    }
-
-    private void writeJson(Path path, Object data) throws Exception {
-        Files.createDirectories(path.getParent());
-        Files.write(path, JsonUtil.toJsonString(data).getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-    }
-
-    private void zipDirectory(Path sourceDir, Path zipFile) throws Exception {
-        List<Path> paths = new ArrayList<Path>();
-        try (java.util.stream.Stream<Path> stream = Files.walk(sourceDir)) {
-            stream.forEach(paths::add);
-        }
-        Collections.sort(paths, Comparator.comparing(Path::toString));
-        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipFile.toFile()))) {
-            for (Path path : paths) {
-                if (Files.isDirectory(path)) {
-                    continue;
-                }
-                String entryName = sourceDir.relativize(path).toString().replace(File.separatorChar, '/');
-                zos.putNextEntry(new ZipEntry(entryName));
-                Files.copy(path, zos);
-                zos.closeEntry();
-            }
-        }
-    }
-
-    private List<String> extractColumnNames(List<Map<String, Object>> columns) {
-        List<String> names = new ArrayList<String>();
-        if (columns == null) {
-            return names;
-        }
-        for (Map<String, Object> column : columns) {
-            Object name = column.get("label");
-            if (name == null || String.valueOf(name).isBlank()) {
-                name = column.get("name");
-            }
-            if (name != null && !String.valueOf(name).isBlank()) {
-                names.add(String.valueOf(name));
-            }
-        }
-        return names;
-    }
-
-    private List<String> valuesForHeader(Map<String, Object> row, List<String> header) {
-        List<String> values = new ArrayList<String>();
-        for (String key : header) {
-            Object value = row.get(key);
-            values.add(value == null ? "" : String.valueOf(value));
-        }
-        return values;
-    }
-
-    private String csvLine(List<String> values) {
-        List<String> items = new ArrayList<String>();
-        for (String value : values) {
-            String text = value == null ? "" : value;
-            items.add("\"" + text.replace("\"", "\"\"") + "\"");
-        }
-        return String.join(",", items);
     }
 
     private String sanitizeFileName(String fileName) {

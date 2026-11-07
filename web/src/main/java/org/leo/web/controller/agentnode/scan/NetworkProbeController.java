@@ -5,11 +5,12 @@ import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.discovery.NetworkDiscoveryDtos.PreviewResponse;
 import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
-import org.leo.web.service.discovery.NetworkProbeResultStore;
-import org.leo.web.service.discovery.NetworkProbeWorkflowService;
-import org.leo.service.discovery.ScanPreviewService;
+import org.leo.service.discovery.NetworkProbeTaskNotFoundException;
+import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.discovery.ScanPlanService;
+import org.leo.service.discovery.ScanPreviewService;
 import org.leo.web.exception.ApiException;
+import org.leo.web.service.discovery.NetworkProbeResultStore;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -161,6 +162,8 @@ public class NetworkProbeController {
                 return ApiResponse.error("删除扫描结果失败");
             }
             return ApiResponse.success(result);
+        } catch (NetworkProbeTaskNotFoundException error) {
+            throw ApiException.notFound(error.getMessage());
         } catch (ApiException error) {
             // Preserve ownership and not-found HTTP semantics for callers.
             throw error;
@@ -199,6 +202,8 @@ public class NetworkProbeController {
             return ApiResponse.success(result);
         } catch (IllegalArgumentException error) {
             return ApiResponse.badRequest(error.getMessage());
+        } catch (NetworkProbeTaskNotFoundException error) {
+            throw ApiException.notFound(error.getMessage());
         } catch (ApiException error) {
             throw error;
         } catch (Exception error) {

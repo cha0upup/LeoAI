@@ -6,7 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.web.service.discovery.NetworkProbeWorkflowService;
+import org.leo.service.discovery.NetworkProbeWorkflowService;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

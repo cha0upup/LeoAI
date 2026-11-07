@@ -1,31 +1,35 @@
 package org.leo.web.service.ssh;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.AfterEach;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.leo.dao.mapper.AgentSshConnectionMapper;
-import org.leo.core.entity.AgentSshConnection;
-import org.leo.web.testing.SqliteTestDatabase;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.leo.core.entity.AgentSshConnection;
 import org.leo.core.session.AgentNodeSession;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.leo.web.dto.agentnode.command.*;
-import org.leo.web.exception.ApiException;
+import org.leo.dao.mapper.AgentSshConnectionMapper;
+import org.leo.service.ssh.SshConnectionException.Kind;
+import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.ssh.SshConnectionProfiles;
+import org.leo.service.ssh.SshProfileConnectCommand;
+import org.leo.service.ssh.SshProfileCryptoService;
+import org.leo.service.ssh.SshProfileSaveCommand;
+import org.leo.web.testing.SqliteTestDatabase;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -67,16 +71,16 @@ class SshConnectionProfilesTest {
         return new SshProfileCryptoService("", temp.resolve("ssh.key").toString());
     }
     SshConnectionProfiles restarted() { return new SshConnectionProfiles(openMapper(), crypto()); }
-    SshProfileSaveRequest create(String auth, String password, String key, String phrase) {
-        return new SshProfileSaveRequest("parent", null, null, "build", "ssh.internal", 22, "ops", auth, password, key, phrase);
+    SshProfileSaveCommand create(String auth, String password, String key, String phrase) {
+        return new SshProfileSaveCommand(null, null, "build", "ssh.internal", 22, "ops", auth, password, key, phrase);
     }
     String id(Map<String, Object> row) { return (String) row.get("profileId"); }
     Long version(Map<String, Object> row) { return ((Number) row.get("version")).longValue(); }
-    SshProfileSaveRequest update(Map<String, Object> row, String host, String auth, String password, String key, String phrase) {
-        return new SshProfileSaveRequest("parent", id(row), version(row), "renamed", host, 22, "ops", auth, password, key, phrase);
+    SshProfileSaveCommand update(Map<String, Object> row, String host, String auth, String password, String key, String phrase) {
+        return new SshProfileSaveCommand(id(row), version(row), "renamed", host, 22, "ops", auth, password, key, phrase);
     }
-    SshProfileConnectRequest connect(Map<String, Object> row) {
-        return new SshProfileConnectRequest("parent", "child", id(row), version(row), pin).normalized();
+    SshProfileConnectCommand connect(Map<String, Object> row) {
+        return new SshProfileConnectCommand("child", id(row), version(row), pin);
     }
     AgentSshConnection stored(Map<String, Object> row) {
         return mapper.selectById("agent", id(row));
@@ -105,11 +109,11 @@ class SshConnectionProfilesTest {
         Map<String, Object> next = profiles.save("owner", parent, update(first, "ssh.internal", "password", null, null, null));
         assertEquals(2L, version(next)); assertEquals(id(first), id(next));
         assertEquals("secret", profiles.resolveConnection("owner", parent, connect(next)).password());
-        assertEquals(409, assertThrows(ApiException.class, () -> profiles.save("owner", parent, update(first, "stale.internal", "password", "stale", null, null))).getCode());
-        assertThrows(ApiException.class, () -> profiles.delete("owner", parent, new SshProfileRequest("parent", id(first), version(first))));
-        profiles.delete("owner", parent, new SshProfileRequest("parent", id(next), version(next)));
+        assertEquals(Kind.CONFLICT, assertThrows(SshConnectionException.class, () -> profiles.save("owner", parent, update(first, "stale.internal", "password", "stale", null, null))).getKind());
+        assertThrows(SshConnectionException.class, () -> profiles.delete("owner", parent, id(first), version(first)));
+        profiles.delete("owner", parent, id(next), version(next));
         assertTrue(profiles.list("owner", parent).isEmpty());
-        assertEquals(404, assertThrows(ApiException.class, () -> profiles.get("owner", parent, id(next))).getCode());
+        assertEquals(Kind.NOT_FOUND, assertThrows(SshConnectionException.class, () -> profiles.get("owner", parent, id(next))).getKind());
     }
     @Test void retainsOrReplacesPrivateKeysAndAllowsExplicitPassphraseRemoval() throws Exception {
         Map<String, Object> first = profiles.save("owner", parent, create("privateKey", null, "fixture-private-key", "fixture-passphrase"));
@@ -121,7 +125,7 @@ class SshConnectionProfilesTest {
         Map<String, Object> cleared = profiles.save("owner", parent, update(kept, "ssh.internal", "privateKey", null, "new-private-key", ""));
         assertEquals(false, cleared.get("hasPassphrase"));
         assertEquals("", profiles.resolveConnection("owner", parent, connect(cleared)).passphrase());
-        assertThrows(ApiException.class, () -> profiles.save("owner", parent, update(cleared, "ssh.internal", "password", null, null, null)));
+        assertThrows(SshConnectionException.class, () -> profiles.save("owner", parent, update(cleared, "ssh.internal", "password", null, null, null)));
         Map<String, Object> password = profiles.save("owner", parent, update(cleared, "ssh.internal", "password", "new-password", null, null));
         assertEquals(false, password.get("hasPrivateKey")); assertEquals(false, password.get("hasPassphrase"));
         assertNull(profiles.resolveConnection("owner", parent, connect(password)).privateKey());
@@ -142,22 +146,22 @@ class SshConnectionProfilesTest {
         assertEquals("renamed", profiles.get("owner", parent, id(saved)).get("name"));
         assertEquals("secret", profiles.resolveConnection("other", peer, connect(edited)).password());
         assertEquals(pin, edited.get("fingerprint"));
-        assertEquals(409, assertThrows(ApiException.class, () -> profiles.save("owner", parent,
-                update(saved, "ssh.internal", "password", "stale", null, null))).getCode());
-        profiles.delete("other", peer, new SshProfileRequest("peer-console", id(edited), version(edited)));
+        assertEquals(Kind.CONFLICT, assertThrows(SshConnectionException.class, () -> profiles.save("owner", parent,
+                update(saved, "ssh.internal", "password", "stale", null, null))).getKind());
+        profiles.delete("other", peer, id(edited), version(edited));
         assertTrue(profiles.list("owner", parent).isEmpty());
     }
     @Test void isolatesDifferentAgentsForReadsUpdatesDeletesAndCredentialResolution() throws Exception {
         var saved = profiles.save("owner", parent, create("password", "secret", null, null));
         when(parent.getAgentId()).thenReturn("other-agent");
         assertTrue(profiles.list("owner", parent).isEmpty());
-        assertThrows(ApiException.class, () -> profiles.get("owner", parent, id(saved)));
-        assertThrows(ApiException.class, () -> profiles.getForConnection("owner", parent, connect(saved)));
-        assertThrows(ApiException.class, () -> profiles.resolveConnection("owner", parent, connect(saved)));
-        assertThrows(ApiException.class, () -> profiles.save("owner", parent,
+        assertThrows(SshConnectionException.class, () -> profiles.get("owner", parent, id(saved)));
+        assertThrows(SshConnectionException.class, () -> profiles.getForConnection("owner", parent, connect(saved)));
+        assertThrows(SshConnectionException.class, () -> profiles.resolveConnection("owner", parent, connect(saved)));
+        assertThrows(SshConnectionException.class, () -> profiles.save("owner", parent,
                 update(saved, "ssh.internal", "password", "changed", null, null)));
-        assertThrows(ApiException.class, () -> profiles.delete("owner", parent,
-                new SshProfileRequest("parent", id(saved), version(saved))));
+        assertThrows(SshConnectionException.class, () -> profiles.delete("owner", parent,
+                id(saved), version(saved)));
         when(parent.getAgentId()).thenReturn("agent");
         assertEquals("secret", profiles.resolveConnection("owner", parent, connect(saved)).password());
     }
@@ -168,9 +172,9 @@ class SshConnectionProfilesTest {
         assertEquals(pin, pinned.get("fingerprint"));
         Map<String, Object> changed = profiles.save("owner", parent, update(pinned, "different.internal", "password", null, null, null));
         assertEquals("", changed.get("fingerprint"));
-        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(pinned), version(pinned), pin, pin));
-        profiles.delete("owner", parent, new SshProfileRequest("parent", id(changed), version(changed)));
-        assertThrows(ApiException.class, () -> profiles.recordFingerprint("owner", parent, id(changed), version(changed), "", pin));
+        assertThrows(SshConnectionException.class, () -> profiles.recordFingerprint("owner", parent, id(pinned), version(pinned), pin, pin));
+        profiles.delete("owner", parent, id(changed), version(changed));
+        assertThrows(SshConnectionException.class, () -> profiles.recordFingerprint("owner", parent, id(changed), version(changed), "", pin));
         assertTrue(profiles.list("owner", parent).isEmpty());
     }
     @Test void rejectsAnotherKeySwappedCiphertextAndMetadataTampering() throws Exception {
@@ -190,10 +194,10 @@ class SshConnectionProfilesTest {
                 () -> profiles.resolveConnection("other", parent, connect(moved))).getMessage());
     }
     @Test void validatesIdsAndCapacityWithoutDroppingEarlierProfiles() throws Exception {
-        assertThrows(ApiException.class, () -> profiles.get("owner", parent, "../outside"));
+        assertThrows(SshConnectionException.class, () -> profiles.get("owner", parent, "../outside"));
         Map<String, Object> first = profiles.save("owner", parent, create("password", "secret", null, null));
         for (int i = 1; i < 100; i++) profiles.save("owner", parent, create("password", "secret", null, null));
-        assertEquals(429, assertThrows(ApiException.class, () -> profiles.save("owner", parent, create("password", "secret", null, null))).getCode());
+        assertEquals(Kind.CAPACITY, assertThrows(SshConnectionException.class, () -> profiles.save("owner", parent, create("password", "secret", null, null))).getKind());
         assertEquals(100, profiles.list("owner", parent).size());
         assertEquals(id(first), profiles.get("owner", parent, id(first)).get("profileId"));
         assertFalse(create("password", "secret", null, null).toString().contains("secret"));
@@ -201,7 +205,7 @@ class SshConnectionProfilesTest {
     @Test void reusesServerPinsAndOrdersRecentConnectionsWithoutChangingCredentialVersions() throws Exception {
         Map<String, Object> first = profiles.save("owner", parent, create("password", "secret", null, null));
         Map<String, Object> second = profiles.save("owner", parent, create("password", "secret", null, null));
-        var request = new SshProfileConnectRequest("parent", "child", id(first), version(first), null).normalized();
+        var request = new SshProfileConnectCommand("child", id(first), version(first), null);
         assertPublic(profiles.getForConnection("owner", parent, request));
         profiles.recordFingerprint("owner", parent, id(first), version(first), "", pin);
         Map<String, Object> pinned = profiles.get("owner", parent, id(first));
@@ -212,7 +216,7 @@ class SshConnectionProfilesTest {
         assertEquals(0L, ((Number) second.get("lastConnectedAt")).longValue());
         Map<String, Object> updated = profiles.save("owner", parent, update(pinned, "ssh.internal", "password", null, null, null));
         assertEquals(pinned.get("lastConnectedAt"), updated.get("lastConnectedAt"));
-        assertThrows(ApiException.class, () -> profiles.getForConnection("owner", parent, request));
+        assertThrows(SshConnectionException.class, () -> profiles.getForConnection("owner", parent, request));
     }
     @Test void conditionalWritesPreserveNewerConnectionStateAndRejectRacingOrCrossScopeMutations() throws Exception {
         var saved = profiles.save("owner", parent, create("password", "secret", null, null));
@@ -243,8 +247,8 @@ class SshConnectionProfilesTest {
         // Both connections saw the first pin, but the user confirmed a new host key in the faster one.
         profiles.recordFingerprint("owner", parent, id, 1L, pin, replacement);
         long latestConnection = stored(saved).getLastConnectedAt();
-        assertEquals(409, assertThrows(ApiException.class,
-                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, pin)).getCode());
+        assertEquals(Kind.CONFLICT, assertThrows(SshConnectionException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, pin)).getKind());
         assertEquals(replacement, profiles.get("owner", parent, id).get("fingerprint"));
         assertEquals(latestConnection, stored(saved).getLastConnectedAt());
         assertEquals(1L, version(profiles.get("owner", parent, id)));
@@ -256,29 +260,29 @@ class SshConnectionProfilesTest {
         var saved = profiles.save("owner", parent, create("password", "secret", null, null));
         String id = id(saved);
         profiles.recordFingerprint("owner", parent, id, 1L, "", pin);
-        assertEquals(409, assertThrows(ApiException.class, () -> profiles.recordFingerprint(
-                "owner", parent, id, 1L, "", "SHA256:" + "B".repeat(43))).getCode());
-        assertEquals(400, assertThrows(ApiException.class,
-                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, "invalid")).getCode());
-        assertEquals(400, assertThrows(ApiException.class,
-                () -> profiles.recordFingerprint("owner", parent, id, 1L, "invalid", pin)).getCode());
+        assertEquals(Kind.CONFLICT, assertThrows(SshConnectionException.class, () -> profiles.recordFingerprint(
+                "owner", parent, id, 1L, "", "SHA256:" + "B".repeat(43))).getKind());
+        assertEquals(Kind.VALIDATION, assertThrows(SshConnectionException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, pin, "invalid")).getKind());
+        assertEquals(Kind.VALIDATION, assertThrows(SshConnectionException.class,
+                () -> profiles.recordFingerprint("owner", parent, id, 1L, "invalid", pin)).getKind());
         assertEquals(pin, profiles.get("owner", parent, id).get("fingerprint"));
     }
     @Test void concurrentCreatesRespectTheDatabaseCapacityLimitAcrossIndependentConnections() throws Exception {
         for (int i = 0; i < 99; i++) profiles.save("owner", parent, create("password", "secret", null, null));
         CountDownLatch ready = new CountDownLatch(2), start = new CountDownLatch(1);
-        java.util.function.Function<String, Integer> save = user -> {
+        java.util.function.Function<String, String> save = user -> {
             try (SqlSession session = factory.openSession(true)) {
                 var service = new SshConnectionProfiles(session.getMapper(AgentSshConnectionMapper.class), crypto());
                 ready.countDown();
                 assertTrue(start.await(5, TimeUnit.SECONDS));
-                try { service.save(user, parent, create("password", "secret", null, null)); return 200; }
-                catch (ApiException error) { return error.getCode(); }
+                try { service.save(user, parent, create("password", "secret", null, null)); return "CREATED"; }
+                catch (SshConnectionException error) { return error.getKind().name(); }
             } catch (Exception error) { throw new RuntimeException(error); }
         };
         var first = CompletableFuture.supplyAsync(() -> save.apply("owner")); var second = CompletableFuture.supplyAsync(() -> save.apply("other"));
         assertTrue(ready.await(5, TimeUnit.SECONDS)); start.countDown();
-        assertEquals(Set.of(200, 429), Set.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)));
+        assertEquals(Set.of("CREATED", "CAPACITY"), Set.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)));
         assertEquals(100, profiles.list("owner", parent).size());
     }
     @Test void deletingTheCreatorKeepsSharedProfilesWhileDeletingTheAgentRemovesThem() throws Exception {

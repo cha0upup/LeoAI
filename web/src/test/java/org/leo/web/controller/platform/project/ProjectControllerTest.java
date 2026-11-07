@@ -1,6 +1,7 @@
 package org.leo.web.controller.platform.project;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
@@ -28,18 +29,24 @@ import static org.mockito.Mockito.when;
 
 class ProjectControllerTest {
 
+    private final ProjectService projectService = mock(ProjectService.class);
+    private final PermissionService permissionService = mock(PermissionService.class);
+    private final ProjectController controller = new ProjectController(
+            projectService, permissionService, mock(AgentDirectoryService.class));
+    private final MockHttpServletRequest request = new MockHttpServletRequest();
+    private final User user = new User();
+
+    @BeforeEach
+    void login() {
+        when(permissionService.requireLogin(request)).thenReturn(user);
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void usesOneSessionSnapshotAndOneGroupedHostCountWithoutChangingProjectOrder() {
-        ProjectService projectService = mock(ProjectService.class);
-        PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        User user = new User();
         user.setUserId("user-1");
         Project first = project("project-2");
         Project second = project("project-1");
-        when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.listVisible(user)).thenReturn(List.of(first, second));
         when(projectService.countAgentsByProject()).thenReturn(Map.of("project-1", 3));
         when(projectService.canManage(first, user)).thenReturn(true);
@@ -65,16 +72,10 @@ class ProjectControllerTest {
 
     @Test
     void skipsHostAndSessionAggregationWhenNoProjectIsVisible() {
-        ProjectService projectService = mock(ProjectService.class);
-        PermissionService permissionService = mock(PermissionService.class);
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        User user = new User();
-        when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.listVisible(user)).thenReturn(List.of());
 
         try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
-            assertEquals(List.of(), new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class))
-                    .listProjects(request).get("data"));
+            assertEquals(List.of(), controller.listProjects(request).get("data"));
             verify(projectService, never()).countAgentsByProject();
             sessions.verifyNoInteractions();
         }
@@ -88,13 +89,7 @@ class ProjectControllerTest {
     @Test
     @SuppressWarnings("unchecked")
     void deletesManageableProjectAndKeepsLiveSessionInGlobalWorkspace() {
-        ProjectService projectService = mock(ProjectService.class);
-        PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        User user = new User();
         Project project = project("project-1");
-        when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.findById("project-1")).thenReturn(project);
         when(projectService.canView(project, user)).thenReturn(true);
         when(projectService.canManage(project, user)).thenReturn(true);
@@ -116,13 +111,7 @@ class ProjectControllerTest {
 
     @Test
     void rejectsDeletionWhenProjectIsNotManageable() {
-        ProjectService projectService = mock(ProjectService.class);
-        PermissionService permissionService = mock(PermissionService.class);
-        ProjectController controller = new ProjectController(projectService, permissionService, mock(AgentDirectoryService.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        User user = new User();
         Project project = project("project-1");
-        when(permissionService.requireLogin(request)).thenReturn(user);
         when(projectService.findById("project-1")).thenReturn(project);
         when(projectService.canView(project, user)).thenReturn(true);
         when(projectService.canManage(project, user)).thenReturn(false);

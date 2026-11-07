@@ -5,14 +5,15 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.service.discovery.NetworkDiscoveryDtos.ScanConfig;
 import org.leo.service.discovery.NetworkProbeAnalysisService;
+import org.leo.service.discovery.NetworkProbeTaskNotFoundException;
+import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.discovery.PortPolicyResolver;
+import org.leo.service.discovery.ScanPlanService;
+import org.leo.service.discovery.ScanPreviewService;
+import org.leo.service.discovery.TargetResolver;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.discovery.NetworkProbeResultStore;
-import org.leo.web.service.discovery.NetworkProbeWorkflowService;
-import org.leo.service.discovery.ScanPlanService;
-import org.leo.service.discovery.TargetResolver;
-import org.leo.service.discovery.ScanPreviewService;
 import org.leo.web.util.ControllerUtil;
 
 import java.util.HashMap;
@@ -20,14 +21,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class NetworkProbeControllerTest {
 
@@ -124,6 +125,33 @@ class NetworkProbeControllerTest {
             when(store.summaryCounts("session", "task")).thenReturn(Map.of());
             assertEquals(live, controller.queryWorkflow(params).get("data"));
         }
+    }
+
+    @Test
+    void mapsApplicationTaskScopeFailuresToTheExistingHttpNotFoundContract() {
+        var workflow = mock(NetworkProbeWorkflowService.class);
+        var store = mock(NetworkProbeResultStore.class);
+        var controller = new NetworkProbeController(workflow, mock(ScanPreviewService.class),
+                mock(ScanPlanService.class), store, new ObjectMapper());
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "taskId", "task"));
+        var missing = new NetworkProbeTaskNotFoundException("fixture task missing or out of scope");
+        when(workflow.pause("session", "task")).thenThrow(missing);
+        when(workflow.resume("session", "task")).thenThrow(missing);
+        when(workflow.stop("session", "task")).thenThrow(missing);
+        when(workflow.delete("session", "task")).thenThrow(missing);
+        try (var utilities = mockStatic(ControllerUtil.class)) {
+            utilities.when(() -> ControllerUtil.getRequiredStringParam(params, "sessionId")).thenReturn("session");
+            utilities.when(() -> ControllerUtil.getRequiredStringParam(params, "taskId")).thenReturn("task");
+            List<Function<HashMap<String, Object>, ?>> operations = List.of(controller::pauseWorkflow,
+                    controller::resumeWorkflow, controller::stopWorkflow, controller::deleteWorkflow);
+            for (var operation : operations) {
+                ApiException response = assertThrows(ApiException.class, () -> operation.apply(params));
+                assertEquals(404, response.getCode());
+                assertEquals(404, response.getHttpStatus().value());
+                assertEquals(missing.getMessage(), response.getMessage());
+            }
+        }
+        verifyNoInteractions(store);
     }
 
     @Test

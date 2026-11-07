@@ -1,0 +1,1 @@
+function e(e){return Uint8Array.from(atob(e),e=>e.charCodeAt(0))}function t(e){let t=``,n=32768;for(let r=0;r<e.length;r+=n)t+=String.fromCharCode(...e.subarray(r,r+n));return btoa(t)}export{t as n,e as t};

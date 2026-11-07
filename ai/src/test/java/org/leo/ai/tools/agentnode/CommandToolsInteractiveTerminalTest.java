@@ -3,6 +3,9 @@ package org.leo.ai.tools.agentnode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.AgentNodeSessionUtils;
 import org.leo.core.agent.AbstractAgentNode;
@@ -131,26 +134,28 @@ class CommandToolsInteractiveTerminalTest {
         verify(terminal, times(2)).execSimpleCommand("whoami");
     }
 
-    @Test
-    void retainsTheExplicitEnvironmentCache() throws Exception {
-        when(terminal.execSimpleCommand("env"))
+    @ParameterizedTest
+    @ValueSource(strings = {"env", "set", "ps aux | grep java", "wmic process where name='java.exe' get CommandLine"})
+    void retainsOnlyTheKnownCommandCaches(String command) throws Exception {
+        when(terminal.execSimpleCommand(command))
                 .thenReturn(Map.of("data", "HOME=/tmp\n".getBytes(), "exitCode", 0));
 
-        tools.exec("env", 0);
-        tools.exec("env", 0);
+        tools.exec(command, 0);
+        tools.exec(command, 0);
 
-        verify(terminal).execSimpleCommand("env");
+        verify(terminal).execSimpleCommand(command);
     }
 
-    @Test
-    void normalizesWarmupCommandCacheBeforeReturningItToTheModel() throws Exception {
-        AgentNodeSessionUtils.putAiContextValue(SESSION_ID, "env-vars",
+    @ParameterizedTest
+    @CsvSource({"env, env-vars", "ps aux | grep java, java-process-args"})
+    void normalizesWarmupCommandCacheBeforeReturningItToTheModel(String command, String cacheKey) throws Exception {
+        AgentNodeSessionUtils.putAiContextValue(SESSION_ID, cacheKey,
                 Map.of("data", "HOME=/tmp\n".getBytes(), "exitCode", 0));
 
-        Map<String, Object> result = tools.exec("env", 0);
+        Map<String, Object> result = tools.exec(command, 0);
 
         assertEquals("HOME=/tmp\n", result.get("output"));
         assertEquals("completed", result.get("status"));
-        verify(terminal, never()).execSimpleCommand("env");
+        verify(terminal, never()).execSimpleCommand(command);
     }
 }

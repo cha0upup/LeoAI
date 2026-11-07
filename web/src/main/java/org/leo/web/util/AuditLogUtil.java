@@ -123,14 +123,6 @@ public class AuditLogUtil {
                 auditLog.setAgentName(agent.getAgentName());
             }
             
-            // 设置会话ID（从请求参数中提取）
-            if (requestParams != null && requestParams.containsKey("sessionId")) {
-                Object sessionIdObj = requestParams.get("sessionId");
-                if (sessionIdObj != null) {
-                    auditLog.setSessionId(sessionIdObj.toString());
-                }
-            }
-
             writeAuditLog(auditLog, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
             
@@ -161,12 +153,6 @@ public class AuditLogUtil {
             if (user != null) {
                 auditLog.setUserId(user.getUserId());
                 auditLog.setUserName(user.getUserName());
-            }
-            if (requestParams != null && requestParams.containsKey("sessionId")) {
-                Object sessionIdObj = requestParams.get("sessionId");
-                if (sessionIdObj != null) {
-                    auditLog.setSessionId(sessionIdObj.toString());
-                }
             }
             writeAuditLog(auditLog, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
@@ -247,6 +233,8 @@ public class AuditLogUtil {
         auditLog.setOperationPath(operationPath);
 
         if (requestParams != null) {
+            Object sessionId = requestParams.get("sessionId");
+            if (sessionId != null) auditLog.setSessionId(sessionId.toString());
             Map<String, Object> sanitizedParams = AuditParameterSanitizer.sanitize(requestParams);
             try {
                 auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));

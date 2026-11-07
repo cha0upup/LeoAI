@@ -1,6 +1,5 @@
 package org.leo.web.service.ssh;
 
-import net.schmizz.sshj.userauth.UserAuthException;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +19,11 @@ import org.leo.dao.mapper.AgentSshConnectionMapper;
 import org.leo.service.audit.AgentAuditService;
 import org.leo.service.security.AgentAccessService;
 import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.ssh.SshConnectionManagementService;
+import org.leo.service.ssh.SshConnectionProfiles;
+import org.leo.service.ssh.SshProfileConnectCommand;
+import org.leo.service.ssh.SshProfileCryptoService;
+import org.leo.service.ssh.SshTransport;
 import org.leo.service.user.UserService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,7 +41,7 @@ class SshConnectionManagementServiceTest {
     @TempDir Path temp;
     final String sessionId = "ssh-management-parent";
     final String pin = "SHA256:" + "A".repeat(43);
-    final AgentSshService ssh = mock(AgentSshService.class);
+    final SshTransport ssh = mock(SshTransport.class);
     final UserService users = mock(UserService.class);
     final AgentAccessService access = mock(AgentAccessService.class);
     final AgentAuditService audit = mock(AgentAuditService.class);
@@ -84,7 +88,7 @@ class SshConnectionManagementServiceTest {
         Map<String, Object> updated = management.update("actor", sessionId, id, 1L, Map.of("name", "renamed"));
         assertEquals(2L, updated.get("version")); assertEquals("renamed", updated.get("name")); assertPublic(updated);
         assertEquals("fixture-secret", profiles.resolveConnection("actor", parent,
-                new org.leo.web.dto.agentnode.command.SshProfileConnectRequest(sessionId, "test", id, 2L, pin)).password());
+                new SshProfileConnectCommand("test", id, 2L, pin)).password());
         assertEquals(SshConnectionException.Kind.CONFLICT, assertThrows(SshConnectionException.class,
                 () -> management.update("actor", sessionId, id, 1L, Map.of("host", "changed.internal"))).getKind());
         assertEquals(SshConnectionException.Kind.CONFLICT, assertThrows(SshConnectionException.class,
@@ -156,7 +160,7 @@ class SshConnectionManagementServiceTest {
         var created = create(); String id = id(created);
         profiles.recordFingerprint("actor", parent, id, 1L, "", pin);
         String changed = "SHA256:" + "B".repeat(43);
-        doThrow(new AgentSshService.HostKeyChangedException(changed)).when(ssh).testConnection(any(), any(), any(), any(), any());
+        doThrow(new SshTransport.HostKeyChangedException(changed)).when(ssh).testConnection(any(), any(), any(), any(), any());
         var result = management.test("actor", sessionId, id, 1L, null);
         assertEquals(true, result.get("confirmationRequired")); assertEquals(pin, result.get("previousFingerprint"));
         assertEquals(changed, result.get("fingerprint"));
@@ -165,7 +169,7 @@ class SshConnectionManagementServiceTest {
 
     @Test void sanitizesAuthenticationAndTransportFailuresAndKeepsFailedTestsOutOfConnectionHistory() throws Exception {
         var created = create(); String id = id(created);
-        doThrow(new UserAuthException("fixture-secret")).when(ssh).testConnection(any(), any(), any(), any(), any());
+        doThrow(new SshTransport.AuthenticationException()).when(ssh).testConnection(any(), any(), any(), any(), any());
         var auth = management.test("actor", sessionId, id, 1L, pin);
         assertEquals(false, auth.get("connected")); assertEquals("SSH_AUTHENTICATION_FAILED", auth.get("errorCode"));
         assertFalse(auth.toString().contains("fixture-secret"));
@@ -197,7 +201,7 @@ class SshConnectionManagementServiceTest {
     @Test void successfulTestsNeverResurrectProfilesDeletedWhileAuthenticationWasInFlight() throws Exception {
         var created = create(); String id = id(created);
         doAnswer(invocation -> {
-            profiles.delete("actor", parent, new org.leo.web.dto.agentnode.command.SshProfileRequest(sessionId, id, 1L));
+            profiles.delete("actor", parent, id, 1L);
             return null;
         }).when(ssh).testConnection(any(), any(), any(), any(), any());
         var result = management.test("actor", sessionId, id, 1L, pin);

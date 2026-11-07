@@ -101,6 +101,8 @@ def verify_release(backend, frontend, install=True):
                 ['bash', backend / 'javacore/compile-components.sh', '--check'], backend)
     run_command('Semantic names',
                 [sys.executable, backend / 'tools/check_semantic_names.py', '--frontend', frontend], backend)
+    run_command('Backend architecture boundaries',
+                [sys.executable, backend / 'tools/check_architecture.py', '--backend', backend], backend)
     run_command('Build-tool regression tests',
                 [sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py'], backend)
     maven = [backend / 'mvnw', '--batch-mode', 'clean', 'verify']

@@ -232,12 +232,7 @@ public class AgentNodeSqlService {
         requireCapability(dialect, "createTable", dialect.getCapabilities().createTable());
         requireTableRef(tableRef);
         String sql = dialect.buildCreateTableSql(tableRef, columns);
-        Map<String, Object> raw = executeRaw(agentNode, connection, sql);
-        Map<String, Object> data = new LinkedHashMap<String, Object>();
-        data.put("objectRef", tableRef.toMap());
-        data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("affectedRows")));
-        return data;
+        return executeTableMutation(agentNode, connection, tableRef, SqlCommand.raw(sql));
     }
 
     public Map<String, Object> createDatabase(SqlCapable agentNode, Map<String, Object> connection, String database) throws Exception {
@@ -260,12 +255,7 @@ public class AgentNodeSqlService {
         requireCapability(dialect, "insert", dialect.getCapabilities().insert());
         requireTableRef(tableRef);
         SqlCommand command = dialect.buildInsertCommand(tableRef, row);
-        Map<String, Object> raw = executeRaw(agentNode, connection, command);
-        Map<String, Object> data = new LinkedHashMap<String, Object>();
-        data.put("objectRef", tableRef.toMap());
-        data.put("sql", command.sql());
-        data.put("affectedRows", toInteger(raw.get("affectedRows")));
-        return data;
+        return executeTableMutation(agentNode, connection, tableRef, command);
     }
 
     public Map<String, Object> updateRows(SqlCapable agentNode,
@@ -277,12 +267,7 @@ public class AgentNodeSqlService {
         requireCapability(dialect, "update", dialect.getCapabilities().update());
         requireTableRef(tableRef);
         SqlCommand command = dialect.buildUpdateCommand(tableRef, where, update);
-        Map<String, Object> raw = executeRaw(agentNode, connection, command);
-        Map<String, Object> data = new LinkedHashMap<String, Object>();
-        data.put("objectRef", tableRef.toMap());
-        data.put("sql", command.sql());
-        data.put("affectedRows", toInteger(raw.get("affectedRows")));
-        return data;
+        return executeTableMutation(agentNode, connection, tableRef, command);
     }
 
     public Map<String, Object> deleteRows(SqlCapable agentNode,
@@ -293,6 +278,13 @@ public class AgentNodeSqlService {
         requireCapability(dialect, "delete", dialect.getCapabilities().delete());
         requireTableRef(tableRef);
         SqlCommand command = dialect.buildDeleteCommand(tableRef, where);
+        return executeTableMutation(agentNode, connection, tableRef, command);
+    }
+
+    private Map<String, Object> executeTableMutation(SqlCapable agentNode,
+                                                     Map<String, Object> connection,
+                                                     SqlObjectRef tableRef,
+                                                     SqlCommand command) throws Exception {
         Map<String, Object> raw = executeRaw(agentNode, connection, command);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("objectRef", tableRef.toMap());

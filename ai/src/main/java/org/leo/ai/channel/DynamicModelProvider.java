@@ -17,7 +17,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * 动态模型提供者：从 {@link AiModelConfigService#getActive()} 读取激活配置，

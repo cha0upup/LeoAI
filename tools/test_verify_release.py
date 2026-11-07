@@ -100,8 +100,22 @@ class ReleaseGateTest(unittest.TestCase):
         labels = [call.args[0] for call in run.call_args_list]
         self.assertEqual(['Install locked frontend dependencies', 'Frontend lint', 'Frontend tests',
                           'Frontend production build', 'Java component API and runtime bytecode check',
-                          'Semantic names', 'Build-tool regression tests',
+                          'Semantic names', 'Backend architecture boundaries', 'Build-tool regression tests',
                           'Backend clean verification and packaging'], labels)
+
+    @patch('verify_release.shutil.which', return_value='/fixture/npm')
+    def test_architecture_violations_stop_backend_packaging(self, _which):
+        def fail_architecture(label, command, cwd):
+            if label == 'Backend architecture boundaries':
+                self.assertEqual(self.backend / 'tools/check_architecture.py', command[1])
+                raise subprocess.CalledProcessError(1, command)
+        with patch('verify_release.run_command', side_effect=fail_architecture) as run, \
+                patch('verify_release.assert_packaged_static_matches') as packaged:
+            with self.assertRaises(subprocess.CalledProcessError):
+                verify_release.verify_release(self.backend, self.frontend, install=False)
+        packaged.assert_not_called()
+        self.assertFalse(any(call.args[0] == 'Backend clean verification and packaging'
+                             for call in run.call_args_list))
 
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
     def test_asset_mismatch_prevents_backend_packaging(self, _which):

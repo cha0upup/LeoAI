@@ -7,18 +7,23 @@ import org.leo.core.agent.capability.ComponentInvokeCapable;
 import org.leo.core.agent.capability.LocalForwardCapable;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
+import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.ssh.SshConnectionProfiles;
+import org.leo.service.ssh.SshConnectionSpec;
+import org.leo.service.ssh.SshInputValidation;
+import org.leo.service.ssh.SshProfileConnectCommand;
+import org.leo.service.ssh.SshProfileSaveCommand;
+import org.leo.service.ssh.SshTransport;
 import org.leo.web.dto.agentnode.SessionIdRequest;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
+import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;
 import org.leo.web.dto.agentnode.command.SshProfileSaveRequest;
-import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.exception.SshApiExceptionMapper;
 import org.leo.web.service.ssh.AgentSshService;
-import org.leo.web.service.ssh.SshConnectionProfiles;
-import org.leo.web.service.ssh.SshConnectionSpec;
-import org.leo.web.util.ControllerUtil;
 import org.leo.web.util.AuditLogUtil;
-import org.leo.web.util.SshInputValidation;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -60,9 +65,10 @@ public class SshTerminalController {
     @PostMapping("/profiles")
     public Map<String, Object> profiles(@RequestBody SessionIdRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
-        Context c = context(SshInputValidation.requireSessionId(body.sessionId()), http);
+        Context c = context(SshApiExceptionMapper.call(() -> SshInputValidation.requireSessionId(body.sessionId())), http);
         try { return ApiResponse.success(profiles.list(c.user, c.parent)); }
         catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (Exception error) { throw ApiException.serverError("读取 SSH 连接配置失败"); }
     }
     @PostMapping("/profiles/get")
@@ -72,40 +78,43 @@ public class SshTerminalController {
         Context c = context(request.sessionId(), http);
         try { return ApiResponse.success(profiles.get(c.user, c.parent, request.profileId())); }
         catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (Exception error) { throw ApiException.serverError("读取 SSH 连接配置失败"); }
     }
     @PostMapping("/profiles/save")
     public Map<String, Object> saveProfile(@RequestBody SshProfileSaveRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
-        SshProfileSaveRequest request = body.normalized();
-        Context c = context(request.sessionId(), http);
+        SshProfileSaveCommand request = body.toCommand();
+        Context c = context(body.sessionId(), http);
         try {
             Map<String, Object> saved = profiles.save(c.user, c.parent, request);
             audit(c, (String) saved.get("profileId"), "SSH_PROFILE_SAVE", Map.of("profileId", saved.get("profileId"), "host", saved.get("host")), null);
             return ApiResponse.success(saved);
         }
         catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (Exception error) { throw ApiException.serverError("保存 SSH 连接配置失败，请检查数据库和 SSH 加密密钥"); }
     }
     @PostMapping("/profiles/delete")
     public Map<String, Object> deleteProfile(@RequestBody SshProfileRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
         SshProfileRequest request = body.normalized();
-        SshInputValidation.requireVersion(request.version());
+        SshApiExceptionMapper.call(() -> SshInputValidation.requireVersion(request.version()));
         Context c = context(request.sessionId(), http);
         try {
-            profiles.delete(c.user, c.parent, request);
+            profiles.delete(c.user, c.parent, request.profileId(), request.version());
             audit(c, request.profileId(), "SSH_PROFILE_DELETE", Map.of("profileId", request.profileId()), null);
             return ApiResponse.success();
         }
         catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (Exception error) { throw ApiException.serverError("删除 SSH 连接配置失败"); }
     }
     @PostMapping("/profiles/connect")
     public Map<String, Object> connectProfile(@RequestBody SshProfileConnectRequest body, HttpServletRequest http) {
         if (body == null) throw ApiException.badRequest("SSH 请求为空");
-        SshProfileConnectRequest request = body.normalized();
-        Context c = context(request.sessionId(), http);
+        SshProfileConnectCommand request = body.toCommand();
+        Context c = context(body.sessionId(), http);
         try {
             Map<String, Object> profile = profiles.getForConnection(c.user, c.parent, request);
             if (request.fingerprint() == null && (!(profile.get("fingerprint") instanceof String pin) || pin.isBlank())) {
@@ -115,7 +124,7 @@ public class SshTerminalController {
             }
             SshConnectionSpec connection = profiles.resolveConnection(c.user, c.parent, request);
             try { ssh.connect(c.user, c.browser, c.parent, c.node, connection); }
-            catch (AgentSshService.HostKeyChangedException changed) { throw hostKeyConfirmation(profile, changed.fingerprint()); }
+            catch (SshTransport.HostKeyChangedException changed) { throw hostKeyConfirmation(profile, changed.fingerprint()); }
             boolean saved = true;
             try { profiles.recordFingerprint(c.user, c.parent, request.profileId(), request.version(),
                     (String) profile.getOrDefault("fingerprint", ""), connection.fingerprint()); }
@@ -124,6 +133,7 @@ public class SshTerminalController {
                     "port", connection.port(), "username", connection.username(), "authType", connection.authType()), null);
             return ApiResponse.success(Map.of("profileSaved", saved));
         } catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (net.schmizz.sshj.userauth.UserAuthException error) {
             audit(c, request.processId(), "COMMAND_INIT", Map.of("profileId", request.profileId()), "SSH 认证失败");
             throw ApiException.badRequest("SSH 认证失败，请编辑已保存的账号、密码或私钥");
@@ -150,6 +160,7 @@ public class SshTerminalController {
             return ApiResponse.success(result);
         }
         catch (ApiException error) { throw error; }
+        catch (SshConnectionException error) { throw SshApiExceptionMapper.toApiException(error); }
         catch (Exception error) { throw ApiException.badRequest("SSH 终端已断开或操作失败，请新建连接"); }
     }
     private void audit(Context context, String process, String operation, Map<String, Object> details, String error) {

@@ -3,10 +3,12 @@ package org.leo.web.service.ai;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.web.exception.ApiException;
@@ -31,8 +33,64 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class NodeAiThreadServiceTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"reset", "switch"})
+    void restoresOwnedThreadOnceBeforeApplyingTheRequestedChannel(String action) {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        AiThreadRecord record = ownedRecord("stored");
+        record.setTitle("stored title");
+        record.setConfigId(2);
+        when(fixture.conversationStore.findThread("stored")).thenReturn(record);
+        AiModelConfig config = new AiModelConfig();
+        config.setId(7);
+        when(fixture.channels.optional(7)).thenReturn(config);
+
+        applyThreadAction(fixture, session, action, "stored", 7);
+
+        AiThread restored = session.getAiThread("stored");
+        assertNotNull(restored);
+        assertEquals("stored title", restored.getTitle());
+        assertEquals(7, restored.getAiConfigId());
+        assertEquals("reset".equals(action), restored.isStopRequested());
+        verify(fixture.conversationStore).findThread("stored");
+        verify(fixture.conversationStore).attachEventJournal("stored", restored);
+        verify(fixture.conversationStore).updateConfig("stored", config);
+        verify(fixture.channels).optional(7);
+        verify(fixture.agentRegistry).evict(session, "stored");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"reset", "switch"})
+    void cachedThreadsKeepTheirIdentityAndDoNotReattachTheJournal(String action) {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        AiThread cached = session.createAiThread("cached", "runtime title");
+        cached.setAiConfigId(2);
+        AiModelConfig config = new AiModelConfig();
+        config.setId(2);
+        when(fixture.channels.optional(2)).thenReturn(config);
+
+        applyThreadAction(fixture, session, action, "cached", null);
+
+        assertSame(cached, session.getAiThread("cached"));
+        assertEquals(2, cached.getAiConfigId());
+        verify(fixture.channels).optional(2);
+        verify(fixture.conversationStore, never()).attachEventJournal(anyString(), same(cached));
+    }
+
+    private static void applyThreadAction(Fixture fixture, AgentNodeSession session,
+                                          String action, String threadId, Integer configId) {
+        switch (action) {
+            case "reset" -> fixture.service.resetThread(session, threadId, configId);
+            case "switch" -> fixture.service.switchChannel(session, threadId, configId);
+            default -> throw new IllegalArgumentException(action);
+        }
+    }
 
     @Test
     void createsAndPersistsFirstThreadOnDemand() {
@@ -219,10 +277,21 @@ class NodeAiThreadServiceTest {
     void rejectsMissingThreadBeforeReadingOrMutatingStorage() {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
-        assertThrows(ApiException.class, () -> fixture.service.threadMessages(session, "missing", 0, 50, null));
-        assertThrows(ApiException.class, () -> fixture.service.renameThread(session, "missing", "changed"));
-        assertThrows(ApiException.class, () -> fixture.service.deleteThread(session, "missing"));
+        List<Runnable> operations = List.of(
+                () -> fixture.service.threadMessages(session, "missing", 0, 50, null),
+                () -> fixture.service.renameThread(session, "missing", "changed"),
+                () -> fixture.service.deleteThread(session, "missing"),
+                () -> fixture.service.requireThread(session, "missing"),
+                () -> fixture.service.resetThread(session, "missing", null),
+                () -> fixture.service.switchChannel(session, "missing", null));
+        for (Runnable operation : operations) {
+            assertEquals(404, assertThrows(ApiException.class, operation::run).getCode());
+        }
+        verifyNoInteractions(fixture.channels, fixture.agentRegistry);
         verify(fixture.conversationStore, never()).deleteThread(anyString());
+        verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
+        verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
+        assertEquals(0, session.listAiThreads().size());
     }
 
     private static AiThreadRecord ownedRecord(String threadId) {
@@ -339,19 +408,21 @@ class NodeAiThreadServiceTest {
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
                 new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
         NodeAiAgentRegistry agentRegistry = mock(NodeAiAgentRegistry.class);
+        AiModelChannelResolver channels = mock(AiModelChannelResolver.class);
         NodeAiThreadService service = new NodeAiThreadService(
                 mock(AiModelConfigService.class),
-                mock(AiModelChannelResolver.class),
+                channels,
                 conversationStore,
                 sessionWarmupService,
                 agentRegistry,
                 new AiThreadQueryService(conversationStore, protocol));
-        return new Fixture(service, conversationStore, sessionWarmupService, agentRegistry);
+        return new Fixture(service, conversationStore, sessionWarmupService, agentRegistry, channels);
     }
 
     private record Fixture(NodeAiThreadService service,
                            AiConversationStoreService conversationStore,
                            SessionWarmupService sessionWarmupService,
-                           NodeAiAgentRegistry agentRegistry) {
+                           NodeAiAgentRegistry agentRegistry,
+                           AiModelChannelResolver channels) {
     }
 }

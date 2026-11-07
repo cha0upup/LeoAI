@@ -2,9 +2,10 @@ package org.leo.web.service.ssh;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import net.schmizz.sshj.SSHClient;
-import net.schmizz.sshj.DefaultConfig;
+import javax.net.SocketFactory;
 import net.schmizz.keepalive.KeepAliveProvider;
+import net.schmizz.sshj.DefaultConfig;
+import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.common.Buffer;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.userauth.password.PasswordUtils;
@@ -13,12 +14,15 @@ import org.leo.core.engine.proxy.AgentRelaySocket;
 import org.leo.core.engine.proxy.ProxySessionResources;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.service.ssh.SshConnectionException.Kind;
+import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.ssh.SshConnectionSpec;
+import org.leo.service.ssh.SshTransport.HostKeyChangedException;
+import org.leo.service.ssh.SshTransport;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
-import org.leo.web.exception.ApiException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import javax.net.SocketFactory;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.security.MessageDigest;
@@ -28,15 +32,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /** Authenticated SSH child sessions; transport always traverses the selected Agent. */
 @Service
-public class AgentSshService {
+public class AgentSshService implements SshTransport {
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
     private final ProxySessionResources relayResources = new ProxySessionResources(64, 4);
     private final ThreadPoolExecutor cleanup = ProxySessionResources.newDaemonExecutor("SSH-Cleanup", 4, 128);
@@ -58,12 +62,12 @@ public class AgentSshService {
     }
     private static String key(String browser, String parent, String process) { return browser + ":" + parent + ":" + process; }
     private synchronized Entry reserve(String user, String browser, AgentNodeSession parent, String process) {
-        if (stopped) throw ApiException.serviceUnavailable("SSH 服务正在关闭");
+        if (stopped) throw new SshConnectionException(Kind.UNAVAILABLE, "SSH 服务正在关闭");
         if (entries.size() >= 64 || entries.values().stream().filter(e -> e.parent == parent).count() >= 8)
-            throw ApiException.tooManyRequests("SSH 会话已达上限，请先关闭闲置终端");
+            throw new SshConnectionException(Kind.CAPACITY, "SSH 会话已达上限，请先关闭闲置终端");
         String key = key(browser, parent.getSessionId(), process);
         Entry entry = new Entry(key, user, browser, parent);
-        if (entries.putIfAbsent(key, entry) != null) throw ApiException.conflict("SSH 终端标识已存在");
+        if (entries.putIfAbsent(key, entry) != null) throw new SshConnectionException(Kind.CONFLICT, "SSH 终端标识已存在");
         return entry;
     }
     private SSHClient establish(Entry entry, ComponentInvokeCapable node, String host, int port,
@@ -73,9 +77,9 @@ public class AgentSshService {
         SSHClient client = new SSHClient(config);
         // SSHJ starts its keep-alive thread during connect(), not during authentication.
         client.getConnection().getKeepAlive().setKeepAliveInterval(10);
-        synchronized (entry) { if (entry.closed) { client.close(); throw ApiException.conflict("SSH 连接已取消"); } entry.client = client; }
+        synchronized (entry) { if (entry.closed) { client.close(); throw new SshConnectionException(Kind.CONFLICT, "SSH 连接已取消"); } entry.client = client; }
         AgentRelaySocket socket = AgentRelaySocket.open(node, host, port, relayResources, cleanup);
-        synchronized (entry) { if (entry.closed) { socket.close(); throw ApiException.conflict("SSH 连接已取消"); } entry.socket = socket; }
+        synchronized (entry) { if (entry.closed) { socket.close(); throw new SshConnectionException(Kind.CONFLICT, "SSH 连接已取消"); } entry.socket = socket; }
         client.setSocketFactory(new SocketFactory() {
             @Override public Socket createSocket() { return socket; }
             @Override public Socket createSocket(String host, int port) { return socket; }
@@ -93,7 +97,7 @@ public class AgentSshService {
         client.connect(host, port);
         return client;
     }
-    public String probeFingerprint(String user, String browser, AgentNodeSession parent,
+    @Override public String probeFingerprint(String user, String browser, AgentNodeSession parent,
                                    ComponentInvokeCapable node, String host, int port) throws Exception {
         Entry entry = reserve(user, browser, parent, "probe-" + UUID.randomUUID());
         var observed = new AtomicReference<String>();
@@ -122,12 +126,14 @@ public class AgentSshService {
     }
 
     /** Authenticate through the Agent, without allocating a PTY, starting a shell or running a command. */
-    public void testConnection(String user, String browser, AgentNodeSession parent,
+    @Override public void testConnection(String user, String browser, AgentNodeSession parent,
                                ComponentInvokeCapable node, SshConnectionSpec request) throws Exception {
         Entry entry = reserve(user, browser, parent, request.processId());
         try {
             establishAuthenticated(entry, node, request);
             requireParent(entry);
+        } catch (net.schmizz.sshj.userauth.UserAuthException error) {
+            throw new SshTransport.AuthenticationException();
         } finally { remove(entry); }
     }
 
@@ -156,24 +162,19 @@ public class AgentSshService {
             throw error;
         }
     }
-    public static final class HostKeyChangedException extends Exception {
-        private final String fingerprint;
-        HostKeyChangedException(String fingerprint) { super("SSH 主机指纹校验未通过"); this.fingerprint = fingerprint; }
-        public String fingerprint() { return fingerprint; }
-    }
     public Map<String, Object> command(String user, String browser, AgentNodeSession parent, CommandExecRequest request) throws Exception {
         Entry entry = entries.get(key(browser, parent.getSessionId(), request.processId()));
         if (entry == null) {
             if ("stop".equals(request.type())) return Map.of("code", 200);
-            throw ApiException.notFound("SSH 终端已关闭或过期，请新建连接");
+            throw new SshConnectionException(Kind.NOT_FOUND, "SSH 终端已关闭或过期，请新建连接");
         }
-        if (!entry.user.equals(user) || entry.parent != parent) throw ApiException.forbidden("SSH 会话不属于当前用户或 Agent");
+        if (!entry.user.equals(user) || entry.parent != parent) throw new SshConnectionException(Kind.FORBIDDEN, "SSH 会话不属于当前用户或 Agent");
         requireParent(entry);
         entry.lastAccess = System.currentTimeMillis();
         if ("stop".equals(request.type())) { remove(entry); return Map.of("code", 200); }
         SshTerminalSession terminal = entry.terminal;
-        if (terminal == null) throw ApiException.conflict("SSH 仍在连接中");
-        if (request.terminalMode() != null || "write-line".equals(request.type())) throw ApiException.badRequest("SSH 终端使用 PTY 字节流");
+        if (terminal == null) throw new SshConnectionException(Kind.CONFLICT, "SSH 仍在连接中");
+        if (request.terminalMode() != null || "write-line".equals(request.type())) throw new SshConnectionException(Kind.VALIDATION, "SSH 终端使用 PTY 字节流");
         return switch (request.type()) {
             case "read" -> terminal.read(request.cmd().isEmpty() ? 0 : Long.parseLong(request.cmd()));
             case "init" -> terminal.response(request.includeOutput());
@@ -182,13 +183,13 @@ public class AgentSshService {
                 yield terminal.response(request.includeOutput());
             }
             case "resize" -> { terminal.resize(request.cmd()); yield terminal.metadata(); }
-            default -> throw ApiException.badRequest("SSH 终端操作无效");
+            default -> throw new SshConnectionException(Kind.VALIDATION, "SSH 终端操作无效");
         };
     }
     private void requireParent(Entry entry) {
         if (entry.closed || AgentNodeSessionContainer.getSession(entry.parent.getSessionId()) != entry.parent
                 || !Objects.equals(entry.host, entry.parent.getCurrentHostId())) {
-            remove(entry); throw ApiException.conflict("父 Agent 会话已变更，请重新连接 SSH");
+            remove(entry); throw new SshConnectionException(Kind.CONFLICT, "父 Agent 会话已变更，请重新连接 SSH");
         }
         entry.parent.touchLastActiveTime();
     }

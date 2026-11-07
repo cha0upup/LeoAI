@@ -2,6 +2,8 @@ package org.leo.ai.tools.agentnode;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
@@ -13,10 +15,13 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.sql.DatabaseConnectionProfileService;
 import org.leo.service.audit.AgentAuditService;
+import org.mockito.ArgumentCaptor;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -24,6 +29,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 
 class SqlToolsSavedConnectionTest {
 
@@ -35,32 +45,49 @@ class SqlToolsSavedConnectionTest {
         AgentNodeSessionContainer.removeSession(SESSION_ID);
     }
 
-    @Test
-    void resolvesSavedConnectionIdBeforeExecutingQuery() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void commonExecutionKeepsQueryAndWriteAuditIdentities(boolean query) throws Exception {
         Fixture fixture = fixture();
-        when(fixture.sqlNode().executeSql(fixture.spec(), "SELECT 1"))
-                .thenReturn(Map.of("code", 200, "rows", 1));
+        String sql = query ? "/* evidence */ SELECT ';' AS marker; -- trailing comment"
+                : "UPDATE inventory SET count = 1";
+        Map<String, Object> result = Map.of("code", 200);
+        when(fixture.sqlNode().executeSql(fixture.spec(), sql)).thenReturn(result);
 
-        Map<String, Object> result = fixture.tools().querySql(
-                Map.of("connectionId", "connection-1"), "SELECT 1");
+        assertSame(result, query
+                ? fixture.tools().querySql(Map.of("connectionId", "connection-1"), sql)
+                : fixture.tools().execSql(Map.of("connectionId", "connection-1"), sql));
 
-        assertEquals(200, result.get("code"));
+        String name = query ? "AI查询SQL" : "AI执行SQL";
+        ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.captor();
+        verify(fixture.audit()).logSuccess(eq(SESSION_ID), same(fixture.node()),
+                eq(query ? "SQL_QUERY" : "SQL_EXEC"), eq(name),
+                eq("mysql://db.internal/inventory | " + sql), params.capture(), eq(name + "成功"));
+        assertEquals(SESSION_ID, params.getValue().get("sessionId"));
+        assertEquals("connection-1", params.getValue().get("connectionId"));
+        assertEquals(sql, params.getValue().get("sql"));
+        assertFalse(((Map<?, ?>) params.getValue().get("connection")).containsKey("password"));
         verify(fixture.profiles()).resolveActive("user-1", "agent-1", "connection-1");
-        verify(fixture.sqlNode()).executeSql(fixture.spec(), "SELECT 1");
+        verify(fixture.sqlNode()).executeSql(fixture.spec(), sql);
+        verifyNoMoreInteractions(fixture.audit());
     }
 
-    @Test
-    void allowsOneReadOnlyStatementWithCommentsAndQuotedSemicolons() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void commonExecutionLogsFailureOnceAndPropagatesTheOriginalError(boolean query) throws Exception {
         Fixture fixture = fixture();
-        String sql = "/* evidence */ SELECT ';' AS marker; -- trailing comment";
-        when(fixture.sqlNode().executeSql(fixture.spec(), sql))
-                .thenReturn(Map.of("code", 200));
+        String sql = query ? "SELECT 1" : "UPDATE inventory SET count = 1";
+        Exception failure = new IllegalStateException("fixture failure");
+        when(fixture.sqlNode().executeSql(fixture.spec(), sql)).thenThrow(failure);
 
-        Map<String, Object> result = fixture.tools().querySql(
-                Map.of("connectionId", "connection-1"), sql);
-
-        assertEquals(200, result.get("code"));
-        verify(fixture.sqlNode()).executeSql(fixture.spec(), sql);
+        assertSame(failure, assertThrows(Exception.class, () -> {
+            if (query) fixture.tools().querySql(Map.of("connectionId", "connection-1"), sql);
+            else fixture.tools().execSql(Map.of("connectionId", "connection-1"), sql);
+        }));
+        verify(fixture.audit()).logFailure(eq(SESSION_ID), same(fixture.node()),
+                eq(query ? "SQL_QUERY" : "SQL_EXEC"), eq(query ? "AI查询SQL" : "AI执行SQL"),
+                anyString(), anyMap(), eq("fixture failure"));
+        verifyNoMoreInteractions(fixture.audit());
     }
 
     @Test
@@ -137,11 +164,13 @@ class SqlToolsSavedConnectionTest {
         session.setCreateByUser("user-1");
         AgentNodeSessionContainer.addSession(SESSION_ID, session);
         AiToolContext.setFromMemoryId(SESSION_ID);
-        return new Fixture(tools, profiles, sqlNode, spec);
+        return new Fixture(tools, profiles, sqlNode, spec, audit, node);
     }
 
     private record Fixture(SqlTools tools,
                            DatabaseConnectionProfileService profiles,
                            SqlCapable sqlNode,
-                           DatabaseConnectionSpec spec) {}
+                           DatabaseConnectionSpec spec,
+                           AgentAuditService audit,
+                           AbstractAgentNode node) {}
 }

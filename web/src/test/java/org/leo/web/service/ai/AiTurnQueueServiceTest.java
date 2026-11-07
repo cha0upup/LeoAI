@@ -1,5 +1,6 @@
 package org.leo.web.service.ai;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -14,20 +15,29 @@ import static org.mockito.Mockito.when;
 
 class AiTurnQueueServiceTest {
 
+    private final AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
+    private final AiSseExecutor executor = mock(AiSseExecutor.class);
+    private final AiTurnApplicationService application = mock(AiTurnApplicationService.class);
+    private final List<Runnable> submitted = new ArrayList<>();
+    private final CompletableFuture<Boolean> completion = new CompletableFuture<>();
+    private final AiTurnProtocolService.TurnSnapshot turn = new AiTurnProtocolService.TurnSnapshot(
+            "turn-1", "thread-1", "running", "client-1", "user-1", "assistant-1", 1L, 2L, null,
+            false, null, AiTurnCommandPayload.SCOPE_PLATFORM, "{}", null);
+    private final AiTurnQueueService queue = new AiTurnQueueService(protocol, executor, application);
+
+    @BeforeEach
+    void captureScheduledTasksAndClaimTheQueuedTurn() {
+        when(executor.submitChat(any())).thenAnswer(invocation -> {
+            submitted.add(invocation.getArgument(0));
+            return CompletableFuture.completedFuture(null);
+        });
+        when(protocol.findNextQueued("thread-1")).thenReturn(turn);
+        when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
+        when(application.execute(turn)).thenReturn(completion);
+    }
+
     @Test
     void waitsForCurrentTurnFutureBeforeSchedulingTheNextDrain() {
-        AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiTurnApplicationService application = mock(AiTurnApplicationService.class);
-        List<Runnable> submitted = captureTasks(executor);
-        AiTurnProtocolService.TurnSnapshot turn = turn("turn-1");
-        CompletableFuture<Boolean> completion = new CompletableFuture<>();
-        when(protocol.findNextQueued("thread-1")).thenReturn(turn);
-        when(protocol.tryStart("turn-1"))
-                .thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
-        when(application.execute(turn)).thenReturn(completion);
-        AiTurnQueueService queue = new AiTurnQueueService(protocol, executor, application);
-
         queue.signal("thread-1");
         assertEquals(1, submitted.size());
         submitted.get(0).run();
@@ -41,18 +51,7 @@ class AiTurnQueueServiceTest {
 
     @Test
     void releasesLocalScheduleWhenTurnIsRequeued() {
-        AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiTurnApplicationService application = mock(AiTurnApplicationService.class);
-        List<Runnable> submitted = captureTasks(executor);
-        AiTurnProtocolService.TurnSnapshot turn = turn("turn-1");
-        when(protocol.findNextQueued("thread-1")).thenReturn(turn);
-        when(protocol.tryStart("turn-1"))
-                .thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
-        when(application.execute(turn))
-                .thenReturn(CompletableFuture.completedFuture(false));
-        AiTurnQueueService queue = new AiTurnQueueService(protocol, executor, application);
-
+        completion.complete(false);
         queue.signal("thread-1");
         submitted.get(0).run();
         queue.signal("thread-1");
@@ -62,39 +61,11 @@ class AiTurnQueueServiceTest {
 
     @Test
     void releasesLocalScheduleWhenTurnFutureFails() {
-        AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiTurnApplicationService application = mock(AiTurnApplicationService.class);
-        List<Runnable> submitted = captureTasks(executor);
-        AiTurnProtocolService.TurnSnapshot turn = turn("turn-1");
-        CompletableFuture<Boolean> completion = new CompletableFuture<>();
-        when(protocol.findNextQueued("thread-1")).thenReturn(turn);
-        when(protocol.tryStart("turn-1"))
-                .thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
-        when(application.execute(turn)).thenReturn(completion);
-        AiTurnQueueService queue = new AiTurnQueueService(protocol, executor, application);
-
         queue.signal("thread-1");
         submitted.get(0).run();
         completion.completeExceptionally(new IllegalStateException("boom"));
         queue.signal("thread-1");
 
         assertEquals(2, submitted.size());
-    }
-
-    private static List<Runnable> captureTasks(AiSseExecutor executor) {
-        List<Runnable> submitted = new ArrayList<>();
-        when(executor.submitChat(any())).thenAnswer(invocation -> {
-            submitted.add(invocation.getArgument(0));
-            return CompletableFuture.completedFuture(null);
-        });
-        return submitted;
-    }
-
-    private static AiTurnProtocolService.TurnSnapshot turn(String id) {
-        return new AiTurnProtocolService.TurnSnapshot(
-                id, "thread-1", "running", "client-1",
-                "user-1", "assistant-1", 1L, 2L, null,
-                false, null, AiTurnCommandPayload.SCOPE_PLATFORM, "{}", null);
     }
 }

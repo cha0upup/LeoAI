@@ -34,6 +34,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.leo.core.security.AccessPolicy.PERMISSION_PRIVATE;
+import static org.leo.core.security.AccessPolicy.PERMISSION_PUBLIC;
+import static org.leo.core.security.AccessPolicy.PERMISSION_TEAM;
+import static org.leo.core.security.AccessPolicy.isAdmin;
+import static org.leo.core.security.AccessPolicy.isLeader;
+import static org.leo.core.security.AccessPolicy.isTeamVisiblePermission;
+
 /**
  * Agent管理控制器
  */
@@ -49,13 +56,6 @@ public class AgentManageController {
     
     // 会话属性常量
     private static final String SESSION_ATTR_USER = "user";
-    
-    // 权限常量
-    private static final String PRIVILEGE_ADMIN = "admin";
-    private static final String PRIVILEGE_LEADER = "leader";
-    private static final String PERMISSION_PRIVATE = "private";
-    private static final String PERMISSION_TEAM = "team";
-    private static final String PERMISSION_PUBLIC = "public";
     
     // 根节点ID
     private static final String ROOT_PARENT_ID = "root";
@@ -399,17 +399,9 @@ public class AgentManageController {
         if (isAdmin(user)) {
             return true;
         }
-        return PRIVILEGE_LEADER.equals(user.getPrivilege())
+        return isLeader(user)
                 && isTeamVisiblePermission(agent.getPermission())
                 && isSameTeamAgent(agent, user);
-    }
-
-    private boolean isAdmin(User user) {
-        return user != null && PRIVILEGE_ADMIN.equals(user.getPrivilege());
-    }
-
-    private boolean isTeamVisiblePermission(String permission) {
-        return PERMISSION_TEAM.equals(permission);
     }
 
     private boolean isSameTeamAgent(Agent agent, User user) {

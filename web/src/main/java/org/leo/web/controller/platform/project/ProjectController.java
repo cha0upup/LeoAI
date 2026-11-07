@@ -16,7 +16,7 @@ import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.exception.ApiException;
-import org.leo.web.security.PermissionPolicy;
+import org.leo.core.security.AccessPolicy;
 import org.leo.web.security.PermissionService;
 import org.leo.web.service.agent.AgentDirectoryService;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
@@ -70,7 +70,7 @@ public class ProjectController {
                                               @RequestBody Project input) {
         User user = permissionService.requireLogin(request);
         if (input != null && "public".equals(input.getPermission())
-                && !PermissionPolicy.isAdmin(user)) {
+                && !AccessPolicy.isAdmin(user)) {
             throw ApiException.forbidden("只有管理员可以创建公开项目");
         }
         try {
@@ -85,7 +85,7 @@ public class ProjectController {
                                               @RequestBody Project input) {
         User user = permissionService.requireLogin(request);
         Project project = requireManageable(input != null ? input.getProjectId() : null, user);
-        if ("public".equals(input.getPermission()) && !PermissionPolicy.isAdmin(user)) {
+        if ("public".equals(input.getPermission()) && !AccessPolicy.isAdmin(user)) {
             throw ApiException.forbidden("只有管理员可以设置公开项目");
         }
         try {
@@ -223,7 +223,7 @@ public class ProjectController {
         for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
             if (session == null) continue;
             String projectId = session.getProjectId();
-            if (projectId != null && PermissionPolicy.canAccessSession(session, user)) {
+            if (projectId != null && AccessPolicy.canAccessSession(session, user)) {
                 counts.merge(projectId, 1, Integer::sum);
             }
         }

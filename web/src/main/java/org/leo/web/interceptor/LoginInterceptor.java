@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
-import org.leo.web.security.PermissionPolicy;
+import org.leo.core.security.AccessPolicy;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.security.RoleAwareAdminEndpoint;
@@ -63,7 +63,7 @@ public class LoginInterceptor implements HandlerInterceptor {
                 || handlerMethod.hasMethodAnnotation(RoleAwareAdminEndpoint.class)
                 || handlerMethod.getBeanType().isAnnotationPresent(RoleAwareAdminEndpoint.class);
         if (adminNamespace && !roleAwareEndpoint) {
-            if (!PermissionPolicy.isAdmin(user)) {
+            if (!AccessPolicy.isAdmin(user)) {
                 writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("管理员权限不足"));
                 return false;
             }
@@ -71,7 +71,7 @@ public class LoginInterceptor implements HandlerInterceptor {
 
         boolean adminOnlyEndpoint = handlerMethod.hasMethodAnnotation(AdminOnlyEndpoint.class)
                 || handlerMethod.getBeanType().isAnnotationPresent(AdminOnlyEndpoint.class);
-        if (adminOnlyEndpoint && !PermissionPolicy.isAdmin(user)) {
+        if (adminOnlyEndpoint && !AccessPolicy.isAdmin(user)) {
             writeJsonError(response, HttpServletResponse.SC_FORBIDDEN,
                     ApiResponse.forbidden("管理员权限不足"));
             return false;

@@ -1,15 +1,16 @@
 package org.leo.web.service.discovery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import javax.sql.DataSource;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.service.discovery.NetworkProbeResultRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
@@ -30,7 +31,7 @@ import java.util.Map;
 
 /** Durable result plane for network discovery tasks. */
 @Service
-public final class NetworkProbeResultStore {
+public final class NetworkProbeResultStore implements NetworkProbeResultRepository {
 
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_FILTER_VALUES = 256;
@@ -77,6 +78,7 @@ public final class NetworkProbeResultStore {
         }
     }
 
+    @Override
     public boolean createTask(String taskId, String sessionId, String name, Map<String, Object> config) {
         if (taskId == null || taskId.isBlank() || sessionId == null || sessionId.isBlank()) return false;
         AgentNodeSession session = scopedSession(sessionId);
@@ -106,12 +108,14 @@ public final class NetworkProbeResultStore {
         }
     }
 
+    @Override
     public boolean append(String taskId, List<Map<String, Object>> observations,
                           List<Map<String, Object>> errors) {
         return append(taskId, observations, errors, List.of(), List.of());
     }
 
     /** Evidence, rule evaluations and summaries are committed together before acknowledging the node. */
+    @Override
     public boolean append(String taskId, List<Map<String, Object>> observations,
                           List<Map<String, Object>> errors, List<Map<String, Object>> matches,
                           List<Map<String, Object>> endpoints) {
@@ -210,6 +214,7 @@ public final class NetworkProbeResultStore {
     }
 
     /** Load selections only from a task owned by the requested session. */
+    @Override
     public FingerprintSource fingerprintSource(String sessionId, String taskId, List<String> endpointIds) {
         if (!ownsTask(sessionId, taskId)) throw new IllegalArgumentException("来源扫描任务不存在或不属于当前会话");
         if (endpointIds == null || endpointIds.isEmpty())
@@ -240,8 +245,6 @@ public final class NetworkProbeResultStore {
             return new FingerprintSource(endpoints, targets);
         } catch (SQLException error) { throw new IllegalStateException("读取补扫资产失败", error); }
     }
-
-    public record FingerprintSource(List<Map<String, Object>> endpoints, List<Map<String, Object>> targets) { }
 
     public Map<String, Object> queryFingerprintMatches(String sessionId, String taskId, Map<String, Object> request) {
         if (!ownsTask(sessionId, taskId)) return Map.of();
@@ -317,11 +320,13 @@ public final class NetworkProbeResultStore {
         } catch (SQLException error) { throw new IllegalStateException("读取组件识别证据失败", error); }
     }
 
+    @Override
     public void updateTask(String taskId, String status, String outcome, String currentStage,
                            int progress, int targetCount) {
         updateTask(taskId, status, outcome, currentStage, progress, targetCount, null, null);
     }
 
+    @Override
     public void updateTask(String taskId, String status, String outcome, String currentStage,
                            int progress, int targetCount, String errorMessage,
                            List<Map<String, Object>> stages) {
@@ -684,6 +689,7 @@ public final class NetworkProbeResultStore {
         }
     }
 
+    @Override
     public boolean ownsTask(String sessionId, String taskId) {
         Ownership ownership = ownership(sessionId, "");
         try (Connection connection = dataSource.getConnection();

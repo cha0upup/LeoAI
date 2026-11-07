@@ -10,7 +10,7 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
-import org.leo.web.security.PermissionPolicy;
+import org.leo.core.security.AccessPolicy;
 import org.leo.web.security.PermissionService;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -237,7 +237,7 @@ public class ControllerUtil {
 
     /** 判断当前请求是否来自 admin 角色用户。 */
     public static boolean isAdmin(HttpServletRequest request) {
-        return PermissionPolicy.isAdmin(getCurrentUser(request));
+        return AccessPolicy.isAdmin(getCurrentUser(request));
     }
 
     /**
@@ -273,7 +273,7 @@ public class ControllerUtil {
      * 会话权限模型：admin 可访问全部；普通用户仅可访问自己创建的会话。
      */
     public static boolean canAccessSession(AgentNodeSession session, User user) {
-        return PermissionPolicy.canAccessSession(session, user);
+        return AccessPolicy.canAccessSession(session, user);
     }
 
     private static String safeText(String value, String fallback) {
