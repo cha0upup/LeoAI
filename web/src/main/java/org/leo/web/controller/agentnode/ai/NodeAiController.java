@@ -25,7 +25,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.RejectedExecutionException;
 
 @RestController
 @RequestMapping("/agent-node/ai")
@@ -90,23 +89,11 @@ public class NodeAiController {
             throw ApiException.badRequest(error.getMessage());
         }
         AiTurnProtocolService.TurnSnapshot turn = reservation.turn();
-        if (reservation.reused()) {
-            if (AiTurnProtocolService.STATUS_QUEUED.equals(turn.status())) {
-                try {
-                    turnQueueService.signal(threadId);
-                } catch (RejectedExecutionException ignored) {
-                    // 周期调度器继续恢复。
-                }
-            }
-            return ApiResponse.success(Map.of("turn", turn.toMap()));
+        if (!reservation.reused()) {
+            session.switchActiveThread(threadId);
+            thread.touchLastActiveAt();
         }
-        session.switchActiveThread(threadId);
-        thread.touchLastActiveAt();
-        try {
-            turnQueueService.signal(threadId);
-        } catch (RejectedExecutionException ignored) {
-            // 命令已经持久化，周期调度器会继续领取。
-        }
+        turnQueueService.signalPersistedTurn(threadId, reservation);
         return ApiResponse.success(Map.of("turn", turn.toMap()));
     }
 

@@ -328,11 +328,7 @@ public class SqlExportService {
             task.put("fileSize", Long.valueOf(artifacts.size(finalPath)));
             updateTask(task, "COMPLETED", 100, null);
         } catch (Exception e) {
-            if ("PAUSED".equals(safeString(task.get("status"))) || "CANCELLED".equals(safeString(task.get("status")))) {
-                persistTask(task);
-                return;
-            }
-            updateTask(task, "FAILED", toInt(task.get("progress")), e.getMessage());
+            failExportUnlessStopped(task, e);
         } finally {
             persistTask(task);
         }
@@ -413,14 +409,17 @@ public class SqlExportService {
             task.put("fileSize", Long.valueOf(artifacts.size(finalPath)));
             updateTask(task, "COMPLETED", 100, null);
         } catch (Exception e) {
-            if ("PAUSED".equals(safeString(task.get("status"))) || "CANCELLED".equals(safeString(task.get("status")))) {
-                persistTask(task);
-                return;
-            }
-            updateTask(task, "FAILED", toInt(task.get("progress")), e.getMessage());
+            failExportUnlessStopped(task, e);
         } finally {
             persistTask(task);
         }
+    }
+
+    private void failExportUnlessStopped(Map<String, Object> task, Exception error) {
+        if ("PAUSED".equals(safeString(task.get("status"))) || "CANCELLED".equals(safeString(task.get("status")))) {
+            return;
+        }
+        updateTask(task, "FAILED", toInt(task.get("progress")), error.getMessage());
     }
 
     private SqlTableCsvExporter.Progress progress(Map<String, Object> task, int start, int end, TaskControl control) {

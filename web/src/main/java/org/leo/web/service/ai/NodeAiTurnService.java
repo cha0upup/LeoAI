@@ -7,6 +7,7 @@ import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStatus;
@@ -16,8 +17,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /** 执行 节点 AI 的一个主对话 Turn。 */
@@ -145,16 +144,6 @@ public class NodeAiTurnService {
     private void emitCurrentPlanAtTurnStart(AiThread thread) {
         AiPlan plan = thread.getCurrentPlan();
         if (plan == null || plan.getStatus() != AiPlanStatus.IN_PROGRESS) return;
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("kind", "plan");
-        payload.put("planId", plan.getPlanId());
-        payload.put("title", plan.getTitle());
-        payload.put("goal", plan.getGoal());
-        payload.put("status", plan.getStatus().name());
-        payload.put("steps", plan.getSteps());
-        if (plan.getFinalSummary() != null) {
-            payload.put("finalSummary", plan.getFinalSummary());
-        }
-        thread.offerSseEvent("node", payload);
+        AiPlanCoordinator.emitPlanSnapshot(thread, plan, true);
     }
 }

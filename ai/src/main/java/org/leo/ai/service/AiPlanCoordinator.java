@@ -23,7 +23,7 @@ public class AiPlanCoordinator {
         AiPlan plan = new AiPlan(title, goal, normalizeSteps(steps));
         if (stepTimeoutMs > 0) plan.setStepTimeoutMs(stepTimeoutMs);
         runtime.addPlan(plan);
-        emitPlan(runtime, plan, true);
+        emitPlanSnapshot(runtime, plan, true);
         return plan;
     }
 
@@ -45,7 +45,7 @@ public class AiPlanCoordinator {
         };
         if (!updated) throw transitionError(plan, stepIndex, normalizedAction, text);
         emitPlanStep(runtime, plan, stepIndex, normalizedAction, text, null);
-        emitPlan(runtime, plan, false);
+        emitPlanSnapshot(runtime, plan, false);
         return plan;
     }
 
@@ -58,7 +58,7 @@ public class AiPlanCoordinator {
                     "PLAN_STEPS_ACTIVE", error.getMessage(),
                     "先将所有 PENDING/IN_PROGRESS 步骤完成、失败或跳过，再结束计划。");
         }
-        emitPlan(runtime, plan, false);
+        emitPlanSnapshot(runtime, plan, false);
         return plan;
     }
 
@@ -66,7 +66,7 @@ public class AiPlanCoordinator {
         AiPlan plan = runtime != null ? runtime.getCurrentPlan() : null;
         if (plan == null) return 0;
         int count = plan.checkStepTimeouts();
-        if (count > 0) emitPlan(runtime, plan, false);
+        if (count > 0) emitPlanSnapshot(runtime, plan, false);
         return count;
     }
 
@@ -134,7 +134,8 @@ public class AiPlanCoordinator {
                 "先按 PENDING → IN_PROGRESS → COMPLETED/FAILED 的顺序更新；skip 可用于放弃未完成步骤。");
     }
 
-    private static void emitPlan(AiRuntimeState runtime, AiPlan plan, boolean create) {
+    /** Canonical plan snapshot for lifecycle updates and replay at a new turn's start. */
+    public static void emitPlanSnapshot(AiRuntimeState runtime, AiPlan plan, boolean create) {
         if (runtime == null || plan == null) return;
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("kind", "plan");

@@ -50,12 +50,7 @@ Java 节点包统一为 `org.leo.core.agent`，PHP 节点包为 `org.leo.phpcore
 ## 验证
 
 ```sh
-python3 tools/check_semantic_names.py --frontend ../LeoVueAi
-python3 -m unittest discover -s tools -p 'test_*.py' -v
-./mvnw clean verify
-# 前端仓库执行
-npm test
-npm run build
+python3 tools/verify_release.py --frontend ../LeoVueAi
 ```
 
 回滚时同时恢复旧前后端及对应旧数据目录，新旧数据库保持独立。

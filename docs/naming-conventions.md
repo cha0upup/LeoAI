@@ -30,13 +30,9 @@ Puppet → Agent 切换按 [命名与部署说明](agent-naming.md) 使用全新
 ## 回归检查
 
 ```sh
-python3 tools/check_semantic_names.py --frontend ../LeoVueAi
-python3 -m unittest discover -s tools -p 'test_*.py' -v
-(cd javacore && bash compile-components.sh --check)
-./mvnw clean verify
+python3 tools/verify_release.py --frontend ../LeoVueAi
 ```
 
-前端仓库执行 `npm test` 和 `npm run build`。
+发布入口统一执行前端 lint/测试/构建、架构约束、组件字节码、静态资源一致性、工具测试、后端构建和打包后 SSH 加密初始化检查。
 涉及 Java Component 源码时，先在 `javacore` 执行 `bash compile-components.sh`，从源码重建 `.payload`，再执行只读一致性检查。
-命名检查覆盖 Java、PHP、Vue、JavaScript、TypeScript 及相应测试源文件，排除生成的静态包和 vendored 框架源码。
-检查器只保护已确定的语义边界，不将主观风格偏好当作所有变量的通用规则。
+命名约定由代码审查按职责和契约核对，不再维护历史名称字符串扫描器。

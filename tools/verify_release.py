@@ -60,14 +60,18 @@ def assert_static_matches(frontend, backend):
                          + ', '.join(mismatches[:20]))
 
 
-def assert_packaged_static_matches(frontend, backend):
+def packaged_application(backend):
     jars = sorted((backend / 'web/target').glob('*.jar'))
     if len(jars) != 1:
         raise ValueError('Expected exactly one packaged application JAR')
+    return jars[0]
+
+
+def assert_packaged_static_matches(frontend, backend):
     expected = asset_manifest(frontend / 'dist')
     packaged = {}
     prefix = 'BOOT-INF/classes/static/'
-    with zipfile.ZipFile(jars[0]) as jar:
+    with zipfile.ZipFile(packaged_application(backend)) as jar:
         for entry in jar.infolist():
             if entry.filename.startswith(prefix) and not entry.is_dir():
                 name = entry.filename[len(prefix):]
@@ -76,6 +80,22 @@ def assert_packaged_static_matches(frontend, backend):
                 packaged[name] = hashlib.sha256(jar.read(entry)).hexdigest()
     if expected != packaged:
         raise ValueError('Packaged JAR static assets differ from the verified frontend build')
+
+
+def verify_packaged_ssh_crypto(backend):
+    java_name = 'java.exe' if os.name == 'nt' else 'java'
+    java_home = os.environ.get('JAVA_HOME')
+    java = Path(java_home) / 'bin' / java_name if java_home else shutil.which(java_name)
+    if not java or not Path(java).is_file():
+        raise ValueError('java is required for packaged SSH crypto verification')
+    classes = (backend / 'web/target/test-classes').resolve()
+    main = 'org.leo.web.service.ssh.PackagedSshCryptoProbe'
+    if not (classes / (main.replace('.', '/') + '.class')).is_file():
+        raise ValueError('Missing compiled packaged SSH crypto probe')
+    # Use Boot's nested dependency loader without starting Spring or touching application data.
+    run_command('Packaged SSH crypto initialization', [java, '-Dloader.main=' + main,
+                '-Dloader.path=' + str(classes), '-cp', packaged_application(backend).resolve(),
+                'org.springframework.boot.loader.launch.PropertiesLauncher'], backend)
 
 
 def run_command(label, command, cwd):
@@ -99,8 +119,6 @@ def verify_release(backend, frontend, install=True):
     assert_static_matches(frontend, backend)
     run_command('Java component API and runtime bytecode check',
                 ['bash', backend / 'javacore/compile-components.sh', '--check'], backend)
-    run_command('Semantic names',
-                [sys.executable, backend / 'tools/check_semantic_names.py', '--frontend', frontend], backend)
     run_command('Backend architecture boundaries',
                 [sys.executable, backend / 'tools/check_architecture.py', '--backend', backend], backend)
     run_command('Build-tool regression tests',
@@ -113,6 +131,7 @@ def verify_release(backend, frontend, install=True):
     # Recheck after all subprocesses so an intervening asset change fails the gate too.
     assert_static_matches(frontend, backend)
     assert_packaged_static_matches(frontend, backend)
+    verify_packaged_ssh_crypto(backend)
     print('\nRelease checks passed.', flush=True)
 
 

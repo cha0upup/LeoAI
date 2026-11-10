@@ -2,14 +2,20 @@ package org.leo.web.service.ai;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -67,5 +73,28 @@ class AiTurnQueueServiceTest {
         queue.signal("thread-1");
 
         assertEquals(2, submitted.size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,queued,true", "false,running,true", "true,queued,true", "true,running,false",
+            "true,completed,false", "true,failed,false", "true,interrupted,false"})
+    void signalsNewReservationsButOnlyResignalsQueuedReuses(boolean reused, String status, boolean signal) {
+        var snapshot = mock(AiTurnProtocolService.TurnSnapshot.class);
+        when(snapshot.status()).thenReturn(status);
+        queue.signalPersistedTurn("thread-1", new AiTurnProtocolService.Reservation(snapshot, reused));
+        verify(executor, times(signal ? 1 : 0)).submitChat(any());
+    }
+
+    @Test
+    void defersPersistedTurnsOnBackpressureWithoutChangingStrictSignalsOrBlockingRecovery() {
+        when(executor.submitChat(any())).thenThrow(new RejectedExecutionException("fixture busy"))
+                .thenThrow(new RejectedExecutionException("fixture busy"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        assertThrows(RejectedExecutionException.class, () -> queue.signal("thread-1"));
+        assertDoesNotThrow(() -> queue.signalPersistedTurn("thread-1",
+                new AiTurnProtocolService.Reservation(turn, false)));
+        when(protocol.listDispatchableThreadIds()).thenReturn(List.of("thread-1"));
+        queue.recoverQueuedTurns();
+        verify(executor, times(3)).submitChat(any());
     }
 }

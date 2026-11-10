@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.SqlCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -121,11 +122,14 @@ class SqlExportServiceExecutionTest {
         verify(sql, never()).getTableColumns(any(), anyMap(), any());
     }
 
-    @Test void lateProgressNeverRevivesAnExportCancelledDuringAQuery() throws Exception {
-        var task = startTable();
+    @ParameterizedTest
+    @CsvSource({"table,false", "table,true", "database,false", "database,true"})
+    void lateProgressOrFailureNeverRevivesAnExportCancelledDuringAQuery(String kind, boolean fail) throws Exception {
+        var task = kind.equals("table") ? startTable() : startDatabase(true, true);
         when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
                 .thenAnswer(call -> {
                     service.stop("owner", id(task));
+                    if (fail) throw new IllegalStateException("fixture query failure after cancellation");
                     return Map.of("rows", List.of(Map.of("id", 7)), "pagination", Map.of("total", 1));
                 });
         queued.get(0).run();
@@ -140,8 +144,10 @@ class SqlExportServiceExecutionTest {
         verifyNoInteractions(sql);
     }
 
-    @Test void reportsQueryFailuresWithoutPublishingSuccessfulCompletion() throws Exception {
-        var task = startTable();
+    @ParameterizedTest
+    @ValueSource(strings = {"table", "database"})
+    void reportsQueryFailuresWithoutPublishingSuccessfulCompletion(String kind) throws Exception {
+        var task = kind.equals("table") ? startTable() : startDatabase(true, true);
         when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
                 .thenThrow(new IllegalStateException("fixture query failure"));
         queued.get(0).run();

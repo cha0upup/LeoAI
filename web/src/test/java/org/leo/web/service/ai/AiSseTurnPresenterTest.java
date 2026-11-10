@@ -13,7 +13,9 @@ import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.service.AiErrorClassifier;
+import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.core.entity.AiChatAuditEntry;
+import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,28 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiSseTurnPresenterTest {
+
+    @Test
+    void publishesPlanSnapshotsWithTheSameSchemaForReplayAndLifecycleUpdates() {
+        AiThread thread = new AiThread("thread-1", "test");
+        AiPlan plan = new AiPlan("title", "goal", List.of());
+        AiPlanCoordinator.emitPlanSnapshot(thread, plan, true);
+        AiSseEvent created = thread.getAiSseEventQueue().poll();
+        assertNotNull(created);
+        assertEquals("node", created.name());
+        assertEquals(Map.of("kind", "plan", "planId", plan.getPlanId(), "title", "title",
+                "goal", "goal", "status", plan.getStatus().name(), "steps", plan.getSteps()), created.data());
+
+        plan.complete("done");
+        AiPlanCoordinator.emitPlanSnapshot(thread, plan, false);
+        AiSseEvent updated = thread.getAiSseEventQueue().poll();
+        assertNotNull(updated);
+        assertEquals("patch", updated.name());
+        Map<?, ?> payload = (Map<?, ?>) updated.data();
+        assertEquals(plan.getPlanId(), payload.get("planId"));
+        assertEquals("COMPLETED", payload.get("status"));
+        assertEquals("done", payload.get("finalSummary"));
+    }
 
     @Test
     void presentsSuccessfulStreamingTurnThroughOneLifecycle() throws Exception {

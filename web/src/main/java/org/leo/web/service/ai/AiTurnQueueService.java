@@ -37,6 +37,18 @@ public class AiTurnQueueService {
         }
     }
 
+    /** Wake a persisted turn without turning executor backpressure into an HTTP failure. */
+    public void signalPersistedTurn(String threadId, AiTurnProtocolService.Reservation reservation) {
+        if (reservation.reused() && !AiTurnProtocolService.STATUS_QUEUED.equals(reservation.turn().status())) {
+            return;
+        }
+        try {
+            signal(threadId);
+        } catch (RejectedExecutionException ignored) {
+            // The command is already durable; the periodic scheduler will recover it.
+        }
+    }
+
     @Scheduled(fixedDelayString = "${leo.ai.turn-dispatch-ms:2000}",
             initialDelayString = "${leo.ai.turn-dispatch-ms:2000}")
     public void recoverQueuedTurns() {

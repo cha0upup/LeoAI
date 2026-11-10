@@ -94,13 +94,15 @@ class ReleaseGateTest(unittest.TestCase):
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
     def test_gate_connects_the_required_checks_before_packaging(self, _which):
         with patch('verify_release.run_command') as run, \
-                patch('verify_release.assert_packaged_static_matches') as packaged, patch('builtins.print'):
+                patch('verify_release.assert_packaged_static_matches') as packaged, \
+                patch('verify_release.verify_packaged_ssh_crypto') as crypto, patch('builtins.print'):
             verify_release.verify_release(self.backend, self.frontend)
         packaged.assert_called_once_with(self.frontend, self.backend)
+        crypto.assert_called_once_with(self.backend)
         labels = [call.args[0] for call in run.call_args_list]
         self.assertEqual(['Install locked frontend dependencies', 'Frontend lint', 'Frontend tests',
                           'Frontend production build', 'Java component API and runtime bytecode check',
-                          'Semantic names', 'Backend architecture boundaries', 'Build-tool regression tests',
+                          'Backend architecture boundaries', 'Build-tool regression tests',
                           'Backend clean verification and packaging'], labels)
 
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
