@@ -1,5 +1,6 @@
 package org.leo.ai.service.skill;
 
+import org.leo.service.importing.ImportOverwritePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -66,18 +67,6 @@ public class SkillExportService {
     /** 单 skill 文件数上限。 */
     private static final int  MAX_FILES       = SkillFileService.MAX_FILES;
 
-    public enum ConflictPolicy {
-        SKIP, OVERWRITE;
-
-        public static ConflictPolicy parse(String s) {
-            if (s == null) return SKIP;
-            return switch (s.toLowerCase()) {
-                case "overwrite" -> OVERWRITE;
-                default -> SKIP;
-            };
-        }
-    }
-
     /**
      * 把单个 skill 目录写为 .skill (zip) 流。entry 名直接是相对 skill 根的路径，
      * 不带 skill 名作为前缀，符合 Anthropic .skill 约定。
@@ -115,7 +104,7 @@ public class SkillExportService {
     public List<ImportResult> importSkills(MultipartFile file,
                                            Path scopeRoot,
                                            String defaultName,
-                                           ConflictPolicy policy) throws IOException {
+                                           ImportOverwritePolicy policy) throws IOException {
         Path tempRoot = Files.createTempDirectory("skill-import-");
         try {
             // 阶段 1：解压到临时目录，按顶层目录拆分。
@@ -253,7 +242,7 @@ public class SkillExportService {
     }
 
     private List<ImportResult> commitFromTemp(Path tempRoot, Path scopeRoot,
-                                              String scope, ConflictPolicy policy) throws IOException {
+                                              String scope, ImportOverwritePolicy policy) throws IOException {
         List<ImportResult> results = new ArrayList<>();
         if (!Files.isDirectory(tempRoot)) return results;
 
@@ -315,7 +304,7 @@ public class SkillExportService {
                 try {
                     ImportResult.Status status = ImportResult.Status.IMPORTED;
                     if (Files.exists(target)) {
-                        if (policy == ConflictPolicy.SKIP) {
+                        if (policy == ImportOverwritePolicy.SKIP) {
                             results.add(ImportResult.of(name, name, ImportResult.Status.SKIPPED));
                             continue;
                         }

@@ -2,8 +2,8 @@ package org.leo.web.controller.platform.skill;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.service.skill.SkillExportService.ConflictPolicy;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.service.importing.ImportOverwritePolicy;
 import org.leo.ai.service.skill.SkillExportService.ImportResult;
 import org.leo.ai.service.skill.SkillOperationLock;
 import org.springframework.mock.web.MockMultipartFile;
@@ -76,7 +76,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         try (var fileSystem = FileSystems.newFileSystem(destination, Map.of("create", "true"))) {
             var scopeRoot = fileSystem.getPath("/agent-node");
 
-            var results = archives.importSkills(upload(archive), scopeRoot, "alpha", ConflictPolicy.SKIP);
+            var results = archives.importSkills(upload(archive), scopeRoot, "alpha", ImportOverwritePolicy.SKIP);
 
             assertEquals(1, results.size());
             assertEquals(ImportResult.Status.IMPORTED, results.get(0).status());
@@ -145,8 +145,9 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"skip", "overwrite"})
-    void importChecksConflictsAfterAcquiringTheSharedLock(String policy) throws Exception {
+    @CsvSource({"skip,skipped", "overwrite,overwritten", "rename,skipped", "OVERWRITE,overwritten",
+            "unknown,skipped", "' overwrite ',skipped", ",skipped"})
+    void importChecksConflictsAfterAcquiringTheSharedLock(String policy, String expectedStatus) throws Exception {
         ReentrantLock targetLock = operationLock.lockFor("agent-node", "alpha");
         CountDownLatch attempted = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -166,8 +167,8 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
             targetLock.unlock();
             var response = pending.get(5, TimeUnit.SECONDS);
             assertEquals(200, response.get("code"));
-            assertEquals(policy.equals("skip") ? "skipped" : "overwritten", result(response, "alpha").get("status"));
-            assertEquals(skill("alpha", policy.equals("skip") ? "concurrent" : "imported"),
+            assertEquals(expectedStatus, result(response, "alpha").get("status"));
+            assertEquals(skill("alpha", expectedStatus.equals("skipped") ? "concurrent" : "imported"),
                     Files.readString(skillDir("alpha").resolve("SKILL.md")));
             assertFalse(targetLock.isLocked());
         } finally {

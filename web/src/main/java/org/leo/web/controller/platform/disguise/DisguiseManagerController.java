@@ -5,7 +5,7 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.User;
 import org.leo.service.disguise.DisguiseService;
-import org.leo.service.disguise.DisguiseService.ConflictPolicy;
+import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.service.disguise.DisguiseService.ImportResult;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
@@ -295,7 +295,7 @@ public class DisguiseManagerController {
             return ApiResponse.badRequest("file 不能为空");
         }
         try {
-            ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
+            ImportConflictPolicy policy = ImportConflictPolicy.parse(conflictPolicy);
             List<ImportResult> results = disguiseService.importDisguises(file, policy, getCurrentUser(request));
             HashMap<String, Object> data = new HashMap<>();
             data.put("results", results.stream().map(ImportResult::toMap).toList());

@@ -1,7 +1,7 @@
 package org.leo.web.service.skill;
 
 import org.leo.ai.service.skill.SkillExportService;
-import org.leo.ai.service.skill.SkillExportService.ConflictPolicy;
+import org.leo.service.importing.ImportOverwritePolicy;
 import org.leo.ai.service.skill.SkillExportService.ImportResult;
 import org.leo.ai.service.skill.SkillExportService.NamedSkill;
 import org.leo.ai.service.skill.SkillExportService.SkillImportException;
@@ -342,7 +342,7 @@ public class SkillManagementService {
             throw ApiException.badRequest(e.getMessage());
         }
         try {
-            return skillExportService.importSkills(file, scopeRoot, defaultName, ConflictPolicy.parse(conflictPolicy));
+            return skillExportService.importSkills(file, scopeRoot, defaultName, ImportOverwritePolicy.parse(conflictPolicy));
         } catch (SkillImportException e) {
             throw ApiException.badRequest(e.getMessage());
         } catch (IOException e) {

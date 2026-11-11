@@ -1,5 +1,6 @@
 package org.leo.service.fingerprint;
 
+import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
 import org.leo.core.fingerprint.FingerprintMetadata;
@@ -381,19 +382,6 @@ public class FingerprintManageService {
 
     // ── 导入 ──────────────────────────────────────────────────────────────────
 
-    public enum ConflictPolicy {
-        SKIP, OVERWRITE, RENAME;
-
-        public static ConflictPolicy parse(String s) {
-            if (s == null) return SKIP;
-            return switch (s.toLowerCase()) {
-                case "overwrite" -> OVERWRITE;
-                case "rename"    -> RENAME;
-                default          -> SKIP;
-            };
-        }
-    }
-
     public record ImportResult(String name, String fingerprintId, String status, String message) {
         public Map<String, Object> toMap() {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -413,7 +401,7 @@ public class FingerprintManageService {
      * </ul>
      */
     public synchronized List<ImportResult> importFingerprints(MultipartFile file,
-                                                  ConflictPolicy policy,
+                                                  ImportConflictPolicy policy,
                                                   User user) throws Exception {
         ensureLoggedIn(user);
         String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
@@ -435,7 +423,7 @@ public class FingerprintManageService {
     }
 
     private ImportResult importOneRecord(Map<String, Object> rec,
-                                          ConflictPolicy policy) {
+                                          ImportConflictPolicy policy) {
         // 基本校验
         String name = rec.get("name") != null ? String.valueOf(rec.get("name")).trim() : null;
         if (name == null || name.isBlank()) {
@@ -477,7 +465,7 @@ public class FingerprintManageService {
                     version
             );
             String status = conflict
-                    ? (policy == ConflictPolicy.OVERWRITE ? "overwritten" : "renamed")
+                    ? (policy == ImportConflictPolicy.OVERWRITE ? "overwritten" : "renamed")
                     : "imported";
             return new ImportResult(name, fingerprintId, status, null);
         } catch (Exception e) {

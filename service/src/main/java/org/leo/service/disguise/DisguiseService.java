@@ -1,5 +1,6 @@
 package org.leo.service.disguise;
 
+import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.disguise.DisguiseRuntimeValidator;
 import org.leo.core.entity.Disguise;
@@ -223,19 +224,6 @@ public class DisguiseService {
 
     // ── 导入 ──────────────────────────────────────────────────────────────────
 
-    public enum ConflictPolicy {
-        SKIP, OVERWRITE, RENAME;
-
-        public static ConflictPolicy parse(String value) {
-            if (value == null) return SKIP;
-            return switch (value.toLowerCase()) {
-                case "overwrite" -> OVERWRITE;
-                case "rename"    -> RENAME;
-                default          -> SKIP;
-            };
-        }
-    }
-
     public record ImportResult(String disguiseId, String disguiseName, String status, String message) {
         public Map<String, Object> toMap() {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -250,7 +238,7 @@ public class DisguiseService {
     /**
      * 导入 .disguise 或 .zip 文件，按冲突策略处理，返回逐条结果。
      */
-    public synchronized List<ImportResult> importDisguises(MultipartFile file, ConflictPolicy policy, User user) throws Exception {
+    public synchronized List<ImportResult> importDisguises(MultipartFile file, ImportConflictPolicy policy, User user) throws Exception {
         ensureLoggedIn(user);
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("文件不能为空");
         String fname = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
@@ -266,7 +254,7 @@ public class DisguiseService {
         }
     }
 
-    private List<ImportResult> importFromZip(byte[] zipBytes, ConflictPolicy policy, User user) throws Exception {
+    private List<ImportResult> importFromZip(byte[] zipBytes, ImportConflictPolicy policy, User user) throws Exception {
         List<ImportResult> results = new ArrayList<>();
         SafeZipReader.forEach(
                 new ByteArrayInputStream(zipBytes),
@@ -277,7 +265,7 @@ public class DisguiseService {
         return results;
     }
 
-    private ImportResult importOneDisguiseBytes(byte[] data, ConflictPolicy policy, User user) {
+    private ImportResult importOneDisguiseBytes(byte[] data, ImportConflictPolicy policy, User user) {
         Disguise disguise;
         try {
             String decrypted = AesUtil.decrypt(new String(data, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
@@ -328,8 +316,8 @@ public class DisguiseService {
             disguise.setCreateUserId(user.getUserId());
             disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
             installAndPersist(disguise);
-            String statusStr = (policy == ConflictPolicy.OVERWRITE && exists) ? "overwritten" : "imported";
-            String msg       = (policy == ConflictPolicy.OVERWRITE && exists) ? "已覆盖"     : "导入成功";
+            String statusStr = (policy == ImportConflictPolicy.OVERWRITE && exists) ? "overwritten" : "imported";
+            String msg       = (policy == ImportConflictPolicy.OVERWRITE && exists) ? "已覆盖"     : "导入成功";
             return new ImportResult(disguiseId, disguise.getDisguiseName(), statusStr, msg);
         } catch (Exception e) {
             return new ImportResult(disguiseId, disguise.getDisguiseName(), "failed", "保存失败: " + e.getMessage());

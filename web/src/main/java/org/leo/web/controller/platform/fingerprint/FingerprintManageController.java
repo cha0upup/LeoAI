@@ -4,7 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.fingerprint.FingerprintManageService;
-import org.leo.service.fingerprint.FingerprintManageService.ConflictPolicy;
+import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.service.fingerprint.FingerprintManageService.ImportResult;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
@@ -164,7 +164,7 @@ public class FingerprintManageController {
             return ApiResponse.badRequest("file 不能为空");
         }
         try {
-            ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
+            ImportConflictPolicy policy = ImportConflictPolicy.parse(conflictPolicy);
             List<ImportResult> results = fingerprintManageService.importFingerprints(
                     file, policy, getCurrentUser(request));
             HashMap<String, Object> data = new HashMap<>();

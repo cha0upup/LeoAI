@@ -1,5 +1,6 @@
 package org.leo.service.fingerprint;
 
+import org.leo.service.importing.ImportConflictPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -57,7 +58,7 @@ class FingerprintManageServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             byte[] content = JsonUtil.toJsonString(sourceDefinition()).getBytes(StandardCharsets.UTF_8);
             var results = service.importFingerprints(new MockMultipartFile("file", "current.json",
-                    "application/json", content), FingerprintManageService.ConflictPolicy.SKIP, user());
+                    "application/json", content), ImportConflictPolicy.SKIP, user());
             assertEquals("imported", results.get(0).status());
             assertClean(stored());
         }
@@ -91,7 +92,7 @@ class FingerprintManageServiceTest {
 
             byte[] content = JsonUtil.toJsonString(old).getBytes(StandardCharsets.UTF_8);
             var results = service.importFingerprints(new MockMultipartFile("file", "old.json",
-                    "application/json", content), FingerprintManageService.ConflictPolicy.SKIP, user());
+                    "application/json", content), ImportConflictPolicy.SKIP, user());
             assertEquals("failed", results.get(0).status());
         }
     }
@@ -121,7 +122,7 @@ class FingerprintManageServiceTest {
             HashMap<String, Object> replacement = sourceDefinition();
             replacement.put("tags", List.of("replacement"));
             assertThrows(IOException.class, () -> failing.saveFingerprint(replacement, user()));
-            var results = failing.importFingerprints(upload(replacement), FingerprintManageService.ConflictPolicy.OVERWRITE, user());
+            var results = failing.importFingerprints(upload(replacement), ImportConflictPolicy.OVERWRITE, user());
             assertEquals("failed", results.get(0).status());
             assertArrayEquals(previous, Files.readAllBytes(path));
             assertEquals(List.of("web"), service.getFingerprintById("demo_any").get("tags"));
@@ -163,11 +164,13 @@ class FingerprintManageServiceTest {
             Path original = directory.resolve("fingerprint/demo_any.json");
             Files.createDirectories(original.getParent());
             Files.writeString(original, "{broken");
-            var skipped = service.importFingerprints(upload(sourceDefinition()), FingerprintManageService.ConflictPolicy.SKIP, user());
-            assertEquals("skipped", skipped.get(0).status());
+            for (String policy : new String[]{null, "unknown", " rename "}) {
+                var skipped = service.importFingerprints(upload(sourceDefinition()), ImportConflictPolicy.parse(policy), user());
+                assertEquals("skipped", skipped.get(0).status());
+            }
             List<String> ids = new ArrayList<>();
             for (int n = 0; n < 2; n++) {
-                var renamed = service.importFingerprints(upload(sourceDefinition()), FingerprintManageService.ConflictPolicy.RENAME, user());
+                var renamed = service.importFingerprints(upload(sourceDefinition()), ImportConflictPolicy.parse("rename"), user());
                 assertEquals("renamed", renamed.get(0).status());
                 ids.add(renamed.get(0).fingerprintId());
                 assertNotNull(service.getFingerprintById(ids.get(n)));
@@ -175,7 +178,7 @@ class FingerprintManageServiceTest {
             assertNotEquals(ids.get(0), ids.get(1));
             assertEquals("{broken", Files.readString(original));
             assertEquals("overwritten", service.importFingerprints(upload(sourceDefinition()),
-                    FingerprintManageService.ConflictPolicy.OVERWRITE, user()).get(0).status());
+                    ImportConflictPolicy.parse("OVERWRITE"), user()).get(0).status());
             assertClean(service.getFingerprintById("demo_any"));
         }
     }
@@ -194,7 +197,7 @@ class FingerprintManageServiceTest {
                 }
             }
             var results = service.importFingerprints(new MockMultipartFile("file", "rules.zip", "application/zip", bytes.toByteArray()),
-                    FingerprintManageService.ConflictPolicy.SKIP, user());
+                    ImportConflictPolicy.SKIP, user());
             assertEquals(2, results.size());
             assertEquals(1, results.stream().filter(result -> "failed".equals(result.status()) && "bad.json".equals(result.name())).count());
             assertEquals(1, results.stream().filter(result -> "imported".equals(result.status())).count());
@@ -207,7 +210,7 @@ class FingerprintManageServiceTest {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             assertThrows(IllegalArgumentException.class, () -> service.importFingerprints(
-                    upload(List.of(sourceDefinition(), "bad entry")), FingerprintManageService.ConflictPolicy.SKIP, user()));
+                    upload(List.of(sourceDefinition(), "bad entry")), ImportConflictPolicy.SKIP, user()));
             assertFalse(Files.exists(directory.resolve("fingerprint/demo_any.json")));
         }
     }
@@ -224,7 +227,7 @@ class FingerprintManageServiceTest {
             invalid[prefix.length + 3] = '}';
             assertThrows(IllegalArgumentException.class, () -> service.importFingerprints(
                     new MockMultipartFile("file", "bad.json", "application/json", invalid),
-                    FingerprintManageService.ConflictPolicy.SKIP, user()));
+                    ImportConflictPolicy.SKIP, user()));
             assertFalse(Files.exists(directory.resolve("fingerprint")));
         }
     }
@@ -244,7 +247,7 @@ class FingerprintManageServiceTest {
                         HashMap<String, Object> definition = sourceDefinition();
                         definition.put("tags", List.of("writer-" + index));
                         start.await();
-                        return service.importFingerprints(upload(definition), FingerprintManageService.ConflictPolicy.SKIP, user()).get(0).status();
+                        return service.importFingerprints(upload(definition), ImportConflictPolicy.SKIP, user()).get(0).status();
                     }
                 }));
             }

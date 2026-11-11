@@ -1,5 +1,6 @@
 package org.leo.service.disguise;
 
+import org.leo.service.importing.ImportConflictPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -51,7 +52,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
                 assertEquals("imported", service.importDisguises(upload(original, key),
-                        DisguiseService.ConflictPolicy.SKIP, user()).get(0).status());
+                        ImportConflictPolicy.SKIP, user()).get(0).status());
                 Disguise installed = manager.getDisguiseById(id);
                 Path target = directory.resolve("disguise/" + id + ".disguise");
                 byte[] previous = Files.readAllBytes(target);
@@ -65,7 +66,7 @@ class DisguiseServiceTest {
                 if (importing) {
                     original.setRemark("replacement");
                     var result = failingService.importDisguises(upload(original, key),
-                            DisguiseService.ConflictPolicy.OVERWRITE, user());
+                            ImportConflictPolicy.OVERWRITE, user());
                     assertEquals("failed", result.get(0).status());
                 } else {
                     HashMap<String, Object> update = new HashMap<>();
@@ -95,7 +96,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
                 var result = new DisguiseService(manager, List.of(), failingStore).importDisguises(upload(definition, key),
-                        DisguiseService.ConflictPolicy.SKIP, user());
+                        ImportConflictPolicy.SKIP, user());
                 assertEquals("failed", result.get(0).status());
                 assertNull(manager.getDisguiseById(id));
                 assertFalse(Files.exists(directory.resolve("disguise/" + id + ".disguise")));
@@ -112,7 +113,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                service.importDisguises(upload(definition, key), DisguiseService.ConflictPolicy.SKIP, user());
+                service.importDisguises(upload(definition, key), ImportConflictPolicy.SKIP, user());
                 Disguise previous = manager.getDisguiseById(id);
                 AtomicFileStore files = spy(new AtomicFileStore());
                 doAnswer(invocation -> {
@@ -160,9 +161,9 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                service.importDisguises(upload(definition, key), DisguiseService.ConflictPolicy.SKIP, user());
+                service.importDisguises(upload(definition, key), ImportConflictPolicy.SKIP, user());
                 for (int n = 0; n < 2; n++) {
-                    var result = service.importDisguises(upload(definition, key), DisguiseService.ConflictPolicy.RENAME, user());
+                    var result = service.importDisguises(upload(definition, key), ImportConflictPolicy.RENAME, user());
                     assertEquals("imported", result.get(0).status());
                     ids.add(result.get(0).disguiseId());
                 }
@@ -194,8 +195,8 @@ class DisguiseServiceTest {
             try {
                 assertNull(manager.getDisguiseById(id));
                 assertEquals("skipped", service.importDisguises(upload(definition, key),
-                        DisguiseService.ConflictPolicy.SKIP, user()).get(0).status());
-                var result = service.importDisguises(upload(definition, key), DisguiseService.ConflictPolicy.RENAME, user());
+                        ImportConflictPolicy.parse(null), user()).get(0).status());
+                var result = service.importDisguises(upload(definition, key), ImportConflictPolicy.parse("RENAME"), user());
                 assertEquals("imported", result.get(0).status());
                 renamedId = result.get(0).disguiseId();
                 assertEquals("corrupt existing definition", Files.readString(path));
@@ -251,7 +252,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             var result = service.importDisguises(new MockMultipartFile("file", "old.disguise",
-                    "application/octet-stream", bytes), DisguiseService.ConflictPolicy.SKIP, user);
+                    "application/octet-stream", bytes), ImportConflictPolicy.SKIP, user);
             assertEquals("failed", result.get(0).status());
             assertNull(manager.getDisguiseById(oldId));
 
@@ -260,7 +261,7 @@ class DisguiseServiceTest {
                     .getBytes(StandardCharsets.UTF_8);
             try {
                 var currentResult = service.importDisguises(new MockMultipartFile("file", "current.disguise",
-                        "application/octet-stream", currentBytes), DisguiseService.ConflictPolicy.SKIP, user);
+                        "application/octet-stream", currentBytes), ImportConflictPolicy.SKIP, user);
                 assertEquals("imported", currentResult.get(0).status());
                 assertEquals(3, manager.getDisguiseById(oldId).getProtocolVersion());
             } finally {

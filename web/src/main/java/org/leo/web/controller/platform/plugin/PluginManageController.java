@@ -1,5 +1,6 @@
 package org.leo.web.controller.platform.plugin;
 
+import org.leo.service.importing.ImportOverwritePolicy;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.Plugin;
@@ -364,7 +365,7 @@ public class PluginManageController {
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
-        ConflictPolicy policy = ConflictPolicy.parse(conflictPolicy);
+        ImportOverwritePolicy policy = ImportOverwritePolicy.parse(conflictPolicy);
         String originalFilename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
         try {
             List<Map<String, Object>> results;
@@ -387,7 +388,7 @@ public class PluginManageController {
 
     // ── 导入私有辅助方法 ──────────────────────────────────────────────────────
 
-    private List<Map<String, Object>> importFromZip(byte[] zipBytes, ConflictPolicy policy, User user) throws IOException {
+    private List<Map<String, Object>> importFromZip(byte[] zipBytes, ImportOverwritePolicy policy, User user) throws IOException {
         List<Map<String, Object>> results = new ArrayList<>();
         SafeZipReader.forEach(
                 new ByteArrayInputStream(zipBytes),
@@ -398,7 +399,7 @@ public class PluginManageController {
         return results;
     }
 
-    private Map<String, Object> importOnePluginFile(byte[] pluginBytes, ConflictPolicy policy, User user) {
+    private Map<String, Object> importOnePluginFile(byte[] pluginBytes, ImportOverwritePolicy policy, User user) {
         Plugin plugin;
         try {
             String decrypted = AesUtil.decrypt(new String(pluginBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
@@ -421,7 +422,7 @@ public class PluginManageController {
         }
         String pluginId = plugin.getPluginId();
         boolean exists = pluginManager.getPluginById(pluginId) != null;
-        if (exists && policy == ConflictPolicy.SKIP) {
+        if (exists && policy == ImportOverwritePolicy.SKIP) {
             return importResult(pluginId, plugin.getPluginName(), "skipped", "已存在，已跳过");
         }
         try {
@@ -443,22 +444,6 @@ public class PluginManageController {
         result.put("status", status);
         result.put("message", message);
         return result;
-    }
-
-    /**
-     * 导入冲突策略。当前 Plugin 模块仅支持 SKIP / OVERWRITE；
-     * RENAME 暂未实现（pluginId 由字节码派生，重命名语义不直观）。
-     */
-    public enum ConflictPolicy {
-        SKIP, OVERWRITE;
-
-        public static ConflictPolicy parse(String value) {
-            if (value == null) return SKIP;
-            return switch (value.toLowerCase()) {
-                case "overwrite" -> OVERWRITE;
-                default          -> SKIP;
-            };
-        }
     }
 
     /**
