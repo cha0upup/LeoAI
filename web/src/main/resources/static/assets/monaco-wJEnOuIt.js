@@ -1,1 +1,0 @@
-import{i as e,n as t,r as n,t as r}from"./vendor-editor-Dv7aW9G1.js";var i=!1,a={json:e,css:n,scss:n,less:n,html:t,handlebars:t,razor:t,typescript:r,javascript:r};function o(){i||=(globalThis.MonacoEnvironment={getWorker(e,t){return new globalThis.Worker(a[t]||`/assets/editor.worker-DsBDrWS5.js`,{name:`monaco-${t||`editor`}`,type:`module`})}},!0)}o();

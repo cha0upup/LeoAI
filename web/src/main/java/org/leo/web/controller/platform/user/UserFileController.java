@@ -6,6 +6,7 @@ import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.service.artifact.UserArtifactService;
 import org.leo.web.util.FileDownloadResponse;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -43,7 +44,7 @@ public class UserFileController {
     @RequestMapping(value = "/overview", method = RequestMethod.GET)
     public HashMap<String, Object> overview(HttpServletRequest request) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -66,7 +67,7 @@ public class UserFileController {
                                         @RequestParam(required = false) String search,
                                         @RequestParam(required = false) String source) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -100,7 +101,7 @@ public class UserFileController {
 
     @RequestMapping(value = "/archive", method = RequestMethod.POST)
     public HashMap<String, Object> archive(HttpServletRequest request, @RequestBody UserArtifactService.ArchiveRequest body) {
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null) return ApiResponse.unauthorized("用户未登录");
         try { return ApiResponse.success(artifacts.archive(user.getUserId(), body)); }
         catch (IllegalArgumentException error) { return ApiResponse.badRequest(error.getMessage()); }
@@ -114,7 +115,7 @@ public class UserFileController {
                                           @RequestParam(value = "filename", required = false) String filename,
                                           @RequestParam(value = "overwrite", required = false) Boolean overwrite) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -172,7 +173,7 @@ public class UserFileController {
                          @RequestParam(value = "filename", required = false) String filename,
                          HttpServletResponse response) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 response.setStatus(401);
                 return;
@@ -200,7 +201,7 @@ public class UserFileController {
                                               @RequestParam(value = "content", required = false) String content,
                                               @RequestParam(value = "overwrite", required = false) Boolean overwrite) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -239,7 +240,7 @@ public class UserFileController {
     public HashMap<String, Object> createDir(HttpServletRequest request,
                                              @RequestParam("path") String relativePath) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -264,7 +265,7 @@ public class UserFileController {
                                            @RequestParam("path") String relativePath,
                                            @RequestParam(value = "size", required = false) Long size) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -304,7 +305,7 @@ public class UserFileController {
                                           @RequestParam("path") String relativePath,
                                           @RequestParam(value = "recursive", required = false) Boolean recursive) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -335,10 +336,6 @@ public class UserFileController {
         } catch (Exception e) {
             return ApiResponse.error("删除失败: " + e.getMessage());
         }
-    }
-
-    private User getUserFromSession(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute("user");
     }
 
     private Path resolveUserPath(String userId, String relativePath) {

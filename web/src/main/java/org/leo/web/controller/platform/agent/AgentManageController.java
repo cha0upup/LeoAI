@@ -54,9 +54,6 @@ public class AgentManageController {
     private static final String PARAM_PARENT_AGENT_ID = "parentAgentId";
     private static final String PARAM_AGENT_ID = "agentId";
     
-    // 会话属性常量
-    private static final String SESSION_ATTR_USER = "user";
-    
     // 根节点ID
     private static final String ROOT_PARENT_ID = "root";
     
@@ -80,7 +77,7 @@ public class AgentManageController {
     @RequestMapping(value = "/children", method = RequestMethod.POST)
     public HashMap<String, Object> getChildrenByParentAgentId(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            User user = getUserFromSession(request);
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null || user.getUserId() == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -94,7 +91,7 @@ public class AgentManageController {
 
     @RequestMapping(value = "/agents", method = RequestMethod.GET)
     public HashMap<String, Object> getAgent(HttpServletRequest request) {
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -112,7 +109,7 @@ public class AgentManageController {
         if (agent == null) {
             return ApiResponse.badRequest("agent参数不能为空");
         }
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -161,7 +158,7 @@ public class AgentManageController {
     @RequestMapping(value = "/agents/export", method = RequestMethod.POST)
     public HashMap<String, Object> exportAgents(HttpServletRequest request,
                                                   @RequestBody HashMap<String, Object> params) {
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -238,7 +235,7 @@ public class AgentManageController {
         if (agent == null || agent.getAgentId() == null || agent.getAgentId().isBlank()) {
             return ApiResponse.badRequest("agent参数或agentId不能为空");
         }
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -277,7 +274,7 @@ public class AgentManageController {
     @RequestMapping(value = "/component-class-name/preview", method = RequestMethod.POST)
     public HashMap<String, Object> previewComponentClassNames(HttpServletRequest request,
                                                                @RequestBody HashMap<String, Object> params) {
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -312,7 +309,7 @@ public class AgentManageController {
         if (params == null) {
             return ApiResponse.badRequest("params参数不能为空");
         }
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -341,7 +338,7 @@ public class AgentManageController {
      */
     @RequestMapping(value = "/url-probe", method = RequestMethod.POST)
     public HashMap<String, Object> probeUrlPaths(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -357,13 +354,6 @@ public class AgentManageController {
             logger.error("URL 探测失败, baseUrl={}: {}", baseUrl, e.getMessage());
             return ApiResponse.error("URL 探测失败: " + e.getMessage());
         }
-    }
-
-    /**
-     * 从会话中获取用户
-     */
-    private User getUserFromSession(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
     }
 
     private boolean canViewAgent(Agent agent, User user) {

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.NetworkProbeCapable;
+import org.leo.service.discovery.NetworkProbeTestFixtures.StubNode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.leo.service.discovery.NetworkProbeTestFixtures.cursorPage;
 
 class NetworkProbeOrchestrationServiceTest {
 
@@ -256,7 +258,7 @@ class NetworkProbeOrchestrationServiceTest {
         throw new AssertionError("producer did not reach high water");
     }
 
-    private static final class BurstNode implements NetworkProbeCapable {
+    private static final class BurstNode implements StubNode {
         private final boolean large;
         private final int total;
         private final AtomicInteger queries = new AtomicInteger();
@@ -275,8 +277,6 @@ class NetworkProbeOrchestrationServiceTest {
                     "cursor", cursor, "nextCursor", (long)end, "hasMore", end < total,
                     "observations", rows, "errors", List.of(Map.of("errorCode", "fixture", "error", "one diagnostic"))));
         }
-        public Map<String, Object> pauseNetworkProbe(String id) { return Map.of("code", 200); }
-        public Map<String, Object> resumeNetworkProbe(String id) { return Map.of("code", 200); }
         public Map<String, Object> stopNetworkProbe(String id) { stopped = true; return Map.of("code", 200); }
         public Map<String, Object> ackNetworkProbe(String id, long cursor) { return Map.of("code", 200); }
         public Map<String, Object> releaseNetworkProbe(String id) { releases.incrementAndGet(); return Map.of("code", 200); }
@@ -342,22 +342,7 @@ class NetworkProbeOrchestrationServiceTest {
         throw new AssertionError("logical task did not stop: " + snapshot);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> cursorPage(Map<String, Object> response, long cursor) {
-        if (!Integer.valueOf(200).equals(response.get("code"))) return response;
-        Map<String, Object> page = new LinkedHashMap<>((Map<String, Object>) response.get("result"));
-        page.put("cursor", cursor);
-        page.put("nextCursor", cursor + ((List<?>) page.get("observations")).size());
-        page.put("hasMore", false);
-        return Map.of("code", 200, "result", page);
-    }
-
-    private static class ImmediateNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static class ImmediateNode implements StubNode {
         private final List<Integer> batchSizes = new ArrayList<>();
         private final List<Map<String, Object>> startedPlans = new ArrayList<>();
         private final List<String> released = new ArrayList<>();
@@ -396,33 +381,13 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> pauseNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> resumeNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> stopNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
         public synchronized Map<String, Object> releaseNetworkProbe(String taskId) {
             released.add(taskId);
             return Map.of("code", 200);
         }
     }
 
-    private static final class StoppableNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static final class StoppableNode implements StubNode {
         private final boolean failQueryAfterStop;
         private final CountDownLatch started = new CountDownLatch(1);
         private final AtomicInteger releaseCount = new AtomicInteger();
@@ -459,16 +424,6 @@ class NetworkProbeOrchestrationServiceTest {
         }
 
         @Override
-        public Map<String, Object> pauseNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> resumeNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
         public Map<String, Object> stopNetworkProbe(String taskId) {
             stopped = true;
             return Map.of("code", 200);
@@ -481,16 +436,11 @@ class NetworkProbeOrchestrationServiceTest {
         }
     }
 
-    private static final class FailedNode implements NetworkProbeCapable {
+    private static final class FailedNode implements StubNode {
         private final String reason;
 
         private FailedNode() { this(null); }
         private FailedNode(String reason) { this.reason = reason; }
-
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
 
         @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
@@ -510,34 +460,9 @@ class NetworkProbeOrchestrationServiceTest {
                     "completed", 0, "observations", List.of(), "errors",
                     reason == null ? List.of() : List.of(Map.of("stage", "WORKER", "error", reason))));
         }
-
-        @Override
-        public Map<String, Object> pauseNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> resumeNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> stopNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
-
-        @Override
-        public Map<String, Object> releaseNetworkProbe(String taskId) {
-            return Map.of("code", 200);
-        }
     }
 
-    private static final class CancelledNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static final class CancelledNode implements StubNode {
         @Override
         public Map<String, Object> startNetworkProbe(Map<String, Object> plan) {
             return Map.of("code", 200, "taskId", "cancelled-child");
@@ -555,14 +480,9 @@ class NetworkProbeOrchestrationServiceTest {
                     "status", "STOPPED", "outcome", "CANCELLED",
                     "completed", 0, "observations", List.of(), "errors", List.of()));
         }
-
-        @Override public Map<String, Object> pauseNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> resumeNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> stopNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> releaseNetworkProbe(String taskId) { return Map.of("code", 200); }
     }
 
-    private static final class IncrementalNode implements NetworkProbeCapable {
+    private static final class IncrementalNode implements StubNode {
         private final List<Long> queryAcks = new ArrayList<>();
         private final List<Long> finalAcks = new ArrayList<>();
 
@@ -591,10 +511,5 @@ class NetworkProbeOrchestrationServiceTest {
                     "incremental", true, "observations", observations.subList((int) cursor, (int) cursor + 1),
                     "errors", List.of()));
         }
-
-        @Override public Map<String, Object> pauseNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> resumeNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> stopNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> releaseNetworkProbe(String taskId) { return Map.of("code", 200); }
     }
 }

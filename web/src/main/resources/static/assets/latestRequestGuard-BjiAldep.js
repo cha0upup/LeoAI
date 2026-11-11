@@ -1,1 +1,0 @@
-function e(e=[]){let t=Object.fromEntries(e.map(e=>[e,0]));function n(e){return t[e]=(t[e]||0)+1,t[e]}return{next:n,isCurrent(e,n){return t[e]===n},invalidate(t=e){t.forEach(n)}}}export{e as t};

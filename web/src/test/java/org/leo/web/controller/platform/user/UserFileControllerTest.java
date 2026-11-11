@@ -2,6 +2,9 @@ package org.leo.web.controller.platform.user;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
@@ -34,6 +37,15 @@ class UserFileControllerTest {
     private final UserArtifactService artifacts = new UserArtifactService(new ObjectMapper(), systemConfigService);
     private final UserFileController controller = new UserFileController(artifacts);
     private final String userId = "test-user-file-" + UUID.randomUUID();
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"invalid-session-user"})
+    void rejectsMissingOrMalformedSessionIdentity(String cachedUser) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", cachedUser);
+        assertEquals(401, controller.overview(request).get("code"));
+    }
 
     @AfterEach
     void cleanWorkspace() throws Exception {

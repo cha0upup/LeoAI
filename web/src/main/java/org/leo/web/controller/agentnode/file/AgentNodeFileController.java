@@ -92,7 +92,7 @@ public class AgentNodeFileController {
     @RequestMapping(value = "/download-local", method = RequestMethod.GET)
     public void downloadLocalFile(HttpServletRequest request, String path, String filename, HttpServletResponse response) {
         try {
-            User user = (User) request.getSession().getAttribute("user");
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 response.setStatus(401);
                 return;

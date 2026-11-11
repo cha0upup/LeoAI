@@ -18,7 +18,7 @@ class FileDownloadResponseTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"report.txt", "中文 报告.txt", "quote\"name.txt", "line\r\nname.txt"})
-    void streamsExactBytesWithAnEncodedDownloadName(String filename) throws Exception {
+    void downloadsExactBytesWithAnEncodedName(String filename) throws Exception {
         byte[] content = {0, 1, 2, (byte) 255};
         Path file = Files.write(temp.resolve("fixture.bin"), content);
         var response = new MockHttpServletResponse();
@@ -32,6 +32,14 @@ class FileDownloadResponseTest {
         assertFalse(header.contains("\r"));
         assertFalse(header.contains("\n"));
         assertEquals(filename, ContentDisposition.parse(header).getFilename());
+        for (String contentType : new String[]{"application/octet-stream", "application/json", "application/zip"}) {
+            var download = FileDownloadResponse.bytes(content, filename, contentType);
+            assertEquals(200, download.getStatusCode().value());
+            assertEquals(contentType, download.getHeaders().getFirst("Content-Type"));
+            assertEquals(header, download.getHeaders().getFirst("Content-Disposition"));
+            assertSame(content, download.getBody());
+            assertEquals(2, download.getHeaders().size());
+        }
     }
 
     @Test

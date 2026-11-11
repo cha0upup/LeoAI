@@ -42,7 +42,7 @@ public class DownloadEngineController {
     @RequestMapping(value = "/start", method = RequestMethod.POST)
     public HashMap<String, Object> start(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            User user = (User) request.getSession().getAttribute("user");
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -73,7 +73,7 @@ public class DownloadEngineController {
     @RequestMapping(value = "/progress", method = RequestMethod.POST)
     public HashMap<String, Object> progress(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            User user = (User) request.getSession().getAttribute("user");
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
@@ -150,7 +150,7 @@ public class DownloadEngineController {
     @RequestMapping(value = "/tasks", method = RequestMethod.POST)
     public HashMap<String, Object> tasks(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            User user = (User) request.getSession().getAttribute("user");
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }

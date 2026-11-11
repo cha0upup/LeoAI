@@ -3,7 +3,6 @@ package org.leo.web.controller.platform.disguise;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Disguise;
 import org.leo.core.disguise.DisguiseProtocol;
-import org.leo.core.entity.User;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.service.disguise.DisguiseService.ImportResult;
@@ -11,8 +10,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
-import org.leo.web.util.DownloadHeaders;
-import org.springframework.http.HttpHeaders;
+import org.leo.web.util.FileDownloadResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,8 +34,6 @@ import java.util.Set;
 @RequestMapping("/platform/disguise-manager")
 public class DisguiseManagerController {
 
-    private static final String SESSION_ATTR_USER = "user";
-
     private final DisguiseService disguiseService;
 
     public DisguiseManagerController(DisguiseService disguiseService) {
@@ -48,7 +44,7 @@ public class DisguiseManagerController {
     @AdminOnlyEndpoint
     public HashMap<String, Object> addDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            disguiseService.addDisguise(params, getCurrentUser(request));
+            disguiseService.addDisguise(params, ControllerUtil.getCurrentUser(request));
             return ApiResponse.success();
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -61,7 +57,7 @@ public class DisguiseManagerController {
     @AdminOnlyEndpoint
     public HashMap<String, Object> delDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            disguiseService.deleteDisguise(ControllerUtil.getRequiredStringParam(params, "disguiseId"), getCurrentUser(request));
+            disguiseService.deleteDisguise(ControllerUtil.getRequiredStringParam(params, "disguiseId"), ControllerUtil.getCurrentUser(request));
             return ApiResponse.success();
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -80,7 +76,7 @@ public class DisguiseManagerController {
     @AdminOnlyEndpoint
     public HashMap<String, Object> updateDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            disguiseService.updateDisguise(params, getCurrentUser(request));
+            disguiseService.updateDisguise(params, ControllerUtil.getCurrentUser(request));
             return ApiResponse.success("disguise更新成功");
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -102,7 +98,7 @@ public class DisguiseManagerController {
     @RequestMapping(value = "/test-disguises", method = RequestMethod.POST)
     @AdminOnlyEndpoint
     public HashMap<String, Object> testDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
-        if (getCurrentUser(request) == null) {
+        if (ControllerUtil.getCurrentUser(request) == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
         try {
@@ -122,7 +118,7 @@ public class DisguiseManagerController {
     @AdminOnlyEndpoint
     public HashMap<String, Object> testRuntimeDisguise(@RequestBody HashMap<String, Object> params,
                                                        HttpServletRequest request) {
-        if (getCurrentUser(request) == null) return ApiResponse.unauthorized("用户未登录");
+        if (ControllerUtil.getCurrentUser(request) == null) return ApiResponse.unauthorized("用户未登录");
         try {
             DisguiseProtocol.requireCurrentMetadata(params);
             Disguise disguise = new Disguise();
@@ -162,7 +158,7 @@ public class DisguiseManagerController {
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
     @AdminOnlyEndpoint
     public HashMap<String, Object> previewDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
-        if (getCurrentUser(request) == null) {
+        if (ControllerUtil.getCurrentUser(request) == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
         try {
@@ -234,10 +230,7 @@ public class DisguiseManagerController {
         try {
             byte[] data = disguiseService.exportDisguise(disguiseId.trim());
             String filename = disguiseId.trim() + ".disguise";
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
-                    .body(data);
+            return FileDownloadResponse.bytes(data, filename, MediaType.APPLICATION_OCTET_STREAM_VALUE);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
                     .body(e.getMessage().getBytes(StandardCharsets.UTF_8));
@@ -270,10 +263,7 @@ public class DisguiseManagerController {
         try {
             byte[] zip = disguiseService.exportDisguisesZip(ids);
             String filename = "disguises_" + LocalDate.now() + ".zip";
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
-                    .body(zip);
+            return FileDownloadResponse.bytes(zip, filename, "application/zip");
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
                     .body(("批量导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
@@ -296,7 +286,7 @@ public class DisguiseManagerController {
         }
         try {
             ImportConflictPolicy policy = ImportConflictPolicy.parse(conflictPolicy);
-            List<ImportResult> results = disguiseService.importDisguises(file, policy, getCurrentUser(request));
+            List<ImportResult> results = disguiseService.importDisguises(file, policy, ControllerUtil.getCurrentUser(request));
             HashMap<String, Object> data = new HashMap<>();
             data.put("results", results.stream().map(ImportResult::toMap).toList());
             return ApiResponse.success(data);
@@ -305,10 +295,6 @@ public class DisguiseManagerController {
         } catch (Exception e) {
             return ApiResponse.error("导入失败: " + e.getMessage());
         }
-    }
-
-    private User getCurrentUser(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
     }
 
     private HashMap<String, Object> toValidationResponse(IllegalArgumentException e) {

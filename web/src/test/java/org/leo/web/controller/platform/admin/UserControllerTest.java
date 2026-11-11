@@ -3,6 +3,7 @@ package org.leo.web.controller.platform.admin;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.service.user.UserService;
@@ -23,6 +24,18 @@ import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
 
 class UserControllerTest {
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"invalid-session-user"})
+    void rejectsMissingOrMalformedSessionIdentity(String cachedUser) {
+        UserService service = mock(UserService.class);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", cachedUser);
+        var controller = new UserController(service, mock(PasswordPolicy.class));
+        assertEquals(401, controller.getUsers(request).get("code"));
+        verifyNoInteractions(service);
+    }
 
     @ParameterizedTest
     @NullAndEmptySource

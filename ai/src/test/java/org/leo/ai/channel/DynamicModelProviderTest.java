@@ -123,10 +123,12 @@ class DynamicModelProviderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"glm-5.3", "glm-5.3-flash", "gemini-3.8-flash", "gemini-4-argon",
-            "gpt-6-astra", "gpt-6.1-sol",
-            "kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"})
-    void mandatoryThinkingModelsRejectDisableAndProbeAtLowEffort(String model) {
+    @CsvSource({
+            "glm-5.3,low", "glm-5.3-flash,low", "gemini-3.8-flash,low", "gemini-4-argon,low",
+            "gpt-6-astra,low", "gpt-6.1-sol,low",
+            "kimi-k3,low", "kimi-k3.1-pro,low", "kimi-k3.1-pro-highspeed,low",
+            "kimi-k2.7-code,", "kimi-k2.7-code-highspeed,"})
+    void mandatoryThinkingModelsRejectDisableAndProbeWithSupportedEffort(String model, String expectedProbeEffort) {
         AiModelConfig config = config("https://example.test/v1", "chat_completions");
         config.setModel(model);
         config.setThinkingEnabled(0);
@@ -136,24 +138,7 @@ class DynamicModelProviderTest {
         assertThrows(IllegalArgumentException.class, () -> provider.buildRuntime(config));
         var probe = provider.buildProbeRuntime(config, false);
         assertTrue(probe.doReasoning());
-        assertEquals("low", probe.reasoningEffort());
-        assertEquals(1024, probe.maxTokens());
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"kimi-k2.7-code", "kimi-k2.7-code-highspeed"})
-    void kimiCodeProbesKeepThinkingWithoutSendingAnUnsupportedEffort(String model) {
-        AiModelConfig config = config("https://example.test/v1", "chat_completions");
-        config.setModel(model);
-        config.setThinkingEnabled(0);
-        AiModelConfigService configs = mock(AiModelConfigService.class);
-        when(configs.capabilitiesForModel(config)).thenReturn(reasoningCaps());
-        DynamicModelProvider provider = provider(configs);
-
-        assertThrows(IllegalArgumentException.class, () -> provider.buildRuntime(config));
-        var probe = provider.buildProbeRuntime(config, false);
-        assertTrue(probe.doReasoning());
-        assertNull(probe.reasoningEffort());
+        assertEquals(expectedProbeEffort, probe.reasoningEffort());
         assertEquals(1024, probe.maxTokens());
     }
 

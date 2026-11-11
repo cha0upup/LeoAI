@@ -1,15 +1,13 @@
 package org.leo.web.controller.platform.fingerprint;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.service.fingerprint.FingerprintManageService.ImportResult;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
-import org.leo.web.util.DownloadHeaders;
-import org.springframework.http.HttpHeaders;
+import org.leo.web.util.FileDownloadResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,8 +25,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/platform/fingerprint-manage")
 public class FingerprintManageController {
-
-    private static final String SESSION_ATTR_USER = "user";
 
     private final FingerprintManageService fingerprintManageService;
 
@@ -63,7 +59,7 @@ public class FingerprintManageController {
     @AdminOnlyEndpoint
     public HashMap<String, Object> saveFingerprint(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
-            HashMap<String, Object> data = fingerprintManageService.saveFingerprint(params, getCurrentUser(request));
+            HashMap<String, Object> data = fingerprintManageService.saveFingerprint(params, ControllerUtil.getCurrentUser(request));
             return ApiResponse.success("保存成功", data);
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -77,7 +73,7 @@ public class FingerprintManageController {
     public HashMap<String, Object> deleteFingerprint(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             String fingerprintId = ControllerUtil.getRequiredStringParam(params, "fingerprintId");
-            fingerprintManageService.deleteFingerprint(getCurrentUser(request), fingerprintId);
+            fingerprintManageService.deleteFingerprint(ControllerUtil.getCurrentUser(request), fingerprintId);
             return ApiResponse.success("删除成功");
         } catch (IllegalArgumentException e) {
             return toValidationResponse(e);
@@ -98,10 +94,7 @@ public class FingerprintManageController {
         try {
             byte[] data = fingerprintManageService.exportFingerprint(fingerprintId);
             String filename = fingerprintId.trim() + ".json";
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
-                    .body(data);
+            return FileDownloadResponse.bytes(data, filename, MediaType.APPLICATION_JSON_VALUE);
         } catch (FingerprintManageService.FingerprintNotFoundException e) {
             return ResponseEntity.notFound().build();
         } catch (IllegalArgumentException e) {
@@ -136,10 +129,7 @@ public class FingerprintManageController {
         try {
             byte[] zip = fingerprintManageService.exportFingerprintsZip(ids);
             String filename = "fingerprints_" + LocalDate.now() + ".zip";
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
-                    .body(zip);
+            return FileDownloadResponse.bytes(zip, filename, "application/zip");
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
                     .body(e.getMessage().getBytes(StandardCharsets.UTF_8));
@@ -166,7 +156,7 @@ public class FingerprintManageController {
         try {
             ImportConflictPolicy policy = ImportConflictPolicy.parse(conflictPolicy);
             List<ImportResult> results = fingerprintManageService.importFingerprints(
-                    file, policy, getCurrentUser(request));
+                    file, policy, ControllerUtil.getCurrentUser(request));
             HashMap<String, Object> data = new HashMap<>();
             data.put("results", results.stream().map(ImportResult::toMap).toList());
             return ApiResponse.success(data);
@@ -175,12 +165,6 @@ public class FingerprintManageController {
         } catch (Exception e) {
             return ApiResponse.error("导入失败: " + e.getMessage());
         }
-    }
-
-    // ── 工具方法 ──────────────────────────────────────────────────────────────
-
-    private User getCurrentUser(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
     }
 
     private HashMap<String, Object> toValidationResponse(IllegalArgumentException e) {

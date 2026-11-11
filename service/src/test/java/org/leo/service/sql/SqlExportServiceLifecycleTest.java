@@ -55,12 +55,11 @@ class SqlExportServiceLifecycleTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"status", "progress", "pause", "stop", "resume"})
+    @ValueSource(strings = {"progress", "pause", "stop", "resume"})
     void cachedTasksRemainPrivateToTheirOwner(String operation) throws Exception {
         String id = id(start("table"));
         assertThrows(IllegalArgumentException.class, () -> {
             switch (operation) {
-                case "status" -> service.getTaskStatus("other", id);
                 case "progress" -> service.progress("other", id);
                 case "pause" -> service.pause("other", id);
                 case "stop" -> service.stop("other", id);

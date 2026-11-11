@@ -12,9 +12,9 @@ import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
-import org.leo.web.util.DownloadHeaders;
+import org.leo.web.util.FileDownloadResponse;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -69,9 +69,6 @@ public class PluginManageController {
     // 结果字段常量
     private static final String RESULT_PLUGIN_ID = "pluginId";
     
-    // 会话属性常量
-    private static final String SESSION_ATTR_USER = "user";
-    
     // 文件相关常量
     private static final String PLUGIN_FILE_EXTENSION = ".plugin";
     private static final String PLUGIN_DIR_NAME = "plugin";
@@ -84,13 +81,6 @@ public class PluginManageController {
     
     @Autowired
     private PluginManager pluginManager;
-    /**
-     * 从会话中获取用户
-     */
-    private User getUserFromSession(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
-    }
-    
     /**
      * 验证并获取安全的文件名
      */
@@ -141,7 +131,7 @@ public class PluginManageController {
         }
         componentPlugin.setBytecode(payloadBytes);
 
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
@@ -285,10 +275,7 @@ public class PluginManageController {
                 return ResponseEntity.notFound().build();
             }
             byte[] data = Files.readAllBytes(pluginFile.toPath());
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(safeFileName))
-                    .body(data);
+            return FileDownloadResponse.bytes(data, safeFileName, MediaType.APPLICATION_OCTET_STREAM_VALUE);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
                     .body(e.getMessage().getBytes(StandardCharsets.UTF_8));
@@ -337,10 +324,7 @@ public class PluginManageController {
                 }
             }
             String filename = "plugins_" + LocalDate.now() + ".zip";
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
-                    .body(baos.toByteArray());
+            return FileDownloadResponse.bytes(baos.toByteArray(), filename, "application/zip");
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
                     .body(("批量导出失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
@@ -361,7 +345,7 @@ public class PluginManageController {
         if (file == null || file.isEmpty()) {
             return ApiResponse.badRequest("file 不能为空");
         }
-        User user = getUserFromSession(request);
+        User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }

@@ -8,6 +8,7 @@ import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
 import org.leo.web.security.RoleAwareAdminEndpoint;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -39,7 +40,6 @@ import static org.leo.service.user.UserAccountPolicy.normalizeStatus;
 @RoleAwareAdminEndpoint
 public class UserController {
 
-    private static final String SESSION_USER = "user";
     private static final int MAX_USERNAME_LENGTH = 100;
     private static final int MAX_EMAIL_LENGTH = 100;
     private static final int MAX_PHONE_LENGTH = 20;
@@ -60,7 +60,7 @@ public class UserController {
      */
     @RequestMapping(value = "/users", method = RequestMethod.GET)
     public HashMap<String, Object> getUsers(HttpServletRequest request) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
 
         List<User> users;
@@ -81,7 +81,7 @@ public class UserController {
      */
     @RequestMapping(value = "/users/no-team", method = RequestMethod.GET)
     public HashMap<String, Object> getNoTeamUsers(HttpServletRequest request) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权访问");
@@ -93,7 +93,7 @@ public class UserController {
 
     @RequestMapping(value = "/users", method = RequestMethod.POST)
     public HashMap<String, Object> addUser(HttpServletRequest request, @RequestBody User user) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (user == null) return ApiResponse.badRequest("user参数不能为空");
 
@@ -158,7 +158,7 @@ public class UserController {
     @RequestMapping(value = "/users/update", method = RequestMethod.POST)
     public HashMap<String, Object> updateUser(HttpServletRequest request,
                                                @RequestBody HashMap<String, Object> params) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
@@ -252,7 +252,7 @@ public class UserController {
     @RequestMapping(value = "/users/reset-password", method = RequestMethod.POST)
     public HashMap<String, Object> resetPassword(HttpServletRequest request,
                                                    @RequestBody HashMap<String, Object> params) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
@@ -296,7 +296,7 @@ public class UserController {
     @RequestMapping(value = "/users/delete", method = RequestMethod.POST)
     public HashMap<String, Object> deleteUser(HttpServletRequest request,
                                                @RequestBody HashMap<String, Object> params) {
-        User caller = getSessionUser(request);
+        User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
@@ -318,10 +318,6 @@ public class UserController {
     }
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────────
-
-    private User getSessionUser(HttpServletRequest request) {
-        return (User) request.getSession().getAttribute(SESSION_USER);
-    }
 
     private List<Map<String, Object>> sanitize(List<User> users) {
         if (users == null) return List.of();

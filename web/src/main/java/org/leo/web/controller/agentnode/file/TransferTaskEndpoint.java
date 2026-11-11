@@ -22,7 +22,7 @@ final class TransferTaskEndpoint {
     static HashMap<String, Object> execute(HttpServletRequest request, Map<String, Object> params,
                                            String errorPrefix, TaskAction action) {
         try {
-            User user = (User) request.getSession().getAttribute("user");
+            User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }

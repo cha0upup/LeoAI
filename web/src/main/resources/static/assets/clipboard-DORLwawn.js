@@ -1,0 +1,1 @@
+import{c as e,d as t}from"./sessionLifecycle-2-BqGSXz.js";async function n(n,r=`已复制到剪贴板`,i=`复制失败，请手动复制`){try{let e=typeof n==`function`?n():n;await navigator.clipboard.writeText(e),t(r)}catch{e(i)}}export{n as t};

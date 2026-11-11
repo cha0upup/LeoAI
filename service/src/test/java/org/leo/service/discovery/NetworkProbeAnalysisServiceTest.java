@@ -4,10 +4,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.service.discovery.NetworkProbeTestFixtures.FingerprintLibrary;
 import org.leo.service.fingerprint.FingerprintManageService;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +41,7 @@ class NetworkProbeAnalysisServiceTest {
 
     @Test
     void keepsTagSelectionAndSnapshotMetadataWithoutCopyingTagsIntoExecutionRules() throws Exception {
-        var analysis = new NetworkProbeAnalysisService(new StubFingerprintManageService());
+        var analysis = new NetworkProbeAnalysisService(new FingerprintLibrary("web-server", "raw"));
         var selected = analysis.snapshotRules(Map.of("tags", List.of("server")));
         assertEquals(1, selected.size());
         assertEquals("web_any", selected.get(0).get("fingerprintId"));
@@ -247,7 +247,7 @@ class NetworkProbeAnalysisServiceTest {
     @CsvSource({"http,http", "https,https", "https,unknown", "http,''"})
     void reconSelectsRulesByDiscoveredProtocolAndService(String protocol, String service) throws Exception {
         NetworkProbeAnalysisService analysisService =
-                new NetworkProbeAnalysisService(new StubFingerprintManageService());
+                new NetworkProbeAnalysisService(new FingerprintLibrary("web-server", "raw"));
 
         NetworkProbeAnalysisService.PreparedScan prepared = analysisService.prepare(Map.of(
                 "kind", "recon",
@@ -267,7 +267,7 @@ class NetworkProbeAnalysisServiceTest {
     @Test
     void httpReconRulesAreRejectedForTcpTargets() {
         NetworkProbeAnalysisService analysisService =
-                new NetworkProbeAnalysisService(new StubFingerprintManageService());
+                new NetworkProbeAnalysisService(new FingerprintLibrary("web-server", "raw"));
 
         assertThrows(IllegalArgumentException.class, () -> analysisService.prepare(Map.of(
                 "kind", "recon",
@@ -279,7 +279,7 @@ class NetworkProbeAnalysisServiceTest {
     @Test
     void reconRejectsKnownServicesWithoutApplicableRules() {
         NetworkProbeAnalysisService analysisService =
-                new NetworkProbeAnalysisService(new StubFingerprintManageService());
+                new NetworkProbeAnalysisService(new FingerprintLibrary("web-server", "raw"));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                 () -> analysisService.prepare(Map.of(
@@ -504,39 +504,5 @@ class NetworkProbeAnalysisServiceTest {
                 "port", port,
                 "stage", "tcp-connect",
                 "state", state);
-    }
-
-    private static final class StubFingerprintManageService extends FingerprintManageService {
-        private final Map<String, HashMap<String, Object>> fingerprints = Map.of(
-                "web_any", fingerprint("web_any", "web-server", "http", List.of("web", "server")));
-
-        @Override
-        public List<Map<String, Object>> listFingerprints() {
-            return fingerprints.values().stream().map(value -> Map.<String, Object>of(
-                    "fingerprintId", value.get("fingerprintId"),
-                    "protocol", value.get("protocol"),
-                    "name", value.get("name"),
-                    "tags", value.get("tags"))).toList();
-        }
-
-        @Override
-        public HashMap<String, Object> getFingerprintById(String fingerprintId) {
-            HashMap<String, Object> fingerprint = fingerprints.get(fingerprintId);
-            if (fingerprint == null) throw new FingerprintNotFoundException("指纹不存在: " + fingerprintId);
-            return new HashMap<>(fingerprint);
-        }
-
-        private static HashMap<String, Object> fingerprint(String id, String name, String protocol,
-                                                            List<String> tags) {
-            HashMap<String, Object> fingerprint = new HashMap<>();
-            fingerprint.put("fingerprintId", id);
-            fingerprint.put("name", name);
-            fingerprint.put("protocol", protocol);
-            fingerprint.put("tags", tags);
-            fingerprint.put("rule", Map.of(
-                    "requests", List.of(Map.of("body", "")),
-                    "match", Map.of("field", "raw", "operator", "contains", "value", name)));
-            return fingerprint;
-        }
     }
 }

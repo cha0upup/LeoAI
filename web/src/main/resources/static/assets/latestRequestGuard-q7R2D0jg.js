@@ -1,0 +1,1 @@
+function e(e=[]){let t=Object.fromEntries(e.map(e=>[e,0])),n=new Map;function r(e){return t[e]=(t[e]||0)+1,t[e]}return{next:r,isCurrent(e,n){return t[e]===n},coalesce(e,i){if(n.has(e))return n.get(e);let a=r(e),o=(async()=>i(()=>t[e]===a))();n.set(e,o);let s=()=>{n.get(e)===o&&n.delete(e)};return o.then(s,s),o},invalidate(t=e){t.forEach(e=>{r(e),n.delete(e)})}}}export{e as t};

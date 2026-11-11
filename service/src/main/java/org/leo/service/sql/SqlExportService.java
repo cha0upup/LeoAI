@@ -62,7 +62,7 @@ public class SqlExportService {
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
         String namespace = tableRef.namespace();
-        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + timestamp() + ".csv");
+        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + ".csv");
         Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
@@ -104,7 +104,7 @@ public class SqlExportService {
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
         String namespace = namespaceRef.namespace();
-        String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + timestamp() + ".zip");
+        String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + System.currentTimeMillis() + ".zip");
         Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         Map<String, Object> task = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
@@ -119,18 +119,13 @@ public class SqlExportService {
         return publicTask(task);
     }
 
-    public Map<String, Object> getTaskStatus(String userId, String taskId) throws Exception {
-        return publicTask(loadOwnedTask(userId, taskId));
-    }
-
     public Map<String, Object> progress(String userId, String taskId) throws Exception {
-        return getTaskStatus(userId, taskId);
+        return publicTask(loadOwnedTask(userId, taskId));
     }
 
     public Map<String, Object> pause(String userId, String taskId) throws Exception {
         Map<String, Object> task = requireTask(userId, taskId);
-        String status = safeString(task.get("status"));
-        if ("COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status)) {
+        if (isTerminalStatus(safeString(task.get("status")))) {
             return publicTask(task);
         }
         TaskControl control = liveControls.get(taskId);
@@ -145,8 +140,7 @@ public class SqlExportService {
 
     public Map<String, Object> stop(String userId, String taskId) throws Exception {
         Map<String, Object> task = requireTask(userId, taskId);
-        String status = safeString(task.get("status"));
-        if ("COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status)) {
+        if (isTerminalStatus(safeString(task.get("status")))) {
             return publicTask(task);
         }
         TaskControl control = liveControls.get(taskId);
@@ -527,9 +521,9 @@ public class SqlExportService {
     static String exportObjectName(SqlObjectRef ref) {
         if (ref == null) return "default";
         List<String> parts = new ArrayList<String>();
-        if (!isEmpty(ref.catalog())) parts.add(ref.catalog());
-        if (!isEmpty(ref.schema())) parts.add(ref.schema());
-        if (!isEmpty(ref.name())) parts.add(ref.name());
+        if (!isBlank(ref.catalog())) parts.add(ref.catalog());
+        if (!isBlank(ref.schema())) parts.add(ref.schema());
+        if (!isBlank(ref.name())) parts.add(ref.name());
         return parts.isEmpty() ? "default" : String.join("_", parts);
     }
 
@@ -537,10 +531,6 @@ public class SqlExportService {
         if (ref == null) return "";
         return safeString(ref.catalog()) + "\u0000" + safeString(ref.schema())
                 + "\u0000" + safeString(ref.name());
-    }
-
-    private static boolean isEmpty(String value) {
-        return value == null || value.isBlank();
     }
 
     private void updateTask(Map<String, Object> task, String status, int progress, String error) {
@@ -557,7 +547,7 @@ public class SqlExportService {
         if ("RUNNING".equals(status) && task.get("startTime") == null) {
             task.put("startTime", Long.valueOf(System.currentTimeMillis()));
         }
-        if ("COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status)) {
+        if (isTerminalStatus(status)) {
             task.put("endTime", Long.valueOf(System.currentTimeMillis()));
         }
         if (error != null) {
@@ -624,11 +614,7 @@ public class SqlExportService {
     }
 
     private String urlEncode(String value) {
-        try {
-            return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20");
-        } catch (Exception e) {
-            return value;
-        }
+        return value == null ? null : java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private String sanitizeFileName(String fileName) {
@@ -636,10 +622,6 @@ public class SqlExportService {
             return "export.dat";
         }
         return fileName.replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]+", "_");
-    }
-
-    private String timestamp() {
-        return String.valueOf(System.currentTimeMillis());
     }
 
     private String safeLower(String value) {
@@ -650,7 +632,7 @@ public class SqlExportService {
         return value == null ? "" : String.valueOf(value);
     }
 
-    private boolean isBlank(String value) {
+    private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
 

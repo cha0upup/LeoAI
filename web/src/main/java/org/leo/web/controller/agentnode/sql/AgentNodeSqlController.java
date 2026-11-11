@@ -314,7 +314,7 @@ public class AgentNodeSqlController {
                                                 @PathVariable("taskId") String taskId) {
         return sqlCall("获取导出任务状态失败", () -> ApiResponse.success(
                 "ok",
-                sqlExportService.getTaskStatus(requireUser(request).getUserId(), taskId)));
+                sqlExportService.progress(requireUser(request).getUserId(), taskId)));
     }
 
     private Map<String, Object> sqlCall(String failureMessage, SqlAction action) {

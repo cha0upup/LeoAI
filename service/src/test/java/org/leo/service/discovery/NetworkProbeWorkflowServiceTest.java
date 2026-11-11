@@ -7,10 +7,10 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.service.discovery.NetworkDiscoveryDtos.*;
-import org.leo.service.fingerprint.FingerprintManageService;
+import org.leo.service.discovery.NetworkProbeTestFixtures.FingerprintLibrary;
+import org.leo.service.discovery.NetworkProbeTestFixtures.StubNode;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.leo.service.discovery.NetworkProbeTestFixtures.cursorPage;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -44,7 +45,7 @@ class NetworkProbeWorkflowServiceTest {
     private final NetworkProbeOrchestrationService orchestration =
             new NetworkProbeOrchestrationService(orchestrationExecutor, 1L);
     private final NetworkProbeAnalysisService analysis =
-            new NetworkProbeAnalysisService(new StubFingerprintManageService());
+            new NetworkProbeAnalysisService(new FingerprintLibrary("nginx", "body"));
     private final NetworkProbeWorkflowService service =
             new NetworkProbeWorkflowService(analysis, orchestration, workflowExecutor, 1L);
 
@@ -571,16 +572,6 @@ class NetworkProbeWorkflowServiceTest {
                 new ExecutionConfig(4, 1000), null, stages == null ? List.of("REACHABILITY", "PORT_SCAN", "SERVICE_PROBE") : stages));
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> cursorPage(Map<String, Object> response, long cursor) {
-        if (!Integer.valueOf(200).equals(response.get("code"))) return response;
-        Map<String, Object> page = new LinkedHashMap<>((Map<String, Object>) response.get("result"));
-        page.put("cursor", cursor);
-        page.put("nextCursor", cursor + ((List<?>) page.get("observations")).size());
-        page.put("hasMore", false);
-        return Map.of("code", 200, "result", page);
-    }
-
     private static final class FingerprintControlledNode implements NetworkProbeCapable {
         @Override
         public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
@@ -633,12 +624,7 @@ class NetworkProbeWorkflowServiceTest {
         throw new AssertionError("expected control call");
     }
 
-    private static final class WorkflowNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static final class WorkflowNode implements StubNode {
         private final Map<String, Map<String, Object>> tasks = new LinkedHashMap<>();
         private final List<String> startedStages = new ArrayList<>();
         private Set<Integer> openPorts = Set.of(80);
@@ -743,19 +729,9 @@ class NetworkProbeWorkflowServiceTest {
                     "observations", observations,
                     "errors", List.of()));
         }
-
-        @Override public Map<String, Object> pauseNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> resumeNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> stopNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> releaseNetworkProbe(String taskId) { return Map.of("code", 200); }
     }
 
-    private static final class ControlledWorkflowNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static final class ControlledWorkflowNode implements StubNode {
         private final CountDownLatch started = new CountDownLatch(1);
         private final AtomicInteger pauseCalls = new AtomicInteger();
         private final AtomicInteger resumeCalls = new AtomicInteger();
@@ -820,12 +796,7 @@ class NetworkProbeWorkflowServiceTest {
         }
     }
 
-    private static final class CancelledWorkflowNode implements NetworkProbeCapable {
-        @Override
-        public Map<String, Object> ackNetworkProbe(String taskId, long cursor) {
-            return Map.of("code", 200, "cursor", cursor);
-        }
-
+    private static final class CancelledWorkflowNode implements StubNode {
         private final List<String> startedStages = new ArrayList<>();
 
         @Override
@@ -847,43 +818,6 @@ class NetworkProbeWorkflowServiceTest {
             return Map.of("code", 200, "result", Map.of(
                     "status", "STOPPED", "outcome", "CANCELLED", "total", 1,
                     "completed", 0, "progress", 0, "observations", List.of(), "errors", List.of()));
-        }
-
-        @Override public Map<String, Object> pauseNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> resumeNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> stopNetworkProbe(String taskId) { return Map.of("code", 200); }
-        @Override public Map<String, Object> releaseNetworkProbe(String taskId) { return Map.of("code", 200); }
-    }
-
-    private static final class StubFingerprintManageService extends FingerprintManageService {
-        private final Map<String, HashMap<String, Object>> fingerprints = Map.of(
-                "web_any", fingerprint("web_any", "nginx", "http", List.of("web", "server")));
-
-        @Override
-        public List<Map<String, Object>> listFingerprints() {
-            return fingerprints.values().stream().map(value -> Map.<String, Object>of(
-                    "fingerprintId", value.get("fingerprintId"), "protocol", value.get("protocol"),
-                    "name", value.get("name"), "tags", value.get("tags"))).toList();
-        }
-
-        @Override
-        public HashMap<String, Object> getFingerprintById(String fingerprintId) {
-            HashMap<String, Object> fingerprint = fingerprints.get(fingerprintId);
-            if (fingerprint == null) throw new FingerprintNotFoundException("指纹不存在: " + fingerprintId);
-            return new HashMap<>(fingerprint);
-        }
-
-        private static HashMap<String, Object> fingerprint(String id, String name, String protocol,
-                                                            List<String> tags) {
-            HashMap<String, Object> fingerprint = new HashMap<>();
-            fingerprint.put("fingerprintId", id);
-            fingerprint.put("name", name);
-            fingerprint.put("protocol", protocol);
-            fingerprint.put("tags", tags);
-            fingerprint.put("rule", Map.of(
-                    "requests", List.of(Map.of("body", "")),
-                    "match", Map.of("field", "body", "operator", "contains", "value", name)));
-            return fingerprint;
         }
     }
 }

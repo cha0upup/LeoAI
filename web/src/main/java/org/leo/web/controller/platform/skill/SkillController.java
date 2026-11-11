@@ -12,9 +12,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.service.skill.SkillManagementService;
-import org.leo.web.util.DownloadHeaders;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.leo.web.util.FileDownloadResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -495,10 +493,7 @@ public class SkillController {
     private static ResponseEntity<byte[]> archiveResponse(Supplier<SkillManagementService.Archive> export) {
         try {
             SkillManagementService.Archive archive = export.get();
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType("application/zip"));
-            headers.setContentDisposition(DownloadHeaders.attachment(archive.filename()));
-            return ResponseEntity.ok().headers(headers).body(archive.content());
+            return FileDownloadResponse.bytes(archive.content(), archive.filename(), "application/zip");
         } catch (ApiException e) {
             if (e.getCode() == ApiResponse.CODE_NOT_FOUND) return ResponseEntity.notFound().build();
             return ResponseEntity.status(e.getHttpStatus()).body(e.getMessage().getBytes(StandardCharsets.UTF_8));
