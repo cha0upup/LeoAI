@@ -11,18 +11,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -37,6 +34,8 @@ public class AiWorkspaceCommandService {
     private static final int MAX_TIMEOUT_SECONDS = 600;
     private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
     private static final int MAX_COMMAND_CHARS = 20_000;
+    private static final Set<String> INHERITED_ENVIRONMENT = Set.of(
+            "PATH", "Path", "PATHEXT", "SystemRoot", "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "TERM");
 
     private final AiWorkspaceService workspaceService;
     private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
@@ -163,26 +162,17 @@ public class AiWorkspaceCommandService {
 
     private void configureEnvironment(ProcessBuilder builder,
                                       AiWorkspaceService.Workspace workspace) {
-        Map<String, String> original = new LinkedHashMap<>(builder.environment());
         Map<String, String> environment = builder.environment();
-        environment.clear();
-        copyEnvironment(original, environment, "PATH", "Path", "PATHEXT", "SystemRoot",
-                "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "TERM");
+        environment.entrySet().removeIf(entry -> !INHERITED_ENVIRONMENT.contains(entry.getKey())
+                || entry.getValue().isBlank());
         if (!environment.containsKey("PATH") && !environment.containsKey("Path")) {
             environment.put("PATH", "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
         }
-        environment.put("HOME", workspace.filesRoot().toAbsolutePath().toString());
-        environment.put("USERPROFILE", workspace.filesRoot().toAbsolutePath().toString());
+        String filesRoot = workspace.filesRoot().toAbsolutePath().toString();
+        environment.put("HOME", filesRoot);
+        environment.put("USERPROFILE", filesRoot);
         environment.put("TMPDIR", workspace.internalRoot().resolve("tmp").toAbsolutePath().toString());
-        environment.put("LEO_AI_WORKSPACE", workspace.filesRoot().toAbsolutePath().toString());
-    }
-
-    private void copyEnvironment(Map<String, String> source, Map<String, String> target,
-                                 String... names) {
-        for (String name : names) {
-            String value = source.get(name);
-            if (value != null && !value.isBlank()) target.put(name, value);
-        }
+        environment.put("LEO_AI_WORKSPACE", filesRoot);
     }
 
     private Map<String, FileFingerprint> snapshot(Path root) throws IOException {
@@ -191,7 +181,7 @@ public class AiWorkspaceCommandService {
             for (Path path : stream.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                     .filter(p -> !Files.isSymbolicLink(p)).sorted().toList()) {
                 String relative = root.relativize(path).toString().replace('\\', '/');
-                result.put(relative, new FileFingerprint(Files.size(path), sha256(path)));
+                result.put(relative, new FileFingerprint(Files.size(path), AiWorkspaceService.sha256(path)));
             }
         }
         return result;
@@ -199,10 +189,10 @@ public class AiWorkspaceCommandService {
 
     private List<Map<String, Object>> changes(Map<String, FileFingerprint> before,
                                               Map<String, FileFingerprint> after) {
-        Set<String> paths = new HashSet<>(before.keySet());
+        Set<String> paths = new TreeSet<>(before.keySet());
         paths.addAll(after.keySet());
         List<Map<String, Object>> result = new ArrayList<>();
-        for (String path : paths.stream().sorted(Comparator.naturalOrder()).toList()) {
+        for (String path : paths) {
             FileFingerprint previous = before.get(path);
             FileFingerprint current = after.get(path);
             if (previous != null && previous.equals(current)) continue;
@@ -216,20 +206,6 @@ public class AiWorkspaceCommandService {
             result.add(change);
         }
         return List.copyOf(result);
-    }
-
-    private String sha256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream input = Files.newInputStream(path)) {
-                byte[] buffer = new byte[16 * 1024];
-                int count;
-                while ((count = input.read(buffer)) >= 0) digest.update(buffer, 0, count);
-            }
-            return HexFormat.of().formatHex(digest.digest());
-        } catch (java.security.GeneralSecurityException e) {
-            throw new IllegalStateException("SHA-256 不可用", e);
-        }
     }
 
     private void readLog(RunState state, InputStream input) {

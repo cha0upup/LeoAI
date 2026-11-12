@@ -51,8 +51,8 @@ class AiWorkspaceCommandServiceTest {
     @Test
     void executesCommandInWorkspaceAndReportsFileChanges() throws Exception {
         String command = System.getProperty("os.name", "").toLowerCase().contains("win")
-                ? "echo hello workspace>output.txt && cd"
-                : "printf 'hello workspace' > output.txt && pwd";
+                ? "echo hello workspace>output.txt && echo WORKSPACE_HOME=%USERPROFILE%"
+                : "printf 'hello workspace' > output.txt && printf 'WORKSPACE_HOME=%s\\n' \"$HOME\"";
 
         Map<String, Object> started = commandService.start(workspace, command, 10);
         String runId = String.valueOf(started.get("runId"));
@@ -63,12 +63,13 @@ class AiWorkspaceCommandServiceTest {
         assertTrue(Files.readString(workspace.filesRoot().resolve("output.txt"))
                 .contains("hello workspace"));
         assertTrue(String.valueOf(completed.get("logTail"))
-                .contains(workspace.filesRoot().toString()));
+                .contains("WORKSPACE_HOME=" + workspace.filesRoot()));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> changes = (List<Map<String, Object>>) completed.get("changedFiles");
-        assertTrue(changes.stream().anyMatch(change ->
-                "output.txt".equals(change.get("path"))
-                        && "CREATED".equals(change.get("change"))));
+        var output = changes.stream()
+                .filter(change -> "output.txt".equals(change.get("path"))).findFirst().orElseThrow();
+        assertEquals("CREATED", output.get("change"));
+        assertEquals(workspaceService.readText(workspace, "output.txt", 1, 10).get("sha256"), output.get("sha256"));
         assertTrue(Files.isRegularFile(workspace.filesRoot()
                 .resolve(String.valueOf(completed.get("logPath")))));
     }

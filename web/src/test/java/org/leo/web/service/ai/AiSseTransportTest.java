@@ -1,5 +1,6 @@
 package org.leo.web.service.ai;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -28,40 +29,54 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiSseTransportTest {
+    private final AiSseEventPump eventPump = mock(AiSseEventPump.class);
+    private final SseEmitter emitter = mock(SseEmitter.class);
+    private final AiThread runtime = new AiThread("thread-1", "test");
+    private final List<AiSseEvent> persistedEvents = new ArrayList<>();
+    private final List<AiSseEvent> eventLog = new ArrayList<>();
+    private final AiSseEventPump.Handle handle = new AiSseEventPump.Handle(
+            new AtomicBoolean(false), mock(Future.class));
+    private AiSseTransport.Session session;
+
+    @BeforeEach
+    void setUp() {
+        runtime.configureEventJournal(0L, persistedEvents::add);
+        when(eventPump.start(
+                anyString(), same(runtime.getAiSseEventQueue()), same(eventLog),
+                any(), any(), any())).thenReturn(handle);
+        session = new AiSseTransport(eventPump, new AiSseEmitterWriter())
+                .open("test", runtime, emitter, eventLog);
+    }
 
     @Test
     void recordsAndSendsEventsThroughOneTransportSession() throws Exception {
-        Fixture fixture = fixture();
+        session.emit("delta", "hello");
+        session.emitStatus("completed");
 
-        fixture.session.emit("delta", "hello");
-        fixture.session.emitStatus("completed");
-
-        assertEquals(2, fixture.persistedEvents.size());
-        verify(fixture.emitter, times(2)).send(any(SseEmitter.SseEventBuilder.class));
+        assertEquals(2, persistedEvents.size());
+        verify(emitter, times(2)).send(any(SseEmitter.SseEventBuilder.class));
     }
 
     @Test
     void safelyRecordsEventWhenClientHasDisconnected() throws Exception {
-        Fixture fixture = fixture();
         doThrow(new IOException("disconnected"))
-                .when(fixture.emitter).send(any(SseEmitter.SseEventBuilder.class));
+                .when(emitter).send(any(SseEmitter.SseEventBuilder.class));
 
-        fixture.session.emitSafely("warn", "still recorded");
+        session.emitSafely("warn", "still recorded");
 
-        assertEquals(1, fixture.persistedEvents.size());
+        assertEquals(1, persistedEvents.size());
     }
 
     @Test
     void stopsPumpAndSynchronouslyFlushesRemainingQueue() throws Exception {
-        Fixture fixture = fixture();
-        AiSseEvent queued = fixture.runtime.offerSseEvent("node", Map.of("kind", "plan"));
+        AiSseEvent queued = runtime.offerSseEvent("node", Map.of("kind", "plan"));
 
-        fixture.session.stopAndFlush();
+        session.stopAndFlush();
 
-        verify(fixture.eventPump).stop(fixture.handle);
-        assertTrue(fixture.runtime.getAiSseEventQueue().isEmpty());
-        assertEquals(List.of(queued), fixture.eventLog);
-        verify(fixture.emitter).send(any(SseEmitter.SseEventBuilder.class));
+        verify(eventPump).stop(handle);
+        assertTrue(runtime.getAiSseEventQueue().isEmpty());
+        assertEquals(List.of(queued), eventLog);
+        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
     }
 
     @Test
@@ -72,7 +87,6 @@ class AiSseTransportTest {
 
     @Test
     void sendsErrorMetadataBeforeTheTerminalErrorAndCompletion() throws Exception {
-        SseEmitter emitter = mock(SseEmitter.class);
         var error = new AiErrorClassifier.Classification("network", "connection lost", null, List.of());
         var events = org.mockito.ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
 
@@ -92,42 +106,10 @@ class AiSseTransportTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void errorSendingAlwaysAttemptsToCloseTheConnection(boolean disconnected) throws Exception {
-        SseEmitter emitter = mock(SseEmitter.class);
         if (disconnected) {
             doThrow(new IOException("disconnected")).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
         }
         AiSseEmitterWriter.safeSendError(emitter, "failed");
         verify(emitter).complete();
-    }
-
-    private Fixture fixture() {
-        AiSseEventPump eventPump = mock(AiSseEventPump.class);
-        SseEmitter emitter = mock(SseEmitter.class);
-        AiThread runtime = new AiThread("thread-1", "test");
-        List<AiSseEvent> persistedEvents = new ArrayList<>();
-        runtime.configureEventJournal(0L, persistedEvents::add);
-        List<AiSseEvent> eventLog = new ArrayList<>();
-        AiSseEventPump.Handle handle = new AiSseEventPump.Handle(
-                new AtomicBoolean(false), mock(Future.class));
-        when(eventPump.start(
-                anyString(), same(runtime.getAiSseEventQueue()), same(eventLog),
-                any(), any(), any())).thenReturn(handle);
-
-        AiSseTransport transport =
-                new AiSseTransport(eventPump, new AiSseEmitterWriter());
-        AiSseTransport.Session session =
-                transport.open("test", runtime, emitter, eventLog);
-        return new Fixture(
-                eventPump, emitter, runtime, eventLog,
-                persistedEvents, handle, session);
-    }
-
-    private record Fixture(AiSseEventPump eventPump,
-                           SseEmitter emitter,
-                           AiThread runtime,
-                           List<AiSseEvent> eventLog,
-                           List<AiSseEvent> persistedEvents,
-                           AiSseEventPump.Handle handle,
-                           AiSseTransport.Session session) {
     }
 }

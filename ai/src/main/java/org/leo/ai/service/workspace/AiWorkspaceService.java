@@ -570,7 +570,7 @@ public class AiWorkspaceService {
         }
     }
 
-    private String sha256(Path path) throws IOException {
+    static String sha256(Path path) throws IOException {
         try (var input = Files.newInputStream(path)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] buffer = new byte[64 * 1024];
