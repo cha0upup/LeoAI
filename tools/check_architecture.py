@@ -113,6 +113,13 @@ SOURCE_IMPORT_BOUNDARIES = (
                      'org.springframework.', 'java.sql.', 'javax.sql.'),
         'message': 'database view policy imports persistence or encryption infrastructure',
     },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',),
+        'prefixes': ('org.springframework.', 'org.leo.dao.', 'org.leo.core.agent.',
+                     'org.leo.service.fingerprint.', 'org.leo.service.concurrent.', 'java.io.',
+                     'java.nio.file.', 'java.util.concurrent.'),
+        'message': 'HTTP fingerprint evaluator imports execution or rule-storage infrastructure',
+    },
 )
 # Same-package references need no import, so guard them in code as well.
 SOURCE_CODE_BOUNDARIES = (
@@ -161,6 +168,16 @@ SOURCE_CODE_BOUNDARIES = (
         'sources': ('service/src/main/java/org/leo/service/sql/AgentDatabaseConnectionService.java',),
         'pattern': r'\b(?:INLINE_SECRET|AUTHORITY_PASSWORD)\b',
         'message': 'database disclosure rules belong to the view policy, not persistence',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',),
+        'pattern': r'\bNetworkProbe(?:AnalysisService|WorkflowService|OrchestrationService|Scheduler|ResultRepository)\b',
+        'message': 'HTTP fingerprint evaluator depends on task execution',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeAnalysisService.java',),
+        'pattern': r'\b(?:VERSION_TOKEN|IncompleteEvidence)\b',
+        'message': 'HTTP evidence semantics belong to the evaluator, not analysis lifecycle',
     },
 )
 NON_CODE = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/')

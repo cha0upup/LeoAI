@@ -27,6 +27,23 @@ public final class NetworkProbePayloads {
         }
     }
 
+    /** Plan/evaluator integers deliberately retain the non-trimming parsing contract. */
+    static int boundedInt(Object value, int fallback, int min, int max) {
+        int result = fallback;
+        try {
+            if (value instanceof Number number) result = number.intValue();
+            else if (value != null && !String.valueOf(value).isBlank()) result = Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            result = fallback;
+        }
+        return Math.max(min, Math.min(max, result));
+    }
+
+    static String defaultText(Object value, String fallback) {
+        String result = text(value);
+        return result.isEmpty() ? fallback : result;
+    }
+
     static String endpointKey(Map<String, Object> endpoint) {
         return text(endpoint.get("host")) + ":" + integer(endpoint.get("port"), -1);
     }

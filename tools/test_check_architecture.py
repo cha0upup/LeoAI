@@ -228,6 +228,26 @@ class ArchitectureAuditTest(unittest.TestCase):
                    'class AgentDatabaseConnectionService { void view() { DatabaseConnectionViewPolicy.publicValues(null); } }')
         self.assertEqual([], audit(self.root))
 
+    def test_http_fingerprint_evaluation_rejects_execution_and_split_evidence_rules(self):
+        self.write('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',
+                   'import org.leo.service.fingerprint.FingerprintManageService;\n'
+                   'import org.leo.core.agent.capability.NetworkProbeCapable;\n'
+                   'class HttpFingerprintEvaluator { NetworkProbeAnalysisService lifecycle; }')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeAnalysisService.java',
+                   'class NetworkProbeAnalysisService { String VERSION_TOKEN; }')
+        issues = audit(self.root)
+        self.assertEqual(4, len(issues))
+        self.assertTrue(any('evidence semantics belong to the evaluator' in issue for issue in issues))
+
+    def test_http_fingerprint_evaluator_accepts_value_rules_and_ignores_documentation(self):
+        self.write('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',
+                   'import java.util.regex.Pattern;\n'
+                   'import static org.leo.service.discovery.NetworkProbePayloads.copyMap;\n'
+                   '// NetworkProbeAnalysisService\nclass HttpFingerprintEvaluator {}')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeAnalysisService.java',
+                   'class NetworkProbeAnalysisService { HttpFingerprintEvaluator.Decision decision; }')
+        self.assertEqual([], audit(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()
