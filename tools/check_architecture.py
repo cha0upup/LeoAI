@@ -100,6 +100,19 @@ SOURCE_IMPORT_BOUNDARIES = (
                      'org.leo.core.util.json.', 'org.leo.service.concurrent.'),
         'message': 'SQL export task imports execution or storage implementation',
     },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',),
+        'prefixes': ('java.io.', 'java.nio.file.', 'java.util.concurrent.', 'org.springframework.',
+                     'org.leo.core.agent.', 'org.leo.core.config.', 'org.leo.core.session.',
+                     'org.leo.service.concurrent.'),
+        'message': 'probe result buffer imports execution or storage infrastructure',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',),
+        'prefixes': ('org.leo.dao.', 'org.leo.service.security.', 'org.leo.core.entity.',
+                     'org.springframework.', 'java.sql.', 'javax.sql.'),
+        'message': 'database view policy imports persistence or encryption infrastructure',
+    },
 )
 # Same-package references need no import, so guard them in code as well.
 SOURCE_CODE_BOUNDARIES = (
@@ -128,6 +141,26 @@ SOURCE_CODE_BOUNDARIES = (
         'sources': ('service/src/main/java/org/leo/service/sql/SqlExportService.java',),
         'pattern': r'\bliveControls\b|\bclass\s+TaskControl\b',
         'message': 'SQL export attempt ownership belongs to the task, not a parallel control registry',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',),
+        'pattern': r'\bNetworkProbe(?:OrchestrationService|Scheduler|ResultRepository|WorkflowService|AnalysisService)\b',
+        'message': 'probe result buffer depends on task execution',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeOrchestrationService.java',),
+        'pattern': r'\b(?:observationOffset|errorOffset|seenErrors)\b',
+        'message': 'probe result accounting belongs to the buffer, not orchestration',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',),
+        'pattern': r'\b(?:AgentDatabaseConnectionService|DatabaseConnectionProfileService|DatabaseCredentialCryptoService)\b',
+        'message': 'database view policy depends on application services',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/AgentDatabaseConnectionService.java',),
+        'pattern': r'\b(?:INLINE_SECRET|AUTHORITY_PASSWORD)\b',
+        'message': 'database disclosure rules belong to the view policy, not persistence',
     },
 )
 NON_CODE = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/')

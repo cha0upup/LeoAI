@@ -13,14 +13,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
+/** Persists connection profiles and resolves encrypted runtime credentials; public edit rules stay in the view policy. */
 @Service
 public class AgentDatabaseConnectionService {
-
-    private static final Pattern INLINE_SECRET = Pattern.compile(
-            "(?i)(^|[?&;])((?:password|passwd|pwd|token|access_token|secret|api_key)=)([^&;]*)");
-    private static final Pattern AUTHORITY_PASSWORD = Pattern.compile("(://[^:/?#]+:)[^@/?#]+(@)");
 
     private final AgentDatabaseConnectionMapper mapper;
     private final DatabaseCredentialCryptoService credentialCrypto;
@@ -121,7 +117,7 @@ public class AgentDatabaseConnectionService {
         view.put("connectionId", source.getConnectionId());
         view.put("connectionName", source.getConnectionName());
         view.put("agentId", source.getAgentId());
-        view.put("connection", sanitizeConnectionView(
+        view.put("connection", DatabaseConnectionViewPolicy.publicValues(
                 DatabaseConnectionSpec.fromMap(storedConnectionValues(source)).toMap()));
         view.put("status", source.getStatus());
         view.put("testStatus", source.getTestStatus());
@@ -141,9 +137,8 @@ public class AgentDatabaseConnectionService {
      */
     public Map<String, Object> mergeProtectedValues(AgentDatabaseConnection source,
                                                     Map<String, Object> incoming) {
-        Map<String, Object> merged = new LinkedHashMap<>(incoming);
-        if (source != null) mergeProtectedValues(storedConnectionValues(source), merged);
-        return merged;
+        return DatabaseConnectionViewPolicy.restoreProtectedValues(
+                source == null ? Map.of() : storedConnectionValues(source), incoming);
     }
 
     private Map<String, Object> storedConnectionValues(AgentDatabaseConnection source) {
@@ -157,61 +152,4 @@ public class AgentDatabaseConnectionService {
         return values;
     }
 
-    private Map<String, Object> sanitizeConnectionView(Map<String, Object> source) {
-        Map<String, Object> safe = new LinkedHashMap<>();
-        source.forEach((key, value) -> {
-            if (!isSecretKey(key)) safe.put(key, sanitizeViewValue(value));
-        });
-        return safe;
-    }
-
-    @SuppressWarnings("unchecked")
-    private void mergeProtectedValues(Map<String, Object> stored, Map<String, Object> incoming) {
-        stored.forEach((key, storedValue) -> {
-            if (isSecretKey(key)) {
-                if (!incoming.containsKey(key)) incoming.put(key, storedValue);
-                return;
-            }
-            Object incomingValue = incoming.get(key);
-            if (storedValue instanceof Map<?, ?> storedMap
-                    && incomingValue instanceof Map<?, ?> incomingMap) {
-                Map<String, Object> writable = new LinkedHashMap<>();
-                incomingMap.forEach((nestedKey, value) -> writable.put(String.valueOf(nestedKey), value));
-                mergeProtectedValues((Map<String, Object>) storedMap, writable);
-                incoming.put(key, writable);
-                return;
-            }
-            if (storedValue instanceof String storedText
-                    && incomingValue instanceof String incomingText
-                    && incomingText.contains("***")
-                    && incomingText.equals(sanitizeViewValue(storedText))) {
-                incoming.put(key, storedText);
-            }
-        });
-    }
-
-    private Object sanitizeViewValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> safe = new LinkedHashMap<>();
-            map.forEach((key, item) -> {
-                String name = String.valueOf(key);
-                if (!isSecretKey(name)) safe.put(name, sanitizeViewValue(item));
-            });
-            return safe;
-        }
-        if (value instanceof List<?> list) return list.stream().map(this::sanitizeViewValue).toList();
-        if (value instanceof String text) {
-            String sanitized = INLINE_SECRET.matcher(text).replaceAll("$1$2***");
-            return AUTHORITY_PASSWORD.matcher(sanitized).replaceAll("$1***$2");
-        }
-        return value;
-    }
-
-    private boolean isSecretKey(String key) {
-        String normalized = key == null ? "" : key.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
-        return normalized.contains("password") || normalized.contains("passwd") || normalized.equals("pwd")
-                || normalized.contains("secret") || normalized.contains("token")
-                || normalized.contains("credential") || normalized.contains("privatekey")
-                || normalized.contains("accesskey") || normalized.contains("apikey");
-    }
 }

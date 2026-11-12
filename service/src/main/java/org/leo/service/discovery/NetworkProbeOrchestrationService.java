@@ -5,7 +5,6 @@ import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,6 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
 import static org.leo.service.discovery.NetworkProbePayloads.copyMapOrEmpty;
 import static org.leo.service.discovery.NetworkProbePayloads.text;
+import static org.leo.service.discovery.NetworkProbeResultBuffer.PAGE_BYTES;
+import static org.leo.service.discovery.NetworkProbeResultBuffer.PAGE_ITEMS;
 
 /**
  * Runs one logical network probe as a sequence of bounded node-side tasks.
@@ -38,10 +39,6 @@ import static org.leo.service.discovery.NetworkProbePayloads.text;
 public final class NetworkProbeOrchestrationService implements AutoCloseable {
 
     private static final int MAX_ACTIVE_TASKS = 36;
-    private static final int RESULT_PAGE_ITEMS = 512;
-    private static final int RESULT_PAGE_BYTES = 1024 * 1024;
-    private static final int MAX_PENDING_ITEMS = 4096;
-    private static final long MAX_PENDING_BYTES = 8L * 1024 * 1024;
     private static final long RPC_TIMEOUT_MS = 15_000L;
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
     private static final long DEFAULT_POLL_INTERVAL_MS = 2000L;
@@ -135,11 +132,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         LogicalTask task = requireTask(sessionId, taskId);
         boolean advanced;
         synchronized (task.monitor) {
-            long before = (long) task.observationOffset + task.errorOffset;
-            acknowledge(task.observations, true, task, observationCursor);
-            acknowledge(task.errors, false, task, errorCursor);
-            refreshPressure(task);
-            advanced = before != (long) task.observationOffset + task.errorOffset;
+            advanced = task.results.acknowledge(observationCursor, errorCursor);
         }
         if (advanced) scheduler.wake(task.ticket);
     }
@@ -150,7 +143,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         boolean ready;
         synchronized (task.monitor) {
             task.listener = listener;
-            ready = task.terminal() || !task.observations.isEmpty() || !task.errors.isEmpty();
+            ready = task.terminal() || task.results.hasPending();
         }
         if (listener != null && ready) listener.run();
     }
@@ -213,7 +206,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             }
             finish(task, "CANCELLED"); return -1;
         }
-        if ("PAUSED".equals(task.status) || task.backpressured) {
+        if ("PAUSED".equals(task.status) || task.results.isBackpressured()) {
             if (task.childTaskId != null && !task.nodePaused) {
                 controlChild(task, task.childTaskId, ChildControl.PAUSE); task.nodePaused = true;
             }
@@ -233,7 +226,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             if (id.isEmpty()) throw new IllegalStateException("节点未返回网络探测子任务 ID");
             synchronized (task.monitor) {
                 task.childTaskId = id; task.childCursor = 0; task.childThreads = workers;
-                task.childTargetCount = end - task.nextIndex; task.batchIndex++; task.seenErrors.clear();
+                task.childTargetCount = end - task.nextIndex; task.batchIndex++; task.results.beginBatch();
             }
             if (task.cancelRequested || "PAUSED".equals(task.status)) return 0;
         }
@@ -249,7 +242,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         if (latest == null) {
             long cursor = task.childCursor;
             Map<String, Object> queried = invoke(task, () -> task.node.queryNetworkProbe(
-                    id, cursor, cursor, RESULT_PAGE_ITEMS, RESULT_PAGE_BYTES, true));
+                    id, cursor, cursor, PAGE_ITEMS, PAGE_BYTES, true));
             latest = copyMapOrEmpty(queried.get("result"));
         }
         if (latest.isEmpty()) throw new IllegalStateException("节点网络探测子任务结果为空");
@@ -258,22 +251,15 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         boolean more = Boolean.TRUE.equals(latest.get("hasMore"));
         if (longValue(latest.get("cursor"), -1) != task.childCursor || next - task.childCursor != page.size()
                 || (more && page.isEmpty())) throw new IllegalStateException("节点网络探测分页游标无效");
-        List<Map<String, Object>> errors = mapListOrEmpty(latest.get("errors")).stream()
-                .filter(error -> !task.seenErrors.contains(error)).toList();
-        long bytes = page.stream().mapToLong(NetworkProbeOrchestrationService::estimateBytes).sum()
-                + errors.stream().mapToLong(NetworkProbeOrchestrationService::estimateBytes).sum();
-        int items = page.size() + errors.size();
-        if (items > MAX_PENDING_ITEMS || bytes > MAX_PENDING_BYTES)
-            throw new IllegalStateException("节点单页结果超过服务端缓冲容量");
         boolean notify;
         synchronized (task.monitor) {
-            if (task.observations.size() + task.errors.size() + items > MAX_PENDING_ITEMS
-                    || task.pendingBytes + bytes > MAX_PENDING_BYTES) {
+            int items = task.results.offer(page, mapListOrEmpty(latest.get("errors")), !cancelling);
+            if (items < 0) {
                 if (cancelling) return -1;
-                task.pendingPage = latest; task.backpressured = true; return 0;
+                task.pendingPage = latest;
+                return 0;
             }
-            task.pendingPage = null; task.observations.addAll(page); task.errors.addAll(errors);
-            task.seenErrors.addAll(errors); task.pendingBytes += bytes; refreshPressure(task);
+            task.pendingPage = null;
             Map<String, Object> metadata = new LinkedHashMap<>(latest);
             metadata.remove("observations"); metadata.remove("errors");
             notify = items > 0 || !metadata.equals(task.activeSnapshot);
@@ -317,10 +303,10 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         synchronized (budget) {
             if (task.leaseThreads > 0) return true;
             budget.waiting.add(task);
-            budget.waiting.removeIf(candidate -> candidate.terminal() || "PAUSED".equals(candidate.status) || candidate.backpressured);
+            budget.waiting.removeIf(candidate -> candidate.terminal() || "PAUSED".equals(candidate.status) || candidate.results.isBackpressured());
             if (budget.waiting.isEmpty() || budget.waiting.iterator().next() != task) return false;
             int runnable = (int) tasks.values().stream().filter(candidate -> candidate.node.equals(task.node)
-                    && !candidate.terminal() && !"PAUSED".equals(candidate.status) && !candidate.backpressured).count();
+                    && !candidate.terminal() && !"PAUSED".equals(candidate.status) && !candidate.results.isBackpressured()).count();
             int capacity = Math.max(1, Math.min(NetworkProbeLimits.NODE_MAX_THREADS, task.node.networkProbeWorkerLimit()));
             int wanted = task.childTaskId != null ? task.childThreads
                     : Math.min(task.requestedThreads, Math.max(1, capacity / Math.max(1, runnable)));
@@ -434,8 +420,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             Map<String, Object> result = taskSummary(task);
             result.put("targets", new ArrayList<>(task.targets));
             result.put("plan", publicPlan(task.plan));
-            result.put("observations", new ArrayList<>(task.observations));
-            result.put("errors", new ArrayList<>(task.errors));
+            result.putAll(task.results.snapshot());
             return result;
         }
     }
@@ -443,27 +428,8 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
     private Map<String, Object> incrementalSnapshot(LogicalTask task,
                                                     long observationCursor, long errorCursor) {
         synchronized (task.monitor) {
-            int observationBase = task.observationOffset;
-            int observationStart = boundedStart(observationCursor, observationBase, task.observations.size());
-            int errorBase = task.errorOffset;
-            int errorStart = boundedStart(errorCursor, errorBase, task.errors.size());
-            int observationEnd = pageEnd(task.observations, observationStart, RESULT_PAGE_ITEMS, RESULT_PAGE_BYTES);
-            int errorEnd = pageEnd(task.errors, errorStart,
-                    Math.max(1, RESULT_PAGE_ITEMS - (observationEnd - observationStart)), RESULT_PAGE_BYTES);
-            List<Map<String, Object>> observations = new ArrayList<>(
-                    task.observations.subList(observationStart, observationEnd));
-            List<Map<String, Object>> errors = new ArrayList<>(
-                    task.errors.subList(errorStart, errorEnd));
             Map<String, Object> result = taskSummary(task);
-            result.put("cursor", Long.valueOf(observationCursor));
-            result.put("nextCursor", Long.valueOf(observationBase + observationEnd));
-            result.put("errorCursor", Long.valueOf(errorCursor));
-            result.put("nextErrorCursor", Long.valueOf(errorBase + errorEnd));
-            result.put("hasMore", Boolean.valueOf(observationEnd < task.observations.size()
-                    || errorEnd < task.errors.size()));
-            result.put("incremental", Boolean.TRUE);
-            result.put("observations", observations);
-            result.put("errors", errors);
+            result.putAll(task.results.incrementalSnapshot(observationCursor, errorCursor));
             return result;
         }
     }
@@ -483,67 +449,13 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         result.put("batchCount", Integer.valueOf(task.batchCount));
         result.put("batchIndex", Integer.valueOf(task.batchIndex));
         result.put("createdAt", Long.valueOf(task.createdAt));
-        result.put("backpressured", task.backpressured);
-        result.put("pendingItems", task.observations.size() + task.errors.size());
-        result.put("pendingBytes", task.pendingBytes);
+        result.put("backpressured", task.results.isBackpressured());
+        result.put("pendingItems", task.results.pendingItems());
+        result.put("pendingBytes", task.results.pendingBytes());
         result.put("nodeBackpressured", Boolean.TRUE.equals(task.activeSnapshot.get("backpressured")));
         if (task.error != null) result.put("error", task.error);
         if (task.finishedAt > 0L) result.put("finishedAt", Long.valueOf(task.finishedAt));
         return result;
-    }
-
-    private static int boundedStart(long cursor, int base, int size) {
-        long requested = Math.max(cursor, (long) base);
-        long start = requested - base;
-        return (int) Math.max(0L, Math.min((long) size, start));
-    }
-
-    private static int pageEnd(List<Map<String, Object>> values, int start,
-                               int maxItems, int maxBytes) {
-        int end = start;
-        int bytes = 0;
-        while (end < values.size() && end - start < maxItems) {
-            int estimate = String.valueOf(values.get(end)).length();
-            if (end > start && bytes + estimate > maxBytes) break;
-            bytes += estimate;
-            end++;
-        }
-        return end;
-    }
-
-    private static void acknowledge(List<Map<String, Object>> values, boolean observations,
-                                    LogicalTask task, long cursor) {
-        int base = observations ? task.observationOffset : task.errorOffset;
-        long bounded = Math.max((long) base, Math.min(cursor, (long) base + values.size()));
-        int remove = (int) (bounded - base);
-        if (remove > 0) {
-            for (Map<String, Object> value : values.subList(0, remove)) task.pendingBytes -= estimateBytes(value);
-            task.pendingBytes = Math.max(0L, task.pendingBytes);
-            values.subList(0, remove).clear();
-            if (observations) task.observationOffset = (int) bounded;
-            else task.errorOffset = (int) bounded;
-        }
-    }
-
-    private static void refreshPressure(LogicalTask task) {
-        int count = task.observations.size() + task.errors.size();
-        if (count >= MAX_PENDING_ITEMS * 3 / 4 || task.pendingBytes >= MAX_PENDING_BYTES * 3 / 4)
-            task.backpressured = true;
-        else if (count <= MAX_PENDING_ITEMS / 2 && task.pendingBytes <= MAX_PENDING_BYTES / 2)
-            task.backpressured = false;
-    }
-
-    // Conservative string/container budget, without allocating serialized copies.
-    private static long estimateBytes(Object value) {
-        if (value instanceof String text) return 16L + 3L * text.length();
-        if (value instanceof byte[] bytes) return 16L + bytes.length;
-        long size = 32L;
-        if (value instanceof Map<?, ?> map) {
-            for (var entry : map.entrySet()) size += 32L + estimateBytes(entry.getKey()) + estimateBytes(entry.getValue());
-        } else if (value instanceof List<?> list) {
-            for (Object item : list) size += 8L + estimateBytes(item);
-        }
-        return size;
     }
 
     private void fail(LogicalTask task, String message) {
@@ -562,12 +474,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
             error.put("stage", "orchestration");
             error.put("errorCode", "ORCHESTRATION");
             error.put("error", task.error);
-            long bytes = estimateBytes(error);
-            if (task.observations.size() + task.errors.size() < MAX_PENDING_ITEMS
-                    && task.pendingBytes + bytes <= MAX_PENDING_BYTES) {
-                task.errors.add(error);
-                task.pendingBytes += bytes;
-            }
+            task.results.addFailure(error);
         }
     }
 
@@ -709,12 +616,7 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         private final Object monitor = new Object();
         private final Object nodeCallMonitor = new Object();
         private final CountDownLatch finished = new CountDownLatch(1);
-        private final List<Map<String, Object>> observations = new ArrayList<>();
-        private final List<Map<String, Object>> errors = new ArrayList<>();
-        private int observationOffset;
-        private int errorOffset;
-        private long pendingBytes;
-        private volatile boolean backpressured;
+        private final NetworkProbeResultBuffer results = new NetworkProbeResultBuffer();
         private String error;
         private volatile String status = "RUNNING";
         private volatile String outcome = "RUNNING";
@@ -729,7 +631,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         private volatile boolean nodePaused;
         private long idleDelay = 10;
         private Map<String, Object> pendingPage;
-        private final Set<Map<String, Object>> seenErrors = new HashSet<>();
         private int completedTargets;
         private int batchIndex;
         private long finishedAt;

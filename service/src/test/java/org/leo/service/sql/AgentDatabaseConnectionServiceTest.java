@@ -166,6 +166,20 @@ class AgentDatabaseConnectionServiceTest {
     }
 
     @Test
+    void publicViewsAndMaskedEditsDoNotDecryptCredentialsOrConsultTheMapper() {
+        DatabaseCredentialCryptoService isolatedCrypto = mock(DatabaseCredentialCryptoService.class);
+        AgentDatabaseConnectionService isolated = new AgentDatabaseConnectionService(mapper, isolatedCrypto);
+        AgentDatabaseConnection stored = connection("opaque-ciphertext");
+        var view = isolated.toConnectionView(stored);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> values = (Map<String, Object>) view.get("connection");
+        var restored = isolated.mergeProtectedValues(stored, values);
+        assertEquals("mysql", restored.get("dialect"));
+        assertFalse(view.toString().contains("opaque-ciphertext"));
+        org.mockito.Mockito.verifyNoInteractions(isolatedCrypto, mapper);
+    }
+
+    @Test
     void updatesEnabledStateAndRejectsInactiveProfilesAtExecutionBoundary() {
         when(mapper.updateStatusByAgent("connection-1", "agent-1", 0)).thenReturn(1);
         AgentDatabaseConnection connection = connection("plain-secret");

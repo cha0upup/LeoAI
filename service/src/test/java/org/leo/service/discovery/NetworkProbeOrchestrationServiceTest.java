@@ -240,6 +240,29 @@ class NetworkProbeOrchestrationServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void mutatingApiSnapshotsDoesNotChangeRetainedEvidenceOrAckAccounting() throws Exception {
+        String taskId = startSingleTarget(new IncrementalNode());
+        awaitTerminal(taskId);
+        var full = result(service.query("session-1", taskId));
+        long before = ((Number) full.get("pendingBytes")).longValue();
+        ((Map<String, Object>) ((List<?>) full.get("observations")).get(0)).put("padding", "x".repeat(100_000));
+        var page = result(service.querySince("session-1", taskId, 0, 0));
+        var first = (Map<String, Object>) ((List<?>) page.get("observations")).get(0);
+        assertEquals(false, first.containsKey("padding"));
+        first.put("host", "changed");
+        var unchanged = result(service.query("session-1", taskId));
+        assertEquals("127.0.0.1", ((Map<?, ?>) ((List<?>) unchanged.get("observations")).get(0)).get("host"));
+        assertEquals(before, unchanged.get("pendingBytes"));
+        service.acknowledge("session-1", taskId, 1, 0);
+        var remaining = result(service.querySince("session-1", taskId, 1, 0));
+        assertEquals(1, remaining.get("pendingItems"));
+        assertTrue(((Number) remaining.get("pendingBytes")).longValue() > 0);
+        service.acknowledge("session-1", taskId, 2, 0);
+        assertEquals(0L, result(service.querySince("session-1", taskId, 2, 0)).get("pendingBytes"));
+    }
+
+    @Test
     void stopReleasesChildWhileTheResultBufferIsBackpressured() throws Exception {
         BurstNode node = new BurstNode(true);
         String taskId = startSingleTarget(node);

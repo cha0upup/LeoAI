@@ -189,6 +189,45 @@ class ArchitectureAuditTest(unittest.TestCase):
                    'class SqlExportService { SqlExportTask task; }')
         self.assertEqual([], audit(self.root))
 
+    def test_probe_result_buffer_rejects_execution_and_split_accounting(self):
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',
+                   'import org.leo.core.agent.capability.NetworkProbeCapable;\n'
+                   'import java.util.concurrent.ExecutorService;\n'
+                   'class NetworkProbeResultBuffer { NetworkProbeScheduler scheduler; }')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeOrchestrationService.java',
+                   'class NetworkProbeOrchestrationService { int observationOffset; int errorOffset; }')
+        issues = audit(self.root)
+        self.assertEqual(5, len(issues))
+        self.assertTrue(any('accounting belongs to the buffer' in issue for issue in issues))
+
+    def test_probe_result_buffer_accepts_value_operations_and_ignores_documentation(self):
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',
+                   'import java.util.LinkedHashMap;\n'
+                   'import static org.leo.service.discovery.NetworkProbePayloads.copyMap;\n'
+                   '// NetworkProbeScheduler\nclass NetworkProbeResultBuffer {}')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeOrchestrationService.java',
+                   'class NetworkProbeOrchestrationService { NetworkProbeResultBuffer results;\n'
+                   'String note = "observationOffset"; }')
+        self.assertEqual([], audit(self.root))
+
+    def test_database_view_policy_rejects_storage_and_split_disclosure_rules(self):
+        self.write('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',
+                   'import org.leo.dao.mapper.Example;\nimport org.springframework.stereotype.Component;\n'
+                   'class DatabaseConnectionViewPolicy { AgentDatabaseConnectionService repository; }')
+        self.write('service/src/main/java/org/leo/service/sql/AgentDatabaseConnectionService.java',
+                   'class AgentDatabaseConnectionService { String INLINE_SECRET; }')
+        issues = audit(self.root)
+        self.assertEqual(4, len(issues))
+        self.assertTrue(any('disclosure rules belong to the view policy' in issue for issue in issues))
+
+    def test_database_view_policy_accepts_value_rules_and_ignores_documentation(self):
+        self.write('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',
+                   'import java.util.Locale;\nimport java.util.regex.Pattern;\n'
+                   '// DatabaseCredentialCryptoService\nclass DatabaseConnectionViewPolicy {}')
+        self.write('service/src/main/java/org/leo/service/sql/AgentDatabaseConnectionService.java',
+                   'class AgentDatabaseConnectionService { void view() { DatabaseConnectionViewPolicy.publicValues(null); } }')
+        self.assertEqual([], audit(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()
