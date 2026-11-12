@@ -146,7 +146,7 @@ class SqlExportServiceExecutionTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"table", "database"})
-    void reportsQueryFailuresWithoutPublishingSuccessfulCompletion(String kind) throws Exception {
+    void failedQueriesRemainFailedUntilAnExplicitResume(String kind) throws Exception {
         var task = kind.equals("table") ? startTable() : startDatabase(true, true);
         when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
                 .thenThrow(new IllegalStateException("fixture query failure"));
@@ -155,6 +155,13 @@ class SqlExportServiceExecutionTest {
         assertEquals("FAILED", failed.get("status"));
         assertEquals("fixture query failure", failed.get("error"));
         assertNotNull(failed.get("endTime"));
+        doReturn(Map.of("rows", List.of(Map.of("id", 7)), "pagination", Map.of("total", 1)))
+                .when(sql).queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull());
+        service.resume(node, "owner", "new-session", id(task), Map.of());
+        queued.get(1).run();
+        assertEquals("COMPLETED", service.progress("owner", id(task)).get("status"));
+        assertEquals(1, service.listBySessionId("owner", "new-session").get("count"));
+        assertEquals(0, service.listBySessionId("owner", "session").get("count"));
     }
 
     @Test void failsRestoredPathsOutsideTheOwnersOutputDirectoryBeforeQuerying() throws Exception {

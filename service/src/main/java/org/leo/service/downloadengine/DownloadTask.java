@@ -6,10 +6,6 @@ import org.leo.service.transfer.TransferStage;
 import org.leo.service.transfer.TransferTaskState;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
@@ -23,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+/** Owns resumable chunk progression, worker lifecycle and transfer state; the store owns local I/O. */
 public class DownloadTask {
     private final FileCapable fileNode;
     private final String userId;
@@ -65,7 +62,6 @@ public class DownloadTask {
 
     private final List<Future<?>> workerFutures =
             Collections.synchronizedList(new ArrayList<Future<?>>());
-    private final Object writeLock = new Object();
 
     private DownloadTask(FileCapable fileNode,
                          String userId,
@@ -123,7 +119,7 @@ public class DownloadTask {
             }
         }
 
-        File finalFile = resolveFinalFile(store, filePath);
+        File finalFile = store.resolveUniqueFinalFile(filePath);
         int totalChunks = (int) ((expectedLength + chunkSize - 1) / (long) chunkSize);
         BitSet done = new BitSet(totalChunks);
         store.requireUsableSpace(expectedLength);
@@ -134,7 +130,7 @@ public class DownloadTask {
         );
         task.persistMeta(TransferTaskState.NEW);
         task.persistChunks();
-        task.prepareTempFile();
+        store.prepareContent(expectedLength);
         return task;
     }
 
@@ -158,7 +154,7 @@ public class DownloadTask {
         long expectedLength = toLong(meta.get("expectedLength"));
         String expectedMd5 = Objects.toString(meta.get("expectedMd5"), null);
         String finalPath = Objects.toString(meta.get("finalPath"), null);
-        File finalFile = finalPath != null ? new File(finalPath) : resolveFinalFile(store, filePath);
+        File finalFile = finalPath != null ? new File(finalPath) : store.resolveUniqueFinalFile(filePath);
 
         int totalChunks = (int) ((expectedLength + chunkSize - 1) / (long) chunkSize);
         BitSet done = new BitSet(totalChunks);
@@ -184,7 +180,7 @@ public class DownloadTask {
         task.updatedAtMs = Math.max(task.createAtMs, toLong(meta.get("updatedAtMs")));
         task.downloadedBytes.set(calculateDownloadedBytes(done, totalChunks, chunkSize, expectedLength));
         if (!task.state.isTerminal() || task.state == TransferTaskState.FAILED) {
-            task.prepareTempFile();
+            store.prepareContent(expectedLength);
         }
         if (Objects.toString(meta.get("state"), "NEW").equals(TransferTaskState.RUNNING.name())) {
             task.persistMetaQuiet(TransferTaskState.PAUSED);
@@ -363,31 +359,9 @@ public class DownloadTask {
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             if (cancelled.get()) return;
             try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> res = fileNode.fileDownloadChunk(filePath, size, offset);
-                int code = res.get("code") instanceof Number number ? number.intValue() : -1;
-                if (code == 404 || code == 403 || code == 416) {
-                    throw new IllegalStateException("不可恢复错误: code=" + code + ", msg=" + res.get("msg"));
-                }
-                if (code != 100 && code != 200) {
-                    throw new IllegalStateException("远端下载返回状态异常: code=" + code);
-                }
-                Object dataObj = res.get("data");
-                byte[] data = (dataObj instanceof byte[]) ? (byte[]) dataObj : null;
-                if (data == null) {
-                    throw new IllegalStateException("响应缺少data");
-                }
-                if (!(res.get("bytesRead") instanceof Number readCount)
-                        || readCount.intValue() != data.length) {
-                    throw new IllegalStateException("远端下载返回字节数无效");
-                }
-                int bytesRead = readCount.intValue();
-                if (bytesRead <= 0) {
-                    throw new IllegalStateException("读取到空数据: offset=" + offset);
-                }
-
-                writeChunk(offset, data, bytesRead);
-                markChunkDone(chunkIndex, bytesRead);
+                byte[] data = readChunk(offset, size);
+                store.writeChunk(offset, data, data.length);
+                markChunkDone(chunkIndex, data.length);
                 maybePersist();
                 return;
             } catch (Exception e) {
@@ -400,14 +374,28 @@ public class DownloadTask {
         }
     }
 
-    private void writeChunk(long offset, byte[] data, int len) throws Exception {
-        synchronized (writeLock) {
-            try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw");
-                 FileChannel ch = raf.getChannel()) {
-                ch.position(offset);
-                ch.write(java.nio.ByteBuffer.wrap(data, 0, len));
-            }
+    private byte[] readChunk(long offset, int size) throws Exception {
+        Map<String, Object> res = fileNode.fileDownloadChunk(filePath, size, offset);
+        int code = res.get("code") instanceof Number number ? number.intValue() : -1;
+        if (code == 404 || code == 403 || code == 416) {
+            throw new IllegalStateException("不可恢复错误: code=" + code + ", msg=" + res.get("msg"));
         }
+        if (code != 100 && code != 200) {
+            throw new IllegalStateException("远端下载返回状态异常: code=" + code);
+        }
+        Object dataObj = res.get("data");
+        byte[] data = (dataObj instanceof byte[]) ? (byte[]) dataObj : null;
+        if (data == null) {
+            throw new IllegalStateException("响应缺少data");
+        }
+        if (!(res.get("bytesRead") instanceof Number readCount)
+                || readCount.intValue() != data.length) {
+            throw new IllegalStateException("远端下载返回字节数无效");
+        }
+        if (readCount.intValue() <= 0) {
+            throw new IllegalStateException("读取到空数据: offset=" + offset);
+        }
+        return data;
     }
 
     private void markChunkDone(int chunkIndex, int bytes) {
@@ -465,7 +453,6 @@ public class DownloadTask {
             try {
                 currentStage = TransferStage.VERIFYING_REMOTE;
                 touch();
-                @SuppressWarnings("unchecked")
                 Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
                 if (!(md5Res.get("code") instanceof Number code) || code.intValue() != 200) {
                     throw new IllegalStateException(Objects.toString(
@@ -478,14 +465,14 @@ public class DownloadTask {
                 }
                 currentStage = TransferStage.VERIFYING_LOCAL;
                 touch();
-                String localMd5 = md5Hex(tempFile);
+                String localMd5 = store.contentMd5();
                 if (!localMd5.equalsIgnoreCase(expectedMd5)) {
                     fail("本地临时文件MD5不一致，expected=" + expectedMd5 + ", actual=" + localMd5);
                     return;
                 }
                 currentStage = TransferStage.COMMITTING;
                 touch();
-                finalizeFile();
+                store.commitContent(finalFile);
                 state = TransferTaskState.COMPLETED;
                 currentStage = TransferStage.FINISHED;
                 endAtMs = System.currentTimeMillis();
@@ -497,14 +484,6 @@ public class DownloadTask {
                 fail("完成阶段失败: " + e.getMessage());
             }
         }
-    }
-
-    private void finalizeFile() throws Exception {
-        File parent = finalFile.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-        java.nio.file.Files.move(tempFile.toPath(), finalFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
     private void fail(String msg) {
@@ -526,21 +505,6 @@ public class DownloadTask {
         synchronized (workerFutures) {
             taskExecutor.cancelDownloadWorkers(workerFutures);
             workerFutures.clear();
-        }
-    }
-
-    private void prepareTempFile() throws Exception {
-        File parent = tempFile.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-        if (!tempFile.exists()) {
-            tempFile.createNewFile();
-        }
-        try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw")) {
-            if (raf.length() != expectedLength) {
-                raf.setLength(expectedLength);
-            }
         }
     }
 
@@ -605,11 +569,6 @@ public class DownloadTask {
         }
     }
 
-    private static File resolveFinalFile(DownloadStore store, String remoteFilePath) {
-        // Default: store under user's downloads dir, filename same as remote (auto rename if conflict).
-        return store.resolveUniqueFinalFile(remoteFilePath);
-    }
-
     private static long toLong(Object obj) {
         return obj instanceof Number number ? number.longValue() : 0L;
     }
@@ -657,28 +616,6 @@ public class DownloadTask {
             total += Math.min(chunkSize, expectedLength - offset);
         }
         return total;
-    }
-
-    private static String md5Hex(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("MD5");
-        FileInputStream input = new FileInputStream(file);
-        try {
-            byte[] buffer = new byte[64 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                if (read > 0) {
-                    digest.update(buffer, 0, read);
-                }
-            }
-        } finally {
-            input.close();
-        }
-        byte[] value = digest.digest();
-        StringBuilder hex = new StringBuilder(value.length * 2);
-        for (byte b : value) {
-            hex.append(String.format("%02x", b & 0xff));
-        }
-        return hex.toString();
     }
 
     private static TransferTaskState parseState(String s) {

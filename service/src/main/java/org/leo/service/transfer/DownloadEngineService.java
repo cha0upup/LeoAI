@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -23,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/** Coordinates download admission, live task ownership and user commands. */
 @Component
 public class DownloadEngineService {
     private static final Logger log = LoggerFactory.getLogger(DownloadEngineService.class);
@@ -146,7 +146,7 @@ public class DownloadEngineService {
             }
             requireActiveSlot(userId);
             DownloadStore store = new DownloadStore(userId, taskId);
-            if (!store.getTaskDir().exists()) {
+            if (!store.hasTaskArtifacts()) {
                 throw new IllegalArgumentException("任务不存在: " + taskId);
             }
             DownloadTask task = DownloadTask.loadFromDisk(
@@ -171,7 +171,7 @@ public class DownloadEngineService {
 
         DownloadStore store = new DownloadStore(userId, taskId);
         try {
-            Map<String, Object> snapshot = readStoredSnapshot(store, taskId);
+            Map<String, Object> snapshot = store.readSnapshot();
             if (snapshot != null) return snapshot;
         } catch (Exception error) {
             throw new IllegalStateException("读取下载任务状态失败", error);
@@ -196,59 +196,13 @@ public class DownloadEngineService {
             }
         }
 
-        File tasksRoot = DownloadStore.getTasksRootDir(userId);
-        File[] taskDirs = tasksRoot.listFiles(File::isDirectory);
-        if (taskDirs != null) {
-            for (File taskDir : taskDirs) {
-                String taskId = taskDir.getName();
-                if (existedTaskIds.contains(taskId)) {
-                    continue;
-                }
-                try {
-                    DownloadStore store = new DownloadStore(userId, taskId);
-                    Map<String, Object> item = readStoredSnapshot(store, taskId);
-                    if (item != null && sessionId.equals(item.get("sessionId"))) {
-                        tasks.add(item);
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        }
+        tasks.addAll(DownloadStore.listSnapshots(userId, sessionId, existedTaskIds));
 
         Map<String, Object> result = new HashMap<>();
         result.put("sessionId", sessionId);
         result.put("count", tasks.size());
         result.put("tasks", tasks);
         return result;
-    }
-
-    private static final List<String> STORED_SNAPSHOT_FIELDS = List.of(
-            "sessionId", "filePath", "currentStage", "threads", "chunkSize", "expectedLength",
-            "expectedMd5", "doneChunks", "totalChunks", "downloadedBytes", "lastError", "errorStage",
-            "createAtMs", "startAtMs", "endAtMs", "updatedAtMs");
-
-    /** Disk metadata is private storage, not a second response format. Reads never resume workers. */
-    private static Map<String, Object> readStoredSnapshot(DownloadStore store, String taskId) throws Exception {
-        Map<String, Object> meta = store.readMeta();
-        if (meta == null) return null;
-        Map<String, Object> snapshot = new HashMap<>();
-        for (String field : STORED_SNAPSHOT_FIELDS) {
-            if (meta.containsKey(field)) snapshot.put(field, meta.get(field));
-        }
-        TransferTaskState state = TransferTaskState.valueOf(String.valueOf(meta.get("state")));
-        snapshot.put("taskId", taskId);
-        snapshot.put("state", state == TransferTaskState.RUNNING ? "PAUSED" : state.name());
-        snapshot.put("speedBytesPerSec", 0L);
-        for (String field : List.of("finalPath", "tempPath")) {
-            Object path = meta.get(field);
-            if (path != null) {
-                String relative = store.toUserRelativePath(new File(String.valueOf(path)));
-                if (relative != null) {
-                    snapshot.put("finalPath".equals(field) ? "downloadPath" : "taskTempPath", relative);
-                }
-            }
-        }
-        return snapshot;
     }
 
     /**
@@ -312,7 +266,7 @@ public class DownloadEngineService {
         DownloadTask task = tasksById.get(key);
         if (task == null) {
             DownloadStore store = new DownloadStore(userId, taskId);
-            if (!store.getTaskDir().exists()) {
+            if (!store.hasTaskArtifacts()) {
                 throw new IllegalArgumentException("任务不存在: " + taskId);
             }
             task = DownloadTask.loadFromDisk(
@@ -353,7 +307,7 @@ public class DownloadEngineService {
             tasksById.remove(key, task);
         }
         DownloadStore store = new DownloadStore(userId, taskId);
-        if (!store.getTaskDir().exists() && task == null) {
+        if (!store.hasTaskArtifacts() && task == null) {
             throw new IllegalArgumentException("任务不存在: " + taskId);
         }
         boolean removed = store.deleteTaskArtifacts();

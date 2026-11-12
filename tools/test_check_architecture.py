@@ -146,6 +146,49 @@ class ArchitectureAuditTest(unittest.TestCase):
         (self.root / 'service/pom.xml').unlink()
         self.assertTrue(any('invalid module descriptor' in issue for issue in audit(self.root)))
 
+    def test_download_roles_reject_filesystem_and_execution_leaks(self):
+        self.write('service/src/main/java/org/leo/service/transfer/DownloadEngineService.java',
+                   'import java.io.File;\nimport org.leo.core.util.json.JsonUtil;')
+        self.write('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',
+                   'import java.nio.channels.FileChannel;\n'
+                   'class DownloadTask { void commit() { java.nio.file.Files.move(null, null); } }')
+        self.write('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',
+                   'import org.leo.core.agent.capability.FileCapable;\n'
+                   'class DownloadStore { DownloadTask task; }')
+        issues = audit(self.root)
+        self.assertEqual(6, len(issues))
+        self.assertTrue(any('workspace depends on task execution' in issue for issue in issues))
+
+    def test_download_roles_accept_workspace_and_state_dependencies(self):
+        self.write('service/src/main/java/org/leo/service/transfer/DownloadEngineService.java',
+                   'import org.leo.service.downloadengine.DownloadStore;')
+        self.write('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',
+                   'import java.io.File;\nimport org.leo.core.agent.capability.FileCapable;\n'
+                   'class DownloadTask { void commit() { store.commitContent(target); } }')
+        self.write('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',
+                   'import java.nio.file.Files;\nimport org.leo.service.transfer.TransferTaskState;\n'
+                   '// DownloadTask\nclass DownloadStore { String label = "DownloadTask"; }')
+        self.assertEqual([], audit(self.root))
+
+    def test_sql_export_task_rejects_execution_dependencies_and_parallel_ownership(self):
+        self.write('service/src/main/java/org/leo/service/sql/SqlExportTask.java',
+                   'import java.io.BufferedWriter;\nimport org.leo.service.concurrent.ServiceTaskExecutor;\n'
+                   'class SqlExportTask { SqlExportArtifacts artifacts; AgentNodeSqlService sql; }')
+        self.write('service/src/main/java/org/leo/service/sql/SqlExportService.java',
+                   'class SqlExportService { Map liveControls; static class TaskControl {} }')
+        issues = audit(self.root)
+        self.assertEqual(6, len(issues))
+        self.assertTrue(any('parallel control registry' in issue for issue in issues))
+
+    def test_sql_export_task_accepts_value_types_and_the_metadata_port(self):
+        self.write('service/src/main/java/org/leo/service/sql/SqlExportTask.java',
+                   'import java.nio.file.Path;\nimport java.util.LinkedHashMap;\n'
+                   '// SqlExportService\n'
+                   'class SqlExportTask { SqlExportTaskRepository repository; SqlObjectRef table; }')
+        self.write('service/src/main/java/org/leo/service/sql/SqlExportService.java',
+                   'class SqlExportService { SqlExportTask task; }')
+        self.assertEqual([], audit(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.config.LeoConfig;
 import org.leo.service.transfer.DownloadEngineService;
 import org.leo.service.downloadengine.DownloadStore;
@@ -122,6 +123,19 @@ class DownloadEngineServiceTest {
         assertTrue(tasks.isEmpty());
         service.close();
         verifyNoMoreInteractions(first, second);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{", "{\"state\":\"UNKNOWN\",\"sessionId\":\"session-one\"}"})
+    void listingSkipsDamagedCheckpointsWhileDirectQueriesReportTheirFailure(String damaged) throws Exception {
+        persist("owner", "valid", "session-one", "COMPLETED");
+        DownloadStore broken = persist("owner", "broken", "session-one", "PAUSED");
+        Files.writeString(broken.getMetaFile().toPath(), damaged);
+        var tasks = (List<?>) service.listBySessionId("owner", "session-one").get("tasks");
+        assertEquals(1, tasks.size());
+        assertEquals("valid", ((Map<?, ?>) tasks.get(0)).get("taskId"));
+        assertThrows(IllegalStateException.class, () -> service.progress("owner", "broken"));
+        assertEquals(damaged, Files.readString(broken.getMetaFile().toPath()));
     }
 
     private DownloadStore persist(String user, String taskId, String session, String state) throws Exception {

@@ -5,6 +5,9 @@ import org.leo.core.util.json.JsonUtil;
 import org.leo.service.transfer.TransferTaskState;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.FileVisitResult;
@@ -12,9 +15,14 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+/** Local download workspace: checkpoints, partial content, publication and disk-only queries. */
 public class DownloadStore {
     private static final long MIN_FREE_SPACE_RESERVE_BYTES = 64L * 1024L * 1024L;
     private static final String META_JSON = "meta.json";
@@ -24,30 +32,35 @@ public class DownloadStore {
     private final File taskDir;
 
     private final File userRootDir;
+    private final File tempFile;
+    private final String taskId;
+    private final Object writeLock = new Object();
 
     public DownloadStore(String userId, String taskId) {
         this.userRootDir = computeUserRootDir(userId);
         this.taskDir = computeTaskDir(this.userRootDir, taskId);
+        this.taskId = taskId;
+        this.tempFile = new File(taskDir, TEMP_FILE);
     }
 
-    public File getTaskDir() {
-        return taskDir;
+    public boolean hasTaskArtifacts() {
+        return taskDir.exists();
     }
 
     public File getTempFile() {
         validateTaskPath();
-        return new File(taskDir, TEMP_FILE);
+        return tempFile;
     }
 
     public File getMetaFile() {
         return new File(taskDir, META_JSON);
     }
 
-    public File getChunksFile() {
+    private File getChunksFile() {
         return new File(taskDir, CHUNKS_BITMAP);
     }
 
-    public static File getTasksRootDir(String userId) {
+    private static File getTasksRootDir(String userId) {
         File userDownloadsDir = computeUserRootDir(userId);
         return new File(userDownloadsDir, ".tasks");
     }
@@ -93,6 +106,116 @@ public class DownloadStore {
         Path p = getChunksFile().toPath();
         ensureTaskDirectory();
         Files.write(p, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    public void prepareContent(long expectedLength) throws Exception {
+        File parent = tempFile.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+        if (!tempFile.exists()) {
+            tempFile.createNewFile();
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw")) {
+            if (raf.length() != expectedLength) {
+                raf.setLength(expectedLength);
+            }
+        }
+    }
+
+    public void writeChunk(long offset, byte[] data, int len) throws Exception {
+        synchronized (writeLock) {
+            try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw");
+                 FileChannel ch = raf.getChannel()) {
+                ch.position(offset);
+                ch.write(java.nio.ByteBuffer.wrap(data, 0, len));
+            }
+        }
+    }
+
+    public String contentMd5() throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("MD5");
+        FileInputStream input = new FileInputStream(tempFile);
+        try {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+        } finally {
+            input.close();
+        }
+        byte[] value = digest.digest();
+        StringBuilder hex = new StringBuilder(value.length * 2);
+        for (byte b : value) {
+            hex.append(String.format("%02x", b & 0xff));
+        }
+        return hex.toString();
+    }
+
+    public void commitContent(File finalFile) throws Exception {
+        File parent = finalFile.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+        java.nio.file.Files.move(tempFile.toPath(), finalFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static final List<String> STORED_SNAPSHOT_FIELDS = List.of(
+            "sessionId", "filePath", "currentStage", "threads", "chunkSize", "expectedLength",
+            "expectedMd5", "doneChunks", "totalChunks", "downloadedBytes", "lastError", "errorStage",
+            "createAtMs", "startAtMs", "endAtMs", "updatedAtMs");
+
+    /** Disk metadata is private storage, not a second response format. Reads never resume workers. */
+    public Map<String, Object> readSnapshot() throws Exception {
+        Map<String, Object> meta = readMeta();
+        if (meta == null) return null;
+        Map<String, Object> snapshot = new HashMap<>();
+        for (String field : STORED_SNAPSHOT_FIELDS) {
+            if (meta.containsKey(field)) snapshot.put(field, meta.get(field));
+        }
+        TransferTaskState state = TransferTaskState.valueOf(String.valueOf(meta.get("state")));
+        snapshot.put("taskId", taskId);
+        snapshot.put("state", state == TransferTaskState.RUNNING ? "PAUSED" : state.name());
+        snapshot.put("speedBytesPerSec", 0L);
+        for (String field : List.of("finalPath", "tempPath")) {
+            Object path = meta.get(field);
+            if (path != null) {
+                String relative = toUserRelativePath(new File(String.valueOf(path)));
+                if (relative != null) {
+                    snapshot.put("finalPath".equals(field) ? "downloadPath" : "taskTempPath", relative);
+                }
+            }
+        }
+        return snapshot;
+    }
+
+    /** Disk queries neither load transfer workers nor rewrite checkpoints. */
+    public static List<Map<String, Object>> listSnapshots(String userId, String sessionId,
+                                                         Set<String> excludedTaskIds) {
+        List<Map<String, Object>> snapshots = new ArrayList<>();
+        File tasksRoot = getTasksRootDir(userId);
+        File[] taskDirs = tasksRoot.listFiles(File::isDirectory);
+        if (taskDirs != null) {
+            for (File taskDir : taskDirs) {
+                String taskId = taskDir.getName();
+                if (excludedTaskIds.contains(taskId)) {
+                    continue;
+                }
+                try {
+                    DownloadStore store = new DownloadStore(userId, taskId);
+                    Map<String, Object> item = store.readSnapshot();
+                    if (item != null && sessionId.equals(item.get("sessionId"))) {
+                        snapshots.add(item);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        return snapshots;
     }
 
     /**

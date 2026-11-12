@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -101,7 +102,9 @@ class SqlExportServiceLifecycleTest {
         clearLiveTasks();
         assertEquals("PENDING", service.progress("owner", id).get("status"));
         assertEquals("CANCELLED", service.stop("owner", id).get("status"));
+        queued.get(0).run();
         assertEquals("CANCELLED", service.progress("owner", id).get("status"));
+        verifyNoInteractions(sql);
     }
 
     @Test void reservesUniqueOutputPathsBeforeWorkersHaveStarted() throws Exception {
@@ -147,6 +150,34 @@ class SqlExportServiceLifecycleTest {
         queued.get(0).run();
         assertEquals("PENDING", service.progress("owner", id).get("status"));
         verifyNoInteractions(sql);
+    }
+
+    @Test void supersededRunningCallbacksAndRetirementKeepTheReplacementAttemptIntact() throws Exception {
+        String id = id(start("table"));
+        AtomicBoolean resumed = new AtomicBoolean();
+        doAnswer(call -> {
+            Map<String, Object> saved = call.getArgument(1);
+            call.callRealMethod();
+            if ("PAUSED".equals(saved.get("status")) && resumed.compareAndSet(false, true))
+                service.resume(node, "owner", "session", id, Map.of());
+            return null;
+        }).when(repository).save(any(), anyMap());
+        when(sql.getTableColumns(any(), anyMap(), any())).thenReturn(Map.of("columns", List.of(Map.of("name", "id"))));
+        AtomicBoolean pauseOnce = new AtomicBoolean();
+        when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
+                .thenAnswer(call -> {
+                    if (pauseOnce.compareAndSet(false, true)) service.pause("owner", id);
+                    return Map.of("rows", List.of(Map.of("id", 7)), "pagination", Map.of("total", 1));
+                });
+        queued.get(0).run();
+        var replacement = service.progress("owner", id);
+        assertTrue(resumed.get());
+        assertEquals(2, queued.size());
+        assertEquals("PENDING", replacement.get("status"));
+        assertEquals(0, replacement.get("progress"));
+        assertNull(replacement.get("rowCount"));
+        queued.get(1).run();
+        assertEquals("COMPLETED", service.progress("owner", id).get("status"));
     }
 
     private Map<String, Object> start(String kind) throws Exception {

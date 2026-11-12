@@ -75,6 +75,31 @@ SOURCE_IMPORT_BOUNDARIES = (
                      'org.leo.core.agent.', 'org.leo.core.session.', 'org.leo.service.concurrent.'),
         'message': 'discovery plan or projection imports execution infrastructure',
     },
+    {
+        'sources': ('service/src/main/java/org/leo/service/transfer/DownloadEngineService.java',),
+        'prefixes': ('java.io.', 'java.nio.file.', 'org.leo.core.config.', 'org.leo.core.util.json.'),
+        'message': 'download coordinator imports filesystem or checkpoint implementation',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',),
+        'prefixes': ('java.io.FileInputStream', 'java.io.FileOutputStream', 'java.io.RandomAccessFile',
+                     'java.nio.channels.', 'java.nio.file.', 'java.security.MessageDigest',
+                     'org.leo.core.config.', 'org.leo.core.util.json.'),
+        'message': 'download task imports local content I/O',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',),
+        'prefixes': ('org.leo.core.agent.', 'org.leo.core.session.', 'org.leo.service.concurrent.',
+                     'org.springframework.stereotype.'),
+        'message': 'download workspace imports node or scheduling infrastructure',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportTask.java',),
+        'prefixes': ('java.io.', 'java.nio.file.Files', 'java.util.concurrent.', 'org.springframework.',
+                     'org.leo.core.agent.', 'org.leo.core.config.', 'org.leo.core.session.',
+                     'org.leo.core.util.json.', 'org.leo.service.concurrent.'),
+        'message': 'SQL export task imports execution or storage implementation',
+    },
 )
 # Same-package references need no import, so guard them in code as well.
 SOURCE_CODE_BOUNDARIES = (
@@ -83,6 +108,26 @@ SOURCE_CODE_BOUNDARIES = (
                     'service/src/main/java/org/leo/service/discovery/NetworkProbeStageResults.java'),
         'pattern': r'\bNetworkProbe(?:WorkflowService|OrchestrationService|AnalysisService|Scheduler|ResultRepository)\b',
         'message': 'discovery plan or projection depends on execution infrastructure',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',),
+        'pattern': r'\b(?:DownloadTask|DownloadEngineService|ServiceTaskExecutor)\b',
+        'message': 'download workspace depends on task execution',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',),
+        'pattern': r'\bnew\s+(?:[\w.]+\.)?(?:FileInputStream|FileOutputStream|RandomAccessFile)\b|\b(?:Files|FileChannel|MessageDigest)\s*\.',
+        'message': 'download task performs local content I/O',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportTask.java',),
+        'pattern': r'\b(?:SqlExportService|SqlExportArtifacts|SqlTableCsvExporter|AgentNodeSqlService)\b',
+        'message': 'SQL export task depends on use-case or content execution',
+    },
+    {
+        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportService.java',),
+        'pattern': r'\bliveControls\b|\bclass\s+TaskControl\b',
+        'message': 'SQL export attempt ownership belongs to the task, not a parallel control registry',
     },
 )
 NON_CODE = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/')

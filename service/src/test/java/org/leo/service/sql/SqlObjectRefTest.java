@@ -31,14 +31,14 @@ class SqlObjectRefTest {
         assertEquals(SqlObjectRef.table("app", "sales", "orders"), ref);
         assertNull(SqlObjectRef.fromMap(Map.of()));
         List<SqlObjectRef> refs = List.of(ref, SqlObjectRef.table("app", "crm", "customers"));
-        assertEquals(refs, SqlExportService.refListValue(SqlExportService.toRefMaps(refs)));
+        assertEquals(refs, SqlExportTask.refListValue(SqlExportTask.toRefMaps(refs)));
     }
 
     @Test
     void includesSchemaInExportEntryNamesToAvoidCollisions() {
-        assertEquals("app_sales_orders", SqlExportService.exportObjectName(
+        assertEquals("app_sales_orders", SqlExportTask.exportObjectName(
                 SqlObjectRef.table("app", "sales", "orders")));
-        assertEquals("app_crm_orders", SqlExportService.exportObjectName(
+        assertEquals("app_crm_orders", SqlExportTask.exportObjectName(
                 SqlObjectRef.table("app", "crm", "orders")));
     }
 
