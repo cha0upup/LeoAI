@@ -7,16 +7,7 @@
         <version>3.0.1</version>
     </parent>
 
-    <groupId>org.leo</groupId>
     <artifactId>jmg</artifactId>
-    <packaging>jar</packaging>
-
-    <name>jmg</name>
-    <url>http://maven.apache.org</url>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
 
     <dependencies>
         <dependency>
@@ -35,7 +26,6 @@
             <groupId>org.leo</groupId>
             <artifactId>core</artifactId>
             <version>${project.version}</version>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.ow2.asm</groupId>

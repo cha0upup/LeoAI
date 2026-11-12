@@ -45,6 +45,10 @@
 
 - Java 代码遵循项目现有风格
 - 前端代码使用 ESLint + Prettier 格式化
+- 日常后端检查直接使用 `./mvnw verify`；完整重建使用 `./mvnw clean verify`，无需额外构建包装脚本。
+- 保持现有模块分层；公共逻辑优先收拢到已有职责中，不为单个分支新增服务、接口或通用框架。
+- 测试按行为和职责组织在已有测试类中，重复输入使用参数化测试；保留业务边界、权限、持久化与生命周期验证，不重复测试底层配置解析或用反射锁定内部类名和字段。
+- `tools/check_architecture.py` 只检查模块依赖、循环依赖和包级适配边界；具体类的实现细节交给行为测试与代码审查。
 - 发布前执行 `python3 tools/verify_release.py --frontend ../LeoVueAi`；应用 JDK 使用 17，可通过 `JAVA8_HOME` 指定组件编译器
 - 命名区分执行节点与 AI：节点模型使用 `Agent`，执行运行时使用 `AgentNode` / `AgentRuntime`，AI 接口使用 `NodeAiAgent` / `PlatformAiAgent`；资产与连接上下文继续使用 `Host` / `Session`。
 - 节点 HTTP API 使用 `/agent-node`，管理 API 使用 `/platform/agent-manage`，节点 Skills scope 使用 `agent-node`。命名切换见 [命名与部署说明](docs/agent-naming.md)；历史数据不兼容，部署时使用全新数据库重建。

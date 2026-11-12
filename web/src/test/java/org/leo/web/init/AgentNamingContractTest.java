@@ -1,11 +1,7 @@
 package org.leo.web.init;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.model.chat.StreamingChatModel;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.agent.AiAgentFactory;
-import org.leo.ai.agent.NodeAiAgent;
-import org.leo.ai.agent.PlatformAiAgent;
 import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.entity.Agent;
 import org.leo.web.controller.agentnode.ai.NodeAiController;
@@ -31,16 +27,6 @@ class AgentNamingContractTest {
         assertFalse(json.has("puppetId"));
         assertFalse(json.has("puppetName"));
         assertFalse(json.has("parentPuppetId"));
-    }
-
-    @Test
-    void distinguishesAiInterfacesFromExecutionNodeModels() throws Exception {
-        assertEquals(NodeAiAgent.class, AiAgentFactory.class.getMethod(
-                "createNodeAiAgent", StreamingChatModel.class, boolean.class,
-                int.class).getReturnType());
-        assertEquals(PlatformAiAgent.class, AiAgentFactory.class.getMethod(
-                "createPlatformAiAgent", StreamingChatModel.class, boolean.class,
-                int.class, Object.class).getReturnType());
     }
 
     @Test

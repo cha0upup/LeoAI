@@ -67,7 +67,7 @@ public class AiEventSubscriptionService {
                     stream(source, threadId, runtime, emitter, afterSeq, closed));
         } catch (RejectedExecutionException error) {
             closed.set(true);
-            AiControllerUtil.safeSendError(emitter, "AI 实时订阅繁忙，请稍后重试");
+            AiSseEmitterWriter.safeSendError(emitter, "AI 实时订阅繁忙，请稍后重试");
         }
         return emitter;
     }
@@ -142,7 +142,7 @@ public class AiEventSubscriptionService {
                     source != null ? source : "AI", error.getMessage());
         } finally {
             closed.set(true);
-            AiControllerUtil.safeComplete(emitter);
+            AiSseEmitterWriter.safeComplete(emitter);
         }
     }
 

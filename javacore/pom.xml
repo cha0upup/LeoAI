@@ -11,8 +11,6 @@
     </parent>
 
     <artifactId>javacore</artifactId>
-    <packaging>jar</packaging>
-    <name>javacore</name>
 
     <dependencies>
         <dependency>

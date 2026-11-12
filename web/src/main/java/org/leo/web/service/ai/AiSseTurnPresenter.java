@@ -90,13 +90,13 @@ public class AiSseTurnPresenter {
                     context.audit().fail(
                             classification.message(), context.elapsedMillis());
                 }
-                AiControllerUtil.safeSendError(
+                AiSseEmitterWriter.safeSendError(
                         context.emitter(), classification);
             });
         } catch (Exception finishError) {
             logger.warn("{} SSE 启动失败收口异常: {}",
                     context.source(), finishError.getMessage(), finishError);
-            AiControllerUtil.safeComplete(context.emitter());
+            AiSseEmitterWriter.safeComplete(context.emitter());
         }
     }
 
@@ -159,7 +159,7 @@ public class AiSseTurnPresenter {
             context.refreshRuntime().run();
             transport.emitStatus(context.runtime().getRunStatus());
             transport.emitSafely("turn", turnEvent(completed));
-            AiControllerUtil.safeComplete(context.emitter());
+            AiSseEmitterWriter.safeComplete(context.emitter());
         }
 
         @Override
@@ -185,24 +185,24 @@ public class AiSseTurnPresenter {
             refreshRuntimeSafely(context, "终态补偿");
             if (terminal.recoveryFailed()) {
                 transport.emitStatus(STATUS_FAILED);
-                AiControllerUtil.safeSendError(
+                AiSseEmitterWriter.safeSendError(
                         context.emitter(), "AI 回复提交失败，请重试");
             } else if (terminal.committed()) {
                 transport.emitStatus(STATUS_COMPLETED);
                 transport.emitSafely(
                         "turn", turnEvent(terminal.completed()));
-                AiControllerUtil.safeComplete(context.emitter());
+                AiSseEmitterWriter.safeComplete(context.emitter());
             } else if (terminal.discarded()) {
                 transport.emitStatus(terminal.failed().status());
                 if (terminal.recovered()) {
-                    AiControllerUtil.safeSendError(
+                    AiSseEmitterWriter.safeSendError(
                             context.emitter(), terminal.failed().message());
                 } else {
                     sendFailure(terminal.failed());
                 }
             } else {
                 transport.emitStatus(STATUS_FAILED);
-                AiControllerUtil.safeSendError(
+                AiSseEmitterWriter.safeSendError(
                         context.emitter(), "AI 执行失败，请重试");
             }
         }
@@ -230,7 +230,7 @@ public class AiSseTurnPresenter {
                             context.audit().fail(reason, context.elapsedMillis());
                         }
                         transport.emitStatus("cancelled");
-                        AiControllerUtil.safeSendError(
+                        AiSseEmitterWriter.safeSendError(
                                 context.emitter(), reason);
                     } else {
                         AiErrorClassifier.Classification classification =
@@ -245,14 +245,14 @@ public class AiSseTurnPresenter {
                                     context.elapsedMillis());
                         }
                         transport.emitStatus(STATUS_FAILED);
-                        AiControllerUtil.safeSendError(
+                        AiSseEmitterWriter.safeSendError(
                                 context.emitter(), classification);
                     }
                 });
             } catch (Exception finishError) {
                 logger.warn("{} 准备失败收口异常: {}",
                         context.source(), finishError.getMessage(), finishError);
-                AiControllerUtil.safeComplete(context.emitter());
+                AiSseEmitterWriter.safeComplete(context.emitter());
             }
         }
 
@@ -270,10 +270,10 @@ public class AiSseTurnPresenter {
 
         private void sendFailure(AiTurnTransaction.FailedTurn failed) {
             if (failed.cancelled()) {
-                AiControllerUtil.safeSendError(
+                AiSseEmitterWriter.safeSendError(
                         context.emitter(), failed.message());
             } else {
-                AiControllerUtil.safeSendError(
+                AiSseEmitterWriter.safeSendError(
                         context.emitter(), failed.classification());
             }
         }

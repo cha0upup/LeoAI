@@ -7,16 +7,7 @@
         <version>3.0.1</version>
     </parent>
 
-    <groupId>org.leo</groupId>
     <artifactId>core</artifactId>
-    <packaging>jar</packaging>
-
-    <name>core</name>
-    <url>http://maven.apache.org</url>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
 
     <dependencies>
         <dependency>
@@ -71,12 +62,5 @@
             <version>1.5.3</version>
         </dependency>
     </dependencies>
-    <repositories>
-        <repository>
-            <id>central</id>
-            <name>Maven Central</name>
-            <url>https://repo1.maven.org/maven2/</url>
-        </repository>
-    </repositories>
 
 </project>

@@ -1,5 +1,6 @@
 package org.leo.web.service.ai;
 
+import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiSseEvent;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -9,7 +10,7 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 统一 AI SSE 的序列化与发送格式。 */
+/** 统一 AI SSE 的发送格式与连接收尾。 */
 @Component
 public class AiSseEmitterWriter {
 
@@ -57,7 +58,39 @@ public class AiSseEmitterWriter {
                 .data(status != null ? status : "idle", MediaType.TEXT_PLAIN));
     }
 
-    private void send(SseEmitter emitter, SseEmitter.SseEventBuilder event)
+    public static void safeSendError(SseEmitter emitter, String message) {
+        safeSendError(emitter, message, null);
+    }
+
+    public static void safeSendError(SseEmitter emitter, AiErrorClassifier.Classification error) {
+        safeSendError(emitter, error != null ? error.message() : null, error);
+    }
+
+    private static void safeSendError(SseEmitter emitter, String message,
+                                      AiErrorClassifier.Classification error) {
+        if (emitter == null) return;
+        try {
+            if (error != null) {
+                send(emitter, SseEmitter.event().name("error_meta").data(error.toMap()));
+            }
+            send(emitter, SseEmitter.event().name("error").data(message != null ? message : "未知错误"));
+        } catch (Exception ignored) {
+            // The client may already have disconnected.
+        } finally {
+            safeComplete(emitter);
+        }
+    }
+
+    public static void safeComplete(SseEmitter emitter) {
+        if (emitter == null) return;
+        try {
+            emitter.complete();
+        } catch (Exception ignored) {
+            // The connection may already be complete.
+        }
+    }
+
+    private static void send(SseEmitter emitter, SseEmitter.SseEventBuilder event)
             throws IOException {
         if (emitter == null) return;
         synchronized (emitter) {

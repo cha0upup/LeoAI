@@ -6,7 +6,7 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>3.5.13</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath/>
     </parent>
     <groupId>org.leo</groupId>
     <artifactId>LeoAi</artifactId>
@@ -29,7 +29,6 @@
         </developer>
     </developers>
     <modules>
-
         <module>core</module>
         <module>dao</module>
         <module>javacore</module>
@@ -38,7 +37,6 @@
         <module>service</module>
         <module>ai</module>
         <module>web</module>
-
     </modules>
     <scm>
         <connection>scm:git:https://github.com/cha0upup/LeoAI.git</connection>
@@ -87,5 +85,4 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
 </project>

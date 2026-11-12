@@ -7,17 +7,7 @@
         <version>3.0.1</version>
     </parent>
 
-    <groupId>org.leo</groupId>
     <artifactId>ai</artifactId>
-    <packaging>jar</packaging>
-
-    <name>ai</name>
-    <url>http://maven.apache.org</url>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-    </properties>
 
     <dependencies>
         <dependency>
@@ -62,25 +52,21 @@
             <groupId>org.leo</groupId>
             <artifactId>core</artifactId>
             <version>${project.version}</version>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.leo</groupId>
             <artifactId>service</artifactId>
             <version>${project.version}</version>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.leo</groupId>
             <artifactId>dao</artifactId>
             <version>${project.version}</version>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.leo</groupId>
             <artifactId>jmg</artifactId>
             <version>${project.version}</version>
-            <scope>compile</scope>
         </dependency>
     </dependencies>
 

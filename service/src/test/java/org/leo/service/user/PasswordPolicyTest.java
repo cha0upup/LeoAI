@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.dao.mapper.SystemConfigMapper;
 import org.leo.service.config.SystemConfigService;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -14,38 +13,31 @@ import static org.mockito.Mockito.when;
 
 class PasswordPolicyTest {
 
-    @Test
-    void enforcesConfiguredLengthOnBackend() {
-        PasswordPolicy policy = policy("10");
-
-        assertThrows(IllegalArgumentException.class, () -> policy.validate("short"));
-        assertDoesNotThrow(() -> policy.validate("long-enough"));
+    @ParameterizedTest
+    @ValueSource(ints = {6, 8, 10, 64})
+    void enforcesTheEffectiveConfiguredMinimum(int minimum) {
+        PasswordPolicy policy = policy(minimum);
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("a".repeat(minimum - 1)));
+        assertDoesNotThrow(() -> policy.validate("a".repeat(minimum)));
     }
 
     @ParameterizedTest
     @NullAndEmptySource
-    @ValueSource(strings = {"invalid", "2147483648"})
-    void invalidConfigurationKeepsTheDefaultMinimum(String configured) {
-        PasswordPolicy policy = policy(configured);
-        assertThrows(IllegalArgumentException.class, () -> policy.validate("1234567"));
-        assertDoesNotThrow(() -> policy.validate("12345678"));
+    @ValueSource(strings = {" ", "\t", "\n"})
+    void rejectsBlankPasswords(String password) {
+        assertThrows(IllegalArgumentException.class, () -> policy(8).validate(password));
     }
 
     @Test
-    void boundsConfiguredMinimumAndAbsoluteMaximum() {
-        PasswordPolicy lower = policy("1");
-        assertThrows(IllegalArgumentException.class, () -> lower.validate("12345"));
-        assertDoesNotThrow(() -> lower.validate("123456"));
-        PasswordPolicy upper = policy("1000");
-        assertThrows(IllegalArgumentException.class, () -> upper.validate("a".repeat(63)));
-        assertDoesNotThrow(() -> upper.validate("a".repeat(64)));
-        assertDoesNotThrow(() -> upper.validate("a".repeat(256)));
-        assertThrows(IllegalArgumentException.class, () -> upper.validate("a".repeat(257)));
+    void enforcesTheAbsoluteMaximum() {
+        PasswordPolicy policy = policy(8);
+        assertDoesNotThrow(() -> policy.validate("a".repeat(256)));
+        assertThrows(IllegalArgumentException.class, () -> policy.validate("a".repeat(257)));
     }
 
-    private PasswordPolicy policy(String configured) {
-        SystemConfigMapper mapper = mock(SystemConfigMapper.class);
-        when(mapper.findValueByKey("security.password.min.length")).thenReturn(configured);
-        return new PasswordPolicy(new SystemConfigService(mapper));
+    private PasswordPolicy policy(int minimum) {
+        SystemConfigService config = mock(SystemConfigService.class);
+        when(config.getInt("security.password.min.length", 8, 6, 64)).thenReturn(minimum);
+        return new PasswordPolicy(config);
     }
 }

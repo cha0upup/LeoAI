@@ -1,6 +1,9 @@
 package org.leo.web.service.ai;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -19,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -64,6 +68,36 @@ class AiSseTransportTest {
     void extractsSubagentAssociation() {
         assertEquals("child-1", AiSseTransport.extractSubagentInvocationId(
                 Map.of("subagentInvocationId", "child-1")));
+    }
+
+    @Test
+    void sendsErrorMetadataBeforeTheTerminalErrorAndCompletion() throws Exception {
+        SseEmitter emitter = mock(SseEmitter.class);
+        var error = new AiErrorClassifier.Classification("network", "connection lost", null, List.of());
+        var events = org.mockito.ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
+
+        AiSseEmitterWriter.safeSendError(emitter, error);
+
+        var order = inOrder(emitter);
+        order.verify(emitter, times(2)).send(events.capture());
+        order.verify(emitter).complete();
+        var metadata = events.getAllValues().get(0).build().stream().map(item -> item.getData()).toList();
+        var terminal = events.getAllValues().get(1).build().stream().map(item -> item.getData()).toList();
+        assertTrue(metadata.contains("event:error_meta\ndata:"));
+        assertTrue(metadata.contains(error.toMap()));
+        assertTrue(terminal.contains("event:error\ndata:"));
+        assertTrue(terminal.contains(error.message()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void errorSendingAlwaysAttemptsToCloseTheConnection(boolean disconnected) throws Exception {
+        SseEmitter emitter = mock(SseEmitter.class);
+        if (disconnected) {
+            doThrow(new IOException("disconnected")).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
+        }
+        AiSseEmitterWriter.safeSendError(emitter, "failed");
+        verify(emitter).complete();
     }
 
     private Fixture fixture() {

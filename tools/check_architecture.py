@@ -19,167 +19,13 @@ ALLOWED_DEPENDENCIES = {
 }
 TEST_DEPENDENCIES = {'service': {'javacore', 'phpcore'}}
 
-# Package boundaries end in '/'; file boundaries match exactly. Adding a role
-# changes policy data, rather than adding another branch to the import scanner.
-SOURCE_IMPORT_BOUNDARIES = (
-    {
-        'sources': ('service/src/main/java/org/leo/service/ssh/',),
-        'prefixes': ('net.schmizz.', 'org.apache.sshd.'),
-        'message': 'SSH application imports transport implementation',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/',),
-        'prefixes': ('java.sql.', 'javax.sql.', 'org.springframework.jdbc.'),
-        'message': 'discovery application imports JDBC implementation',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/',),
-        'names': ('org.leo.core.session.AgentNodeSessionContainer',),
-        'message': 'discovery application imports global session registry',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportService.java',
-                    'service/src/main/java/org/leo/service/sql/SqlTableCsvExporter.java'),
-        'prefixes': ('java.nio.file.Files', 'java.io.File', 'java.io.OutputStream', 'java.util.zip.',
-                     'org.leo.core.util.json.JsonUtil', 'org.leo.core.util.session.AgentNodeSessionWorkDirUtil',
-                     'org.leo.service.sql.FileSqlExport', 'org.leo.service.sql.SqlExportWorkspace'),
-        'message': 'SQL export application imports filesystem implementation',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/SqlTableCsvExporter.java',),
-        'names': ('org.leo.service.concurrent.ServiceTaskExecutor',),
-        'message': 'CSV content exporter imports task scheduling',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/transfer/UploadEngineService.java',),
-        'prefixes': ('org.leo.core.config.', 'org.leo.service.vfs.', 'java.io.FileInputStream',
-                     'java.io.InputStream', 'org.springframework.util.DigestUtils'),
-        'message': 'upload coordinator imports VFS policy or protocol I/O',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/transfer/UploadTask.java',),
-        'prefixes': ('org.leo.service.concurrent.', 'org.leo.core.config.', 'org.leo.core.session.',
-                     'org.springframework.stereotype.', 'java.util.concurrent.Executor',
-                     'java.util.concurrent.ThreadPoolExecutor'),
-        'message': 'upload task imports scheduling or application infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/vfs/',),
-        'prefixes': ('org.leo.service.transfer.',),
-        'message': 'VFS access depends on transfer scheduling',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeWorkflowPlan.java',
-                    'service/src/main/java/org/leo/service/discovery/NetworkProbeStageResults.java'),
-        'prefixes': ('org.springframework.', 'java.util.concurrent.', 'java.io.', 'java.nio.file.',
-                     'org.leo.core.agent.', 'org.leo.core.session.', 'org.leo.service.concurrent.'),
-        'message': 'discovery plan or projection imports execution infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/transfer/DownloadEngineService.java',),
-        'prefixes': ('java.io.', 'java.nio.file.', 'org.leo.core.config.', 'org.leo.core.util.json.'),
-        'message': 'download coordinator imports filesystem or checkpoint implementation',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',),
-        'prefixes': ('java.io.FileInputStream', 'java.io.FileOutputStream', 'java.io.RandomAccessFile',
-                     'java.nio.channels.', 'java.nio.file.', 'java.security.MessageDigest',
-                     'org.leo.core.config.', 'org.leo.core.util.json.'),
-        'message': 'download task imports local content I/O',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',),
-        'prefixes': ('org.leo.core.agent.', 'org.leo.core.session.', 'org.leo.service.concurrent.',
-                     'org.springframework.stereotype.'),
-        'message': 'download workspace imports node or scheduling infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportTask.java',),
-        'prefixes': ('java.io.', 'java.nio.file.Files', 'java.util.concurrent.', 'org.springframework.',
-                     'org.leo.core.agent.', 'org.leo.core.config.', 'org.leo.core.session.',
-                     'org.leo.core.util.json.', 'org.leo.service.concurrent.'),
-        'message': 'SQL export task imports execution or storage implementation',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',),
-        'prefixes': ('java.io.', 'java.nio.file.', 'java.util.concurrent.', 'org.springframework.',
-                     'org.leo.core.agent.', 'org.leo.core.config.', 'org.leo.core.session.',
-                     'org.leo.service.concurrent.'),
-        'message': 'probe result buffer imports execution or storage infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',),
-        'prefixes': ('org.leo.dao.', 'org.leo.service.security.', 'org.leo.core.entity.',
-                     'org.springframework.', 'java.sql.', 'javax.sql.'),
-        'message': 'database view policy imports persistence or encryption infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',),
-        'prefixes': ('org.springframework.', 'org.leo.dao.', 'org.leo.core.agent.',
-                     'org.leo.service.fingerprint.', 'org.leo.service.concurrent.', 'java.io.',
-                     'java.nio.file.', 'java.util.concurrent.'),
-        'message': 'HTTP fingerprint evaluator imports execution or rule-storage infrastructure',
-    },
-)
-# Same-package references need no import, so guard them in code as well.
-SOURCE_CODE_BOUNDARIES = (
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeWorkflowPlan.java',
-                    'service/src/main/java/org/leo/service/discovery/NetworkProbeStageResults.java'),
-        'pattern': r'\bNetworkProbe(?:WorkflowService|OrchestrationService|AnalysisService|Scheduler|ResultRepository)\b',
-        'message': 'discovery plan or projection depends on execution infrastructure',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadStore.java',),
-        'pattern': r'\b(?:DownloadTask|DownloadEngineService|ServiceTaskExecutor)\b',
-        'message': 'download workspace depends on task execution',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/downloadengine/DownloadTask.java',),
-        'pattern': r'\bnew\s+(?:[\w.]+\.)?(?:FileInputStream|FileOutputStream|RandomAccessFile)\b|\b(?:Files|FileChannel|MessageDigest)\s*\.',
-        'message': 'download task performs local content I/O',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportTask.java',),
-        'pattern': r'\b(?:SqlExportService|SqlExportArtifacts|SqlTableCsvExporter|AgentNodeSqlService)\b',
-        'message': 'SQL export task depends on use-case or content execution',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/SqlExportService.java',),
-        'pattern': r'\bliveControls\b|\bclass\s+TaskControl\b',
-        'message': 'SQL export attempt ownership belongs to the task, not a parallel control registry',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeResultBuffer.java',),
-        'pattern': r'\bNetworkProbe(?:OrchestrationService|Scheduler|ResultRepository|WorkflowService|AnalysisService)\b',
-        'message': 'probe result buffer depends on task execution',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeOrchestrationService.java',),
-        'pattern': r'\b(?:observationOffset|errorOffset|seenErrors)\b',
-        'message': 'probe result accounting belongs to the buffer, not orchestration',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/DatabaseConnectionViewPolicy.java',),
-        'pattern': r'\b(?:AgentDatabaseConnectionService|DatabaseConnectionProfileService|DatabaseCredentialCryptoService)\b',
-        'message': 'database view policy depends on application services',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/sql/AgentDatabaseConnectionService.java',),
-        'pattern': r'\b(?:INLINE_SECRET|AUTHORITY_PASSWORD)\b',
-        'message': 'database disclosure rules belong to the view policy, not persistence',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/HttpFingerprintEvaluator.java',),
-        'pattern': r'\bNetworkProbe(?:AnalysisService|WorkflowService|OrchestrationService|Scheduler|ResultRepository)\b',
-        'message': 'HTTP fingerprint evaluator depends on task execution',
-    },
-    {
-        'sources': ('service/src/main/java/org/leo/service/discovery/NetworkProbeAnalysisService.java',),
-        'pattern': r'\b(?:VERSION_TOKEN|IncompleteEvidence)\b',
-        'message': 'HTTP evidence semantics belong to the evaluator, not analysis lifecycle',
-    },
-)
+# Package-wide boundaries only; class internals are reviewed and tested by behavior.
+ADAPTER_IMPORTS = {
+    'service/src/main/java/org/leo/service/ssh/': ('net.schmizz.', 'org.apache.sshd.'),
+    'service/src/main/java/org/leo/service/discovery/': (
+        'java.sql.', 'javax.sql.', 'org.springframework.jdbc.',
+        'org.leo.core.session.AgentNodeSessionContainer'),
+}
 NON_CODE = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/')
 IMPORT = re.compile(r'\bimport\s+(?:static\s+)?([\w.]+)(?:\.\*)?\s*;')
 
@@ -202,19 +48,6 @@ def dependency_cycles(graph):
     for module in sorted(graph):
         visit(module)
     return issues
-
-
-def boundary_applies(boundary, source):
-    return any(source == path or (path.endswith('/') and source.startswith(path))
-               for path in boundary['sources'])
-
-
-def source_import_violation(source, name):
-    for boundary in SOURCE_IMPORT_BOUNDARIES:
-        if boundary_applies(boundary, source) and (name in boundary.get('names', ())
-                        or name.startswith(boundary.get('prefixes', ()))):
-            return boundary['message'] + ': ' + name
-    return None
 
 
 def audit(root):
@@ -259,17 +92,12 @@ def audit(root):
                     reason = 'forbidden upward import: ' + name
                 if module == 'service' and name.startswith(('jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.bind.annotation.')):
                     reason = 'application service imports HTTP server API: ' + name
-                reason = source_import_violation(relative_source, name) or reason
+                if any(relative_source.startswith(package) and name.startswith(prefixes)
+                       for package, prefixes in ADAPTER_IMPORTS.items()):
+                    reason = 'application service imports adapter implementation: ' + name
                 if reason:
                     line = code.count('\n', 0, match.start()) + 1
                     issues.append(f'{source.relative_to(root)}:{line}: {reason}')
-            if relative_source == 'service/src/main/java/org/leo/service/transfer/UploadEngineService.java' and re.search(r'\bclass\s+UploadTask\b', code):
-                issues.append(f'{source.relative_to(root)}: upload protocol execution belongs in UploadTask, not the coordinator')
-            for boundary in SOURCE_CODE_BOUNDARIES:
-                if boundary_applies(boundary, relative_source):
-                    for match in re.finditer(boundary['pattern'], code):
-                        line = code.count('\n', 0, match.start()) + 1
-                        issues.append(f"{relative_source}:{line}: {boundary['message']}: {match[0]}")
     return issues + dependency_cycles(graph)
 
 
