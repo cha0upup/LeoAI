@@ -393,7 +393,7 @@ public class AgentNodeSqlService {
 
     private Map<String, Object> normalizeQueryResult(Map<String, Object> raw, String statementType) {
         List<Map<String, Object>> rowList = rows(raw);
-        List<Map<String, Object>> columns = columns(raw);
+        List<Map<String, Object>> columns = mapList(raw.get("columns"));
         if (columns.isEmpty() && !rowList.isEmpty()) {
             for (String key : rowList.get(0).keySet()) {
                 Map<String, Object> column = new LinkedHashMap<String, Object>();
@@ -417,33 +417,19 @@ public class AgentNodeSqlService {
         return data;
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> columns(Map<String, Object> raw) {
-        Object columns = raw.get("columns");
-        if (!(columns instanceof List<?>)) {
-            return new ArrayList<Map<String, Object>>();
-        }
-        List<?> list = (List<?>) columns;
-        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
-        for (Object item : list) {
-            if (item instanceof Map<?, ?>) {
-                result.add((Map<String, Object>) item);
-            }
-        }
-        return result;
+    private List<Map<String, Object>> rows(Map<String, Object> raw) {
+        Object rows = raw.get("rows");
+        return rows instanceof List<?> ? mapList(rows) : Collections.emptyList();
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> rows(Map<String, Object> raw) {
-        Object rows = raw.get("rows");
-        if (!(rows instanceof List<?>)) {
-            return Collections.emptyList();
-        }
-        List<?> list = (List<?>) rows;
+    private List<Map<String, Object>> mapList(Object value) {
         List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
-        for (Object item : list) {
-            if (item instanceof Map<?, ?>) {
-                result.add((Map<String, Object>) item);
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?>) {
+                    result.add((Map<String, Object>) item);
+                }
             }
         }
         return result;

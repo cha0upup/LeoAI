@@ -4,6 +4,7 @@ import org.leo.core.entity.User;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.agent.capability.FileCapable;
 import org.leo.service.transfer.UploadEngineService;
+import org.leo.service.vfs.VfsFileAccess;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.util.AuditLogUtil;
@@ -26,9 +27,11 @@ public class UploadEngineController {
     private static final Logger logger = LoggerFactory.getLogger(UploadEngineController.class);
 
     private final UploadEngineService uploadEngineService;
+    private final VfsFileAccess vfsFileAccess;
 
-    public UploadEngineController(UploadEngineService uploadEngineService) {
+    public UploadEngineController(UploadEngineService uploadEngineService, VfsFileAccess vfsFileAccess) {
         this.uploadEngineService = uploadEngineService;
+        this.vfsFileAccess = vfsFileAccess;
     }
 
     /**
@@ -54,8 +57,7 @@ public class UploadEngineController {
             String filePath = ControllerUtil.getRequiredStringParam(params, "filePath");
             FileCapable fileNode = ControllerUtil.requireCapability(params, FileCapable.class);
             AbstractAgentNode auditNode = ControllerUtil.getAbstractAgentNode(sessionId);
-            Path sourceFile = uploadEngineService.resolveVfsFilePath(vfsPath);
-            uploadEngineService.validateReadPermission(userId, user.getPrivilege(), sourceFile);
+            Path sourceFile = vfsFileAccess.resolveReadable(userId, user.getPrivilege(), vfsPath);
             if (!Files.exists(sourceFile) || !Files.isRegularFile(sourceFile)) {
                 return ApiResponse.notFound("平台侧文件不存在: " + vfsPath);
             }

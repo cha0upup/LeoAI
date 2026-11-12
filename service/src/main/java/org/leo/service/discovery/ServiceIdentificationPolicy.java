@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 import static org.leo.service.discovery.NetworkProbePayloads.copyMapOrEmpty;
+import static org.leo.service.discovery.NetworkProbePayloads.integer;
+import static org.leo.service.discovery.NetworkProbePayloads.text;
 
 /** Pure service-identification rules; no task scheduling, node I/O or persistence. */
 final class ServiceIdentificationPolicy {
@@ -111,18 +113,5 @@ final class ServiceIdentificationPolicy {
 
     static String hostForUrl(String host) {
         return host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
-    }
-
-    private static int integer(Object value, int fallback) {
-        if (value instanceof Number number) return number.intValue();
-        try {
-            return value == null ? fallback : Integer.parseInt(String.valueOf(value).trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
     }
 }

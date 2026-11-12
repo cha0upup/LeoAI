@@ -311,6 +311,52 @@ class NetworkProbeWorkflowServiceTest {
     }
 
     @Test
+    void onlyAcknowledgesAndAdvancesBothCursorsAfterPersistenceSucceeds() throws Exception {
+        var backend = mock(NetworkProbeOrchestrationService.class);
+        var store = mock(NetworkProbeResultRepository.class);
+        List<String> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicInteger writes = new AtomicInteger();
+        when(store.createTask(anyString(), anyString(), anyString(), anyMap())).thenReturn(true);
+        when(store.ownsTask(eq("session-1"), anyString())).thenReturn(true);
+        when(backend.start(anyString(), any(), anyMap())).thenReturn(Map.of("taskId", "pages"));
+        when(backend.querySince(anyString(), anyString(), anyLong(), anyLong())).thenAnswer(call -> {
+            long cursor = call.getArgument(2), errorCursor = call.getArgument(3);
+            events.add("query:" + cursor + ":" + errorCursor);
+            boolean first = cursor == 0;
+            return Map.of("result", Map.of("status", "STOPPED", "outcome", "COMPLETED", "total", 2, "completed", 2,
+                    "nextCursor", first ? 1L : 2L, "nextErrorCursor", 1L, "hasMore", first,
+                    "observations", List.of(Map.of("host", "host-a", "port", first ? 80 : 443,
+                            "state", "open", "stage", "tcp-connect")),
+                    "errors", first ? List.of(Map.of("error", "fixture")) : List.of()));
+        });
+        when(store.append(anyString(), anyList(), anyList(), anyList(), anyList())).thenAnswer(call -> {
+            List<Map<String, Object>> observations = call.getArgument(1);
+            boolean stored = writes.incrementAndGet() > 1;
+            events.add("store:" + observations.get(0).get("port") + ":" + stored);
+            return stored;
+        });
+        org.mockito.Mockito.doAnswer(call -> {
+            events.add("ack:" + call.getArgument(2) + ":" + call.getArgument(3));
+            return null;
+        }).when(backend).acknowledge(anyString(), anyString(), anyLong(), anyLong());
+        try (var worker = new NetworkProbeWorkflowService(analysis, backend, Executors.newSingleThreadExecutor(), 10)) {
+            worker.setResultStore(store);
+            String id = String.valueOf(worker.start("session-1", new WorkflowNode(),
+                    plan(List.of(80, 443), List.of("PORT_SCAN"))).get("taskId"));
+            Map<String, Object> snapshot = Map.of();
+            for (int attempt = 0; attempt < 200; attempt++) {
+                snapshot = worker.querySummaryIfPresent("session-1", id);
+                if ("STOPPED".equals(snapshot.get("status"))) break;
+                Thread.sleep(5);
+            }
+            assertEquals("COMPLETED", snapshot.get("outcome"));
+            assertEquals(2, snapshot.get("openCount"));
+            assertEquals(List.of("query:0:0", "store:80:false", "query:0:0", "store:80:true", "ack:1:1",
+                    "query:1:1", "store:443:true", "ack:2:1"), events);
+        }
+    }
+
+    @Test
     void drainsQueuedPagesWithoutWaitingForTheIdlePollInterval() throws Exception {
         var backend = mock(NetworkProbeOrchestrationService.class);
         when(backend.start(anyString(), any(), anyMap())).thenReturn(Map.of("taskId", "pages"));

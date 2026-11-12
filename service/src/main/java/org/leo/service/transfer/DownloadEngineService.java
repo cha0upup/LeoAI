@@ -48,9 +48,7 @@ public class DownloadEngineService {
                                              String filePath,
                                              int threads,
                                              int chunkSize) throws Exception {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("缺少必要参数: userId");
-        }
+        requireUserId(userId);
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: sessionId");
         }
@@ -64,7 +62,6 @@ public class DownloadEngineService {
         int t = clampInt(threads, DEFAULT_THREADS, 1, MAX_THREADS);
         int cs = clampInt(chunkSize, DEFAULT_CHUNK_SIZE, 1, MAX_CHUNK_SIZE);
 
-        @SuppressWarnings("unchecked")
         Map<String, Object> probe = fileNode.fileDownloadChunk(filePath, 1L, 0L);
         ensureRemoteSuccess(probe, Set.of(100, 200), "读取远端文件信息失败");
         if (!(probe.get("length") instanceof Number length)) {
@@ -75,7 +72,6 @@ public class DownloadEngineService {
             throw new IllegalStateException("远端文件长度无效: " + expectedLength);
         }
 
-        @SuppressWarnings("unchecked")
         Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
         String expectedMd5 = extractMd5(md5Res);
         if (expectedMd5 == null || expectedMd5.isBlank()) {
@@ -122,9 +118,7 @@ public class DownloadEngineService {
     }
 
     public Map<String, Object> resume(FileCapable fileNode, String userId, String sessionId, String taskId) throws Exception {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("缺少必要参数: userId");
-        }
+        requireUserId(userId);
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: sessionId");
         }
@@ -186,9 +180,7 @@ public class DownloadEngineService {
     }
 
     public Map<String, Object> listBySessionId(String userId, String sessionId) {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("缺少必要参数: userId");
-        }
+        requireUserId(userId);
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: sessionId");
         }
@@ -271,7 +263,7 @@ public class DownloadEngineService {
         for (Map.Entry<String, DownloadTask> entry : tasksById.entrySet()) {
             DownloadTask task = entry.getValue();
             TransferTaskState s = task.getState();
-            if (isTerminalState(s) && task.getEndAtMs() > 0 && (now - task.getEndAtMs()) > FINISHED_TASK_RETAIN_MS) {
+            if (s != null && s.isTerminal() && task.getEndAtMs() > 0 && (now - task.getEndAtMs()) > FINISHED_TASK_RETAIN_MS) {
                 if (tasksById.remove(entry.getKey(), task)) {
                     new DownloadStore(task.getUserId(), task.getTaskId())
                             .deleteTaskArtifacts();
@@ -288,33 +280,15 @@ public class DownloadEngineService {
         tasksById.clear();
     }
 
-    private static boolean isTerminalState(TransferTaskState state) {
-        return state != null && state.isTerminal();
-    }
-
     public Map<String, Object> pause(String userId, String taskId) {
-        requireUserId(userId);
-        if (taskId == null || taskId.isBlank()) {
-            throw new IllegalArgumentException("缺少必要参数: taskId");
-        }
-        DownloadTask task = tasksById.get(taskKey(userId, taskId));
-        if (task == null) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
-        }
+        DownloadTask task = requireTask(userId, taskId);
         task.pause();
         log.info("[FileTransfer] download paused taskId={}, userId={}", taskId, userId);
         return task.snapshot();
     }
 
     public Map<String, Object> cancel(String userId, String taskId) {
-        requireUserId(userId);
-        if (taskId == null || taskId.isBlank()) {
-            throw new IllegalArgumentException("缺少必要参数: taskId");
-        }
-        DownloadTask task = tasksById.get(taskKey(userId, taskId));
-        if (task == null) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
-        }
+        DownloadTask task = requireTask(userId, taskId);
         task.cancel();
         log.info("[FileTransfer] download cancelled taskId={}, userId={}", taskId, userId);
         return task.snapshot();
@@ -389,6 +363,18 @@ public class DownloadEngineService {
         result.put("taskId", taskId);
         result.put("removed", removed);
         return result;
+    }
+
+    private DownloadTask requireTask(String userId, String taskId) {
+        requireUserId(userId);
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: taskId");
+        }
+        DownloadTask task = tasksById.get(taskKey(userId, taskId));
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
+        return task;
     }
 
     private void startWithAdmission(DownloadTask task, String userId) {

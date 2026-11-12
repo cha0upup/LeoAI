@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -85,6 +87,40 @@ class UploadEngineServiceTest {
         verify(node).createFile(anyString(), eq(""));
         verify(node).fileUploadChunk(anyString(), eq(0L), any());
         verify(node).moveFile(anyString(), eq("/remote/file.txt"), eq("overwrite"));
+    }
+
+    @Test
+    void rejectedSchedulingReturnsAFailedTaskWithoutCallingTheNode() {
+        ServiceTaskExecutor rejected = mock(ServiceTaskExecutor.class);
+        when(rejected.submitUpload(any(Runnable.class))).thenThrow(new RejectedExecutionException());
+        UploadEngineService isolated = new UploadEngineService(rejected);
+        try {
+            var snapshot = isolated.start(node, "user", "session", "/remote/file.txt", source.toFile(), "file.txt", 1024);
+            assertEquals("FAILED", snapshot.get("state"));
+            assertEquals("CREATED", snapshot.get("errorStage"));
+            assertEquals("上传任务队列繁忙", snapshot.get("errorMessage"));
+            verifyNoInteractions(node);
+        } finally {
+            isolated.close();
+        }
+    }
+
+    @Test
+    void taskCommandsKeepOwnerAndSessionBoundariesBeforeRescheduling() {
+        ServiceTaskExecutor queued = mock(ServiceTaskExecutor.class);
+        when(queued.submitUpload(any(Runnable.class))).thenReturn(CompletableFuture.completedFuture(null));
+        UploadEngineService isolated = new UploadEngineService(queued);
+        try {
+            String id = (String) isolated.start(node, "user", "session", "/remote/file.txt", source.toFile(), "file.txt", 1024).get("taskId");
+            isolated.pause("user", id);
+            assertThrows(IllegalArgumentException.class, () -> isolated.resume(node, "other", "session", id));
+            assertThrows(IllegalArgumentException.class, () -> isolated.resume(node, "user", "other-session", id));
+            assertEquals("PAUSED", isolated.progress("user", id).get("state"));
+            verify(queued).submitUpload(any(Runnable.class));
+            verifyNoInteractions(node);
+        } finally {
+            isolated.close();
+        }
     }
 
     private String start() {

@@ -95,6 +95,53 @@ class ArchitectureAuditTest(unittest.TestCase):
         self.module('service', [('javacore', 'compile')])
         self.assertTrue(any('forbidden compile' in issue for issue in audit(self.root)))
 
+    def test_upload_boundaries_reject_policy_io_and_scheduler_leaks(self):
+        self.write('service/src/main/java/org/leo/service/transfer/UploadEngineService.java',
+                   'import org.leo.service.vfs.VfsFileAccess;\nimport java.io.InputStream;\n'
+                   'class UploadEngineService { private static class UploadTask {} }')
+        self.write('service/src/main/java/org/leo/service/transfer/UploadTask.java',
+                   'import org.leo.service.concurrent.ServiceTaskExecutor;\n'
+                   'import java.util.concurrent.Executors;')
+        self.write('service/src/main/java/org/leo/service/vfs/VfsFileAccess.java',
+                   'import org.leo.service.transfer.UploadEngineService;')
+        issues = audit(self.root)
+        self.assertEqual(6, len(issues))
+        self.assertTrue(any('not the coordinator' in issue for issue in issues))
+        self.assertTrue(any('VFS access depends on transfer' in issue for issue in issues))
+
+    def test_upload_task_accepts_capabilities_and_cancellation_without_a_scheduler(self):
+        self.write('service/src/main/java/org/leo/service/transfer/UploadTask.java',
+                   'import org.leo.core.agent.capability.FileCapable;\n'
+                   'import java.util.concurrent.Future;\nimport java.util.function.Consumer;')
+        self.write('service/src/main/java/org/leo/service/transfer/UploadEngineService.java',
+                   'import org.leo.service.concurrent.ServiceTaskExecutor;')
+        self.write('service/src/main/java/org/leo/service/vfs/VfsFileAccess.java',
+                   'import org.leo.core.config.LeoConfig;')
+        self.assertEqual([], audit(self.root))
+
+    def test_discovery_models_reject_same_package_execution_and_external_io(self):
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeWorkflowPlan.java',
+                   'package org.leo.service.discovery;\n'
+                   'class NetworkProbeWorkflowPlan { NetworkProbeScheduler scheduler; }')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeStageResults.java',
+                   'import org.leo.core.agent.capability.NetworkProbeCapable;\n'
+                   'import java.util.concurrent.ExecutorService;\n'
+                   'class NetworkProbeStageResults { NetworkProbeResultRepository repository; }')
+        issues = audit(self.root)
+        self.assertEqual(4, len(issues))
+        self.assertTrue(all('execution infrastructure' in issue for issue in issues))
+
+    def test_discovery_models_accept_domain_dependencies_and_ignore_documentation(self):
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeWorkflowPlan.java',
+                   'import org.leo.service.discovery.ScanPlanService.ScanPlan;\n'
+                   'import static org.leo.service.discovery.NetworkProbePayloads.copyMap;\n'
+                   '// NetworkProbeScheduler\n'
+                   'class NetworkProbeWorkflowPlan { String label = "NetworkProbeResultRepository"; }')
+        self.write('service/src/main/java/org/leo/service/discovery/NetworkProbeStageResults.java',
+                   'import java.util.LinkedHashMap;\n'
+                   'class NetworkProbeStageResults { void apply() { ServiceIdentificationPolicy.httpCandidates(null); } }')
+        self.assertEqual([], audit(self.root))
+
     def test_missing_descriptors_are_reported(self):
         (self.root / 'service/pom.xml').unlink()
         self.assertTrue(any('invalid module descriptor' in issue for issue in audit(self.root)))

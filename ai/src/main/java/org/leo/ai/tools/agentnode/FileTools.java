@@ -12,6 +12,7 @@ import org.leo.core.agent.capability.FileCapable;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.transfer.DownloadEngineService;
 import org.leo.service.transfer.UploadEngineService;
+import org.leo.service.vfs.VfsFileAccess;
 import org.leo.service.audit.AgentAuditService;
 import org.leo.service.user.UserService;
 import dev.langchain4j.agent.tool.Tool;
@@ -46,17 +47,20 @@ public class FileTools {
 
     private final DownloadEngineService downloadEngineService;
     private final UploadEngineService uploadEngineService;
+    private final VfsFileAccess vfsFileAccess;
     private final UserService userService;
     private final AgentAuditService auditService;
     private final AiWorkspaceService workspaceService;
 
     public FileTools(DownloadEngineService downloadEngineService,
                      UploadEngineService uploadEngineService,
+                     VfsFileAccess vfsFileAccess,
                      UserService userService,
                      AgentAuditService auditService,
                      AiWorkspaceService workspaceService) {
         this.downloadEngineService = downloadEngineService;
         this.uploadEngineService = uploadEngineService;
+        this.vfsFileAccess = vfsFileAccess;
         this.userService = userService;
         this.auditService = auditService;
         this.workspaceService = workspaceService;
@@ -193,8 +197,7 @@ public class FileTools {
         AbstractAgentNode auditNode = AgentNodeSessionUtils.getAgentNode(sessionId);
         User user = userService.getUserById(userId);
         String privilege = user == null ? null : user.getPrivilege();
-        Path sourceFile = uploadEngineService.resolveVfsFilePath(vfsPath);
-        uploadEngineService.validateReadPermission(userId, privilege, sourceFile);
+        Path sourceFile = vfsFileAccess.resolveReadable(userId, privilege, vfsPath);
         if (!Files.exists(sourceFile) || !Files.isRegularFile(sourceFile)) {
             throw AiToolException.modelCorrectable(
                     "RESOURCE_NOT_FOUND",
@@ -398,9 +401,8 @@ public class FileTools {
         }
         User user = userService.getUserById(userId);
         String privilege = user == null ? null : user.getPrivilege();
-        Path source = uploadEngineService.resolveVfsFilePath(
+        Path source = vfsFileAccess.resolveReadable(userId, privilege,
                 "users/" + userId + "/" + downloadPath);
-        uploadEngineService.validateReadPermission(userId, privilege, source);
         Map<String, Object> workspaceFile = workspaceService.writeGeneratedFile(
                 workspaceService.workspaceFromContext(), workspacePath, source);
         result.put("workspaceFile", workspaceFile);

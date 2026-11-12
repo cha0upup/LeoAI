@@ -26,13 +26,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
 import static org.leo.service.discovery.NetworkProbePayloads.copyMapOrEmpty;
+import static org.leo.service.discovery.NetworkProbePayloads.endpointKey;
+import static org.leo.service.discovery.NetworkProbePayloads.integer;
+import static org.leo.service.discovery.NetworkProbePayloads.mapRows;
+import static org.leo.service.discovery.NetworkProbePayloads.text;
 
 /**
  * Runs the discovery workflow as one user-visible task.
  *
  * <p>The existing orchestration service remains responsible for node batching
- * and transport lifecycle. This service only owns stage transitions and the
- * derived targets passed from one stage to the next.</p>
+ * and transport lifecycle. This service owns workflow lifecycle, scheduling and
+ * persistence-before-ACK; the plan builds requests and stage results own the
+ * endpoint projection passed from one stage to the next.</p>
  */
 @Service
 public final class NetworkProbeWorkflowService implements AutoCloseable {
@@ -41,10 +46,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     public static final String KIND = "network_workflow";
     private static final long TASK_TTL_MS = 30L * 60L * 1000L;
     private static final long DEFAULT_POLL_INTERVAL_MS = 2000L;
-    /** A banner normally arrives immediately; do not let silent services block discovery. */
-    private static final int SERVICE_BANNER_TIMEOUT_MS = 300;
-    /** HTTP identification only needs the response headers. */
-    private static final int HTTP_IDENTIFICATION_TIMEOUT_MS = 700;
     private final NetworkProbeAnalysisService analysisService;
     private final NetworkProbeOrchestrationService orchestrationService;
     private volatile NetworkProbeResultRepository resultStore;
@@ -80,13 +81,10 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     }
 
     public Map<String, Object> start(String sessionId, NetworkProbeCapable node, ScanPlan plan) {
-        if (plan == null) throw new IllegalArgumentException("扫描计划不能为空");
-        return start(sessionId, node, new WorkflowSpec(plan.hosts(), plan.ports(), plan.targets(),
-                plan.timeoutMs(), plan.workers(), plan.stages(), plan.name(), plan.reachabilityTargets(),
-                plan.fingerprintRules(), List.of(), "", false));
+        return start(sessionId, node, NetworkProbeWorkflowPlan.from(plan));
     }
 
-    private Map<String, Object> start(String sessionId, NetworkProbeCapable node, WorkflowSpec spec) {
+    private Map<String, Object> start(String sessionId, NetworkProbeCapable node, NetworkProbeWorkflowPlan spec) {
         if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("sessionId不能为空");
         if (node == null) throw new IllegalArgumentException("网络探测节点不能为空");
         cleanup();
@@ -99,7 +97,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             tasks.put(taskId, task);
         }
         NetworkProbeResultRepository store = resultStore;
-        Map<String, Object> durableConfig = durableConfig(spec);
+        Map<String, Object> durableConfig = spec.durableConfig();
         durableConfig.put("targetCount", Integer.valueOf(spec.hosts().size()));
         if (store != null && !store.createTask(taskId, sessionId.trim(), spec.name(), durableConfig)) {
             tasks.remove(taskId);
@@ -135,15 +133,10 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     public Map<String, Object> startFingerprint(String sessionId, NetworkProbeCapable node,
                                                 List<Map<String, Object>> endpoints, List<Map<String, Object>> targets,
                                                 List<Map<String, Object>> rules, String name, String sourceTaskId, boolean debug) throws Exception {
-        endpoints = mapList(endpoints);
-        targets = mapList(targets);
-        rules = mapList(rules);
-        if (endpoints.isEmpty()) throw new IllegalArgumentException("组件识别需要至少一个资产");
-        List<String> hosts = endpoints.stream().map(endpoint -> text(endpoint.get("host"))).distinct().toList();
-        WorkflowSpec spec = new WorkflowSpec(hosts, List.of(), targets, 3000, 16,
-                List.of(ScanStage.FINGERPRINT), name, List.of(), rules, endpoints, sourceTaskId, debug);
+        NetworkProbeWorkflowPlan spec = NetworkProbeWorkflowPlan.fingerprint(
+                endpoints, targets, rules, name, sourceTaskId, debug);
         // Validate all work before creating a durable task; the orchestrator bounds node batches.
-        analysisService.prepare(Map.of("kind", "fingerprint", "targets", fingerprintTargets(spec, endpoints), "rules", rules));
+        analysisService.prepare(spec.fingerprintPreflight());
         return start(sessionId, node, spec);
     }
 
@@ -270,9 +263,9 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         try {
             CompletableFuture<?> flow;
             if (!task.spec.seedEndpoints().isEmpty()) {
-                List<Map<String, Object>> endpoints = mapList(task.spec.seedEndpoints());
+                List<Map<String, Object>> endpoints = mapRows(task.spec.seedEndpoints());
                 synchronized (task.monitor) { task.confirmedHosts.addAll(task.spec.hosts()); }
-                if (resultStore != null && !resultStore.append(task.taskId, seedObservations(task.spec), List.of()))
+                if (resultStore != null && !resultStore.append(task.taskId, task.spec.seedObservations(), List.of()))
                     throw new IllegalStateException("保存补扫资产上下文失败");
                 for (Map<String, Object> endpoint : endpoints) endpoint.put("serviceIdentified", true);
                 flow = executeFingerprint(task, endpoints);
@@ -296,7 +289,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         CompletableFuture<Map<String, Object>> discovery = CompletableFuture.completedFuture(Map.of());
         if (reachability != null) {
             try {
-                Map<String, Object> scan = reachabilityScan(task.spec);
+                Map<String, Object> scan = task.spec.reachabilityScan();
                 scan.put("hostDiscovery", true);
                 scan.put("javaReachability", task.node.supportsJavaReachability());
                 var prepared = analysisService.prepare(scan);
@@ -320,7 +313,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             return executePorts(task, ports, hosts)
                     .thenCompose(portResult -> {
                         if (!proceed(task)) return CompletableFuture.completedFuture(null);
-                        List<Map<String, Object>> endpoints = mapList(portResult.get("openPortResults"));
+                        List<Map<String, Object>> endpoints = mapRows(portResult.get("openPortResults"));
                         if (endpoints.isEmpty()) {
                             skip(task, task.stages.get("SERVICE_PROBE"), "NO_OPEN_PORTS");
                             skip(task, task.stages.get("FINGERPRINT"), "NO_OPEN_PORTS");
@@ -336,8 +329,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
             if (!proceed(task)) return CompletableFuture.completedFuture(Map.of());
             task.currentStage = stage.name; stage.status = "PAUSED".equals(task.status) ? "PAUSED" : "RUNNING";
         }
-        Map<String, Object> plan = portPlan(task.spec, hosts);
-        List<Map<String, Object>> targets = mapList(plan.get("targets"));
+        Map<String, Object> plan = task.spec.portPlan(hosts);
+        List<Map<String, Object>> targets = mapRows(plan.get("targets"));
         List<Map<String, Object>> cached = new ArrayList<>();
         List<Map<String, Object>> remaining = new ArrayList<>();
         for (Map<String, Object> target : targets) {
@@ -352,15 +345,15 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 && !resultStore.append(task.taskId, annotateStage(cached, "PORT_SCAN"), List.of()))
             return CompletableFuture.failedFuture(new IllegalStateException("保存探活复用结果失败"));
         if (remaining.isEmpty()) {
-            Map<String, Map<String, Object>> open = new LinkedHashMap<>(); collectOpenEndpoints(open, cached);
+            var results = new NetworkProbeStageResults(ScanStage.PORT_SCAN, null, cached);
             synchronized (task.monitor) {
                 if (!proceed(task)) return CompletableFuture.completedFuture(Map.of());
                 stage.status = "COMPLETED";
                 setStageProgress(stage, targets.size(), targets.size());
-                enrichPortResult(stage, open.values());
+                enrichPortResult(stage, results.endpointRows());
             }
             persistTaskState(task);
-            return CompletableFuture.completedFuture(Map.of("openPortResults", new ArrayList<>(open.values())));
+            return CompletableFuture.completedFuture(Map.of("openPortResults", results.openPortResults()));
         }
         plan.put("targets", remaining);
         return executeStage(task, stage, plan, null, null, cached.size(), targets.size());
@@ -369,14 +362,14 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private CompletableFuture<?> identifyServices(WorkflowTask task, List<Map<String, Object>> endpoints) {
         StageState stage = task.stages.get("SERVICE_PROBE");
         if (stage == null || !proceed(task)) return CompletableFuture.completedFuture(null);
-        return executeStage(task, stage, servicePlan(task.spec, endpoints), null, endpoints).thenCompose(ignoredTcp -> {
+        return executeStage(task, stage, task.spec.servicePlan(endpoints), null, endpoints).thenCompose(ignoredTcp -> {
             if (!proceed(task)) return CompletableFuture.completedFuture(null);
             List<Map<String, Object>> http = ServiceIdentificationPolicy.httpCandidates(endpoints);
             CompletableFuture<Map<String, Object>> probes = CompletableFuture.completedFuture(Map.of());
             int total = endpoints.size() + http.size();
             if (!http.isEmpty()) {
                 setStageProgress(stage, endpoints.size(), total);
-                probes = executeStage(task, stage, serviceHttpPlan(task.spec, http, false), null, endpoints, endpoints.size(), total);
+                probes = executeStage(task, stage, task.spec.serviceHttpPlan(http, false), null, endpoints, endpoints.size(), total);
             }
             return probes.thenCompose(ignoredHttp -> {
                 // Each stage applies its evidence to the live endpoints before completing.
@@ -384,7 +377,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 List<Map<String, Object>> https = ServiceIdentificationPolicy.httpsCandidates(http);
                 if (https.isEmpty()) return CompletableFuture.completedFuture(null);
                 int expanded = total + https.size(); setStageProgress(stage, total, expanded);
-                return executeStage(task, stage, serviceHttpPlan(task.spec, https, true), null, endpoints, total, expanded);
+                return executeStage(task, stage, task.spec.serviceHttpPlan(https, true), null, endpoints, total, expanded);
             }).thenRun(() -> {
                 if (!proceed(task)) return;
                 enrichPortResult(task.stages.get("PORT_SCAN"), endpoints);
@@ -395,34 +388,12 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private CompletableFuture<?> executeFingerprint(WorkflowTask task, List<Map<String, Object>> endpoints) {
         StageState stage = task.stages.get("FINGERPRINT");
         if (stage == null || !proceed(task)) return CompletableFuture.completedFuture(null);
-        List<Map<String, Object>> applications = fingerprintTargets(task.spec, endpoints);
+        List<Map<String, Object>> applications = task.spec.fingerprintTargets(endpoints);
         if (applications.isEmpty()) { skip(task, stage, "NO_HTTP_APPLICATIONS"); return CompletableFuture.completedFuture(null); }
         try {
-            var prepared = analysisService.prepare(Map.of("kind", "fingerprint", "targets", applications,
-                    "rules", task.spec.fingerprintRules(), "threads", Math.min(32, task.spec.threads()), "debug", task.spec.debug()));
+            var prepared = analysisService.prepare(task.spec.fingerprintRequest(applications));
             return executeStage(task, stage, prepared.plan(), prepared, endpoints);
         } catch (Exception error) { return CompletableFuture.failedFuture(error); }
-    }
-
-    private List<Map<String, Object>> seedObservations(WorkflowSpec spec) {
-        List<Map<String, Object>> observations = new ArrayList<>();
-        for (Map<String, Object> endpoint : spec.seedEndpoints()) {
-            Map<String, Object> observation = new LinkedHashMap<>();
-            for (String key : List.of("host", "port", "protocol", "service", "confidence"))
-                if (endpoint.get(key) != null) observation.put(key, endpoint.get(key));
-            observation.put("state", "open");
-            observation.put("stage", "asset-context");
-            observation.put("workflowStage", "SERVICE_PROBE");
-            observation.put("sourceTaskId", spec.sourceTaskId());
-            observation.put("contextOnly", true);
-            Map<String, Object> evidence = new LinkedHashMap<>();
-            for (String key : List.of("title", "statusCode", "server", "banner", "contentType", "location"))
-                if (endpoint.get(key) != null) evidence.put(key, endpoint.get(key));
-            if (endpoint.get("responseSize") != null) evidence.put("bodyLength", endpoint.get("responseSize"));
-            observation.put("evidence", evidence);
-            observations.add(observation);
-        }
-        return observations;
     }
 
     private CompletableFuture<Map<String, Object>> executeStage(WorkflowTask task, StageState stage,
@@ -468,8 +439,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         Map<String, Object> latest = copyMapOrEmpty(queried.get("result"));
         if (latest.isEmpty()) throw new IllegalStateException("工作流阶段结果为空: " + stage.name);
         updateStage(stage, latest, context.offset, context.total);
-        List<Map<String, Object>> observations = mapList(latest.get("observations"));
-        List<Map<String, Object>> errors = mapList(latest.get("errors"));
+        List<Map<String, Object>> observations = mapRows(latest.get("observations"));
+        List<Map<String, Object>> errors = mapRows(latest.get("errors"));
         synchronized (context.task.monitor) {
             for (Map<String, Object> observation : observations) {
                 if ("REACHABILITY".equals(stage.name) && "tcp-connect".equals(observation.get("stage"))
@@ -482,26 +453,14 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 }
             }
         }
-        if ("PORT_SCAN".equals(context.stage.name)) {
-            collectOpenEndpoints(context.endpointsByKey, observations);
-            enrichPortResult(context.stage, context.endpointsByKey.values());
-        } else if ("SERVICE_PROBE".equals(context.stage.name)) {
-            if (context.liveEndpoints != null) {
-                // Live endpoint maps retain earlier evidence; replayed result pages are idempotent.
-                applyServiceEvidence(context.endpointsByKey, observations);
-                enrichPortResult(context.stage, context.liveEndpoints);
-            }
-        }
-        List<Map<String, Object>> matches = "FINGERPRINT".equals(context.stage.name)
-                ? mapList(copyMapOrEmpty(latest.get("analysis")).get("matches")) : List.of();
-        if ("FINGERPRINT".equals(context.stage.name) && context.liveEndpoints != null) {
-            applyFingerprintMatches(context.liveEndpoints, matches);
-            enrichPortResult(context.stage, context.liveEndpoints);
+        List<Map<String, Object>> matches = context.results.accept(latest, observations);
+        if (context.results.hasEndpointProjection()) {
+            enrichPortResult(stage, context.results.endpointRows());
         }
         boolean hasData = !observations.isEmpty() || !errors.isEmpty() || !matches.isEmpty();
         boolean persisted = context.store == null || !hasData || context.store.append(context.task.taskId,
                 annotateStage(observations, context.stage.name), annotateStage(errors, context.stage.name),
-                matches, "FINGERPRINT".equals(context.stage.name) ? context.liveEndpoints : List.of());
+                matches, context.results.fingerprintEndpoints());
         if (persisted) {
             context.persistenceFailures = 0;
         } else if (++context.persistenceFailures >= 8) {
@@ -517,7 +476,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         persistTaskState(task, false);
         boolean terminal = "STOPPED".equalsIgnoreCase(text(latest.get("status"))) && !Boolean.TRUE.equals(latest.get("hasMore"));
         if (terminal && persisted) {
-            if ("PORT_SCAN".equals(stage.name)) latest.put("openPortResults", new ArrayList<>(context.endpointsByKey.values()));
+            context.results.finish(latest);
             finishStage(context, latest); return -1;
         }
         if (!persisted) return terminal ? Math.max(25L, pollIntervalMs * 2) : pollIntervalMs;
@@ -544,7 +503,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private static String stageMessage(String prefix, Map<String, Object> latest) {
         String detail = text(latest.get("error"));
         if (detail.isEmpty()) {
-            for (Map<String, Object> error : mapList(latest.get("errors"))) {
+            for (Map<String, Object> error : mapRows(latest.get("errors"))) {
                 detail = text(error.get("error"));
                 if (!detail.isEmpty()) break;
             }
@@ -579,10 +538,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         StageExecution context = task.execution;
         if (context != null) scheduler.wake(context.ticket);
         else if (task.startup != null) scheduler.wake(task.startup);
-    }
-
-    private static String endpointKey(Map<String, Object> endpoint) {
-        return text(endpoint.get("host")) + ":" + integer(endpoint.get("port"), -1);
     }
 
     private void updateStage(StageState stage, Map<String, Object> result,
@@ -738,24 +693,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return item;
     }
 
-    private static Map<String, Object> durableConfig(WorkflowSpec spec) {
-        Map<String, Object> config = new LinkedHashMap<>();
-        if (!spec.name().isEmpty()) config.put("name", spec.name());
-        config.put("hosts", spec.hosts());
-        config.put("ports", spec.ports());
-        config.put("timeout", Integer.valueOf(spec.timeout()));
-        config.put("threads", Integer.valueOf(spec.threads()));
-        config.put("stages", spec.stages().stream().map(Enum::name).toList());
-        if (!spec.sourceTaskId().isEmpty()) config.put("sourceTaskId", spec.sourceTaskId());
-        if (spec.debug()) config.put("debug", true);
-        // Preserve original hostnames and application paths for later supplemental scans.
-        config.put("targets", spec.targets());
-        if (!spec.fingerprintRules().isEmpty()) {
-            config.put("fingerprintRules", spec.fingerprintRules());
-        }
-        return config;
-    }
-
     private int taskProgress(WorkflowTask task) {
         synchronized (task.monitor) {
             int progress = 0;
@@ -813,8 +750,8 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 result.put("hosts", task.spec.hosts());
                 result.put("ports", task.spec.ports());
                 result.put("reachableHostList", new ArrayList<>(task.confirmedHosts));
-                result.put("openPortResults", mapList(open));
-                result.put("serviceResults", mapList(open.stream()
+                result.put("openPortResults", mapRows(open));
+                result.put("serviceResults", mapRows(open.stream()
                         .filter(endpoint -> Boolean.TRUE.equals(endpoint.get("serviceIdentified"))).toList()));
             } else {
                 result.put("reachableHostCount", task.confirmedHosts.size());
@@ -881,169 +818,9 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 && now - entry.getValue().finishedAt > TASK_TTL_MS);
     }
 
-    private List<Map<String, Object>> fingerprintTargets(WorkflowSpec spec, List<Map<String, Object>> endpoints) {
-        Map<String, Map<String, Object>> configured = new LinkedHashMap<>();
-        for (Map<String, Object> target : spec.targets()) configured.put(endpointKey(target), target);
-        Map<String, Map<String, Object>> applications = new LinkedHashMap<>();
-        for (Map<String, Object> endpoint : endpoints) {
-            Map<String, Object> original = configured.getOrDefault(endpointKey(endpoint), Map.of());
-            List<Map<String, Object>> inputs = mapList(original.get("applications"));
-            if (inputs.isEmpty() && original.containsKey("baseUrl")) inputs = List.of(Map.of("baseUrl", original.get("baseUrl")));
-            if (inputs.isEmpty()) inputs = List.of(Map.of("hostname", endpoint.get("host")));
-            String service = text(endpoint.get("service"));
-            for (Map<String, Object> input : inputs) {
-                String url = text(input.get("baseUrl"));
-                if (url.isEmpty()) {
-                    if (!List.of("http", "https").contains(service)) continue;
-                    url = service + "://" + ServiceIdentificationPolicy.hostForUrl(text(input.get("hostname"))) + ":" + endpoint.get("port") + "/";
-                }
-                try {
-                    java.net.URI uri = java.net.URI.create(url);
-                    if (!List.of("http", "https").contains(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null)
-                        throw new IllegalArgumentException("无效的应用 URL");
-                    String path = uri.getRawPath();
-                    if (path == null || path.isEmpty()) path = "/";
-                    if (!path.endsWith("/")) path += "/";
-                    url = uri.getScheme() + "://" + uri.getRawAuthority() + path;
-                    Map<String, Object> target = new LinkedHashMap<>();
-                    target.put("host", endpoint.get("host"));
-                    target.put("port", endpoint.get("port"));
-                    target.put("protocol", uri.getScheme());
-                    target.put("baseUrl", url);
-                    String id = endpointKey(endpoint) + "|" + url;
-                    target.put("targetId", id);
-                    applications.putIfAbsent(id, target);
-                } catch (IllegalArgumentException error) {
-                    throw new IllegalArgumentException("无法创建组件识别目标: " + url, error);
-                }
-            }
-        }
-        return new ArrayList<>(applications.values());
-    }
-
-    private void applyFingerprintMatches(List<Map<String, Object>> endpoints, List<Map<String, Object>> matches) {
-        Map<String, List<Map<String, Object>>> byEndpoint = new LinkedHashMap<>();
-        for (Map<String, Object> match : matches)
-            byEndpoint.computeIfAbsent(endpointKey(match), ignored -> new ArrayList<>()).add(match);
-        for (Map<String, Object> endpoint : endpoints) {
-            List<Map<String, Object>> results = byEndpoint.get(endpointKey(endpoint));
-            if (results == null) continue;
-            Map<String, Object> fingerprint = new LinkedHashMap<>();
-            fingerprint.put("status", results.stream().anyMatch(result -> "PENDING".equals(result.get("status")))
-                    ? "RUNNING" : results.stream().anyMatch(result -> "CANCELLED".equals(result.get("status"))) ? "CANCELLED" : "COMPLETED");
-            fingerprint.put("components", results.stream().filter(result -> Boolean.TRUE.equals(result.get("matched"))).toList());
-            fingerprint.put("completed", results.stream().filter(result -> Boolean.TRUE.equals(result.get("complete"))).count());
-            fingerprint.put("total", results.size());
-            fingerprint.put("errorCount", results.stream().filter(result -> "ERROR".equals(result.get("status"))).count());
-            fingerprint.put("inconclusiveCount", results.stream().filter(result -> "INCONCLUSIVE".equals(result.get("status"))).count());
-            endpoint.put("fingerprint", fingerprint);
-        }
-    }
-
-    private Map<String, Object> reachabilityScan(WorkflowSpec spec) {
-        Map<String, Object> scan = new LinkedHashMap<>();
-        scan.put("kind", "reachability");
-        scan.put("hosts", spec.hosts());
-        scan.put("targets", spec.reachabilityTargets());
-        scan.put("timeout", Integer.valueOf(spec.timeout()));
-        scan.put("threads", Integer.valueOf(spec.threads()));
-        return scan;
-    }
-
-    private Map<String, Object> portPlan(WorkflowSpec spec, Set<String> hosts) {
-        List<Map<String, Object>> targets = new ArrayList<>();
-        for (Map<String, Object> target : spec.targets()) {
-            if (hosts.contains(text(target.get("host")))) {
-                targets.add(copyMap(target));
-            }
-        }
-        return probePlan(targets, "tcp-connect", spec);
-    }
-
-    private Map<String, Object> servicePlan(WorkflowSpec spec, List<Map<String, Object>> endpoints) {
-        List<Map<String, Object>> targets = new ArrayList<>();
-        Integer timeout = Math.min(spec.timeout(), SERVICE_BANNER_TIMEOUT_MS);
-        for (Map<String, Object> endpoint : endpoints) {
-            Map<String, Object> target = new LinkedHashMap<>(endpoint);
-            target.put("protocol", "tcp");
-            target.remove("service");
-            target.remove("serviceIdentified");
-            target.put("stage", "tcp-exchange");
-            target.put("timeout", timeout);
-            targets.add(target);
-        }
-        return probePlan(targets, "tcp-exchange", spec);
-    }
-
-    private Map<String, Object> serviceHttpPlan(WorkflowSpec spec, List<Map<String, Object>> endpoints,
-                                                boolean forceHttps) {
-        List<Map<String, Object>> targets = new ArrayList<>();
-        Integer timeout = Math.min(spec.timeout(), HTTP_IDENTIFICATION_TIMEOUT_MS);
-        for (Map<String, Object> endpoint : endpoints) {
-            int port = integer(endpoint.get("port"), -1);
-            String scheme = forceHttps ? "https" : ServiceIdentificationPolicy.httpProbeScheme(port);
-            Map<String, Object> target = new LinkedHashMap<>(endpoint);
-            target.put("protocol", scheme);
-            target.put("baseUrl", scheme + "://" + ServiceIdentificationPolicy.hostForUrl(text(endpoint.get("host"))) + ":" + port + "/");
-            target.put("stage", "http-head");
-            target.put("timeout", timeout);
-            targets.add(target);
-        }
-        return probePlan(targets, "http-head", spec);
-    }
-
-    private Map<String, Object> probePlan(List<Map<String, Object>> targets, String stage, WorkflowSpec spec) {
-        Map<String, Object> limits = new LinkedHashMap<>();
-        limits.put("timeout", Integer.valueOf(spec.timeout()));
-        limits.put("threads", Integer.valueOf(Math.min(spec.threads(), Math.max(1, targets.size()))));
-        limits.put("maxReadBytes", Integer.valueOf(NetworkProbeLimits.NODE_MAX_READ_BYTES));
-        Map<String, Object> plan = new LinkedHashMap<>();
-        plan.put("targets", new ArrayList<>(targets));
-        plan.put("stages", new ArrayList<>(List.of(stage)));
-        plan.put("limits", limits);
-        return plan;
-    }
-
-    private static void collectOpenEndpoints(Map<String, Map<String, Object>> byEndpoint,
-                                      Collection<Map<String, Object>> observations) {
-        for (Map<String, Object> observation : observations) {
-            if (!"tcp-connect".equals(text(observation.get("stage")))
-                    || !"open".equalsIgnoreCase(text(observation.get("state")))) continue;
-            String host = text(observation.get("host"));
-            int port = integer(observation.get("port"), -1);
-            if (host.isEmpty() || port < 1) continue;
-            Map<String, Object> endpoint = new LinkedHashMap<>();
-            endpoint.put("host", host);
-            endpoint.put("port", Integer.valueOf(port));
-            endpoint.put("protocol", "tcp");
-            endpoint.put("state", "open");
-            endpoint.put("endpointId", "tcp|" + host + "|" + port);
-            endpoint.put("discoveredAt", Long.valueOf(System.currentTimeMillis()));
-            if (observation.get("latencyMs") != null) endpoint.put("responseTime", observation.get("latencyMs"));
-            endpoint.put("probe", "connect");
-            byEndpoint.putIfAbsent(host + ":" + port, endpoint);
-        }
-    }
-
-    private void applyServiceEvidence(Map<String, Map<String, Object>> endpointsByKey,
-                                      Collection<Map<String, Object>> observations) {
-        for (Map<String, Object> observation : observations) {
-            Map<String, Object> endpoint = endpointsByKey.get(endpointKey(observation));
-            if (endpoint != null) ServiceIdentificationPolicy.applyServiceObservation(endpoint, observation);
-        }
-    }
-
     private void enrichPortResult(StageState stage, Collection<Map<String, Object>> endpoints) {
         synchronized (stage) {
-            // Published snapshots must not share the worker's mutable endpoint maps.
-            List<Map<String, Object>> results = new ArrayList<>(endpoints.size());
-            List<Object> ports = new ArrayList<>(endpoints.size());
-            for (Map<String, Object> endpoint : endpoints) {
-                results.add(copyMap(endpoint));
-                ports.add(endpoint.get("port"));
-            }
-            stage.result.put("openPortResults", results);
-            stage.result.put("openPortList", ports);
+            stage.result.putAll(NetworkProbeStageResults.snapshot(endpoints));
         }
     }
 
@@ -1055,13 +832,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
     private static Map<String, Object> response(Map<String, Object> values) {
         Map<String, Object> result = new LinkedHashMap<>(values);
         result.put("code", Integer.valueOf(200));
-        return result;
-    }
-
-    private static List<Map<String, Object>> mapList(Object value) {
-        if (!(value instanceof List<?> list)) return List.of();
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Object item : list) if (item instanceof Map<?, ?> raw) result.add(copyMapOrEmpty(raw));
         return result;
     }
 
@@ -1085,15 +855,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         return result;
     }
 
-    private static int integer(Object value, int fallback) {
-        if (value instanceof Number number) return number.intValue();
-        try {
-            return value == null ? fallback : Integer.parseInt(String.valueOf(value).trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
-    }
-
     private static long longValue(Object value, long fallback) {
         if (value instanceof Number number) return number.longValue();
         try {
@@ -1101,10 +862,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         } catch (NumberFormatException ignored) {
             return fallback;
         }
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static String messageOf(Exception error) {
@@ -1136,13 +893,6 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         scheduler.close();
     }
 
-    private record WorkflowSpec(List<String> hosts, List<Integer> ports,
-                                List<Map<String, Object>> targets, int timeout, int threads,
-                                List<ScanStage> stages, String name,
-                                List<Map<String, Object>> reachabilityTargets,
-                                List<Map<String, Object>> fingerprintRules, List<Map<String, Object>> seedEndpoints,
-                                String sourceTaskId, boolean debug) { }
-
     private static final class WorkflowTask {
         private final Set<String> confirmedHosts = new LinkedHashSet<>();
         private final Set<String> plannedEndpointKeys = new LinkedHashSet<>();
@@ -1150,7 +900,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         private final String taskId;
         private final String sessionId;
         private final NetworkProbeCapable node;
-        private final WorkflowSpec spec;
+        private final NetworkProbeWorkflowPlan spec;
         private final long createdAt = System.currentTimeMillis();
         private final Object monitor = new Object();
         private final CountDownLatch finished = new CountDownLatch(1);
@@ -1170,7 +920,7 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         private String lastPersistedOutcome;
         private String lastPersistedStage;
 
-        private WorkflowTask(String taskId, String sessionId, NetworkProbeCapable node, WorkflowSpec spec) {
+        private WorkflowTask(String taskId, String sessionId, NetworkProbeCapable node, NetworkProbeWorkflowPlan spec) {
             this.taskId = taskId;
             this.sessionId = sessionId;
             this.node = node;
@@ -1190,11 +940,10 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
         private final StageState stage;
         private final Map<String, Object> plan;
         private final NetworkProbeAnalysisService.PreparedScan prepared;
-        private final List<Map<String, Object>> liveEndpoints;
+        private final NetworkProbeStageResults results;
         private final int offset, total;
         private final NetworkProbeResultRepository store;
         private final CompletableFuture<Map<String, Object>> result = new CompletableFuture<>();
-        private final Map<String, Map<String, Object>> endpointsByKey = new LinkedHashMap<>();
         private NetworkProbeScheduler.Ticket ticket;
         private String childTaskId;
         private long observationCursor, errorCursor;
@@ -1203,14 +952,9 @@ public final class NetworkProbeWorkflowService implements AutoCloseable {
                 NetworkProbeAnalysisService.PreparedScan prepared, List<Map<String, Object>> endpoints,
                 int offset, int total, NetworkProbeResultRepository store) {
             this.task = task; this.stage = stage; this.plan = plan; this.prepared = prepared;
-            this.liveEndpoints = endpoints; this.offset = offset; this.total = total; this.store = store;
-            if ("PORT_SCAN".equals(stage.name)) {
-                collectOpenEndpoints(endpointsByKey, task.reachabilityCache.values());
-            }
-            // Port discovery has already deduplicated these live endpoint maps.
-            if ("SERVICE_PROBE".equals(stage.name) && endpoints != null) {
-                for (var endpoint : endpoints) endpointsByKey.put(endpointKey(endpoint), endpoint);
-            }
+            this.offset = offset; this.total = total; this.store = store;
+            this.results = new NetworkProbeStageResults(ScanStage.valueOf(stage.name), endpoints,
+                    task.reachabilityCache.values());
         }
     }
 

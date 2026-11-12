@@ -8,10 +8,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Mutable snapshots of scan payload maps and collections, preserving order and set semantics. */
+/** Scan payload conversion and mutable snapshots, preserving order and set semantics. */
 public final class NetworkProbePayloads {
 
     private NetworkProbePayloads() {}
+
+    public static String text(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    /** Accepts numeric values or trimmed decimal strings; malformed values retain the fallback. */
+    static int integer(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return value == null ? fallback : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    static String endpointKey(Map<String, Object> endpoint) {
+        return text(endpoint.get("host")) + ":" + integer(endpoint.get("port"), -1);
+    }
+
+    static List<Map<String, Object>> mapRows(Object value) {
+        if (!(value instanceof List<?> list)) return List.of();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : list) if (item instanceof Map<?, ?> raw) result.add(copyMapOrEmpty(raw));
+        return result;
+    }
 
     public static Map<String, Object> copyMapOrEmpty(Object value) {
         return value instanceof Map<?, ?> source ? copyMap(source) : new LinkedHashMap<>();

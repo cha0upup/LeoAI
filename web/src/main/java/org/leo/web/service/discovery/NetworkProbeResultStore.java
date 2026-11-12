@@ -29,6 +29,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.leo.service.discovery.NetworkProbePayloads.text;
+
 /** Durable result plane for network discovery tasks. */
 @Service
 public final class NetworkProbeResultStore implements NetworkProbeResultRepository {
@@ -931,10 +933,6 @@ public final class NetworkProbeResultStore implements NetworkProbeResultReposito
         } catch (Exception error) {
             return Integer.toHexString(String.valueOf(value).hashCode());
         }
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static String value(Object value, String fallback) {

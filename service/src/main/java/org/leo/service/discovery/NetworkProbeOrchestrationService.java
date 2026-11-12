@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
 import static org.leo.service.discovery.NetworkProbePayloads.copyMapOrEmpty;
+import static org.leo.service.discovery.NetworkProbePayloads.text;
 
 /**
  * Runs one logical network probe as a sequence of bounded node-side tasks.
@@ -643,10 +644,6 @@ public final class NetworkProbeOrchestrationService implements AutoCloseable {
         } catch (NumberFormatException ignored) {
             return fallback;
         }
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static String messageOf(Exception error) {

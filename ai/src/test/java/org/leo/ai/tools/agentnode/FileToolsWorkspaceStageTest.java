@@ -15,6 +15,7 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.transfer.DownloadEngineService;
 import org.leo.service.transfer.UploadEngineService;
+import org.leo.service.vfs.VfsFileAccess;
 import org.leo.service.audit.AgentAuditService;
 import org.leo.service.user.UserService;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -28,9 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class FileToolsWorkspaceStageTest {
@@ -64,12 +65,13 @@ class FileToolsWorkspaceStageTest {
 
         DownloadEngineService downloads = mock(DownloadEngineService.class);
         UploadEngineService uploads = mock(UploadEngineService.class);
+        VfsFileAccess files = mock(VfsFileAccess.class);
         UserService users = mock(UserService.class);
         AgentAuditService audit = mock(AgentAuditService.class);
         AiWorkspaceService workspaces = new AiWorkspaceService(
                 new AiWorkspaceProperties());
         FileTools tools = new FileTools(
-                downloads, uploads, users, audit, workspaces);
+                downloads, uploads, files, users, audit, workspaces);
 
         registerSession();
         User user = new User();
@@ -84,9 +86,8 @@ class FileToolsWorkspaceStageTest {
                 "filePath", "/remote/History",
                 "state", "COMPLETED",
                 "downloadPath", "downloads/History"));
-        when(uploads.resolveVfsFilePath("users/" + USER_ID + "/downloads/History"))
+        when(files.resolveReadable(USER_ID, "user", "users/" + USER_ID + "/downloads/History"))
                 .thenReturn(source);
-        doNothing().when(uploads).validateReadPermission(eq(USER_ID), eq("user"), eq(source));
         when(users.getUserById(USER_ID)).thenReturn(user);
 
         Map<String, Object> result = tools.queryRemoteFileStage(
@@ -100,6 +101,8 @@ class FileToolsWorkspaceStageTest {
         Path imported = workspaces.workspaceFromContext().filesRoot()
                 .resolve("input/browser/history.sqlite");
         assertArrayEquals(artifact, Files.readAllBytes(imported));
+        verify(files).resolveReadable(USER_ID, "user", "users/" + USER_ID + "/downloads/History");
+        verifyNoInteractions(uploads);
         verify(audit).logSuccess(eq(SESSION_ID), any(), eq("FILE_DOWNLOAD"),
                 eq("AI完成文件采集"), eq("/remote/History"), any(),
                 eq("文件已导入任务工作空间"));

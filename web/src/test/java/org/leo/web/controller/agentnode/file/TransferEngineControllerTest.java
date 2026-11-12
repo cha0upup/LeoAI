@@ -1,12 +1,17 @@
 package org.leo.web.controller.agentnode.file;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.FileCapable;
 import org.leo.service.transfer.DownloadEngineService;
 import org.leo.service.transfer.UploadEngineService;
+import org.leo.service.vfs.VfsFileAccess;
 import org.leo.web.util.AuditLogUtil;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.HashMap;
@@ -19,7 +24,37 @@ class TransferEngineControllerTest {
     private final DownloadEngineService service = mock(DownloadEngineService.class);
     private final DownloadEngineController controller = new DownloadEngineController(service);
     private final UploadEngineService uploadService = mock(UploadEngineService.class);
-    private final UploadEngineController uploadController = new UploadEngineController(uploadService);
+    private final VfsFileAccess files = mock(VfsFileAccess.class);
+    private final UploadEngineController uploadController = new UploadEngineController(
+            uploadService, files);
+
+    @Test
+    void uploadSourceAccessIsCheckedBeforeAnyTaskIsScheduled() {
+        var request = request();
+        User user = (User) request.getSession().getAttribute("user");
+        user.setPrivilege("user");
+        var params = new HashMap<String, Object>(Map.of(
+                "sessionId", "session", "vfsPath", "users/other/private.bin", "filePath", "/remote/file.bin"));
+        FileCapable node = mock(FileCapable.class);
+        try (var utilities = mockStatic(ControllerUtil.class)) {
+            utilities.when(() -> ControllerUtil.getCurrentUser(request)).thenReturn(user);
+            for (String name : new String[]{"sessionId", "vfsPath", "filePath"}) {
+                utilities.when(() -> ControllerUtil.getRequiredStringParam(params, name))
+                        .thenReturn((String) params.get(name));
+            }
+            utilities.when(() -> ControllerUtil.requireCapability(params, FileCapable.class)).thenReturn(node);
+            utilities.when(() -> ControllerUtil.getAbstractAgentNode("session")).thenReturn(mock(AbstractAgentNode.class));
+            when(files.resolveReadable("owner", "user", "users/other/private.bin"))
+                    .thenThrow(new IllegalArgumentException("无权访问该VFS路径"));
+
+            var response = uploadController.start(request, params);
+
+            assertEquals(500, response.get("code"));
+            assertEquals("启动上传任务失败: 无权访问该VFS路径", response.get("msg"));
+            verify(files).resolveReadable("owner", "user", "users/other/private.bin");
+            verifyNoInteractions(uploadService, node);
+        }
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})

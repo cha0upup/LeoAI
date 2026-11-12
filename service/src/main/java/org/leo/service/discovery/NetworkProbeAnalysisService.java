@@ -24,6 +24,7 @@ import java.util.regex.Pattern;
 
 import static org.leo.service.discovery.NetworkProbePayloads.copyMap;
 import static org.leo.service.discovery.NetworkProbePayloads.copyValue;
+import static org.leo.service.discovery.NetworkProbePayloads.text;
 
 /** Builds fingerprint probe plans and evaluates their bounded evidence on the service side. */
 @Service
@@ -788,10 +789,6 @@ public class NetworkProbeAnalysisService {
     private static String defaultText(Object value, String fallback) {
         String result = text(value);
         return result.isEmpty() ? fallback : result;
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static final class IncompleteEvidence extends RuntimeException {
