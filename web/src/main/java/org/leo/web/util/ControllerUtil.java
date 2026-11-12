@@ -16,71 +16,31 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 控制器工具类
- * 提供控制器中常用的公共方法，减少代码重复
- * 
- * @author LeoSpring
- * @version 2.0
- */
-public class ControllerUtil {
-    
+/** Shared HTTP argument, session and audit helpers. */
+public final class ControllerUtil {
+    private ControllerUtil() {}
+
     private static final String PARAM_SESSION_ID = "sessionId";
     private static final String SESSION_ATTR_USER = "user";
-    private static final Set<String> GENERIC_AUDIT_SKIP_PARTS = new LinkedHashSet<>(Set.of(
-            "_LIST",
-            "_QUERY",
-            "_PROGRESS",
-            "_TASKS",
-            "_STATUS",
-            "_INFO",
-            "_DETAIL",
-            "_META",
-            "_STATS",
-            "_SUMMARY",
-            "_POLL"
-    ));
-    private static final Set<String> GENERIC_AUDIT_ACTION_PARTS = new LinkedHashSet<>(Set.of(
-            "_ADD",
-            "_CANCEL",
-            "_CHMOD",
-            "_CLEAR",
-            "_CONNECT",
-            "_COPY",
-            "_CREATE",
-            "_DELETE",
-            "_DISCONNECT",
-            "_DOWNLOAD",
-            "_DUMP",
-            "_EDIT",
-            "_EXEC",
-            "_EXPORT",
-            "_IMPORT",
-            "_INVOKE",
-            "_KILL",
-            "_MONITOR",
-            "_MOVE",
-            "_PAUSE",
-            "_REMOVE",
-            "_RENAME",
-            "_RESTART",
-            "_RESUME",
-            "_RUN",
-            "_SEND",
-            "_START",
-            "_STOP",
-            "_TOGGLE",
-            "_TOUCH",
-            "_UNPAUSE",
-            "_UPDATE",
-            "_UPLOAD",
-            "_WRITE"
-    ));
+    private static final Set<String> GENERIC_AUDIT_SKIP_PARTS = Set.of(
+            "_LIST", "_QUERY", "_PROGRESS", "_TASKS", "_STATUS", "_INFO",
+            "_DETAIL", "_META", "_STATS", "_SUMMARY", "_POLL");
+    private static final Set<String> GENERIC_AUDIT_ACTION_PARTS = Set.of(
+            "_ADD", "_CANCEL", "_CHMOD", "_CLEAR", "_CONNECT", "_COPY", "_CREATE", "_DELETE",
+            "_DISCONNECT", "_DOWNLOAD", "_DUMP", "_EDIT", "_EXEC", "_EXPORT", "_IMPORT", "_INVOKE",
+            "_KILL", "_MONITOR", "_MOVE", "_PAUSE", "_REMOVE", "_RENAME", "_RESTART", "_RESUME",
+            "_RUN", "_SEND", "_START", "_STOP", "_TOGGLE", "_TOUCH", "_UNPAUSE", "_UPDATE",
+            "_UPLOAD", "_WRITE");
+
+    /** Validates and trims a text field while preserving the endpoint's error message. */
+    public static String requireText(String value, String message) {
+        if (value == null || value.isBlank()) throw ApiException.badRequest(message);
+        return value.trim();
+    }
     
     /**
      * 获取必需的字符串参数
@@ -98,8 +58,7 @@ public class ControllerUtil {
         if (paramObj == null || paramObj.toString().isBlank()) {
             throw new IllegalArgumentException(paramName + "不能为空");
         }
-        String value = paramObj.toString();
-        return value;
+        return paramObj.toString();
     }
     
     /**

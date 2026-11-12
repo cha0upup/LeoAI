@@ -10,16 +10,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class ModelEndpointTest {
     @ParameterizedTest
     @CsvSource({
-            "https://api.xiaomimimo.com/v1,/chat/completions,chat_completions,https://api.xiaomimimo.com/v1",
-            "https://api.deepseek.com,/chat/completions,chat_completions,https://api.deepseek.com",
-            "https://api.moonshot.cn/v1,/chat/completions,chat_completions,https://api.moonshot.cn/v1",
-            "https://api.moonshot.ai/v1,/chat/completions,chat_completions,https://api.moonshot.ai/v1",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1,/chat/completions,chat_completions,https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "https://open.bigmodel.cn/api/paas/v4,/chat/completions,chat_completions,https://open.bigmodel.cn/api/paas/v4",
-            "https://generativelanguage.googleapis.com/v1beta/openai,/chat/completions,chat_completions,https://generativelanguage.googleapis.com/v1beta/openai",
-            "http://localhost:11434/v1,/chat/completions,chat_completions,http://localhost:11434/v1",
+            "https://example.test,/chat/completions,chat_completions,https://example.test",
+            "https://example.test/v1/,,chat_completions,https://example.test/v1",
+            "https://example.test/compatible-mode/v1,/chat/completions,chat_completions,https://example.test/compatible-mode/v1",
+            "http://localhost:11434/v1,,chat_completions,http://localhost:11434/v1",
             "https://gateway.test/proxy/,/v2/responses,responses,https://gateway.test/proxy/v2",
-            "https://api.openai.com/v1,/responses,responses,https://api.openai.com/v1"
+            "https://example.test/v1,/responses,responses,https://example.test/v1"
     })
     void resolvesOneRootForInferenceAndDiscovery(String base, String path, String protocol, String root) {
         AiModelConfig config = config(base, path, protocol);

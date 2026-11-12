@@ -28,16 +28,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * 会话生命周期管理控制器。
- *
- * <p>端点：
- * <ul>
- *   <li>{@code GET  /platform/session/sessions}         — 获取当前用户所有会话</li>
- *   <li>{@code POST /platform/session/sessions/delete}  — 删除会话</li>
- *   <li>{@code POST /platform/session/conn-link-chain}  — 获取连接链路链</li>
- * </ul>
- */
+/** 会话查询与生命周期管理。 */
 @RestController
 @RequestMapping("/platform/session")
 public class SessionManageController {
@@ -77,7 +68,7 @@ public class SessionManageController {
      */
     @PostMapping("/sessions/delete")
     public HashMap<String, Object> deleteSession(@RequestBody SessionRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
+        String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         ControllerUtil.getAgentNodeSession(sessionId);
         try {
             sessionLifecycleManager.destroy(sessionId, true);
@@ -92,7 +83,7 @@ public class SessionManageController {
      */
     @PostMapping("/conn-link-chain")
     public HashMap<String, Object> getConnLinkChain(@RequestBody SessionRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
+        String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
 
         List<ConnLinkItem> chain;
@@ -168,12 +159,5 @@ public class SessionManageController {
     private static String str(Map<?, ?> m, String key) {
         Object v = m.get(key);
         return v != null ? v.toString() : null;
-    }
-
-    private static String requireText(String value, String name) {
-        if (value == null || value.isBlank()) {
-            throw ApiException.badRequest(name + " 不能为空");
-        }
-        return value.trim();
     }
 }

@@ -28,15 +28,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiEventSubscriptionServiceTest {
+    private final AiSseExecutor executor = mock(AiSseExecutor.class);
+    private final AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
+    private final AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
+    private final AiEventSubscriptionService service = new AiEventSubscriptionService(executor, writer, eventStore);
 
     @Test
     void replaysOnlyEventsAfterSubscriberCursorAndCompletesAtTerminalState()
             throws Exception {
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
-        AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
-        AiEventSubscriptionService service =
-                new AiEventSubscriptionService(executor, writer, eventStore);
         AiThread thread = new AiThread("thread-1", "test");
         AiSseEvent first = thread.recordSseEvent("delta", "old");
         AiSseEvent second = thread.recordSseEvent("turn", "new");
@@ -60,11 +59,6 @@ class AiEventSubscriptionServiceTest {
 
     @Test
     void subscriberDisconnectDoesNotCancelTheRunningTask() throws Exception {
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
-        AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
-        AiEventSubscriptionService service =
-                new AiEventSubscriptionService(executor, writer, eventStore);
         AiThread thread = new AiThread("thread-2", "test");
         assertTrue(thread.claimExecution());
         AiSseEvent live = thread.recordSseEvent("delta", "live");
@@ -84,11 +78,6 @@ class AiEventSubscriptionServiceTest {
 
     @Test
     void freshSubscriberStartsAtTheCurrentRunBoundary() throws Exception {
-        AiSseExecutor executor = mock(AiSseExecutor.class);
-        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
-        AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
-        AiEventSubscriptionService service =
-                new AiEventSubscriptionService(executor, writer, eventStore);
         AiThread thread = new AiThread("thread-3", "test");
         AiSseEvent previousTurn = thread.recordSseEvent("turn", "previous");
         assertTrue(thread.claimExecution());
@@ -113,11 +102,6 @@ class AiEventSubscriptionServiceTest {
 
     @Test
     void waitsForProtocolCompletionEventBeforeClosingTerminalStream() throws Exception {
-        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
-        AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
-        AiEventSubscriptionService service =
-                new AiEventSubscriptionService(
-                        mock(AiSseExecutor.class), writer, eventStore);
         AiThread thread = new AiThread("thread-4", "test");
         thread.bindActiveTurnId("turn-4");
         thread.markCompleted();
@@ -153,12 +137,6 @@ class AiEventSubscriptionServiceTest {
     @Test
     void closesAfterQueuedTurnCancellationEvenWhenRuntimeStayedIdle()
             throws Exception {
-        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
-        AiConversationStoreService eventStore =
-                mock(AiConversationStoreService.class);
-        AiEventSubscriptionService service =
-                new AiEventSubscriptionService(
-                        mock(AiSseExecutor.class), writer, eventStore);
         AiThread thread = new AiThread("thread-queued", "test");
         AiSseEvent completed = new AiSseEvent(
                 1L, 1L, "turn/completed",

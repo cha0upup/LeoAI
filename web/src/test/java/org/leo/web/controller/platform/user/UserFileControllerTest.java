@@ -222,6 +222,14 @@ class UserFileControllerTest {
         assertEquals(5, preview.get("previewSize"));
         assertEquals(true, preview.get("truncated"));
         assertEquals("notes/preview.txt", preview.get("path"));
+        var complete = (Map<String, Object>) controller.preview(request, "notes/preview.txt", null).get("data");
+        assertEquals("hello fixture", complete.get("content"));
+        assertEquals(13, complete.get("previewSize"));
+        assertEquals(false, complete.get("truncated"));
+        controller.createFile(request, "notes/empty.txt", "", false);
+        var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null).get("data");
+        assertEquals(0, empty.get("previewSize"));
+        assertEquals("", empty.get("contentBase64"));
         assertEquals(404, controller.preview(request, "notes", null).get("code"));
         assertEquals(400, controller.preview(request, "../private.txt", null).get("code"));
         assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null).get("code"));

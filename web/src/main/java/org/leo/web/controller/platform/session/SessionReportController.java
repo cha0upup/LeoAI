@@ -4,7 +4,6 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
-import org.leo.web.exception.ApiException;
 import org.leo.web.service.agent.SessionReportService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,14 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 
-/**
- * 会话侦察报告控制器。
- *
- * <p>端点：
- * <ul>
- *   <li>{@code POST /platform/session/report/generate} — 生成离线侦察报告（Markdown）</li>
- * </ul>
- */
+/** 会话报告 HTTP 接口。 */
 @RestController
 @RequestMapping("/platform/session")
 public class SessionReportController {
@@ -40,16 +32,9 @@ public class SessionReportController {
      */
     @PostMapping("/report/generate")
     public HashMap<String, Object> generateReport(@RequestBody SessionRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
+        String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         ReportResponse report = sessionReportService.generate(session);
         return ApiResponse.success(report);
-    }
-
-    private static String requireText(String value, String name) {
-        if (value == null || value.isBlank()) {
-            throw ApiException.badRequest(name + " 不能为空");
-        }
-        return value.trim();
     }
 }

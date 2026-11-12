@@ -52,11 +52,11 @@ public class NodeAiController {
     public HashMap<String, Object> startTurn(
             @RequestBody NodeAiChatRequest body,
             HttpServletRequest request) {
-        String sessionId = requiredText(
+        String sessionId = ControllerUtil.requireText(
                 body != null ? body.sessionId() : null, "缺少 sessionId");
-        String threadId = requiredText(
+        String threadId = ControllerUtil.requireText(
                 body != null ? body.threadId() : null, "缺少 threadId");
-        String message = requiredText(
+        String message = ControllerUtil.requireText(
                 body != null ? body.message() : null, "缺少 message");
         AgentNodeSession session = requiredSession(sessionId);
         session.touchLastActiveTime();
@@ -101,9 +101,9 @@ public class NodeAiController {
     @PostMapping("/turn/interrupt")
     public HashMap<String, Object> interruptTurn(
             @RequestBody AiTurnInterruptRequest body) {
-        String sessionId = requiredText(
+        String sessionId = ControllerUtil.requireText(
                 body != null ? body.sessionId() : null, "缺少 sessionId");
-        String threadId = requiredText(
+        String threadId = ControllerUtil.requireText(
                 body != null ? body.threadId() : null, "缺少 threadId");
         String turnId = body != null ? body.turnId() : null;
         AgentNodeSession session = requiredSession(sessionId);
@@ -155,7 +155,7 @@ public class NodeAiController {
     @RequestMapping("/thread/delete")
     public HashMap<String, Object> deleteThread(@RequestBody AiThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         aiThreadService.deleteThread(session, threadId);
         return ApiResponse.success(true);
     }
@@ -168,8 +168,8 @@ public class NodeAiController {
     @RequestMapping("/thread/rename")
     public HashMap<String, Object> renameThread(@RequestBody AiThreadRenameRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
-        String title = requiredText(body != null ? body.title() : null, "缺少 title");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
+        String title = ControllerUtil.requireText(body != null ? body.title() : null, "缺少 title");
         aiThreadService.renameThread(session, threadId, title);
         return ApiResponse.success(true);
     }
@@ -183,7 +183,7 @@ public class NodeAiController {
     @RequestMapping("/thread/messages")
     public HashMap<String, Object> threadMessages(@RequestBody AiThreadMessagesRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer offset = body != null ? body.offset() : null;
         Integer limit = body != null ? body.limit() : null;
         return ApiResponse.success(aiThreadService.threadMessages(
@@ -196,7 +196,7 @@ public class NodeAiController {
     @RequestMapping("/thread/events")
     public HashMap<String, Object> threadEvents(@RequestBody AiThreadEventsRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Long afterSeq = body != null ? body.afterSeq() : null;
         Integer limit = body != null ? body.limit() : null;
         return ApiResponse.success(aiThreadService.threadEvents(session, threadId, afterSeq, limit));
@@ -207,7 +207,7 @@ public class NodeAiController {
     public SseEmitter threadStream(@RequestBody AiThreadEventsRequest body) {
         AgentNodeSession session =
                 requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(
+        String threadId = ControllerUtil.requireText(
                 body != null ? body.threadId() : null, "缺少 threadId");
         AiThread thread = aiThreadService.requireThread(session, threadId);
         return eventSubscriptionService.subscribe(
@@ -223,7 +223,7 @@ public class NodeAiController {
     @RequestMapping("/reset")
     public HashMap<String, Object> reset(@RequestBody AiThreadConfigRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer configId = body != null ? body.configId() : null;
         return ApiResponse.success(aiThreadService.resetThread(session, threadId, configId));
     }
@@ -236,7 +236,7 @@ public class NodeAiController {
     @RequestMapping("/switchChannel")
     public HashMap<String, Object> switchChannel(@RequestBody AiThreadConfigRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer configId = body != null ? body.configId() : null;
         aiThreadService.switchChannel(session, threadId, configId);
         return ApiResponse.success(true);
@@ -252,7 +252,7 @@ public class NodeAiController {
     @RequestMapping("/thread/plan")
     public HashMap<String, Object> threadPlan(@RequestBody AiThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         AiThread thread = aiThreadService.requireThread(session, threadId);
         AiPlan plan = thread.getCurrentPlan();
         return ApiResponse.success(plan);
@@ -266,20 +266,13 @@ public class NodeAiController {
     @RequestMapping("/thread/plans")
     public HashMap<String, Object> threadPlans(@RequestBody AiThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+        String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         AiThread thread = aiThreadService.requireThread(session, threadId);
         List<AiPlan> history = thread.getPlanHistory();
         return ApiResponse.success(history);
     }
 
     private AgentNodeSession requiredSession(String sessionId) {
-        return ControllerUtil.getAgentNodeSession(requiredText(sessionId, "缺少 sessionId"));
-    }
-
-    private String requiredText(String value, String message) {
-        if (value == null || value.isBlank()) {
-            throw org.leo.web.exception.ApiException.badRequest(message);
-        }
-        return value.trim();
+        return ControllerUtil.getAgentNodeSession(ControllerUtil.requireText(sessionId, "缺少 sessionId"));
     }
 }

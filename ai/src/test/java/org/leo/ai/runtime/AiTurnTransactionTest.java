@@ -29,11 +29,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiTurnTransactionTest {
+    private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiModelFailoverService failover = mock(AiModelFailoverService.class);
+    private final ManagedConversationMemory memory = mock(ManagedConversationMemory.class);
+    private final ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
+    private final AiConversationStoreService.PersistedTurn persistedTurn =
+            new AiConversationStoreService.PersistedTurn(
+                    "turn-1", "run-1", "thread-1", "message-1", "assistant-message-1", 1L, null);
+    private final AiTurnTransaction.Session session = openSession();
 
     @Test
     void commitsExactlyOnceAndReturnsTheSameResult() {
-        Fixture fixture = fixture();
-        AiTurnTransaction.Session session = fixture.session();
         AiTurnResult result = new AiTurnResult("done", null, false, false);
 
         AiTurnTransaction.CompletedTurn first =
@@ -44,10 +50,10 @@ class AiTurnTransactionTest {
         assertSame(first, repeated);
         assertEquals("done", first.output());
         assertTrue(session.isTerminal());
-        verify(fixture.store, times(1)).completeTurn(
-                eq(fixture.persistedTurn), eq("done"), any(), any(), any(), eq(0));
-        verify(fixture.failover).recordSuccess(7);
-        verify(fixture.store, never()).discardTurn(
+        verify(store, times(1)).completeTurn(
+                eq(persistedTurn), eq("done"), any(), any(), any(), eq(0));
+        verify(failover).recordSuccess(7);
+        verify(store, never()).discardTurn(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -56,55 +62,52 @@ class AiTurnTransactionTest {
 
     @Test
     void discardsFailureExactlyOnceAndAlwaysRebuildsMemory() {
-        Fixture fixture = fixture();
         AiTurnFailure failure = new AiTurnFailure(
                 new RuntimeException("network down"), AiTurnOutcome.FAILED, null);
 
         AiTurnTransaction.FailedTurn first =
-                fixture.session().discard(failure, List.of(), null);
+                session.discard(failure, List.of(), null);
         AiTurnTransaction.FailedTurn repeated =
-                fixture.session().discard(failure, List.of(), null);
+                session.discard(failure, List.of(), null);
 
         assertSame(first, repeated);
         assertEquals("network", first.classification().category());
-        verify(fixture.store, times(1)).discardTurn(
-                eq(fixture.persistedTurn), eq("failed"), eq("network"),
+        verify(store, times(1)).discardTurn(
+                eq(persistedTurn), eq("failed"), eq("network"),
                 any(), eq("network down"), eq(0),
                 eq(""), eq(List.of()), eq(null),
                 eq(""));
-        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
-        verify(fixture.failover).recordFailure(eq(7), any());
+        verify(memory).rebuild(agent, "session:thread-1");
+        verify(failover).recordFailure(eq(7), any());
     }
 
     @Test
     void rebuildsMemoryEvenWhenDiscardPersistenceFails() {
-        Fixture fixture = fixture();
         doThrow(new IllegalStateException("db unavailable"))
-                .when(fixture.store).discardTurn(
+                .when(store).discardTurn(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
                 any());
 
         assertThrows(IllegalStateException.class,
-                () -> fixture.session().discard(new AiTurnFailure(
+                () -> session.discard(new AiTurnFailure(
                         new RuntimeException("boom"), AiTurnOutcome.FAILED, null), List.of(), null));
 
-        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
-        assertFalse(fixture.session().isTerminal());
+        verify(memory).rebuild(agent, "session:thread-1");
+        assertFalse(session.isTerminal());
     }
 
     @Test
     void terminalRecoveryDoesNotDiscardAnAlreadyCommittedTurn() {
-        Fixture fixture = fixture();
-        fixture.session().commit(
+        session.commit(
                 new AiTurnResult("done", null, false, false), List.of(), null, null);
 
-        boolean recovered = fixture.session().recoverTerminalFailure(
+        boolean recovered = session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream"));
 
         assertFalse(recovered);
-        verify(fixture.store, never()).discardTurn(
+        verify(store, never()).discardTurn(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -113,21 +116,17 @@ class AiTurnTransactionTest {
 
     @Test
     void rebuildsCanonicalMemoryAfterARecoveredStreamCommits() {
-        Fixture fixture = fixture();
-
-        AiTurnTransaction.CompletedTurn completed = fixture.session().commit(
+        AiTurnTransaction.CompletedTurn completed = session.commit(
                 new AiTurnResult("done", null, false, true),
                 List.of(), null, null);
 
-        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+        verify(memory).rebuild(agent, "session:thread-1");
         assertEquals(true, completed.review().get("streamRecovered"));
     }
 
     @Test
     void discardsCancellationWithoutPenalizingTheModel() {
-        Fixture fixture = fixture();
-
-        AiTurnTransaction.FailedTurn failed = fixture.session().discard(
+        AiTurnTransaction.FailedTurn failed = session.discard(
                 new AiTurnFailure(new InterruptedException("stopped"),
                         AiTurnOutcome.CANCELLED, "用户停止"), List.of(), null);
 
@@ -135,23 +134,22 @@ class AiTurnTransactionTest {
         assertEquals(AiTurnOutcome.CANCELLED, failed.outcome());
         assertEquals("cancelled", failed.status());
         assertEquals("用户停止", failed.message());
-        verify(fixture.store).discardTurn(
-                eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
+        verify(store).discardTurn(
+                eq(persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
                 eq(""), eq(List.of()), eq(null),
                 eq(""));
-        verify(fixture.failover, never()).recordFailure(any(), any());
-        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+        verify(failover, never()).recordFailure(any(), any());
+        verify(memory).rebuild(agent, "session:thread-1");
     }
 
     @Test
     void planOnlyFailureNeverPersistsTheRecoverySnapshotAsVisibleText() {
-        Fixture fixture = fixture();
         var plan = Map.of("kind", "plan", "step", "fixture step");
         var events = List.of(new AiSseEvent("node", plan));
-        fixture.session().discard(new AiTurnFailure(new RuntimeException("network down"), AiTurnOutcome.FAILED, null), events, plan);
-        verify(fixture.store).discardTurn(
-                eq(fixture.persistedTurn), eq("failed"), eq("network"),
+        session.discard(new AiTurnFailure(new RuntimeException("network down"), AiTurnOutcome.FAILED, null), events, plan);
+        verify(store).discardTurn(
+                eq(persistedTurn), eq("failed"), eq("network"),
                 any(), any(), eq(0),
                 eq(""), any(), eq(plan),
                 eq(AiTurnRecoveryContext.build(events, plan)));
@@ -159,13 +157,12 @@ class AiTurnTransactionTest {
 
     @Test
     void persistsInterruptedAssistantItemWithPartialOutput() {
-        Fixture fixture = fixture();
         List<AiSseEvent> events = List.of(
                 new AiSseEvent("delta", "停止前内容"),
                 new AiSseEvent("node", Map.of(
                         "kind", "text", "content", "停止前内容")));
 
-        fixture.session().discard(
+        session.discard(
                 new AiTurnFailure(
                         new InterruptedException("stopped"),
                         AiTurnOutcome.CANCELLED,
@@ -173,8 +170,8 @@ class AiTurnTransactionTest {
                 events,
                 null);
 
-        verify(fixture.store).discardTurn(
-                eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
+        verify(store).discardTurn(
+                eq(persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
                 eq("停止前内容"), any(), eq(null),
                 eq("停止前内容\n\n[执行在此处中断；以下是可用于继续任务的已完成进度]"
@@ -183,58 +180,47 @@ class AiTurnTransactionTest {
 
     @Test
     void recoversCommitPersistenceFailureExactlyOnce() {
-        Fixture fixture = fixture();
         doThrow(new IllegalStateException("commit unavailable"))
-                .when(fixture.store).completeTurn(any(), any(), any(), any(), any(), anyInt());
+                .when(store).completeTurn(any(), any(), any(), any(), any(), anyInt());
 
-        assertThrows(IllegalStateException.class, () -> fixture.session().commit(
+        assertThrows(IllegalStateException.class, () -> session.commit(
                 new AiTurnResult("done", null, false, false), List.of(), null, null));
 
-        assertTrue(fixture.session().recoverTerminalFailure(
+        assertTrue(session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("commit unavailable")));
-        assertFalse(fixture.session().recoverTerminalFailure(
+        assertFalse(session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("repeated")));
-        assertEquals("persistence", fixture.session().failedTurn().classification().category());
-        verify(fixture.store, times(1)).discardTurn(
-                eq(fixture.persistedTurn), eq("failed"), eq("persistence"),
+        assertEquals("persistence", session.failedTurn().classification().category());
+        verify(store, times(1)).discardTurn(
+                eq(persistedTurn), eq("failed"), eq("persistence"),
                 eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
                 eq(""), eq(List.of()), eq(null),
                 eq(""));
-        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+        verify(memory).rebuild(agent, "session:thread-1");
     }
 
     @Test
     void postCommitHookFailureCannotUndoTheCommittedTurn() {
-        Fixture fixture = fixture();
         doThrow(new IllegalStateException("health registry unavailable"))
-                .when(fixture.failover).recordSuccess(7);
+                .when(failover).recordSuccess(7);
 
-        AiTurnTransaction.CompletedTurn completed = fixture.session().commit(
+        AiTurnTransaction.CompletedTurn completed = session.commit(
                 new AiTurnResult("done", null, false, false), List.of(), null, null);
 
         assertEquals("done", completed.output());
-        assertSame(completed, fixture.session().completedTurn());
-        assertTrue(fixture.session().isTerminal());
-        assertFalse(fixture.session().recoverTerminalFailure(
+        assertSame(completed, session.completedTurn());
+        assertTrue(session.isTerminal());
+        assertFalse(session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream")));
-        verify(fixture.store, never()).discardTurn(
+        verify(store, never()).discardTurn(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
                 any());
     }
 
-    private Fixture fixture() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        AiModelFailoverService failover = mock(AiModelFailoverService.class);
+    private AiTurnTransaction.Session openSession() {
         AiErrorClassifier classifier = mock(AiErrorClassifier.class);
-        AiTurnArtifacts artifacts = new AiTurnArtifacts();
-        ManagedConversationMemory memory = mock(ManagedConversationMemory.class);
-        ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
-        AiConversationStoreService.PersistedTurn persisted =
-                new AiConversationStoreService.PersistedTurn(
-                        "turn-1", "run-1", "thread-1", "message-1",
-                        "assistant-message-1", 1L, null);
         when(classifier.classify(any(Throwable.class))).thenReturn(
                 new AiErrorClassifier.Classification(
                         "network", "网络连接失败", "network down", List.of()));
@@ -242,30 +228,13 @@ class AiTurnTransactionTest {
                 new AiErrorClassifier.Classification(
                         "persistence", "AI 回复提交失败", "commit unavailable", List.of()));
         AiTurnTransaction transaction = new AiTurnTransaction(
-                store, failover, classifier, artifacts, memory);
-        AiTurnTransaction.Session session = transaction.open(
-                new AiTurnTransaction.Context(
-                        persisted, 7, agent, "session:thread-1",
-                        AiChatAuditEntry.platform(
-                                "user-1", "alice", "normal", "hello"),
-                        System.currentTimeMillis(),
-                        boundTrace(persisted)));
-        return new Fixture(store, failover, memory, agent, persisted, session);
-    }
-
-    private AiTurnTrace boundTrace(
-            AiConversationStoreService.PersistedTurn persisted) {
+                store, failover, classifier, new AiTurnArtifacts(), memory);
         AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "test", persisted.threadId(), persisted.startedAt());
-        trace.bind(persisted.turnId(), persisted.runId());
-        return trace;
-    }
-
-    private record Fixture(AiConversationStoreService store,
-                           AiModelFailoverService failover,
-                           ManagedConversationMemory memory,
-                           ChatMemoryAccess agent,
-                           AiConversationStoreService.PersistedTurn persistedTurn,
-                           AiTurnTransaction.Session session) {
+                "trace-1", "test", persistedTurn.threadId(), persistedTurn.startedAt());
+        trace.bind(persistedTurn.turnId(), persistedTurn.runId());
+        return transaction.open(new AiTurnTransaction.Context(
+                persistedTurn, 7, agent, "session:thread-1",
+                AiChatAuditEntry.platform("user-1", "alice", "normal", "hello"),
+                System.currentTimeMillis(), trace));
     }
 }

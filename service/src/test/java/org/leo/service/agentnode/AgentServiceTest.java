@@ -21,11 +21,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AgentServiceTest {
+    private final AgentMapper mapper = mock(AgentMapper.class);
+    private final AgentService service = new AgentService(mapper);
 
     @Test
     void skipsChildQueriesForEmptyOrInvalidParentIds() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         assertEquals(List.of(), service.findAgentsByParentAgentIds(null));
         assertEquals(List.of(), service.findAgentsByParentAgentIds(List.of()));
         assertEquals(List.of(), service.findAgentsByParentAgentIds(Arrays.asList(null, "", " ")));
@@ -34,8 +34,6 @@ class AgentServiceTest {
 
     @Test
     void normalizesAndDeduplicatesParentsBeforeOneChildQuery() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         Agent child = agent("child");
         when(mapper.findAgentsByParentAgentIds(List.of("a", "b"))).thenReturn(List.of(child));
         assertEquals(List.of(child), service.findAgentsByParentAgentIds(Arrays.asList(" a ", "b", "a", null)));
@@ -45,8 +43,6 @@ class AgentServiceTest {
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
     void chunksLargeDirectoriesBelowSqliteParameterLimits() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         when(mapper.findAgentsByParentAgentIds(anyList())).thenReturn(List.of());
         List<String> ids = IntStream.range(0, 1001).mapToObj(i -> "parent-" + i).toList();
         assertEquals(List.of(), service.findAgentsByParentAgentIds(ids));
@@ -58,8 +54,6 @@ class AgentServiceTest {
 
     @Test
     void rejectsMaximumRequestCountOutsideThePublicContract() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         Agent agent = new Agent();
         agent.setMaxReqCount(Agent.MAX_REQUEST_COUNT + 1);
 
@@ -69,8 +63,6 @@ class AgentServiceTest {
 
     @Test
     void deletesCompleteAgentSubtreeFromLeavesToRoot() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         Agent root = agent("root-node");
         Agent child = agent("child-node");
         Agent grandchild = agent("grandchild-node");
@@ -92,8 +84,6 @@ class AgentServiceTest {
 
     @Test
     void rollsBackContractWhenAnySubtreeNodeCannotBeDeleted() {
-        AgentMapper mapper = mock(AgentMapper.class);
-        AgentService service = new AgentService(mapper);
         Agent root = agent("root-node");
         Agent child = agent("child-node");
         when(mapper.findAgentById("root-node")).thenReturn(root);

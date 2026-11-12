@@ -15,20 +15,13 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.LongSummaryStatistics;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Skill 目录内的文件级操作：列树、读、写、删、移动。
- *
- * <p>所有方法对 {@code relativePath} 做严格校验：
- * <ul>
- *   <li>不能为空、不能含 NUL、不能含 {@code ..}、不能是绝对路径</li>
- *   <li>{@link Path#normalize()} 后仍必须落在 skill 根目录内</li>
- * </ul>
- *
- * <p>文件大小限制（默认）：单文件 10MB，单 skill 总和 50MB，文件数 200。
- * 写入前都会校验，超限直接抛 {@link SkillFileException}。
+ * Skill 文件 CRUD；只接受根目录内、不含 NUL 或 .. 段的相对路径。
+ * 写入前校验单文件 10MB、目录总大小 50MB 和 200 个文件的上限。
  */
 @Service
 public class SkillFileService {
@@ -52,8 +45,8 @@ public class SkillFileService {
     );
 
     /** SKILL.md 与 manifest.yaml 是必需文件，禁止删除或重命名。 */
-    public static final String SKILL_FILE = "SKILL.md";
-    public static final String MANIFEST_FILE = "manifest.yaml";
+    public static final String SKILL_FILE = SkillManifestService.SKILL_FILE;
+    public static final String MANIFEST_FILE = SkillManifestService.MANIFEST_FILE;
 
     /**
      * 列出 skill 目录下所有文件（深度限制 {@link #MAX_DEPTH}），按路径升序。
@@ -141,13 +134,13 @@ public class SkillFileService {
         Path target = resolveSafe(skillDir, relativePath);
 
         // 写入前估算 skill 总大小（含本次新增/覆盖）
-        long currentTotal = totalSize(skillDir);
+        LongSummaryStatistics usage = directoryUsage(skillDir);
         long existing = Files.isRegularFile(target) ? Files.size(target) : 0L;
-        long projected = currentTotal - existing + bytes.length;
+        long projected = usage.getSum() - existing + bytes.length;
         if (projected > MAX_SKILL_BYTES) {
             throw new SkillFileException("skill 总大小超出限制（" + (MAX_SKILL_BYTES / 1024 / 1024) + "MB）");
         }
-        if (!Files.isRegularFile(target) && countFiles(skillDir) >= MAX_FILES) {
+        if (!Files.isRegularFile(target) && usage.getCount() >= MAX_FILES) {
             throw new SkillFileException("skill 文件数已达上限（" + MAX_FILES + "）");
         }
 
@@ -248,30 +241,17 @@ public class SkillFileService {
         return true;
     }
 
-    private static long totalSize(Path skillDir) throws IOException {
-        if (!Files.isDirectory(skillDir)) return 0L;
-        long[] sum = {0L};
+    private static LongSummaryStatistics directoryUsage(Path skillDir) throws IOException {
+        LongSummaryStatistics usage = new LongSummaryStatistics();
+        if (!Files.isDirectory(skillDir)) return usage;
         Files.walkFileTree(skillDir, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                sum[0] += attrs.size();
+                usage.accept(attrs.size());
                 return FileVisitResult.CONTINUE;
             }
         });
-        return sum[0];
-    }
-
-    private static int countFiles(Path skillDir) throws IOException {
-        if (!Files.isDirectory(skillDir)) return 0;
-        int[] cnt = {0};
-        Files.walkFileTree(skillDir, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                cnt[0]++;
-                return FileVisitResult.CONTINUE;
-            }
-        });
-        return cnt[0];
+        return usage;
     }
 
     /**

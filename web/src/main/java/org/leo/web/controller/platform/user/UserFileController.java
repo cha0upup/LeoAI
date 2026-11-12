@@ -276,22 +276,18 @@ public class UserFileController {
             long previewSize = size == null ? DEFAULT_PREVIEW_SIZE : Math.min(Math.max(size, 1L), MAX_PREVIEW_SIZE);
             long fileSize = Files.size(target);
             int readSize = (int) Math.min(previewSize, fileSize);
-            byte[] bytes = new byte[readSize];
-            int n;
+            byte[] actual;
             try (InputStream in = Files.newInputStream(target)) {
-                n = Math.max(0, in.read(bytes));
+                actual = in.readNBytes(readSize);
             }
-            byte[] actual = n == bytes.length ? bytes : java.util.Arrays.copyOf(bytes, n);
-            String base64 = Base64.getEncoder().encodeToString(actual);
-            String text = new String(actual, StandardCharsets.UTF_8);
 
             HashMap<String, Object> result = new HashMap<>();
             result.put("path", toUserRelativePath(user.getUserId(), target));
             result.put("size", fileSize);
-            result.put("previewSize", n);
-            result.put("truncated", fileSize > n);
-            result.put("content", text);
-            result.put("contentBase64", base64);
+            result.put("previewSize", actual.length);
+            result.put("truncated", fileSize > actual.length);
+            result.put("content", new String(actual, StandardCharsets.UTF_8));
+            result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
             return ApiResponse.success(result);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());

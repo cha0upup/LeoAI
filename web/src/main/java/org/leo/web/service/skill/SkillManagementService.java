@@ -199,71 +199,64 @@ public class SkillManagementService {
                 unchanged, failed, results);
     }
 
+    /** Scope and name have already been validated and normalized by the entry points. */
     private ToggleResult toggleOne(String scope, String name, boolean enabled,
                                    SkillInspection catalogInspection) {
-        if (isBlank(scope)) return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST, "scope 不能为空");
-        if (isBlank(name)) return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST, "name 不能为空");
-        String normalizedScope = scope.trim();
-        String normalizedName = name.trim();
-        if (!SkillRegistryService.isValidSkillName(normalizedName)) {
-            return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST, "name 包含非法字符");
-        }
-
         Path skillDir;
         try {
-            skillDir = resolveSkillDir(normalizedScope, normalizedName);
+            skillDir = resolveSkillDir(scope, name);
         } catch (IllegalArgumentException e) {
-            return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST, e.getMessage());
+            return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST, e.getMessage());
         }
         Path skillFile = skillDir.resolve(SKILL_FILE);
         Path manifestFile = skillDir.resolve(MANIFEST_FILE);
         if (!Files.isRegularFile(skillFile) || !Files.isRegularFile(manifestFile)) {
-            return ToggleResult.failed(normalizedName, ApiResponse.CODE_NOT_FOUND,
+            return ToggleResult.failed(name, ApiResponse.CODE_NOT_FOUND,
                     "skill 或 manifest 不存在：" + scope + "/" + name);
         }
 
-        ReentrantLock lock = operationLock.lockFor(normalizedScope, normalizedName);
+        ReentrantLock lock = operationLock.lockFor(scope, name);
         lock.lock();
         try {
             String skillContent = Files.readString(skillFile, StandardCharsets.UTF_8);
             String original = Files.readString(manifestFile, StandardCharsets.UTF_8);
             SkillInspection originalInspection = manifestService.inspect(
-                    normalizedScope, normalizedName, skillContent, original);
+                    scope, name, skillContent, original);
             if (enabled) {
                 if (catalogInspection == null) {
-                    return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST,
+                    return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST,
                             "skill 尚未进入 catalog");
                 }
                 if (!catalogInspection.valid()) {
-                    return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST,
+                    return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST,
                             "skill catalog 校验失败：" + SkillManifestService.summarizeErrors(catalogInspection));
                 }
                 if (!originalInspection.valid()) {
-                    return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST,
+                    return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST,
                             "skill 校验失败：" + SkillManifestService.summarizeErrors(originalInspection));
                 }
             }
             if (originalInspection.descriptor() != null
                     && originalInspection.descriptor().enabled() == enabled) {
-                return ToggleResult.unchanged(normalizedName,
+                return ToggleResult.unchanged(name,
                         enabled ? "skill 已处于启用状态" : "skill 已处于禁用状态");
             }
             String updated = manifestService.setEnabled(original, enabled);
             SkillInspection updatedInspection = manifestService.inspect(
-                    normalizedScope, normalizedName, skillContent, updated);
+                    scope, name, skillContent, updated);
             if (enabled && !updatedInspection.valid()) {
-                return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST,
+                return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST,
                         "skill 校验失败：" + SkillManifestService.summarizeErrors(updatedInspection));
             }
             Files.writeString(manifestFile, updated, StandardCharsets.UTF_8);
             String message = enabled ? "skill 已启用" : "skill 已禁用";
             if (!enabled && !updatedInspection.valid()) message += "；其余 manifest 错误仍需修复";
-            return ToggleResult.changed(normalizedName, message);
+            return ToggleResult.changed(name, message);
         } catch (IllegalArgumentException e) {
-            return ToggleResult.failed(normalizedName, ApiResponse.CODE_BAD_REQUEST,
+            return ToggleResult.failed(name, ApiResponse.CODE_BAD_REQUEST,
                     "manifest 无法修改：" + e.getMessage());
         } catch (IOException e) {
-            return ToggleResult.failed(normalizedName, ApiResponse.CODE_ERROR,
+            return ToggleResult.failed(name, ApiResponse.CODE_ERROR,
                     "操作失败：" + e.getMessage());
         } finally {
             lock.unlock();

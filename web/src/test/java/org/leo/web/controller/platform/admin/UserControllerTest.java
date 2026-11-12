@@ -24,15 +24,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
 
 class UserControllerTest {
+    private final UserService service = mock(UserService.class);
+    private final UserController controller = new UserController(service, mock(PasswordPolicy.class));
+    private final MockHttpServletRequest request = new MockHttpServletRequest();
 
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"invalid-session-user"})
     void rejectsMissingOrMalformedSessionIdentity(String cachedUser) {
-        UserService service = mock(UserService.class);
-        MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", cachedUser);
-        var controller = new UserController(service, mock(PasswordPolicy.class));
         assertEquals(401, controller.getUsers(request).get("code"));
         verifyNoInteractions(service);
     }
@@ -41,17 +41,15 @@ class UserControllerTest {
     @NullAndEmptySource
     @ValueSource(strings = {"team-2", "missing-team"})
     void leaderCannotMoveMembersAcrossTeamBoundaries(String newTeam) {
-        UserService service = mock(UserService.class);
         User target = account("member", "normal", "team-1");
         when(service.getUserById("member")).thenReturn(target);
-        MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", account("leader", "leader", "team-1"));
         HashMap<String, Object> params = new HashMap<>();
         params.put("userId", "member");
         params.put("userName", "changed-name");
         params.put("teamId", newTeam);
 
-        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request, params);
+        var result = controller.updateUser(request, params);
 
         assertEquals(403, result.get("code"));
         assertEquals("team-1", target.getTeamId());
@@ -61,16 +59,14 @@ class UserControllerTest {
 
     @Test
     void leaderCanEditMembersWithoutChangingTheirTeam() {
-        UserService service = mock(UserService.class);
         User target = account("member", "normal", "team-1");
         when(service.getUserById("member")).thenReturn(target);
         when(service.updateUser(target)).thenReturn(true);
-        MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", account("leader", "leader", "team-1"));
         HashMap<String, Object> params = new HashMap<>(Map.of(
                 "userId", "member", "teamId", " team-1 ", "remark", "updated"));
 
-        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request, params);
+        var result = controller.updateUser(request, params);
 
         assertEquals(200, result.get("code"));
         assertEquals("team-1", target.getTeamId());
@@ -79,14 +75,12 @@ class UserControllerTest {
 
     @Test
     void administratorRetainsTeamTransferAccess() {
-        UserService service = mock(UserService.class);
         User target = account("member", "normal", "team-1");
         when(service.getUserById("member")).thenReturn(target);
         when(service.updateUser(target)).thenReturn(true);
-        MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", account("manager", "admin", null));
 
-        var result = new UserController(service, mock(PasswordPolicy.class)).updateUser(request,
+        var result = controller.updateUser(request,
                 new HashMap<>(Map.of("userId", "member", "teamId", "team-2")));
 
         assertEquals(200, result.get("code"));
@@ -104,9 +98,6 @@ class UserControllerTest {
 
     @Test
     void unassignedUserListingUsesTheSharedFilterAndRequiresAdmin() {
-        UserService service = mock(UserService.class);
-        UserController controller = new UserController(service, mock(PasswordPolicy.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
         User caller = new User();
         caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
         request.getSession(true).setAttribute("user", caller);
@@ -121,9 +112,6 @@ class UserControllerTest {
 
     @Test
     void userListingKeepsLeaderAndNormalUserVisibilityBoundaries() {
-        UserService service = mock(UserService.class);
-        UserController controller = new UserController(service, mock(PasswordPolicy.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
         User caller = new User();
         caller.setUserId("user-1");
         caller.setPrivilege(UserService.PRIVILEGE_LEADER);
@@ -143,17 +131,13 @@ class UserControllerTest {
     @Test
     @SuppressWarnings("unchecked")
     void userListDoesNotMutateOrExposePasswordHash() {
-        UserService userService = mock(UserService.class);
         User stored = new User();
         stored.setUserId("user-1");
         stored.setUserName("alice");
         stored.setPassword("pbkdf2-secret-hash");
         stored.setPrivilege(UserService.PRIVILEGE_NORMAL);
         stored.setStatus(1);
-        when(userService.getAllUsers()).thenReturn(List.of(stored));
-        UserController controller = new UserController(
-                userService, mock(PasswordPolicy.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
+        when(service.getAllUsers()).thenReturn(List.of(stored));
         User admin = new User();
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
         request.getSession(true).setAttribute("user", admin);
@@ -168,17 +152,13 @@ class UserControllerTest {
 
     @Test
     void marksAnAdministrativelyResetPasswordForMandatoryChange() {
-        UserService userService = mock(UserService.class);
         User target = new User();
         target.setUserId("user-1");
         target.setUserName("alice");
         target.setPrivilege(UserService.PRIVILEGE_NORMAL);
         target.setPasswordChangeRequired(0);
-        when(userService.getUserById("user-1")).thenReturn(target);
-        when(userService.updateUser(target)).thenReturn(true);
-        UserController controller = new UserController(
-                userService, mock(PasswordPolicy.class));
-        MockHttpServletRequest request = new MockHttpServletRequest();
+        when(service.getUserById("user-1")).thenReturn(target);
+        when(service.updateUser(target)).thenReturn(true);
         User admin = new User();
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
         request.getSession(true).setAttribute("user", admin);
@@ -190,6 +170,6 @@ class UserControllerTest {
 
         assertEquals(200, response.get("code"));
         assertEquals(1, target.getPasswordChangeRequired());
-        verify(userService).updateUser(target);
+        verify(service).updateUser(target);
     }
 }

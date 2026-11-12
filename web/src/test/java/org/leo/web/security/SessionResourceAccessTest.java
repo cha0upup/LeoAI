@@ -106,6 +106,16 @@ class SessionResourceAccessTest {
         verifyNoInteractions(agents);
     }
 
+    @Test
+    void textValidationTrimsValuesAndKeepsEndpointErrors() {
+        assertEquals("connection", ControllerUtil.requireText(" connection ", "缺少 sessionId"));
+        for (String value : new String[]{null, "", " \t "}) {
+            var error = assertThrows(ApiException.class, () -> ControllerUtil.requireText(value, "缺少 sessionId"));
+            assertEquals(400, error.getCode());
+            assertEquals("缺少 sessionId", error.getMessage());
+        }
+    }
+
     private void authenticate(MockHttpServletRequest request) throws Exception {
         if (request.getSession(false) == null) request.getSession().setAttribute("user", reader);
         HandlerMethod handler = new HandlerMethod(new Endpoint(), Endpoint.class.getMethod("read"));

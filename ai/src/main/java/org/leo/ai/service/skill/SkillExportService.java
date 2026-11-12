@@ -26,6 +26,10 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
+import static org.leo.ai.service.skill.SkillManifestService.SKILL_FILE;
+import static org.leo.ai.service.skill.SkillManifestService.MANIFEST_FILE;
+import static org.leo.ai.service.skill.SkillRegistryService.isValidSkillName;
+
 /**
  * Skill 的打包导出 / 解包导入。
  *
@@ -48,9 +52,6 @@ import java.util.zip.ZipOutputStream;
 public class SkillExportService {
 
     private static final Logger log = LoggerFactory.getLogger(SkillExportService.class);
-
-    private static final String SKILL_FILE = "SKILL.md";
-    private static final String MANIFEST_FILE = "manifest.yaml";
 
     private final SkillManifestService manifestService;
     private final SkillOperationLock operationLock;
@@ -153,7 +154,7 @@ public class SkillExportService {
                 if (defaultName == null || defaultName.isBlank()) {
                     throw new SkillImportException("zip 根含 SKILL.md 但未指定目标 name");
                 }
-                if (!isSafeSkillName(defaultName)) {
+                if (!isValidSkillName(defaultName)) {
                     throw new SkillImportException("name 包含非法字符");
                 }
                 skillNameForRoot = defaultName.trim();
@@ -179,7 +180,7 @@ public class SkillExportService {
                         continue;
                     }
                     String topName = name.substring(0, slash);
-                    if (!isSafeSkillName(topName)) {
+                    if (!isValidSkillName(topName)) {
                         throw new SkillImportException("skill 名含非法字符: " + topName);
                     }
                     target = tempRoot.resolve(name).normalize();
@@ -251,7 +252,7 @@ public class SkillExportService {
             for (Path skillTmpDir : stream.toList()) {
                 if (!Files.isDirectory(skillTmpDir)) continue;
                 String name = skillTmpDir.getFileName().toString();
-                if (!isSafeSkillName(name)) {
+                if (!isValidSkillName(name)) {
                     results.add(ImportResult.failed(name, "skill 名含非法字符"));
                     continue;
                 }
@@ -332,10 +333,6 @@ public class SkillExportService {
         if (name.contains("..")) throw new SkillImportException("entry 名含 .. : " + name);
         if (name.startsWith("/")) throw new SkillImportException("entry 名为绝对路径: " + name);
         if (name.indexOf('\0') >= 0) throw new SkillImportException("entry 名含 NUL");
-    }
-
-    private static boolean isSafeSkillName(String name) {
-        return SkillRegistryService.isValidSkillName(name);
     }
 
     public record NamedSkill(String name, Path dir) {}
