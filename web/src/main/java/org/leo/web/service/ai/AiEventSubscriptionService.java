@@ -90,47 +90,44 @@ public class AiEventSubscriptionService {
                     cursor = Math.max(cursor, event.seq());
                     lastHeartbeatAt = System.currentTimeMillis();
                 }
-
-                long serverLastSeq = Math.max(
-                        runtime.getLastSseEventSeq(),
-                        eventStore.findLastEventSeq(threadId));
-                AiThreadRecord persistedThread = eventStore.findThread(threadId);
-                String status = runtime.isExecuting()
-                        ? runtime.getRunStatus()
-                        : persistedThread != null
-                                ? persistedThread.getRunStatus()
-                                : runtime.getRunStatus();
-                List<AiTurnRecord> inProgressTurns =
-                        eventStore.listInProgressProtocolTurns(threadId);
-                boolean protocolExecuting = !inProgressTurns.isEmpty();
-                if (protocolExecuting) {
-                    String dispatchStatus =
-                            inProgressTurns.get(0).getDispatchStatus();
-                    status = dispatchStatus != null
-                            ? dispatchStatus
-                            : "running";
-                }
-                boolean completionRecorded =
-                        eventStore.hasLatestTurnCompletedEvent(threadId);
-                if (!runtime.isExecuting() && cursor >= serverLastSeq
-                        && completionRecorded
-                        && !protocolExecuting) {
-                    if (isTerminal(status)) {
-                        writer.sendStatus(emitter, status);
-                    }
-                    return;
-                }
+                // 满页时先追上事件日志，避免每页都查询状态并等待一次轮询。
+                if (events.size() == PAGE_SIZE) continue;
 
                 long now = System.currentTimeMillis();
-                if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
-                    Map<String, Object> heartbeat = new LinkedHashMap<>();
-                    heartbeat.put("ts", now);
-                    heartbeat.put("status", status);
-                    heartbeat.put("lastSeq", serverLastSeq);
-                    heartbeat.put("executing",
-                            runtime.isExecuting() || protocolExecuting);
-                    writer.sendHeartbeat(emitter, heartbeat);
-                    lastHeartbeatAt = now;
+                boolean executing = runtime.isExecuting();
+                boolean heartbeatDue = now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS;
+                // 执行期间只追增量事件；心跳和终态检查时再读取持久化状态。
+                if (!executing || heartbeatDue) {
+                    long serverLastSeq = Math.max(
+                            runtime.getLastSseEventSeq(),
+                            eventStore.findLastEventSeq(threadId));
+                    List<AiTurnRecord> inProgressTurns =
+                            eventStore.listInProgressProtocolTurns(threadId);
+                    boolean protocolExecuting = !inProgressTurns.isEmpty();
+                    String status = runtime.getRunStatus();
+                    if (protocolExecuting) {
+                        String dispatchStatus = inProgressTurns.get(0).getDispatchStatus();
+                        status = dispatchStatus != null ? dispatchStatus : "running";
+                    } else if (!executing) {
+                        AiThreadRecord persistedThread = eventStore.findThread(threadId);
+                        if (persistedThread != null) status = persistedThread.getRunStatus();
+                    }
+                    if (!runtime.isExecuting() && !protocolExecuting && cursor >= serverLastSeq
+                            && eventStore.hasLatestTurnCompletedEvent(threadId)) {
+                        if (isTerminal(status)) {
+                            writer.sendStatus(emitter, status);
+                        }
+                        return;
+                    }
+                    if (heartbeatDue) {
+                        Map<String, Object> heartbeat = new LinkedHashMap<>();
+                        heartbeat.put("ts", now);
+                        heartbeat.put("status", status);
+                        heartbeat.put("lastSeq", serverLastSeq);
+                        heartbeat.put("executing", runtime.isExecuting() || protocolExecuting);
+                        writer.sendHeartbeat(emitter, heartbeat);
+                        lastHeartbeatAt = now;
+                    }
                 }
                 Thread.sleep(POLL_MILLIS);
             }

@@ -2,6 +2,7 @@ package org.leo.web.service.ai;
 
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
+import org.leo.core.entity.AiSseEvent;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -52,7 +53,7 @@ public class AiThreadQueryService {
         int limit = requestedLimit != null ? requestedLimit : 200;
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("events", conversationStore.listEventsAfter(threadId, afterSeq, limit).stream()
-                .map(AiEventPayloadMapper::toMap).toList());
+                .map(AiThreadQueryService::eventPayload).toList());
         data.put("lastSeq", Math.max(runtime != null ? runtime.getLastSseEventSeq() : 0L,
                 conversationStore.findLastEventSeq(threadId)));
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
@@ -62,5 +63,20 @@ public class AiThreadQueryService {
 
     public void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
         target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
+    }
+
+    private static Map<String, Object> eventPayload(AiSseEvent event) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("seq", event.seq());
+        item.put("timestamp", event.timestamp());
+        item.put("name", event.name());
+        item.put("data", event.data());
+        if (event.subagentInvocationId() != null) {
+            item.put("subagentInvocationId", event.subagentInvocationId());
+        }
+        if (event.turnId() != null) item.put("turnId", event.turnId());
+        if (event.itemId() != null) item.put("itemId", event.itemId());
+        if (event.runId() != null) item.put("runId", event.runId());
+        return item;
     }
 }

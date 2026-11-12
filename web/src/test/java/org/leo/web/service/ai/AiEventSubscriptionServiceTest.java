@@ -1,49 +1,70 @@
 package org.leo.web.service.ai;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
-import org.leo.core.ai.AiRunStatus;
+import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.session.AiThread;
+import org.mockito.ArgumentCaptor;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.Map;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@Timeout(5)
 class AiEventSubscriptionServiceTest {
     private final AiSseExecutor executor = mock(AiSseExecutor.class);
     private final AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
     private final AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
     private final AiEventSubscriptionService service = new AiEventSubscriptionService(executor, writer, eventStore);
 
-    @Test
-    void replaysOnlyEventsAfterSubscriberCursorAndCompletesAtTerminalState()
+    @ParameterizedTest
+    @CsvSource({"1,false", "200,false", "201,false", "401,false", "2,true"})
+    void replaysInOrderWithoutRepeatedStateQueries(int eventCount, boolean running)
             throws Exception {
         AiThread thread = new AiThread("thread-1", "test");
         AiSseEvent first = thread.recordSseEvent("delta", "old");
-        AiSseEvent second = thread.recordSseEvent("turn", "new");
-        thread.markCompleted();
+        if (running) assertTrue(thread.claimExecution());
+        List<AiSseEvent> events = IntStream.range(0, eventCount)
+                .mapToObj(index -> thread.recordSseEvent("delta", "new-" + index)).toList();
         SseEmitter emitter = mock(SseEmitter.class);
-        when(eventStore.listEventsAfter("thread-1", first.seq(), 200))
-                .thenReturn(List.of(second));
-        when(eventStore.findLastEventSeq("thread-1")).thenReturn(second.seq());
+        if (running) {
+            doAnswer(invocation -> {
+                thread.markCompleted();
+                thread.clearExecuting();
+                return null;
+            }).when(writer).sendEvent(emitter, events.get(eventCount - 1));
+        } else {
+            thread.markCompleted();
+        }
+        when(eventStore.listEventsAfter(eq("thread-1"), anyLong(), eq(200)))
+                .thenAnswer(invocation -> events.stream()
+                        .filter(event -> event.seq() > (long) invocation.getArgument(1))
+                        .limit(running ? 1 : 200).toList());
+        when(eventStore.findLastEventSeq("thread-1")).thenReturn(thread.getLastSseEventSeq());
         when(eventStore.findThread("thread-1"))
                 .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("thread-1")).thenReturn(true);
@@ -51,8 +72,13 @@ class AiEventSubscriptionServiceTest {
         service.stream("test", "thread-1", thread, emitter,
                 first.seq(), new AtomicBoolean(false));
 
-        verify(writer, never()).sendEvent(emitter, first);
-        verify(writer).sendEvent(emitter, second);
+        ArgumentCaptor<AiSseEvent> sent = ArgumentCaptor.forClass(AiSseEvent.class);
+        verify(writer, times(eventCount)).sendEvent(eq(emitter), sent.capture());
+        assertEquals(events, sent.getAllValues());
+        verify(eventStore).findLastEventSeq("thread-1");
+        verify(eventStore).findThread("thread-1");
+        verify(eventStore).listInProgressProtocolTurns("thread-1");
+        verify(eventStore).hasLatestTurnCompletedEvent("thread-1");
         verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
         verify(emitter).complete();
     }
@@ -105,32 +131,26 @@ class AiEventSubscriptionServiceTest {
         AiThread thread = new AiThread("thread-4", "test");
         thread.bindActiveTurnId("turn-4");
         thread.markCompleted();
+        AiSseEvent completed = new AiSseEvent(1L, 1L,
+                "turn/completed", Map.of("turn", Map.of("id", "turn-4", "status", "completed")),
+                null, "turn-4", null, null);
         SseEmitter emitter = mock(SseEmitter.class);
-        List<AiSseEvent> persisted = new CopyOnWriteArrayList<>();
-        when(eventStore.listEventsAfter(eq("thread-4"), anyLong(), eq(200)))
-                .thenAnswer(invocation -> persisted.stream()
-                        .filter(event -> event.seq() > (long) invocation.getArgument(1))
-                        .toList());
+        when(eventStore.listEventsAfter("thread-4", 0L, 200))
+                .thenReturn(List.of(), List.of(completed));
         when(eventStore.findLastEventSeq("thread-4"))
-                .thenAnswer(invocation -> thread.getLastSseEventSeq());
+                .thenReturn(0L, completed.seq());
         when(eventStore.findThread("thread-4"))
                 .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("thread-4"))
-                .thenAnswer(invocation -> persisted.stream().anyMatch(
-                        event -> "turn/completed".equals(event.name())));
+                .thenReturn(false, true);
 
-        CompletableFuture<Void> stream = CompletableFuture.runAsync(() ->
-                service.stream("test", "thread-4", thread, emitter,
-                        0L, new AtomicBoolean(false)));
-        Thread.sleep(250L);
-        verify(writer, never()).sendStatus(emitter, AiRunStatus.COMPLETED);
+        service.stream("test", "thread-4", thread, emitter,
+                0L, new AtomicBoolean(false));
 
-        persisted.add(thread.recordSseEvent(
-                "turn/completed",
-                Map.of("turn", Map.of("id", "turn-4", "status", "completed"))));
-        stream.get(2, TimeUnit.SECONDS);
-
-        verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
+        var order = inOrder(eventStore, writer);
+        order.verify(eventStore).hasLatestTurnCompletedEvent("thread-4");
+        order.verify(writer).sendEvent(emitter, completed);
+        order.verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
         verify(emitter).complete();
     }
 
@@ -145,10 +165,14 @@ class AiEventSubscriptionServiceTest {
                         "status", "interrupted")),
                 null, "turn-queued", "assistant-queued", null);
         SseEmitter emitter = mock(SseEmitter.class);
+        AiTurnRecord queued = new AiTurnRecord();
+        queued.setDispatchStatus("queued");
         when(eventStore.listEventsAfter("thread-queued", 0L, 200))
-                .thenReturn(List.of(completed));
+                .thenReturn(List.of(), List.of(completed));
         when(eventStore.findLastEventSeq("thread-queued"))
-                .thenReturn(1L);
+                .thenReturn(0L, 1L);
+        when(eventStore.listInProgressProtocolTurns("thread-queued"))
+                .thenReturn(List.of(queued), List.of());
         when(eventStore.findThread("thread-queued"))
                 .thenReturn(threadRecord(AiRunStatus.IDLE));
         when(eventStore.hasLatestTurnCompletedEvent("thread-queued"))
@@ -158,6 +182,10 @@ class AiEventSubscriptionServiceTest {
                 0L, new AtomicBoolean(false));
 
         verify(writer).sendEvent(emitter, completed);
+        verify(writer).sendHeartbeat(eq(emitter), argThat(heartbeat ->
+                "queued".equals(heartbeat.get("status")) && Boolean.TRUE.equals(heartbeat.get("executing"))));
+        verify(eventStore).findThread("thread-queued");
+        verify(eventStore).hasLatestTurnCompletedEvent("thread-queued");
         verify(writer, never()).sendStatus(emitter, AiRunStatus.IDLE);
         verify(emitter).complete();
     }
