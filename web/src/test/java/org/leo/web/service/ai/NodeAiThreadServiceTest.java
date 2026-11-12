@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiThreadRecord;
@@ -127,21 +126,51 @@ class NodeAiThreadServiceTest {
         verify(fixture.sessionWarmupService).warmupAsync("session-1");
     }
 
-    @Test
-    void doesNotRecreatePersistedThread() {
+    @ParameterizedTest
+    @CsvSource(value = {"null,null,null,null", "7,2,3,7", "null,2,3,2", "null,null,3,3"}, nullValues = "null")
+    void preparesPersistedThreadWithOneChannelResolution(
+            Integer requestedConfig, Integer cachedConfig, Integer persistedConfig, Integer expectedConfig) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
         AiThread thread = session.createAiThread("persisted-thread", "已有对话");
+        thread.setAiConfigId(cachedConfig);
         AiThreadRecord record = ownedRecord(thread.getThreadId());
+        record.setConfigId(persistedConfig);
         when(fixture.conversationStore.findThread(thread.getThreadId())).thenReturn(record);
+        if (expectedConfig != null) {
+            AiModelConfig config = new AiModelConfig();
+            config.setId(expectedConfig);
+            when(fixture.channels.optional(expectedConfig)).thenReturn(config);
+        }
 
         NodeAiThreadService.ThreadResolution resolution =
-                fixture.service.ensureThreadReady(session, thread.getThreadId(), null);
+                fixture.service.ensureThreadReady(session, thread.getThreadId(), requestedConfig);
 
         assertSame(thread, resolution.thread());
         assertNull(resolution.errorMessage());
+        assertEquals(expectedConfig, thread.getAiConfigId());
+        verify(fixture.channels).optional(expectedConfig);
         verify(fixture.conversationStore, never()).createAgentThread(
-                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), isNull());
+                eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), nullable(AiModelConfig.class));
+    }
+
+    @Test
+    void channelResolutionFailureStopsBeforePersistenceOrWarmup() {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        AiThread thread = session.createAiThread("transient", "未持久化");
+        thread.setAiConfigId(2);
+        when(fixture.channels.optional(7)).thenThrow(ApiException.notFound("模型已删除"));
+
+        NodeAiThreadService.ThreadResolution resolution =
+                fixture.service.ensureThreadReady(session, thread.getThreadId(), 7);
+
+        assertSame(thread, resolution.thread());
+        assertEquals("模型已删除", resolution.errorMessage());
+        assertEquals(2, thread.getAiConfigId());
+        verify(fixture.conversationStore, never()).createAgentThread(
+                anyString(), anyString(), anyString(), anyString(), same(thread), nullable(AiModelConfig.class));
+        verifyNoInteractions(fixture.sessionWarmupService, fixture.agentRegistry);
     }
 
     @Test
@@ -410,7 +439,6 @@ class NodeAiThreadServiceTest {
         NodeAiAgentRegistry agentRegistry = mock(NodeAiAgentRegistry.class);
         AiModelChannelResolver channels = mock(AiModelChannelResolver.class);
         NodeAiThreadService service = new NodeAiThreadService(
-                mock(AiModelConfigService.class),
                 channels,
                 conversationStore,
                 sessionWarmupService,

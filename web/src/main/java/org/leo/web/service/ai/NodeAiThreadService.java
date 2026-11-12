@@ -1,7 +1,6 @@
 package org.leo.web.service.ai;
 
 import com.alibaba.fastjson.JSON;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiExecutionPolicy;
@@ -37,20 +36,17 @@ public class NodeAiThreadService {
 
     private static final Logger logger =
             LoggerFactory.getLogger(NodeAiThreadService.class);
-    private final AiModelConfigService modelConfigService;
     private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final NodeAiAgentRegistry agentRegistry;
     private final AiThreadQueryService threadQueries;
 
-    public NodeAiThreadService(AiModelConfigService modelConfigService,
-                                     AiModelChannelResolver channelResolver,
-                                     AiConversationStoreService conversationStore,
-                                     SessionWarmupService sessionWarmupService,
-                                     NodeAiAgentRegistry agentRegistry,
-                                     AiThreadQueryService threadQueries) {
-        this.modelConfigService = modelConfigService;
+    public NodeAiThreadService(AiModelChannelResolver channelResolver,
+                               AiConversationStoreService conversationStore,
+                               SessionWarmupService sessionWarmupService,
+                               NodeAiAgentRegistry agentRegistry,
+                               AiThreadQueryService threadQueries) {
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
@@ -73,10 +69,6 @@ public class NodeAiThreadService {
             return new ThreadResolution(thread, error.getMessage());
         }
         if (resolvedChannel != null) resolvedConfigId = resolvedChannel.getId();
-        String configError = validateConfigId(resolvedConfigId);
-        if (configError != null) {
-            return new ThreadResolution(thread, configError);
-        }
         String persistenceError =
                 ensureThreadPersisted(session, thread, persisted, resolvedChannel);
         if (persistenceError != null) {
@@ -360,17 +352,6 @@ public class NodeAiThreadService {
         if (requestedConfigId != null) return requestedConfigId;
         if (thread != null && thread.getAiConfigId() != null) return thread.getAiConfigId();
         return record != null ? record.getConfigId() : null;
-    }
-
-    private String validateConfigId(Integer configId) {
-        if (configId == null) return null;
-        try {
-            return modelConfigService.findById(configId) != null
-                    ? null
-                    : "AI 通道不存在或已删除，configId: " + configId + "，请切换 AI 通道后重试";
-        } catch (Exception error) {
-            return "AI 通道校验失败，configId: " + configId + "，请检查配置后重试";
-        }
     }
 
     private Map<String, Object> threadToMap(AiThread thread, int messageCount) {
