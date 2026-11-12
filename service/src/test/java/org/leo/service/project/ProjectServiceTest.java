@@ -1,11 +1,11 @@
 package org.leo.service.project;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.Project;
 import org.leo.core.entity.Agent;
+import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
-import org.leo.dao.mapper.ProjectMapper;
 import org.leo.dao.entity.ProjectAgentCount;
+import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
 import org.mockito.InOrder;
 
@@ -18,15 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class ProjectServiceTest {
+    private final ProjectMapper mapper = mock(ProjectMapper.class);
+    private final AgentService agentService = mock(AgentService.class);
+    private final ProjectService service = new ProjectService(mapper, agentService);
 
     @Test
     void groupsAllHostCountsWithOneMapperCall() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         when(mapper.countAgentsByProject()).thenReturn(List.of(
                 new ProjectAgentCount("project-1", 3),
                 new ProjectAgentCount("project-2", 1)));
@@ -37,8 +38,6 @@ class ProjectServiceTest {
 
     @Test
     void returnsEmptyCountsWhenNoHostRelationsExist() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         when(mapper.countAgentsByProject()).thenReturn(List.of());
 
         assertTrue(service.countAgentsByProject().isEmpty());
@@ -46,10 +45,6 @@ class ProjectServiceTest {
 
     @Test
     void inheritsProjectScopeFromAttachedAncestorAgent() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        AgentService agentService = mock(AgentService.class);
-        ProjectService service = new ProjectService(mapper, agentService);
-
         Agent child = new Agent();
         child.setAgentId("child");
         child.setParentAgentId("gateway");
@@ -62,10 +57,6 @@ class ProjectServiceTest {
 
     @Test
     void resolvesChildSelectionToItsEntryAgent() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        AgentService agentService = mock(AgentService.class);
-        ProjectService service = new ProjectService(mapper, agentService);
-
         Agent child = agent("child", "gateway");
         Agent gateway = agent("gateway", "root");
         when(agentService.findAgentById("child")).thenReturn(child);
@@ -76,9 +67,6 @@ class ProjectServiceTest {
 
     @Test
     void exposesEntryProjectMembershipsOnChildNodes() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        AgentService agentService = mock(AgentService.class);
-        ProjectService service = new ProjectService(mapper, agentService);
         User user = new User();
         user.setUserId("user-1");
         user.setPrivilege("normal");
@@ -96,8 +84,6 @@ class ProjectServiceTest {
 
     @Test
     void appliesOwnerAndTeamVisibilityWithoutGrantingPrivateProjects() {
-        ProjectService service = new ProjectService(
-                mock(ProjectMapper.class), mock(AgentService.class));
         User user = new User();
         user.setUserId("user-1");
         user.setTeamId("team-1");
@@ -114,8 +100,6 @@ class ProjectServiceTest {
 
     @Test
     void separatesPublicVisibilityFromProjectContentEditing() {
-        ProjectService service = new ProjectService(
-                mock(ProjectMapper.class), mock(AgentService.class));
         User user = new User();
         user.setUserId("user-1");
         user.setTeamId("team-1");
@@ -133,8 +117,6 @@ class ProjectServiceTest {
 
     @Test
     void deletesRelationsBeforeDeletingProject() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         Project project = projectWithId("project-1");
         when(mapper.deleteAgentRelations("project-1")).thenReturn(3);
         when(mapper.deleteProject("project-1")).thenReturn(1);
@@ -148,8 +130,6 @@ class ProjectServiceTest {
 
     @Test
     void reportsConcurrentOrMissingProjectDeletion() {
-        ProjectMapper mapper = mock(ProjectMapper.class);
-        ProjectService service = new ProjectService(mapper, mock(AgentService.class));
         when(mapper.deleteProject("project-1")).thenReturn(0);
 
         IllegalStateException error = assertThrows(

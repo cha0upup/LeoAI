@@ -1,11 +1,13 @@
 package org.leo.web.service.discovery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.sqlite.SQLiteDataSource;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.web.testing.SqliteTestDatabase;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -17,8 +19,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -28,22 +30,22 @@ import static org.mockito.Mockito.when;
 
 class NetworkProbeResultStoreTest {
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void registerFixtureSessions() {
-        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
         for (String id : List.of("session", "session-a", "session-b", "other")) {
-            var session = new org.leo.core.session.AgentNodeSession();
+            var session = new AgentNodeSession();
             session.setSessionId(id);
             session.setCreateByUser("user-" + id);
             session.setAgentId("agent-1");
             session.bindHostId("host-1");
-            org.leo.core.session.AgentNodeSessionContainer.addSession(id, session);
+            AgentNodeSessionContainer.addSession(id, session);
         }
     }
 
-    @org.junit.jupiter.api.AfterEach
+    @AfterEach
     void clearFixtureSessions() {
-        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @TempDir
@@ -51,11 +53,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void loadsEverySupplementalAssetBeyondTheFormerSelectionQuota() throws Exception {
-        var dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("large-selection.db"));
-        try (var connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("large-selection.db"));
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("source", "session", "source", Map.of()));
         var rows = java.util.stream.IntStream.range(1, 301).mapToObj(port -> Map.<String, Object>of(
@@ -72,11 +70,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void restoresStrictDiscoveryStatisticsFromTheDurableStageSnapshot() throws Exception {
-        var dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("discovery-stats.db"));
-        try (var connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("discovery-stats.db"));
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("stats", "session", "strict", Map.of("targetCount", 4)));
         assertTrue(store.append("stats", List.of(Map.of("workflowStage", "REACHABILITY", "stage", "java-reachability",
@@ -93,12 +87,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void deletesTaskAndCascadedResultsWithoutTouchingAnotherSession() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("network-results.db"));
-        dataSource.setEnforceForeignKeys(true);
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("network-results.db"));
 
         NetworkProbeResultStore store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("task-delete", "session-a", "test", Map.of(
@@ -150,12 +139,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void deletesExplicitlySelectedHistoryWithoutTouchingAnotherOwner() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("network-session-delete.db"));
-        dataSource.setEnforceForeignKeys(true);
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("network-session-delete.db"));
 
         NetworkProbeResultStore store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("task-a", "session-a", "a", Map.of("targetCount", 1)));
@@ -170,11 +154,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void restoresSelectedStagesAndHostsDiscoveredWithoutReachabilityStage() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("selected-stages.db"));
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("selected-stages.db"));
         NetworkProbeResultStore store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         List<Map<String, Object>> stages = List.of(Map.of("name", "PORT_SCAN", "status", "COMPLETED", "progress", 100));
         assertTrue(store.createTask("ports-only", "session-a", "ports", Map.of("targetCount", 2, "stages", List.of("PORT_SCAN"))));
@@ -197,11 +177,7 @@ class NetworkProbeResultStoreTest {
 
     @Test
     void deduplicatesReportedErrorsAgainstObservationsAndEarlierErrors() throws Exception {
-        SQLiteDataSource source = new SQLiteDataSource();
-        source.setUrl("jdbc:sqlite:" + tempDir.resolve("errors.db"));
-        try (var connection = source.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var source = SqliteTestDatabase.create(tempDir.resolve("errors.db"));
         var store = new NetworkProbeResultStore(source, new ObjectMapper());
         assertTrue(store.createTask("task", "session", "errors", Map.of()));
         Map<String, Object> reported = Map.of("host", "127.0.0.1", "port", 80, "errorCode", "RESET");
@@ -222,12 +198,7 @@ class NetworkProbeResultStoreTest {
     @Test
     @SuppressWarnings("unchecked")
     void atomicallyStoresFingerprintEvidenceAndDeduplicatesReplayedMatches() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("fingerprints.db"));
-        dataSource.setEnforceForeignKeys(true);
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("fingerprints.db"));
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("task", "session", "test", Map.of()));
         Map<String, Object> endpoint = Map.of("host", "127.0.0.1", "port", 80, "stage", "http-head", "state", "open",
@@ -263,11 +234,7 @@ class NetworkProbeResultStoreTest {
     @Test
     @SuppressWarnings("unchecked")
     void restartMarksPendingFingerprintEvidenceAsIncomplete() throws Exception {
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("interrupted.db"));
-        try (Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(tempDir.resolve("interrupted.db"));
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         assertTrue(store.createTask("task", "session", "test", Map.of()));
         Map<String, Object> endpoint = Map.of("host", "127.0.0.1", "port", 80, "stage", "tcp-connect", "state", "open");
@@ -287,11 +254,7 @@ class NetworkProbeResultStoreTest {
     @Test
     @SuppressWarnings("unchecked")
     void pagesStableHistoryAndFindsOldActiveTasksIndependently() throws Exception {
-        SQLiteDataSource source = new SQLiteDataSource();
-        source.setUrl("jdbc:sqlite:" + tempDir.resolve("history.db"));
-        try (var connection = source.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var source = SqliteTestDatabase.create(tempDir.resolve("history.db"));
         var store = new NetworkProbeResultStore(source, new ObjectMapper());
         for (int index = 0; index < 25; index++) {
             String id = "task-%02d".formatted(index);
@@ -334,11 +297,7 @@ class NetworkProbeResultStoreTest {
     @Test
     @SuppressWarnings("unchecked")
     void batchesListCountsWithoutLoadingStageDetailsOrHostSamples() throws Exception {
-        SQLiteDataSource source = new SQLiteDataSource();
-        source.setUrl("jdbc:sqlite:" + tempDir.resolve("list-counts.db"));
-        try (var connection = source.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var source = SqliteTestDatabase.create(tempDir.resolve("list-counts.db"));
         var store = new NetworkProbeResultStore(source, new ObjectMapper());
         assertTrue(store.createTask("task", "session", "scan", Map.of()));
         assertTrue(store.createTask("empty", "session", "empty", Map.of()));

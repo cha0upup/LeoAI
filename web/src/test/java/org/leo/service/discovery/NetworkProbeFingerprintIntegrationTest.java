@@ -2,16 +2,18 @@ package org.leo.service.discovery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.agent.capability.NetworkProbeCapable;
 import org.leo.core.component.NetworkProbeComponent;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.discovery.NetworkDiscoveryDtos.*;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.service.discovery.NetworkProbeResultStore;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
-import org.sqlite.SQLiteDataSource;
+import org.leo.web.testing.SqliteTestDatabase;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -23,22 +25,22 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NetworkProbeFingerprintIntegrationTest {
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void registerFixtureSessions() {
-        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
         for (String id : List.of("session", "session-a", "session-b", "other")) {
-            var session = new org.leo.core.session.AgentNodeSession();
+            var session = new AgentNodeSession();
             session.setSessionId(id);
             session.setCreateByUser("user-" + id);
             session.setAgentId("agent-1");
             session.bindHostId("host-1");
-            org.leo.core.session.AgentNodeSessionContainer.addSession(id, session);
+            AgentNodeSessionContainer.addSession(id, session);
         }
     }
 
-    @org.junit.jupiter.api.AfterEach
+    @AfterEach
     void clearFixtureSessions() {
-        org.leo.core.session.AgentNodeSessionContainer.clearAllSessions();
+        AgentNodeSessionContainer.clearAllSessions();
     }
 
     @TempDir Path directory;
@@ -49,9 +51,7 @@ class NetworkProbeFingerprintIntegrationTest {
             int port = socket.getLocalPort();
             var analysis = new NetworkProbeAnalysisService(new FingerprintManageService());
             var planner = new ScanPlanService(new TargetResolver(), new PortPolicyResolver(), analysis);
-            var dataSource = new SQLiteDataSource();
-            dataSource.setUrl("jdbc:sqlite:" + directory.resolve("host-discovery.db"));
-            try (var connection = dataSource.getConnection()) { ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql")); }
+            var dataSource = SqliteTestDatabase.create(directory.resolve("host-discovery.db"));
             var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
             try (var orchestration = new NetworkProbeOrchestrationService(Executors.newSingleThreadExecutor(), 10);
                  var workflow = new NetworkProbeWorkflowService(analysis, orchestration, Executors.newSingleThreadExecutor(), 10)) {
@@ -116,12 +116,7 @@ class NetworkProbeFingerprintIntegrationTest {
         match.clear();
         match.putAll(Map.of("field", "body", "operator", "contains", "value", "edited-rule-must-not-run"));
 
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + directory.resolve("results.db"));
-        dataSource.setEnforceForeignKeys(true);
-        try (var connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
-        }
+        var dataSource = SqliteTestDatabase.create(directory.resolve("results.db"));
         NetworkProbeResultStore store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         try (var orchestration = new NetworkProbeOrchestrationService(Executors.newSingleThreadExecutor(), 10);
              var workflow = new NetworkProbeWorkflowService(analysis, orchestration, Executors.newSingleThreadExecutor(), 10)) {
@@ -185,9 +180,7 @@ class NetworkProbeFingerprintIntegrationTest {
             @Override public List<Map<String, Object>> listFingerprints() { return List.of(first, second); }
             @Override public HashMap<String, Object> getFingerprintById(String id) { return "first".equals(id) ? first : second; }
         };
-        SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + directory.resolve("supplement.db"));
-        try (var connection = dataSource.getConnection()) { ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql")); }
+        var dataSource = SqliteTestDatabase.create(directory.resolve("supplement.db"));
         var store = new NetworkProbeResultStore(dataSource, new ObjectMapper());
         Map<String, Object> configured = Map.of("host", "127.0.0.1", "port", port, "applications", List.of(
                 Map.of("baseUrl", url + "/app/"), Map.of("baseUrl", url + "/other/")));

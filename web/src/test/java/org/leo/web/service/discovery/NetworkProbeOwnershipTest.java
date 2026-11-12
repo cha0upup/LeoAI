@@ -10,10 +10,9 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.web.service.agent.SessionLifecycleManager;
+import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -128,11 +127,7 @@ class NetworkProbeOwnershipTest {
     }
 
     private SQLiteDataSource database() {
-        SQLiteDataSource source = new SQLiteDataSource();
-        source.setUrl("jdbc:sqlite:" + temp.resolve("ownership.db"));
-        source.setEnforceForeignKeys(true);
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
-        return source;
+        return SqliteTestDatabase.create(temp.resolve("ownership.db"));
     }
 
     private void session(String id, String user, String agent, String host) {
