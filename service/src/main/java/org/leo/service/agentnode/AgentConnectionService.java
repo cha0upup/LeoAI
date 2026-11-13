@@ -3,6 +3,8 @@ package org.leo.service.agentnode;
 import org.leo.core.entity.Agent;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.rpc.AgentRpcEnvelopeMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -16,6 +18,8 @@ import java.util.Map;
  */
 @Service
 public class AgentConnectionService {
+
+    private static final Logger logger = LoggerFactory.getLogger(AgentConnectionService.class);
 
     private final AgentService agentService;
     private final AgentNodeFactory agentNodeFactory;
@@ -52,8 +56,9 @@ public class AgentConnectionService {
     }
 
     private Map<String, Object> testConnection(Agent agent, boolean updateHeartbeat) {
+        AbstractAgentNode node = null;
         try {
-            AbstractAgentNode node = agentNodeFactory.createLiveNode(agent, null);
+            node = agentNodeFactory.createLiveNode(agent, null);
 
             long start = System.currentTimeMillis();
             Map<String, Object> result = node.testConnection();
@@ -80,6 +85,16 @@ public class AgentConnectionService {
 
         } catch (Exception e) {
             return fail(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), null);
+        } finally {
+            // A probe never transfers ownership to a live Session. Cleanup failures must
+            // not replace the ping result or hide the original connection failure.
+            if (node != null) {
+                try {
+                    node.close();
+                } catch (Exception e) {
+                    logger.warn("关闭临时连接测试节点失败, agentId={}", agent.getAgentId(), e);
+                }
+            }
         }
     }
 

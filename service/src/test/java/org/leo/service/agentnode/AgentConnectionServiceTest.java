@@ -15,6 +15,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,14 +55,16 @@ class AgentConnectionServiceTest {
         assertEquals(List.of("TestConnComponent"), result.get("components"));
         assertTrue(result.get("latencyMs") instanceof Long);
         verifyNoInteractions(agentService);
+        verify(node).close();
     }
 
     @Test
-    void recordsHeartbeatOnlyForSuccessfulSavedConfiguration() {
+    void recordsHeartbeatOnlyForSuccessfulSavedConfiguration() throws Exception {
         Map<String, Object> result = service.testConnection(config.getAgentId());
 
         assertEquals(true, result.get("success"));
         verify(agentService).updateLastConnectedAt(config.getAgentId());
+        verify(node).close();
     }
 
     @Test
@@ -91,6 +94,7 @@ class AgentConnectionServiceTest {
         assertEquals(3, result.size());
         assertTrue(result.get("latencyMs") instanceof Long);
         verify(agentService, never()).updateLastConnectedAt(config.getAgentId());
+        verify(node).close();
     }
 
     private static Stream<Arguments> invalidPingResults() {
@@ -119,6 +123,56 @@ class AgentConnectionServiceTest {
 
         assertEquals(Map.of("success", false, "message", "IllegalStateException"), result);
         assertFalse(result.containsKey("latencyMs"));
+        verifyNoInteractions(agentService);
+        verify(node).close();
+    }
+
+    @Test
+    void closesTheNodeWhenHeartbeatPersistenceFails() throws Exception {
+        doThrow(new IllegalStateException("heartbeat failed"))
+                .when(agentService).updateLastConnectedAt(config.getAgentId());
+
+        assertEquals(Map.of("success", false, "message", "heartbeat failed"),
+                service.testConnection(config.getAgentId()));
+
+        verify(node).close();
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidPingResults")
+    void cleanupFailurePreservesTheOriginalPingFailure(
+            Map<String, Object> pingResult, String message) throws Exception {
+        when(node.testConnection()).thenReturn(pingResult);
+        doThrow(new IllegalStateException("cleanup failed")).when(node).close();
+
+        Map<String, Object> result = service.testConnection(config.getAgentId());
+
+        assertEquals(false, result.get("success"));
+        assertEquals(message, result.get("message"));
+        assertTrue(result.get("latencyMs") instanceof Long);
+        verify(agentService, never()).updateLastConnectedAt(config.getAgentId());
+        verify(node).close();
+    }
+
+    @Test
+    void cleanupFailureDoesNotTurnASuccessfulProbeIntoAFailure() throws Exception {
+        doThrow(new IllegalStateException("cleanup failed")).when(node).close();
+
+        assertEquals(true, service.testConnection(config).get("success"));
+
+        verify(node).close();
+        verifyNoInteractions(agentService);
+    }
+
+    @Test
+    void cleanupFailureDoesNotMaskTheConnectionException() throws Exception {
+        when(node.testConnection()).thenThrow(new IllegalStateException("ping failed"));
+        doThrow(new IllegalStateException("cleanup failed")).when(node).close();
+
+        assertEquals(Map.of("success", false, "message", "ping failed"),
+                service.testConnection(config));
+
+        verify(node).close();
         verifyNoInteractions(agentService);
     }
 }
