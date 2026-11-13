@@ -14,7 +14,7 @@ import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentNodeFactory;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
-import org.leo.web.dto.agentnode.AgentInitResponse;
+import org.leo.web.application.agent.AgentNodeLifecycleService.SessionInfo;
 import org.mockito.MockedStatic;
 
 import java.nio.file.Path;
@@ -74,9 +74,9 @@ class AgentNodeLifecycleServiceTest {
         when(node.getAgent()).thenReturn(agent);
         when(node.testConnection()).thenReturn(Map.of("code", 200, "hostId", "host-1", "components", List.of()));
 
-        AgentInitResponse first = lifecycleService.initLiveSession(agent, user, null, null);
+        SessionInfo first = lifecycleService.initLiveSession(agent, user, null, null);
         verify(node).testConnection();
-        AgentInitResponse second = lifecycleService.initLiveSession(agent, user, null, null);
+        SessionInfo second = lifecycleService.initLiveSession(agent, user, null, null);
 
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSame(node, assertSessionWithoutAiThreads(first, false).getAgentNode());
@@ -104,8 +104,8 @@ class AgentNodeLifecycleServiceTest {
         when(cacheService.requireSelectedHostId("user-1", "agent-1", null))
                 .thenReturn("host-1");
 
-        AgentInitResponse first = lifecycleService.initCacheSession(agent, user, null, null);
-        AgentInitResponse second = lifecycleService.initCacheSession(agent, user, null, null);
+        SessionInfo first = lifecycleService.initCacheSession(agent, user, null, null);
+        SessionInfo second = lifecycleService.initCacheSession(agent, user, null, null);
 
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSessionWithoutAiThreads(first, true);
@@ -113,7 +113,7 @@ class AgentNodeLifecycleServiceTest {
         verifyNoInteractions(nodeFactory);
     }
 
-    private AgentNodeSession assertSessionWithoutAiThreads(AgentInitResponse response, boolean cacheMode) {
+    private AgentNodeSession assertSessionWithoutAiThreads(SessionInfo response, boolean cacheMode) {
         AgentNodeSession session = AgentNodeSessionContainer.getSession(response.sessionId());
         assertNotNull(session);
         assertEquals(cacheMode, response.cacheMode());

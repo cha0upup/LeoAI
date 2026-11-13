@@ -1,7 +1,6 @@
 package org.leo.web.application.agent;
 
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
-import org.leo.web.dto.agentnode.CacheCheckResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -12,16 +11,18 @@ import java.util.Map;
 @Service
 public class AgentCacheService {
 
+    public record Status(boolean hasCache, String saveTime) {}
+
     private final AgentHostCacheRepository repository;
 
     public AgentCacheService(AgentHostCacheRepository repository) {
         this.repository = repository;
     }
 
-    public CacheCheckResponse status(String userId, String agentId) {
+    public Status status(String userId, String agentId) {
         var cache = repository.readCache(userId, agentId);
         boolean available = !cache.hostIds().isEmpty();
-        return new CacheCheckResponse(available,
+        return new Status(available,
                 available ? cache.saveTime() : null);
     }
 

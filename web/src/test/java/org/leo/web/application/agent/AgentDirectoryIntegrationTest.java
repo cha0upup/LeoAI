@@ -126,7 +126,7 @@ class AgentDirectoryIntegrationTest {
 
     @Test
     void doesNotRevealChildrenHiddenByTheCurrentPermissionRules() {
-        List<AgentDirectoryEntry> result = directory.describe(agents.findAgentsByParentAgentId("root"),
+        var result = directory.describe(agents.findAgentsByParentAgentId("root"),
                 agent -> permissions.canAccessAgentChain(agent, user));
         assertFalse(result.stream().filter(row -> "leaf".equals(row.agent().getAgentId())).findFirst().orElseThrow().hasChildren());
         assertTrue(entries(projects.listChildren(request, "project", new ProjectChildrenRequest("child")))

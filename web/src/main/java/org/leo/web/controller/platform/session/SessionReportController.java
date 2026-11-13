@@ -3,7 +3,6 @@ package org.leo.web.controller.platform.session;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.application.agent.SessionReportService;
-import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,7 +33,6 @@ public class SessionReportController {
     public HashMap<String, Object> generateReport(@RequestBody SessionRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
-        ReportResponse report = sessionReportService.generate(session);
-        return ApiResponse.success(report);
+        return ApiResponse.success(sessionReportService.generate(session));
     }
 }

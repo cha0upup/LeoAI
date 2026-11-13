@@ -2,7 +2,6 @@ package org.leo.web.application.agent;
 
 import org.leo.core.entity.Agent;
 import org.leo.service.agentnode.AgentService;
-import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -12,6 +11,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class AgentDirectoryService {
+    public record Entry(Agent agent, boolean hasChildren) {}
+
     private final AgentService agentService;
 
     public AgentDirectoryService(AgentService agentService) {
@@ -19,7 +20,7 @@ public class AgentDirectoryService {
     }
 
     /** 只根据当前用户可见的直接子机显示展开箭头，保留调用方的工作区和权限规则。 */
-    public List<AgentDirectoryEntry> describe(List<Agent> agents, Predicate<Agent> visible) {
+    public List<Entry> describe(List<Agent> agents, Predicate<Agent> visible) {
         if (agents == null || agents.isEmpty()) return List.of();
         List<Agent> rows = agents.stream().filter(agent -> agent != null
                 && agent.getAgentId() != null && !agent.getAgentId().isBlank())
@@ -29,7 +30,7 @@ public class AgentDirectoryService {
         Set<String> parentsWithChildren = agentService.findAgentsByParentAgentIds(parentIds).stream()
                 .filter(child -> child != null && visible.test(child))
                 .map(Agent::getParentAgentId).collect(Collectors.toSet());
-        return rows.stream().map(agent -> new AgentDirectoryEntry(
+        return rows.stream().map(agent -> new Entry(
                 agent, parentsWithChildren.contains(agent.getAgentId()))).toList();
     }
 }

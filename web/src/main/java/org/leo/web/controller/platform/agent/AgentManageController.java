@@ -12,6 +12,7 @@ import org.leo.service.discovery.UrlProbeService;
 import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
+import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,7 +85,8 @@ public class AgentManageController {
             }
             String parentAgentId = ControllerUtil.getRequiredStringParam(params, PARAM_PARENT_AGENT_ID);
             List<Agent> childAgents = agentService.findAgentsByParentAgentId(parentAgentId);
-            return ApiResponse.success(directoryService.describe(childAgents, agent -> canViewAgent(agent, user)));
+            return ApiResponse.success(AgentDirectoryEntry.from(
+                    directoryService.describe(childAgents, agent -> canViewAgent(agent, user))));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -98,7 +100,8 @@ public class AgentManageController {
         }
         List<Agent> roots = agentService.getAllAgents().stream()
                 .filter(agent -> agent != null && ROOT_PARENT_ID.equals(agent.getParentAgentId())).toList();
-        return ApiResponse.success(directoryService.describe(roots, agent -> canViewAgent(agent, user)));
+        return ApiResponse.success(AgentDirectoryEntry.from(
+                directoryService.describe(roots, agent -> canViewAgent(agent, user))));
     }
     
     @RequestMapping(value = "/agents", method = RequestMethod.POST)

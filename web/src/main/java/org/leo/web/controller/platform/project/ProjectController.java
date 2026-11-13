@@ -215,7 +215,8 @@ public class ProjectController {
     }
 
     private List<AgentDirectoryEntry> filterAccessible(List<Agent> agents, User user) {
-        return directoryService.describe(agents, agent -> permissionService.canAccessAgentChain(agent, user));
+        return AgentDirectoryEntry.from(
+                directoryService.describe(agents, agent -> permissionService.canAccessAgentChain(agent, user)));
     }
 
     private Map<String, Integer> countActiveSessionsByProject(User user) {

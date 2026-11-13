@@ -19,9 +19,9 @@ import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.session.AiThread;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentNodeLifecycleService;
+import org.leo.web.application.agent.AgentNodeLifecycleService.SessionInfo;
 import org.leo.web.application.ai.NodeAiDelegationService;
 import org.leo.web.application.ai.NodeAiThreadService;
-import org.leo.web.dto.agentnode.AgentInitResponse;
 import org.leo.web.security.PermissionService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.stereotype.Component;
@@ -220,7 +220,7 @@ public class PlatformNodeAiBridgeTools {
         if (existing != null) return existing;
 
         try {
-            AgentInitResponse response = lifecycleService.initLiveSession(agent, user, null, null);
+            SessionInfo response = lifecycleService.initLiveSession(agent, user, null, null);
             AgentNodeSession created = AgentNodeSessionContainer.getSession(response.sessionId());
             if (created == null) throw new IllegalStateException("Agent 实时会话创建后未找到");
             return created;

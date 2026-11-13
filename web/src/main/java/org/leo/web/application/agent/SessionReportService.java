@@ -5,7 +5,6 @@ import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
 import org.leo.core.infrastructure.persistence.session.AgentReconRepository;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.agentnode.AgentService;
-import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +21,8 @@ import java.util.Map;
  */
 @Service
 public class SessionReportService {
+
+    public record Report(String sessionId, String report, String filename) {}
 
     private static final DateTimeFormatter REPORT_TIME_FMT = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -42,10 +43,10 @@ public class SessionReportService {
      * 生成离线侦察报告（Markdown 格式）。
      *
      * @param session 目标会话（不能为 null）
-     * @return 含报告内容和建议文件名的 DTO
+     * @return 含报告内容和建议文件名的结果
      * @throws ApiException 若无法确定 agentId
      */
-    public ReportResponse generate(AgentNodeSession session) {
+    public Report generate(AgentNodeSession session) {
         String userId   = session.getCreateByUser();
         String agentId = resolveAgentId(session);
 
@@ -61,7 +62,7 @@ public class SessionReportService {
         appendReconSummarySection(sb, reconRepository.load(userId, agentId, session.getCurrentHostId()));
 
         String filename = "recon-report-" + agentName.replaceAll("[^\\w\\-]", "_") + ".md";
-        return new ReportResponse(session.getSessionId(), sb.toString(), filename);
+        return new Report(session.getSessionId(), sb.toString(), filename);
     }
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────

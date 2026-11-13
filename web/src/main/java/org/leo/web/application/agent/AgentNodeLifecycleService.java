@@ -11,7 +11,6 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentNodeFactory;
 import org.leo.service.agentnode.AgentService;
-import org.leo.web.dto.agentnode.AgentInitResponse;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +32,9 @@ import java.util.UUID;
 @Service
 public class AgentNodeLifecycleService {
 
+    public record SessionInfo(String sessionId, String projectId,
+                              boolean cacheMode, List<String> capabilities) {}
+
     private static final Logger logger = LoggerFactory.getLogger(AgentNodeLifecycleService.class);
 
     private final AgentService agentService;
@@ -53,7 +55,7 @@ public class AgentNodeLifecycleService {
         this.sessionLifecycleManager = sessionLifecycleManager;
     }
 
-    public AgentInitResponse initLiveSession(Agent agent, User user,
+    public SessionInfo initLiveSession(Agent agent, User user,
                                               String projectId, String selectedHostId) throws Exception {
         String sessionId = UUID.randomUUID().toString();
 
@@ -80,11 +82,11 @@ public class AgentNodeLifecycleService {
         agentService.updateLastConnectedAt(agent.getAgentId());
         logger.info("Agent初始化成功，agentId: {}, sessionId: {}", agent.getAgentId(), sessionId);
         AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
-        return new AgentInitResponse(sessionId, projectId, false,
+        return new SessionInfo(sessionId, projectId, false,
                 session != null ? session.getCapabilities() : List.of());
     }
 
-    public AgentInitResponse initCacheSession(Agent agent, User user, String projectId, String selectedHostId) {
+    public SessionInfo initCacheSession(Agent agent, User user, String projectId, String selectedHostId) {
         String userId = user.getUserId();
         String agentId = agent.getAgentId();
         String hostId = cacheService.requireSelectedHostId(userId, agentId, selectedHostId);
@@ -109,7 +111,7 @@ public class AgentNodeLifecycleService {
         sessionLifecycleManager.register(session);
 
         logger.info("缓存模式 session 已创建, agentId={}, sessionId={}", agentId, sessionId);
-        return new AgentInitResponse(sessionId, projectId, true, session.getCapabilities());
+        return new SessionInfo(sessionId, projectId, true, session.getCapabilities());
     }
 
     private boolean doInitConn(AbstractAgentNode node, String sessionId,

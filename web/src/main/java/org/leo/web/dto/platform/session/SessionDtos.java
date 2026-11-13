@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * 会话管理相关 DTO（Record 风格）。
  *
- * <p>涵盖：会话管理、HostId 管理、侦察摘要、报告生成四个子模块的请求/响应类型。
+ * <p>保留会话管理、HostId 视图及摘要操作请求；摘要和报告结果由对应应用用例定义。
  */
 public final class SessionDtos {
 
@@ -51,45 +51,10 @@ public final class SessionDtos {
 
     // ─── 侦察摘要 ─────────────────────────────────────────────────────────────
 
-    public record ReconSummaryResponse(
-            String sessionId,
-            String reconSummary,
-            boolean hasReconSummary
-    ) {}
-
     public record SetReconSummaryRequest(
             String sessionId,
             String reconSummary
     ) {}
 
     public record AppendReconSummaryRequest(String sessionId, String content) {}
-
-    public record ReconSummaryMutateResponse(
-            String sessionId,
-            String reconSummary,
-            String msg
-    ) {}
-
-    public record OrganizeResponse(
-            String sessionId,
-            String reconSummary,
-            String msg
-    ) {}
-
-    public record DigestResponse(
-            String sessionId,
-            String digest,
-            boolean dirty,
-            boolean fresh,
-            int summaryLength,
-            int threshold
-    ) {}
-
-    public record DigestGenerateResponse(String sessionId, String digest, String msg) {}
-
-    public record AutoAppendToggleResponse(String sessionId, boolean autoAppendRecon, String msg) {}
-
-    // ─── 报告生成 ─────────────────────────────────────────────────────────────
-
-    public record ReportResponse(String sessionId, String report, String filename) {}
 }

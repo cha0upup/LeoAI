@@ -4,12 +4,6 @@ import org.leo.ai.service.ReconSummaryDigestService;
 import org.leo.ai.service.ReconSummaryOrganizeService;
 import org.leo.core.infrastructure.persistence.session.AgentReconRepository;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.web.dto.platform.session.SessionDtos.AutoAppendToggleResponse;
-import org.leo.web.dto.platform.session.SessionDtos.DigestGenerateResponse;
-import org.leo.web.dto.platform.session.SessionDtos.DigestResponse;
-import org.leo.web.dto.platform.session.SessionDtos.OrganizeResponse;
-import org.leo.web.dto.platform.session.SessionDtos.ReconSummaryMutateResponse;
-import org.leo.web.dto.platform.session.SessionDtos.ReconSummaryResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +15,17 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class ReconSummaryService {
+
+    public record Summary(String sessionId, String reconSummary, boolean hasReconSummary) {}
+
+    public record SummaryUpdate(String sessionId, String reconSummary, String msg) {}
+
+    public record Digest(String sessionId, String digest, boolean dirty, boolean fresh,
+                         int summaryLength, int threshold) {}
+
+    public record GeneratedDigest(String sessionId, String digest, String msg) {}
+
+    public record AutoAppendState(String sessionId, boolean autoAppendRecon, String msg) {}
 
     private final ReconSummaryOrganizeService reconSummaryOrganizeService;
     private final ReconSummaryDigestService reconSummaryDigestService;
@@ -34,49 +39,49 @@ public class ReconSummaryService {
         this.repository = repository;
     }
 
-    public ReconSummaryResponse load(String sessionId, AgentNodeSession session) {
+    public Summary load(String sessionId, AgentNodeSession session) {
         String persisted = repository.load(sessionId);
         session.setReconSummary(persisted);
 
-        return new ReconSummaryResponse(
+        return new Summary(
                 sessionId,
                 session.getReconSummary(),
                 session.hasReconSummary());
     }
 
-    public ReconSummaryMutateResponse set(String sessionId,
+    public SummaryUpdate set(String sessionId,
                                           AgentNodeSession session,
                                           String summary) {
         repository.save(sessionId, summary);
         triggerDigestIfNeeded(session);
-        return new ReconSummaryMutateResponse(sessionId, session.getReconSummary(), "侦察摘要已更新");
+        return new SummaryUpdate(sessionId, session.getReconSummary(), "侦察摘要已更新");
     }
 
-    public ReconSummaryMutateResponse append(String sessionId, AgentNodeSession session, String content) {
+    public SummaryUpdate append(String sessionId, AgentNodeSession session, String content) {
         if (content == null || content.isBlank()) throw ApiException.badRequest("追加内容为空");
         String updated = repository.append(sessionId, content);
         if (updated == null) throw new IllegalStateException("追加侦察摘要失败");
         triggerDigestIfNeeded(session);
-        return new ReconSummaryMutateResponse(sessionId, updated, "侦察摘要已追加");
+        return new SummaryUpdate(sessionId, updated, "侦察摘要已追加");
     }
 
-    public ReconSummaryMutateResponse clear(String sessionId, AgentNodeSession session) {
+    public SummaryUpdate clear(String sessionId, AgentNodeSession session) {
         repository.save(sessionId, null);
-        return new ReconSummaryMutateResponse(sessionId, null, "侦察摘要已清空");
+        return new SummaryUpdate(sessionId, null, "侦察摘要已清空");
     }
 
-    public OrganizeResponse organize(String sessionId, AgentNodeSession session) {
+    public SummaryUpdate organize(String sessionId, AgentNodeSession session) {
         if (!session.hasReconSummary()) {
             throw ApiException.badRequest("侦察摘要为空，无需整理");
         }
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
         repository.save(sessionId, organized);
         triggerDigestIfNeeded(session);
-        return new OrganizeResponse(sessionId, organized, "侦察摘要已整理并保存");
+        return new SummaryUpdate(sessionId, organized, "侦察摘要已整理并保存");
     }
 
-    public DigestResponse digestStatus(String sessionId, AgentNodeSession session) {
-        return new DigestResponse(
+    public Digest digestStatus(String sessionId, AgentNodeSession session) {
+        return new Digest(
                 sessionId,
                 session.getReconSummaryDigest(),
                 session.isReconSummaryDigestDirty(),
@@ -85,22 +90,22 @@ public class ReconSummaryService {
                 ReconSummaryDigestService.DIGEST_THRESHOLD);
     }
 
-    public DigestGenerateResponse generateDigest(String sessionId, AgentNodeSession session) {
+    public GeneratedDigest generateDigest(String sessionId, AgentNodeSession session) {
         // 空摘要不视为错误：前端 AI turn 结束后会无差别调用此接口，若主 Agent 这一轮没有
         // 生成任何侦察数据，应该静默跳过而不是抛 ApiException —— 否则 GlobalExceptionHandler
         // 会打 WARN 日志，制造噪音。返回 digest=null + 友好提示即可，前端拿到后自行决定是否更新 UI。
         if (!session.hasReconSummary()) {
-            return new DigestGenerateResponse(sessionId, null, "尚无侦察摘要，跳过精简版生成");
+            return new GeneratedDigest(sessionId, null, "尚无侦察摘要，跳过精简版生成");
         }
         String digest = reconSummaryDigestService.generateAndSave(session);
-        return new DigestGenerateResponse(sessionId, digest,
+        return new GeneratedDigest(sessionId, digest,
                 digest != null ? "精简版已生成" : "摘要已更新，跳过过期精简结果");
     }
 
-    public AutoAppendToggleResponse toggleAutoAppend(String sessionId, AgentNodeSession session) {
+    public AutoAppendState toggleAutoAppend(String sessionId, AgentNodeSession session) {
         boolean newVal = !session.isAutoAppendRecon();
         session.setAutoAppendRecon(newVal);
-        return new AutoAppendToggleResponse(sessionId, newVal, newVal ? "自动追加已开启" : "自动追加已关闭");
+        return new AutoAppendState(sessionId, newVal, newVal ? "自动追加已开启" : "自动追加已关闭");
     }
 
     private void triggerDigestIfNeeded(AgentNodeSession session) {

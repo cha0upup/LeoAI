@@ -108,7 +108,8 @@ class ArchitectureAuditTest(unittest.TestCase):
                  'org.springframework.http.HttpStatus', 'org.springframework.web.*',
                  'org.leo.web.controller.platform.ai.PlatformAiController',
                  'org.leo.web.util.ControllerUtil', 'org.leo.web.adapter.ai.PlatformNodeAiBridgeTools',
-                 'org.leo.web.adapter.*', 'org.leo.web.config.WebConfig', 'org.leo.web.config.*')
+                 'org.leo.web.adapter.*', 'org.leo.web.config.WebConfig', 'org.leo.web.config.*',
+                 'org.leo.web.dto.agentnode.AgentNodeInitRequest', 'org.leo.web.dto.*')
         for name in names:
             for body in (f'import {name};', f'class Example {{ {name} value; }}'):
                 if '*' in body and not body.startswith('import'):

@@ -5,7 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository.CacheSnapshot;
-import org.leo.web.dto.agentnode.CacheCheckResponse;
+import org.leo.web.application.agent.AgentCacheService.Status;
 import org.leo.web.exception.ApiException;
 
 import java.util.List;
@@ -25,7 +25,7 @@ class AgentCacheServiceTest {
         when(repository.readCache("user", "agent"))
                 .thenReturn(new CacheSnapshot(available ? List.of("host-a") : List.of(), saveTime));
 
-        assertEquals(new CacheCheckResponse(available, available ? saveTime : null), service.status("user", "agent"));
+        assertEquals(new Status(available, available ? saveTime : null), service.status("user", "agent"));
         verify(repository).readCache("user", "agent");
         verifyNoMoreInteractions(repository);
     }
