@@ -1,7 +1,12 @@
 package org.leo.web.config;
 
-import org.leo.web.interceptor.LoginInterceptor;
+import org.leo.ai.agent.AiAgentFactory;
+import org.leo.ai.channel.AiModelFailoverService;
+import org.leo.ai.channel.DynamicModelProvider;
+import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
+import org.leo.web.application.ai.PlatformAiAgentRegistry;
 import org.leo.web.interceptor.BootstrapReadinessInterceptor;
+import org.leo.web.interceptor.LoginInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -65,5 +70,15 @@ public class WebConfig implements WebMvcConfigurer {
     @Bean
     public ServletListenerRegistrationBean<PlatformAiSessionListener> platformAiSessionListener() {
         return new ServletListenerRegistrationBean<>(new PlatformAiSessionListener());
+    }
+
+    /** 在组合根绑定平台工具，运行时注册表只接收 Agent 创建函数。 */
+    @Bean
+    public static PlatformAiAgentRegistry platformAiAgentRegistry(
+            AiAgentFactory agentFactory, DynamicModelProvider modelProvider,
+            AiModelFailoverService failoverService, PlatformNodeAiBridgeTools bridgeTools) {
+        return new PlatformAiAgentRegistry(modelProvider, failoverService, runtime ->
+                agentFactory.createPlatformAiAgent(runtime.streamingModel(),
+                        runtime.supportsFunctionCalling(), runtime.contextWindowTokens(), bridgeTools));
     }
 }

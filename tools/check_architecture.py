@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the backend module DAG and keep application code independent of HTTP adapters."""
+"""Enforce the backend module DAG and keep application code independent of adapters and composition."""
 
 import argparse
 from collections import defaultdict
@@ -29,7 +29,8 @@ ADAPTER_IMPORTS = {
 }
 WEB_APPLICATION_ADAPTERS = (
     'jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.',
-    'org.springframework.http.', 'org.leo.web.controller.', 'org.leo.web.util.ControllerUtil',
+    'org.springframework.http.', 'org.leo.web.controller.', 'org.leo.web.adapter.',
+    'org.leo.web.config.', 'org.leo.web.util.ControllerUtil',
 )
 CORE_CONTRACT_PACKAGES = (
     'org.leo.core.agent.capability', 'org.leo.core.agent.database',
@@ -123,7 +124,7 @@ def boundary_reason(module, relative_source, source_package, name, targets, kind
         reason = 'application service imports adapter implementation: ' + name
     if matches_boundary(source_package, 'org.leo.web.application') and any(
             matches_boundary(name, prefix) for prefix in WEB_APPLICATION_ADAPTERS):
-        reason = 'web application references HTTP adapter: ' + name
+        reason = 'web application references adapter or composition: ' + name
     if (module == 'core' and (source_package == 'org.leo.core.net' or any(
             matches_boundary(source_package, package) for package in CORE_CONTRACT_PACKAGES))
             and matches_boundary(name, 'org.leo.core.infrastructure.')):

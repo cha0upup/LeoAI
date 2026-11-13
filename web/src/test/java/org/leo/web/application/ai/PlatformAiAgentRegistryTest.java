@@ -2,21 +2,19 @@ package org.leo.web.application.ai;
 
 import dev.langchain4j.model.chat.StreamingChatModel;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAiAgent;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -26,10 +24,8 @@ class PlatformAiAgentRegistryTest {
 
     @Test
     void reusesAgentUntilThePlannedRuntimeChangesAndSupportsEviction() {
-        AiAgentFactory agentFactory = mock(AiAgentFactory.class);
         DynamicModelProvider modelProvider = mock(DynamicModelProvider.class);
         AiModelFailoverService failoverService = mock(AiModelFailoverService.class);
-        PlatformNodeAiBridgeTools bridgeTools = mock(PlatformNodeAiBridgeTools.class);
         AiModelConfig config = config(7);
         StreamingChatModel streamingModel = mock(StreamingChatModel.class);
         DynamicModelProvider.ModelRuntime modelRuntime = runtime(streamingModel);
@@ -42,11 +38,12 @@ class PlatformAiAgentRegistryTest {
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(config, "medium")).thenReturn(modelRuntime);
         when(modelProvider.buildRuntime(config, "high")).thenReturn(modelRuntime);
-        when(agentFactory.createPlatformAiAgent(
-                same(streamingModel), eq(true), eq(32_768), same(bridgeTools)))
-                .thenReturn(firstAgent, secondAgent, secondAgent);
+        List<DynamicModelProvider.ModelRuntime> created = new ArrayList<>();
         PlatformAiAgentRegistry registry = new PlatformAiAgentRegistry(
-                agentFactory, modelProvider, failoverService, bridgeTools);
+                modelProvider, failoverService, runtime -> {
+                    created.add(runtime);
+                    return created.size() == 1 ? firstAgent : secondAgent;
+                });
         PlatformAiState state = new PlatformAiState("state-1");
 
         PlatformAiAgentRegistry.AiRuntime first = registry.resolve(state, config, "medium");
@@ -56,12 +53,14 @@ class PlatformAiAgentRegistryTest {
         assertSame(first, reused);
         assertNotSame(first, rebuilt);
         assertSame(secondAgent, rebuilt.aiAgent());
+        assertEquals(List.of(modelRuntime, modelRuntime), created);
         assertEquals("运行时提示", first.failoverMessage());
         verify(modelProvider, times(2)).buildRuntime(eq(config), org.mockito.ArgumentMatchers.any());
 
         registry.evict(state.getStateId());
         PlatformAiAgentRegistry.AiRuntime afterEviction = registry.resolve(state, config, "high");
         assertNotSame(rebuilt, afterEviction);
+        assertEquals(3, created.size());
         verify(modelProvider, times(3)).buildRuntime(eq(config), org.mockito.ArgumentMatchers.any());
     }
 

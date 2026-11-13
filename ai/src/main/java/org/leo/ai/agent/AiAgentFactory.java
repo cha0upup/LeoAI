@@ -2,8 +2,8 @@ package org.leo.ai.agent;
 
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
-import org.leo.ai.service.AutoReconAppendService;
 import org.leo.ai.service.AiPlanCoordinator;
+import org.leo.ai.service.AutoReconAppendService;
 import org.leo.core.ai.AiRuntimeState;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 
-import static org.leo.ai.agent.AiToolAuthorizationPolicy.AiAgentScope.PLATFORM;
 import static org.leo.ai.agent.AiToolAuthorizationPolicy.AiAgentScope.AGENT_NODE;
+import static org.leo.ai.agent.AiToolAuthorizationPolicy.AiAgentScope.PLATFORM;
 
 /**
  * Agent 构建工厂。
@@ -111,8 +111,8 @@ public class AiAgentFactory {
     /**
      * 创建平台 Agent，并按运行入口追加可选工具。
      *
-     * <p>桥接 Node AI 的工具位于 web 模块，不能反向成为 ai 模块的固定依赖，
-     * 因此由 web 模块的 Agent 注册表在构建线程运行时时注入。
+     * <p>桥接 Node AI 的工具由 web 组合根绑定，ai 模块只接收工具对象，
+     * 保持对具体入口与适配器的独立性。
      */
     public PlatformAiAgent createPlatformAiAgent(StreamingChatModel streamingModel,
                                              boolean enableTools,

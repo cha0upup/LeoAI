@@ -2,38 +2,32 @@ package org.leo.web.application.ai;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAiAgent;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
-import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
-/** 按平台会话和模型运行时缓存 PlatformAiAgent。 */
-@Component
+/** 按平台会话和模型运行时缓存 PlatformAiAgent；具体创建方式由组合根绑定。 */
 public class PlatformAiAgentRegistry {
 
-    private final AiAgentFactory agentFactory;
     private final DynamicModelProvider modelProvider;
     private final AiModelFailoverService failoverService;
-    private final PlatformNodeAiBridgeTools bridgeTools;
+    private final Function<DynamicModelProvider.ModelRuntime, PlatformAiAgent> createAgent;
     private final ConcurrentMap<String, AiRuntime> aiRuntimes = new ConcurrentHashMap<>();
     private final Consumer<String> stateDestroyListener = this::evict;
 
-    public PlatformAiAgentRegistry(AiAgentFactory agentFactory,
-                                   DynamicModelProvider modelProvider,
+    public PlatformAiAgentRegistry(DynamicModelProvider modelProvider,
                                    AiModelFailoverService failoverService,
-                                   PlatformNodeAiBridgeTools bridgeTools) {
-        this.agentFactory = agentFactory;
+                                   Function<DynamicModelProvider.ModelRuntime, PlatformAiAgent> createAgent) {
         this.modelProvider = modelProvider;
         this.failoverService = failoverService;
-        this.bridgeTools = bridgeTools;
+        this.createAgent = createAgent;
     }
 
     @PostConstruct
@@ -64,11 +58,7 @@ public class PlatformAiAgentRegistry {
             }
             DynamicModelProvider.ModelRuntime modelRuntime =
                     modelProvider.buildRuntime(effective, reasoningEffort);
-            PlatformAiAgent aiAgent = agentFactory.createPlatformAiAgent(
-                    modelRuntime.streamingModel(),
-                    modelRuntime.supportsFunctionCalling(),
-                    modelRuntime.contextWindowTokens(),
-                    bridgeTools);
+            PlatformAiAgent aiAgent = createAgent.apply(modelRuntime);
             return new AiRuntime(
                     modelRuntimeCacheKey,
                     aiAgent,

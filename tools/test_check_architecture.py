@@ -102,12 +102,13 @@ class ArchitectureAuditTest(unittest.TestCase):
                    f'import {name};\nclass Example {{ {name} value; }}')
         self.assertEqual([], audit(self.root))
 
-    def test_web_application_keeps_http_details_in_adapters(self):
+    def test_web_application_keeps_adapter_and_composition_dependencies_out(self):
         names = ('jakarta.servlet.http.HttpSession',
                  'org.springframework.web.servlet.mvc.method.annotation.SseEmitter',
                  'org.springframework.http.HttpStatus', 'org.springframework.web.*',
                  'org.leo.web.controller.platform.ai.PlatformAiController',
-                 'org.leo.web.util.ControllerUtil')
+                 'org.leo.web.util.ControllerUtil', 'org.leo.web.adapter.ai.PlatformNodeAiBridgeTools',
+                 'org.leo.web.adapter.*', 'org.leo.web.config.WebConfig', 'org.leo.web.config.*')
         for name in names:
             for body in (f'import {name};', f'class Example {{ {name} value; }}'):
                 if '*' in body and not body.startswith('import'):
@@ -118,7 +119,7 @@ class ArchitectureAuditTest(unittest.TestCase):
                                'package org.leo.web.application.ai;\n' + body)
                     issues = audit(self.root)
                     self.assertEqual(1, len(issues), issues)
-                    self.assertIn('web application references HTTP adapter', issues[0])
+                    self.assertIn('web application references adapter or composition', issues[0])
                     self.write('web/src/main/java/Example.java',
                                'package org.leo.web.adapter.ai;\n' + body)
                     self.assertEqual([], audit(self.root))
