@@ -7,12 +7,11 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Session-scoped file listing and download cache persistence. */
+/** Session-scoped file listing and preview cache persistence. */
 @Repository
 public class AgentSessionFileRepository {
 
@@ -47,7 +46,7 @@ public class AgentSessionFileRepository {
         }
     }
 
-    public File appendDownloadChunk(String sessionId, String filePath, long offset, byte[] data) {
+    public File savePreview(String sessionId, String filePath, byte[] data) {
         if (data == null || data.length == 0) return null;
         try {
             File fileDir = AgentNodeSessionWorkDirUtil.getSessionFileDir(sessionId);
@@ -55,12 +54,7 @@ public class AgentSessionFileRepository {
             Path local = base.resolve(AgentNodeSessionWorkDirUtil.toRelativePathUnderFile(filePath)).normalize();
             if (!local.startsWith(base)) return null;
             Files.createDirectories(local.getParent());
-            if (offset == 0) {
-                Files.write(local, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            } else {
-                Files.write(local, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            }
-            return local.toFile();
+            return Files.write(local, data).toFile();
         } catch (IOException e) {
             return null;
         }

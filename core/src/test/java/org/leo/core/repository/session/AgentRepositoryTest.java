@@ -167,7 +167,7 @@ class AgentRepositoryTest {
     }
 
     @Test
-    void fileListingsAndDownloadChunksCreateTheirOwnDirectories() throws Exception {
+    void fileListingsAndPreviewsCreateTheirOwnDirectories() throws Exception {
         AgentNodeSession session = session("files", "agent-a", "host-a");
         AtomicFileStore files = new AtomicFileStore();
         AgentSessionFileRepository repository = new AgentSessionFileRepository(files);
@@ -177,11 +177,11 @@ class AgentRepositoryTest {
         assertNotNull(listing);
         assertEquals("/var/log", files.readJsonMap(listing).get("absolutePath"));
 
-        String downloadPath = "/downloads/nested/data.bin";
-        File download = repository.appendDownloadChunk(session.getSessionId(), downloadPath, 0, new byte[]{1, 2});
-        assertNotNull(download);
-        assertEquals(download, repository.appendDownloadChunk(session.getSessionId(), downloadPath, 2, new byte[]{3}));
-        assertArrayEquals(new byte[]{1, 2, 3}, Files.readAllBytes(download.toPath()));
+        String previewPath = "/var/nested/preview.bin";
+        File preview = repository.savePreview(session.getSessionId(), previewPath, new byte[]{1, 2});
+        assertNotNull(preview);
+        assertEquals(preview, repository.savePreview(session.getSessionId(), previewPath, new byte[]{3}));
+        assertArrayEquals(new byte[]{3}, Files.readAllBytes(preview.toPath()));
     }
 
     @Test

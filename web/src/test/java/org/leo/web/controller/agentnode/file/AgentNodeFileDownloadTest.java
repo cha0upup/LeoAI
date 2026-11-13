@@ -4,23 +4,63 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.core.agent.capability.FileCapable;
 import org.leo.core.entity.User;
 import org.leo.core.repository.session.AgentSessionFileRepository;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
+import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
+import org.leo.web.util.ControllerUtil;
 import org.springframework.http.ContentDisposition;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class AgentNodeFileDownloadTest {
     @TempDir Path temp;
-    private final AgentNodeFileController controller = new AgentNodeFileController(mock(AgentSessionFileRepository.class));
+    private final AgentSessionFileRepository repository = mock(AgentSessionFileRepository.class);
+    private final AgentNodeFileController controller = new AgentNodeFileController(repository);
+
+    @ParameterizedTest
+    @CsvSource({"100,false", "200,true"})
+    void previewsNormalizeBothWireFormatsAndCacheTheInitialSlice(int code, boolean encoded) throws Exception {
+        FileCapable node = mock(FileCapable.class);
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "path", "/preview.txt"));
+        byte[] bytes = {1, 2};
+        long totalSize = code == 100 ? 3L : 2L;
+        when(node.fileDownloadChunk("/preview.txt", 1024 * 1024L, 0L)).thenReturn(Map.of(
+                "code", code, "data", encoded ? "AQI=" : bytes, "length", totalSize, "nextOffset", 2L));
+        try (var sessions = mockStatic(ControllerUtil.class); var audit = mockStatic(AuditLogUtil.class)) {
+            sessions.when(() -> ControllerUtil.requireCapability(params, FileCapable.class)).thenReturn(node);
+            sessions.when(() -> ControllerUtil.getRequiredStringParam(params, "path")).thenReturn("/preview.txt");
+            assertEquals(Map.of("data", "AQI=", "size", totalSize, "truncated", code == 100, "nextOffset", 2L),
+                    controller.filePreview(params).get("data"));
+            verify(repository).savePreview("session", "/preview.txt", bytes);
+        }
+    }
+
+    @Test
+    void failedPreviewsNeitherAuditSuccessNorWriteCache() throws Exception {
+        FileCapable node = mock(FileCapable.class);
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "path", "/preview.txt"));
+        when(node.fileDownloadChunk("/preview.txt", 1024 * 1024L, 0L))
+                .thenReturn(null, Map.of("code", 500, "msg", "fixture failure"));
+        try (var sessions = mockStatic(ControllerUtil.class); var audit = mockStatic(AuditLogUtil.class)) {
+            sessions.when(() -> ControllerUtil.requireCapability(params, FileCapable.class)).thenReturn(node);
+            sessions.when(() -> ControllerUtil.getRequiredStringParam(params, "path")).thenReturn("/preview.txt");
+            assertThrows(ApiException.class, () -> controller.filePreview(params));
+            assertThrows(ApiException.class, () -> controller.filePreview(params));
+            verifyNoInteractions(repository);
+            audit.verifyNoInteractions();
+        }
+    }
 
     @Test
     void streamsTaskStorageWithoutMovingItIntoTheWorkspace() throws Exception {

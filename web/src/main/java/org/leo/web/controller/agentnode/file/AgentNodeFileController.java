@@ -58,21 +58,19 @@ public class AgentNodeFileController {
 
 
     /**
-     * 获取文件列表（成功时将列表结果结构化存储到 root/sessions/{sessionId}/file-lists）
+     * 获取文件列表，成功时将列表结果缓存到会话文件目录。
      */
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> listFiles(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         FileCapable node = getFileNode(params);
         Map<String, Object> results = agentCall(() -> node.getFileList(path), "获取文件列表失败");
-        if (results != null) {
-            String sessionId = (String) params.get("sessionId");
-            if (sessionId != null && !sessionId.isBlank()) {
-                try {
-                    fileRepository.saveFileList(sessionId, path, results);
-                } catch (Exception ex) {
-                    logger.warn("写入会话文件列表失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
-                }
+        String sessionId = (String) params.get("sessionId");
+        if (sessionId != null && !sessionId.isBlank()) {
+            try {
+                fileRepository.saveFileList(sessionId, path, results);
+            } catch (Exception ex) {
+                logger.warn("写入会话文件列表失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
             }
         }
         return ApiResponse.success(results);
@@ -161,7 +159,7 @@ public class AgentNodeFileController {
             AuditLogUtil.logSuccess(auditNode, "FILE_UPLOAD", "上传文件", filePath, auditParams(params),
                     ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp());
         }
-        return ApiResponse.success(results != null ? results : new HashMap<>());
+        return ApiResponse.success(results);
     }
 
     /**
@@ -193,7 +191,7 @@ public class AgentNodeFileController {
     }
 
     /**
-     * 文件预览（同时将预览内容按服务器路径结构存入会话 root/sessions/{sessionId}/file 下）
+     * 文件预览，同时将首段内容按服务器路径结构缓存到会话文件目录。
      * 统一响应结构：{ data(base64), size(文件总大小), truncated(是否截断), nextOffset }
      */
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
@@ -206,29 +204,17 @@ public class AgentNodeFileController {
                 "文件预览失败",
                 CHUNK_SUCCESS_CODES
         );
-        if (results != null) {
-            Object codeObj = results.get("code");
-            int code = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
-            if (code == 200 || code == 100) {
-                AuditLogUtil.logSuccess(auditNode, "FILE_READ", "读取文件", path, params,
-                        ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
-                Object dataObj = results.get("data");
-                byte[] chunkData = null;
-                if (dataObj instanceof byte[]) {
-                    chunkData = (byte[]) dataObj;
-                } else if (dataObj instanceof String) {
-                    chunkData = Base64.getDecoder().decode((String) dataObj);
-                }
-                if (chunkData != null && chunkData.length > 0) {
-                    String sessionId = (String) params.get("sessionId");
-                    if (sessionId != null && !sessionId.isBlank()) {
-                        try {
-                            fileRepository.appendDownloadChunk(sessionId, path, 0L, chunkData);
-                        } catch (Exception ex) {
-                            logger.warn("预览写入会话文件目录失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
-                        }
-                    }
-                }
+        AuditLogUtil.logSuccess(auditNode, "FILE_READ", "读取文件", path, params,
+                ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
+        Object dataObj = results.get("data");
+        byte[] chunkData = dataObj instanceof byte[] bytes ? bytes
+                : dataObj instanceof String encoded ? Base64.getDecoder().decode(encoded) : null;
+        String sessionId = (String) params.get("sessionId");
+        if (chunkData != null && chunkData.length > 0 && sessionId != null && !sessionId.isBlank()) {
+            try {
+                fileRepository.savePreview(sessionId, path, chunkData);
+            } catch (Exception ex) {
+                logger.warn("预览写入会话文件目录失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
             }
         }
         return ApiResponse.success(normalizeChunkResult(results));
@@ -239,10 +225,6 @@ public class AgentNodeFileController {
      */
     private HashMap<String, Object> normalizeChunkResult(Map<String, Object> raw) {
         HashMap<String, Object> normalized = new HashMap<>();
-        if (raw == null) {
-            return normalized;
-        }
-
         // 解析内层 code：200=完整, 100=截断
         Object codeObj = raw.get("code");
         int innerCode = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
@@ -385,7 +367,7 @@ public class AgentNodeFileController {
         Map<String, Object> results = agentCall(() -> node.compressFile(src, des, finalExclude), "文件压缩失败");
         AuditLogUtil.logSuccess(auditNode, "FILE_COMPRESS", "文件压缩", src + " -> " + des, params,
                 ApiResponse.CODE_SUCCESS, "文件压缩成功", AuditLogUtil.getClientIp());
-        return ApiResponse.success(results != null ? results : new HashMap<>());
+        return ApiResponse.success(results);
     }
 
     /**
@@ -403,7 +385,7 @@ public class AgentNodeFileController {
         String operationPath = src + " -> " + des + " (" + format + ")";
         AuditLogUtil.logSuccess(auditNode, "FILE_DECOMPRESS", "文件解压", operationPath, params,
                 ApiResponse.CODE_SUCCESS, "文件解压成功", AuditLogUtil.getClientIp());
-        return ApiResponse.success(results != null ? results : new HashMap<>());
+        return ApiResponse.success(results);
     }
 
     /**
