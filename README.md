@@ -199,6 +199,7 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 
 #### WebShell 生成
 - 支持格式：JSP、JSPX、Groovy
+- AI 生成结果通过 `resultId` 一次取回完整内容及元数据；临时缓存最多保留 256 条、最长 30 分钟，满容量时淘汰最早写入的结果，请及时下载或归档。
 
 <img src="docs/images/screenshot-script-builder.png" alt="脚本构建器" width="800" />
 

@@ -3,10 +3,12 @@ package org.leo.web.controller.platform.shell;
 import org.leo.jmg.generation.GeneratedClassArtifact;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Disguise;
 import org.leo.core.manager.DisguiseManager;
 import org.leo.service.generator.ScriptGeneratorService;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.leo.service.shell.ShellResultStore;
 
 import java.util.HashMap;
 import java.util.List;
@@ -22,16 +24,27 @@ class ShellGeneratorControllerProtocolTest {
 
     private final DisguiseManager disguiseManager = mock(DisguiseManager.class);
     private final ScriptGeneratorService scriptGeneratorService = mock(ScriptGeneratorService.class);
+    private final ShellResultStore resultStore = new ShellResultStore();
     private ShellGeneratorController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new ShellGeneratorController();
-        ReflectionTestUtils.setField(controller, "disguiseManager", disguiseManager);
-        ReflectionTestUtils.setField(controller, "scriptGeneratorService", scriptGeneratorService);
+        controller = new ShellGeneratorController(disguiseManager, resultStore, scriptGeneratorService);
         when(scriptGeneratorService.getMetadata()).thenReturn(Map.of());
         when(disguiseManager.getDisguiseById("req")).thenReturn(requestDisguise());
         when(disguiseManager.getDisguiseById("resp")).thenReturn(responseDisguise());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void retrievesContentAndOptionalMetadataTogether(boolean withMetadata) {
+        Map<String, Object> meta = withMetadata ? Map.of("protocol", "http") : null;
+        String id = resultStore.put("fixture content", meta);
+        Map<String, Object> expected = new HashMap<>(Map.of("resultId", id, "content", "fixture content"));
+        if (withMetadata) expected.put("meta", meta);
+
+        assertEquals(expected, controller.getGeneratedResult(id).get("data"));
+        assertEquals(400, controller.getGeneratedResult("missing").get("code"));
     }
 
     @Test

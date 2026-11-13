@@ -61,7 +61,7 @@ class ShellGeneratorToolsTest {
 
         assertEquals(true, result.get("success"));
         assertNotNull(result.get("resultId"));
-        assertEquals("<?php echo 'fixture';", resultStore.getContent((String) result.get("resultId")));
+        assertEquals("<?php echo 'fixture';", resultStore.get((String) result.get("resultId")).content());
         assertTrue(String.valueOf(result.get("tip")).contains("取回 PHP WebShell 代码"));
 
         GenerationRequest request = captured.get();
@@ -128,7 +128,7 @@ class ShellGeneratorToolsTest {
 
         assertEquals(true, assembled.get("success"));
         assertNotNull(assembled.get("resultId"));
-        String content = resultStore.getContent(String.valueOf(assembled.get("resultId")));
+        String content = resultStore.get(String.valueOf(assembled.get("resultId"))).content();
         assertTrue(content.contains("org.demo.GeneratedCore"));
         assertFalse(content.contains("{{"));
     }

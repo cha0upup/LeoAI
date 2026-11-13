@@ -19,7 +19,6 @@ import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.service.generator.ScriptGeneratorService;
 import org.leo.web.util.ControllerUtil;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,14 +44,17 @@ public class ShellGeneratorController {
     private static final ShellGenerationService SHELL_GENERATION_SERVICE =
             new ShellGenerationService();
 
-    @Autowired
-    private DisguiseManager disguiseManager;
+    private final DisguiseManager disguiseManager;
+    private final ShellResultStore shellResultStore;
+    private final ScriptGeneratorService scriptGeneratorService;
 
-    @Autowired
-    private ShellResultStore shellResultStore;
-
-    @Autowired
-    private ScriptGeneratorService scriptGeneratorService;
+    public ShellGeneratorController(DisguiseManager disguiseManager,
+                                    ShellResultStore shellResultStore,
+                                    ScriptGeneratorService scriptGeneratorService) {
+        this.disguiseManager = disguiseManager;
+        this.shellResultStore = shellResultStore;
+        this.scriptGeneratorService = scriptGeneratorService;
+    }
 
     /**
      * 取回 AI 工具生成的完整代码。
@@ -61,15 +63,14 @@ public class ShellGeneratorController {
      */
     @RequestMapping(value = "/result/{id}", method = RequestMethod.GET)
     public HashMap<String, Object> getGeneratedResult(@PathVariable("id") String id) {
-        String content = shellResultStore.getContent(id);
-        if (content == null) {
+        ShellResultStore.Result result = shellResultStore.get(id);
+        if (result == null) {
             return ApiResponse.badRequest("结果不存在或已过期（TTL 30 分钟）: " + id);
         }
-        java.util.Map<String, Object> meta = shellResultStore.getMeta(id);
         HashMap<String, Object> data = new HashMap<>();
         data.put("resultId", id);
-        data.put("content",  content);
-        if (meta != null) data.put("meta", meta);
+        data.put("content", result.content());
+        if (result.meta() != null) data.put("meta", result.meta());
         return ApiResponse.success(data);
     }
 

@@ -181,6 +181,7 @@ The exact PHP feature set depends on the target environment: database operations
 
 #### WebShell Generation
 - Supported formats: JSP, JSPX, Groovy
+- AI-generated results are retrieved by `resultId`, with content and metadata read together. The temporary cache holds at most 256 results for up to 30 minutes and evicts the oldest insertion when full; download or archive results promptly.
 
 Every Java build keeps the final Packer text and also exposes downloadable Core,
 Shell, and Injector class artifacts with byte sizes and server-generated SHA-256 digests.
