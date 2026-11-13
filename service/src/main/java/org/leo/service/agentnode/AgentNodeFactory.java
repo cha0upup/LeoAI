@@ -1,17 +1,17 @@
 package org.leo.service.agentnode;
 
-import org.leo.core.entity.Disguise;
+import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.entity.Agent;
+import org.leo.core.entity.Disguise;
 import org.leo.core.entity.User;
+import org.leo.core.infrastructure.transport.HttpChunkedCommunication;
+import org.leo.core.infrastructure.transport.HttpCommunication;
+import org.leo.core.infrastructure.transport.WebSocketCommunication;
 import org.leo.core.manager.DisguiseManager;
 import org.leo.core.net.Communication;
-import org.leo.core.net.impl.HttpChunkedCommunication;
-import org.leo.core.net.impl.HttpCommunication;
-import org.leo.core.net.impl.WebSocketCommunication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.net.layer.TlsFingerprintStrategy;
-import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.runtime.AgentNodeCreationContext;
 import org.leo.core.runtime.AgentRuntime;
 import org.leo.core.runtime.AgentRuntimeModule;

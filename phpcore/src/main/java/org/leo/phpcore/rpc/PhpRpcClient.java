@@ -1,12 +1,9 @@
 package org.leo.phpcore.rpc;
 
-import org.leo.core.rpc.AgentRpcRetryPolicy;
-import org.leo.core.rpc.AgentRpcErrorCodes;
-
 import org.leo.core.component.runtime.ComponentArtifact;
 import org.leo.core.entity.Agent;
+import org.leo.core.infrastructure.transport.HttpCommunication;
 import org.leo.core.net.Communication;
-import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.HeaderNoiseGenerator;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.HttpSessionProfile;
@@ -18,8 +15,10 @@ import org.leo.core.net.layer.UrlGenerator;
 import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.rpc.AgentOperation;
 import org.leo.core.rpc.AgentRpcEnvelopeMapper;
+import org.leo.core.rpc.AgentRpcErrorCodes;
 import org.leo.core.rpc.AgentRpcRequest;
 import org.leo.core.rpc.AgentRpcResponse;
+import org.leo.core.rpc.AgentRpcRetryPolicy;
 import org.leo.phpcore.payload.PhpPayloadCodec;
 
 import java.nio.charset.StandardCharsets;

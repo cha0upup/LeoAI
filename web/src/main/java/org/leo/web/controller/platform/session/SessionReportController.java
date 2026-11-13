@@ -2,9 +2,9 @@ package org.leo.web.controller.platform.session;
 
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.application.agent.SessionReportService;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
-import org.leo.web.service.agent.SessionReportService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;

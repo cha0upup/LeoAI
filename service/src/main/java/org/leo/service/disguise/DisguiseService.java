@@ -1,18 +1,18 @@
 package org.leo.service.disguise;
 
-import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.core.config.LeoConfig;
+import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.disguise.DisguiseRuntimeValidator;
 import org.leo.core.entity.Disguise;
-import org.leo.core.disguise.DisguiseProtocol;
 import org.leo.core.entity.User;
+import org.leo.core.infrastructure.bytecode.javassist.JavassistDisguiseFactory;
+import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
 import org.leo.core.manager.DisguiseManager;
-import org.leo.core.repository.session.AtomicFileStore;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.leo.core.util.SafeZipReader;
 import org.leo.core.util.aes.AesUtil;
-import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.core.util.json.JsonUtil;
+import org.leo.service.importing.ImportConflictPolicy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,9 +28,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.zip.ZipEntry;

@@ -1,8 +1,8 @@
 package org.leo.core.entity;
 
-import org.leo.core.util.javassist.JavassistDisguiseFactory;
-import org.leo.core.util.json.JsonUtil;
 import org.leo.core.disguise.DisguiseProtocol;
+import org.leo.core.infrastructure.bytecode.javassist.JavassistDisguiseFactory;
+import org.leo.core.util.json.JsonUtil;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;

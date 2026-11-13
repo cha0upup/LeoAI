@@ -1,6 +1,6 @@
 package org.leo.jmg.generation.pipeline;
 
-import org.leo.core.util.asm.ClassFileMinimizer;
+import org.leo.core.infrastructure.bytecode.asm.ClassFileMinimizer;
 import org.leo.jmg.core.LeoCore;
 import org.leo.jmg.generation.GenerationRequest;
 

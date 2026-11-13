@@ -22,7 +22,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SRC_DIR="$SCRIPT_DIR/src/main/java/org/leo/core/component"
+SRC_DIR="$SCRIPT_DIR/src/main/java/org/leo/javacore/component"
 OUT_DIR="$SCRIPT_DIR/src/main/resources/component"
 TMP_DIR=$(mktemp -d)
 
@@ -164,7 +164,7 @@ for sourcefile in "$SRC_DIR"/*.java; do
     fi
 done
 
-CLASS_DIR="$TMP_DIR/org/leo/core/component"
+CLASS_DIR="$TMP_DIR/org/leo/javacore/component"
 source_count=$(find "$SRC_DIR" -maxdepth 1 -type f -name '*.java' | wc -l | tr -d ' ')
 class_count=$(find "$CLASS_DIR" -maxdepth 1 -type f -name '*.class' | wc -l | tr -d ' ')
 if [ "$class_count" -ne "$source_count" ]; then
@@ -184,9 +184,9 @@ for classfile in "$CLASS_DIR"/*.class; do
         exit 1
     fi
     class_name=$(basename "$classfile" .class)
-    allowed_name="org/leo/core/component/$class_name"
+    allowed_name="org/leo/javacore/component/$class_name"
     foreign_refs=$($JAVAP -verbose "$classfile" \
-        | sed -n 's|.*// \(org/leo/core/component/[A-Za-z0-9_$]*\).*|\1|p' \
+        | sed -n 's|.*// \(org/leo/javacore/component/[A-Za-z0-9_$]*\).*|\1|p' \
         | sort -u \
         | grep -v "^${allowed_name}$" || true)
     if [ -n "$foreign_refs" ]; then

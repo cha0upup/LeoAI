@@ -1,18 +1,18 @@
 package org.leo.javacore;
 
+import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.UrlStrategy;
-import org.leo.core.agent.AbstractAgentNode;
-import org.leo.core.agent.impl.JavaAgentNode;
 import org.leo.core.runtime.AgentNodeCreationContext;
 import org.leo.core.runtime.AgentRuntime;
 import org.leo.core.runtime.AgentRuntimeModule;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.request.ComponentClassNameStrategy;
+import org.leo.javacore.agent.impl.JavaAgentNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

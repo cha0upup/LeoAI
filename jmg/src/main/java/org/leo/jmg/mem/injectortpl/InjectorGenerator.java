@@ -6,7 +6,7 @@ import javassist.CtClass;
 import javassist.CtConstructor;
 import javassist.CtMethod;
 import javassist.CtNewMethod;
-import org.leo.core.util.asm.ClassFileMinimizer;
+import org.leo.core.infrastructure.bytecode.asm.ClassFileMinimizer;
 import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.ServletNamespace;

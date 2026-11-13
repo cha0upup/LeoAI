@@ -3,7 +3,7 @@ package org.leo.ai.service.workspace;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.config.AiWorkspaceProperties;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
+import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;

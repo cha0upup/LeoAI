@@ -1,18 +1,18 @@
 package org.leo.web.controller.platform.user;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
+import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
-import org.leo.web.service.artifact.UserArtifactService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.leo.web.application.artifact.UserArtifactService;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.http.MediaType;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

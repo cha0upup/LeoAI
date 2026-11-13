@@ -1,34 +1,34 @@
 package org.leo.service.fingerprint;
 
-import org.leo.service.importing.ImportConflictPolicy;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.User;
 import org.leo.core.fingerprint.FingerprintMetadata;
-import org.leo.core.repository.session.AtomicFileStore;
-import org.leo.core.repository.session.FileStoreException;
+import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.core.infrastructure.persistence.session.FileStoreException;
+import org.leo.core.util.SafeZipReader;
+import org.leo.core.util.json.JsonUtil;
+import org.leo.service.importing.ImportConflictPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.leo.core.util.SafeZipReader;
-import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.UUID;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 

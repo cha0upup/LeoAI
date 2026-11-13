@@ -4,8 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Agent;
+import org.leo.core.infrastructure.transport.HttpCommunication;
 import org.leo.core.net.Communication;
-import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.TlsFingerprintStrategy;
 import org.mockito.ArgumentCaptor;
 

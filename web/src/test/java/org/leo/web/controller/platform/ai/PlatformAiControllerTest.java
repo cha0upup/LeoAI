@@ -2,23 +2,31 @@ package org.leo.web.controller.platform.ai;
 
 import org.junit.jupiter.api.Test;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
+import org.leo.web.adapter.ai.AiEventSubscriptionService;
+import org.leo.web.application.ai.AiTurnProtocolService;
+import org.leo.web.application.ai.AiTurnQueueService;
+import org.leo.web.application.ai.PlatformAiThreadService;
+import org.leo.web.dto.platform.ai.PlatformAiDtos;
+import org.leo.web.exception.ApiException;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
-import org.leo.web.service.ai.AiTurnProtocolService;
-import org.leo.web.service.ai.AiTurnQueueService;
-import org.leo.web.service.ai.PlatformAiThreadService;
-import org.leo.web.service.ai.AiEventSubscriptionService;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -27,6 +35,43 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class PlatformAiControllerTest {
+    @Test
+    void ownsHttpSessionBindingAndPreservesItWhenTheUseCaseFails() {
+        PlatformAiThreadService threads = mock(PlatformAiThreadService.class);
+        PlatformAiController controller = new PlatformAiController(threads,
+                mock(AiModelConfigService.class), mock(AiTurnTelemetryRegistry.class),
+                mock(AiEventSubscriptionService.class), mock(AiTurnProtocolService.class),
+                mock(AiTurnQueueService.class));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        var session = request.getSession();
+        User user = new User();
+        session.setAttribute("user", user);
+        session.setAttribute("platformAiStateId", "previous");
+
+        when(threads.createAgent(session.getId(), "previous", user, 99))
+                .thenThrow(ApiException.notFound("模型已删除"));
+        assertThrows(ApiException.class, () -> controller.createAgent(
+                new PlatformAiDtos.AiAgentConfigRequest(null, 99), request));
+        assertEquals("previous", session.getAttribute("platformAiStateId"));
+
+        PlatformAiState created = new PlatformAiState("created");
+        when(threads.createAgent(session.getId(), "previous", user, 7)).thenReturn(created);
+        controller.createAgent(new PlatformAiDtos.AiAgentConfigRequest(null, 7), request);
+        assertEquals("created", session.getAttribute("platformAiStateId"));
+
+        when(threads.createThread(session.getId(), user, "new", 7))
+                .thenReturn(Map.of("threadId", "new"));
+        controller.createThread(new PlatformAiDtos.CreateThreadRequest("new", 7), request);
+        assertEquals("new", session.getAttribute("platformAiStateId"));
+
+        when(threads.activateThread(user, "created")).thenReturn(created);
+        controller.activateThread(new PlatformAiDtos.ThreadIdRequest("created"), request);
+        controller.deleteThread(new PlatformAiDtos.ThreadIdRequest("other"), request);
+        assertEquals("created", session.getAttribute("platformAiStateId"));
+        controller.deleteThread(new PlatformAiDtos.ThreadIdRequest("created"), request);
+        assertNull(session.getAttribute("platformAiStateId"));
+    }
+
     @Test
     void ordinaryChatCatalogIncludesTheSameEffortContractAndModeAsAdminWithoutConnectionSecrets() throws Exception {
         AiModelConfigService configs = mock(AiModelConfigService.class);

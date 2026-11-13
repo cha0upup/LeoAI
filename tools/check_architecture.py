@@ -27,6 +27,15 @@ ADAPTER_IMPORTS = {
         'java.sql.', 'javax.sql.', 'org.springframework.jdbc.',
         'org.leo.core.session.AgentNodeSessionContainer'),
 }
+WEB_APPLICATION_ADAPTERS = (
+    'jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.',
+    'org.springframework.http.', 'org.leo.web.controller.', 'org.leo.web.util.ControllerUtil',
+)
+CORE_CONTRACT_PACKAGES = (
+    'org.leo.core.agent.capability', 'org.leo.core.agent.database',
+    'org.leo.core.runtime', 'org.leo.core.generator',
+    'org.leo.core.component.runtime', 'org.leo.core.rpc',
+)
 NON_CODE = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/')
 IDENTIFIER = r'[A-Za-z_$][\w$]*'
 QUALIFIED_NAME = IDENTIFIER + r'(?:\s*\.\s*' + IDENTIFIER + r')*'
@@ -101,7 +110,7 @@ def matches_boundary(name, prefix):
     return direct or (name.endswith('.*') and name[:-2] == prefix.rpartition('.')[0])
 
 
-def boundary_reason(module, relative_source, name, targets, kind):
+def boundary_reason(module, relative_source, source_package, name, targets, kind):
     forbidden = targets - {module} - ALLOWED_DEPENDENCIES[module]
     reason = None
     if forbidden:
@@ -112,6 +121,13 @@ def boundary_reason(module, relative_source, name, targets, kind):
     if any(relative_source.startswith(package) and any(matches_boundary(name, prefix) for prefix in prefixes)
            for package, prefixes in ADAPTER_IMPORTS.items()):
         reason = 'application service imports adapter implementation: ' + name
+    if matches_boundary(source_package, 'org.leo.web.application') and any(
+            matches_boundary(name, prefix) for prefix in WEB_APPLICATION_ADAPTERS):
+        reason = 'web application references HTTP adapter: ' + name
+    if (module == 'core' and (source_package == 'org.leo.core.net' or any(
+            matches_boundary(source_package, package) for package in CORE_CONTRACT_PACKAGES))
+            and matches_boundary(name, 'org.leo.core.infrastructure.')):
+        reason = 'core contract references infrastructure implementation: ' + name
     return reason
 
 
@@ -170,10 +186,14 @@ def audit(root):
                 issues.append(f'{module}/pom.xml: forbidden {scope} dependency on {target}')
         for source, code in sources[module]:
             relative_source = source.relative_to(root).as_posix()
+            declaration = PACKAGE.search(code)
+            source_package = qualified_name(declaration[1]) if declaration else ''
+            if module == 'javacore' and matches_boundary(source_package, 'org.leo.core'):
+                issues.append(relative_source + ': Java runtime implementation belongs in org.leo.javacore')
             for match in IMPORT.finditer(code):
                 name = qualified_name(match[1])
                 targets = import_modules(name, bool(match[2]), owners, packages)
-                reason = boundary_reason(module, relative_source,
+                reason = boundary_reason(module, relative_source, source_package,
                                          name + '.*' if match[2] else name, targets, 'import')
                 if reason:
                     line = code.count('\n', 0, match.start()) + 1
@@ -181,7 +201,7 @@ def audit(root):
             references = IMPORT.sub(mask, PACKAGE.sub(mask, code))
             for match in REFERENCE.finditer(references):
                 name = qualified_name(match[0])
-                reason = boundary_reason(module, relative_source, name,
+                reason = boundary_reason(module, relative_source, source_package, name,
                                          type_modules(name, owners), 'reference')
                 if reason:
                     line = code.count('\n', 0, match.start()) + 1

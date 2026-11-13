@@ -3,11 +3,11 @@ package org.leo.service.sql;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.leo.core.component.DatabaseComponent;
 import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
-import org.leo.core.agent.database.JavaDatabaseConnectionAdapter;
 import org.leo.core.agent.database.SqlCommand;
+import org.leo.javacore.agent.database.JavaDatabaseConnectionAdapter;
+import org.leo.javacore.component.DatabaseComponent;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 
 import java.lang.reflect.Field;

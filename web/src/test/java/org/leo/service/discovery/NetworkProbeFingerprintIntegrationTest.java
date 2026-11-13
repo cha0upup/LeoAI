@@ -7,12 +7,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.agent.capability.NetworkProbeCapable;
-import org.leo.core.component.NetworkProbeComponent;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.javacore.component.NetworkProbeComponent;
 import org.leo.service.discovery.NetworkDiscoveryDtos.*;
 import org.leo.service.fingerprint.FingerprintManageService;
-import org.leo.web.service.discovery.NetworkProbeResultStore;
+import org.leo.web.infrastructure.discovery.NetworkProbeResultStore;
 import org.leo.web.testing.SqliteTestDatabase;
 
 import java.net.InetSocketAddress;

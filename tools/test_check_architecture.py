@@ -102,9 +102,57 @@ class ArchitectureAuditTest(unittest.TestCase):
                    f'import {name};\nclass Example {{ {name} value; }}')
         self.assertEqual([], audit(self.root))
 
+    def test_web_application_keeps_http_details_in_adapters(self):
+        names = ('jakarta.servlet.http.HttpSession',
+                 'org.springframework.web.servlet.mvc.method.annotation.SseEmitter',
+                 'org.springframework.http.HttpStatus', 'org.springframework.web.*',
+                 'org.leo.web.controller.platform.ai.PlatformAiController',
+                 'org.leo.web.util.ControllerUtil')
+        for name in names:
+            for body in (f'import {name};', f'class Example {{ {name} value; }}'):
+                if '*' in body and not body.startswith('import'):
+                    continue
+                with self.subTest(body=body):
+                    # Package boundaries follow the declaration, not the filename.
+                    self.write('web/src/main/java/Example.java',
+                               'package org.leo.web.application.ai;\n' + body)
+                    issues = audit(self.root)
+                    self.assertEqual(1, len(issues), issues)
+                    self.assertIn('web application references HTTP adapter', issues[0])
+                    self.write('web/src/main/java/Example.java',
+                               'package org.leo.web.adapter.ai;\n' + body)
+                    self.assertEqual([], audit(self.root))
+
+    def test_core_contracts_keep_infrastructure_out(self):
+        for package in ('net', 'agent.capability', 'agent.database', 'runtime',
+                        'generator', 'component.runtime', 'rpc'):
+            for body in ('import org.leo.core.infrastructure.transport.HttpCommunication;',
+                         'class Example { org.leo.core.infrastructure.transport.HttpCommunication value; }'):
+                with self.subTest(package=package, body=body):
+                    self.write('core/src/main/java/Example.java',
+                               f'package org.leo.core.{package};\n' + body)
+                    issues = audit(self.root)
+                    self.assertEqual(1, len(issues), issues)
+                    self.assertIn('core contract references infrastructure', issues[0])
+                    self.write('core/src/main/java/Example.java',
+                               'package org.leo.core.infrastructure.persistence;\n' + body)
+                    self.assertEqual([], audit(self.root))
+
+    def test_java_implementations_use_their_own_namespace(self):
+        self.write('pom.xml', '<project><modules><module>javacore</module></modules></project>')
+        self.module('javacore', [('core', 'compile')])
+        self.write('javacore/src/main/java/Example.java',
+                   'package org.leo.core.agent.impl; class Example {}')
+        issues = audit(self.root)
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn('belongs in org.leo.javacore', issues[0])
+        self.write('javacore/src/main/java/Example.java',
+                   'package org.leo.javacore.agent.impl; class Example {}')
+        self.assertEqual([], audit(self.root))
+
     def test_runtime_fixtures_are_test_only_dependencies(self):
         self.module('service', [('javacore', 'test'), ('phpcore', 'test')])
-        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        name = 'org.leo.shared.agent.impl.JavaAgentNode'
         self.production_type('javacore', name)
         self.write('service/src/test/java/ExampleTest.java', f'import {name};')
         self.assertEqual([], audit(self.root))
@@ -115,7 +163,7 @@ class ArchitectureAuditTest(unittest.TestCase):
         self.assertTrue(any('forbidden compile' in issue for issue in audit(self.root)))
 
     def test_imports_resolve_to_the_source_module_instead_of_the_package_prefix(self):
-        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        name = 'org.leo.shared.agent.impl.JavaAgentNode'
         self.production_type('javacore', name,
                              'public static final Object INSTANCE = null; public class Options {}')
         cases = (
@@ -124,8 +172,8 @@ class ArchitectureAuditTest(unittest.TestCase):
             f'import static {name}.INSTANCE;',
             f'import static {name}.*;',
             f'import {name}.*;',
-            'import org.leo.core.agent.impl.*;',
-            'import/* separator */ static org . leo . core . agent . impl . JavaAgentNode . INSTANCE;',
+            'import org.leo.shared.agent.impl.*;',
+            'import/* separator */ static org . leo . shared . agent . impl . JavaAgentNode . INSTANCE;',
         )
         for statement in cases:
             with self.subTest(statement=statement):
@@ -137,23 +185,23 @@ class ArchitectureAuditTest(unittest.TestCase):
                 self.assertIn('javacore', issues[0])
 
     def test_mixed_packages_keep_explicit_type_ownership_separate(self):
-        self.production_type('core', 'org.leo.core.agent.database.SqlCommand')
-        self.production_type('javacore', 'org.leo.core.agent.database.JavaDatabaseConnectionAdapter')
+        self.production_type('core', 'org.leo.shared.agent.database.SqlCommand')
+        self.production_type('javacore', 'org.leo.shared.agent.database.JavaDatabaseConnectionAdapter')
         source = 'service/src/main/java/Example.java'
 
-        self.write(source, 'import org.leo.core.agent.database.SqlCommand;')
+        self.write(source, 'import org.leo.shared.agent.database.SqlCommand;')
         self.assertEqual([], audit(self.root))
 
         # A wildcard exposes the runtime implementation as well. Explicit
         # contract imports keep shared-package consumers independent of it.
-        self.write(source, 'import org.leo.core.agent.database.*;')
+        self.write(source, 'import org.leo.shared.agent.database.*;')
         issues = audit(self.root)
         self.assertEqual(1, len(issues), issues)
         self.assertIn('javacore', issues[0])
 
     def test_package_wildcards_do_not_include_subpackages(self):
         self.production_type('core', 'org.leo.core.agent.AbstractAgentNode')
-        self.production_type('javacore', 'org.leo.core.agent.impl.JavaAgentNode')
+        self.production_type('javacore', 'org.leo.shared.agent.impl.JavaAgentNode')
         self.write('service/src/main/java/Example.java', 'import org.leo.core.agent.*;')
         self.assertEqual([], audit(self.root))
 
@@ -170,7 +218,7 @@ class ArchitectureAuditTest(unittest.TestCase):
         self.assertIn('jmg', issues[0])
 
     def test_fully_qualified_references_observe_module_boundaries(self):
-        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        name = 'org.leo.shared.agent.impl.JavaAgentNode'
         self.production_type('javacore', name)
         for expression in (f'new {name}()', f'{name}.class', f'{name}.INSTANCE'):
             with self.subTest(expression=expression):
@@ -182,7 +230,7 @@ class ArchitectureAuditTest(unittest.TestCase):
                 self.assertIn('javacore', issues[0])
 
     def test_comments_and_strings_are_not_source_dependencies(self):
-        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        name = 'org.leo.shared.agent.impl.JavaAgentNode'
         self.production_type('javacore', name)
         self.production_type('service', 'org.leo.service.Example',
                              f'String value = "{name}"; /* new {name}(); */\n'
@@ -192,7 +240,7 @@ class ArchitectureAuditTest(unittest.TestCase):
     def test_dollar_identifiers_keep_their_full_type_name(self):
         for simple_name in ('Runtime$', '$Runtime'):
             with self.subTest(simple_name=simple_name):
-                name = 'org.leo.core.runtimeimpl.' + simple_name
+                name = 'org.leo.shared.runtimeimpl.' + simple_name
                 self.production_type('javacore', name)
                 self.production_type('service', 'org.leo.service.Example',
                                      f'Object value = new {name}();')
@@ -202,7 +250,7 @@ class ArchitectureAuditTest(unittest.TestCase):
                 self.assertIn('javacore', issues[0])
 
     def test_indexes_top_level_declarations_and_resolves_nested_type_imports(self):
-        prefix = 'org.leo.core.runtimeimpl'
+        prefix = 'org.leo.shared.runtimeimpl'
         self.write('javacore/src/main/java/Holder.java',
                    f'package {prefix};\npublic class Holder {{ class Nested {{}} }}\n'
                    'class Secondary {}\ninterface Contract {}\nenum Mode { DEFAULT }\n'
@@ -219,15 +267,15 @@ class ArchitectureAuditTest(unittest.TestCase):
                    '<module>service</module><module>web</module></modules></project>')
         self.module('javacore', [('core', 'compile')])
         self.production_type('core', 'org.leo.core.agent.AbstractAgentNode')
-        self.production_type('javacore', 'org.leo.core.agent.impl.JavaAgentNode',
+        self.production_type('javacore', 'org.leo.shared.agent.impl.JavaAgentNode',
                              'org.leo.core.agent.AbstractAgentNode contract;')
-        self.production_type('javacore', 'org.leo.core.agent.impl.OtherNode',
-                             'org.leo.core.agent.impl.JavaAgentNode node;')
-        self.write('web/src/main/java/Example.java', 'import org.leo.core.agent.impl.JavaAgentNode;')
+        self.production_type('javacore', 'org.leo.shared.agent.impl.OtherNode',
+                             'org.leo.shared.agent.impl.JavaAgentNode node;')
+        self.write('web/src/main/java/Example.java', 'import org.leo.shared.agent.impl.JavaAgentNode;')
         self.assertEqual([], audit(self.root))
 
     def test_duplicate_production_types_are_reported_instead_of_choosing_an_owner(self):
-        name = 'org.leo.core.Shared'
+        name = 'org.leo.shared.Shared'
         self.production_type('core', name)
         self.production_type('javacore', name)
 

@@ -13,7 +13,7 @@ import org.leo.service.discovery.ScanPreviewService;
 import org.leo.service.discovery.TargetResolver;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.exception.ApiException;
-import org.leo.web.service.discovery.NetworkProbeResultStore;
+import org.leo.web.infrastructure.discovery.NetworkProbeResultStore;
 import org.leo.web.util.ControllerUtil;
 
 import java.util.HashMap;

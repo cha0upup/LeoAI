@@ -1,35 +1,35 @@
 package org.leo.service.fingerprint;
 
-import org.leo.service.importing.ImportConflictPolicy;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.core.repository.session.FileStoreException;
+import org.leo.core.config.LeoConfig;
+import org.leo.core.entity.User;
+import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.core.infrastructure.persistence.session.FileStoreException;
+import org.leo.core.util.json.JsonUtil;
+import org.leo.service.importing.ImportConflictPolicy;
+import org.springframework.mock.web.MockMultipartFile;
+
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.config.LeoConfig;
-import org.leo.core.entity.User;
-import org.leo.core.repository.session.AtomicFileStore;
-import org.leo.core.util.json.JsonUtil;
-import org.springframework.mock.web.MockMultipartFile;
-
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.zip.ZipInputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 class FingerprintManageServiceTest {
     @TempDir Path directory;

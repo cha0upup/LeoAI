@@ -2,7 +2,7 @@ package org.leo.core.init;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.repository.session.AtomicFileStore;
+import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

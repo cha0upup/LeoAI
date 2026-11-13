@@ -8,7 +8,7 @@ import javassist.CtConstructor;
 import javassist.CtMethod;
 import javassist.CtNewMethod;
 import javassist.Modifier;
-import org.leo.core.util.asm.ClassFileMinimizer;
+import org.leo.core.infrastructure.bytecode.asm.ClassFileMinimizer;
 import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.catalog.InjectorDescriptor;
 import org.leo.jmg.generation.GenerationRequest;

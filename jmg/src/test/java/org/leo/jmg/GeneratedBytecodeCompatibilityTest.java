@@ -1,13 +1,13 @@
 package org.leo.jmg;
 
+import jakarta.servlet.Filter;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtNewMethod;
-import jakarta.servlet.Filter;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.core.util.asm.ClassFileMinimizer;
+import org.leo.core.infrastructure.bytecode.asm.ClassFileMinimizer;
 import org.leo.jmg.core.LeoCore;
 import org.leo.jmg.generation.GenerationRequest;
 import org.leo.jmg.generation.GenerationResult;
@@ -19,7 +19,6 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import static org.leo.jmg.TrafficTestFixtures.requestDisguise;
 import static org.leo.jmg.TrafficTestFixtures.responseDisguise;
 

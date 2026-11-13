@@ -1,6 +1,7 @@
 package org.leo.web.controller.platform.ai;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.ModelRequestOptions;
 import org.leo.ai.platform.PlatformAiState;
@@ -11,19 +12,19 @@ import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.adapter.ai.AiAttachmentPrompt;
+import org.leo.web.adapter.ai.AiEventSubscriptionService;
+import org.leo.web.application.ai.AiTurnCommandPayload;
+import org.leo.web.application.ai.AiTurnProtocolService;
+import org.leo.web.application.ai.AiTurnQueueService;
+import org.leo.web.application.ai.PlatformAiThreadService;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.AiAgentConfigRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.ChatRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
-import org.leo.web.service.ai.PlatformAiThreadService;
-import org.leo.web.service.ai.AiTurnProtocolService;
-import org.leo.web.service.ai.AiTurnQueueService;
-import org.leo.web.service.ai.AiTurnCommandPayload;
-import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.exception.ApiException;
-import org.leo.web.service.ai.AiAttachmentPrompt;
-import org.leo.web.service.ai.AiEventSubscriptionService;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,6 +42,7 @@ import java.util.Map;
 @RequestMapping("/platform/ai")
 public class PlatformAiController {
 
+    private static final String SESSION_ATTR_PLATFORM_AI_STATE_ID = "platformAiStateId";
     private final PlatformAiThreadService threadService;
     private final AiModelConfigService aiModelConfigService;
     private final AiTurnTelemetryRegistry telemetryRegistry;
@@ -189,7 +191,11 @@ public class PlatformAiController {
                                            HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         Integer configId = body != null ? body.configId() : null;
-        threadService.createAgent(request.getSession(), user, configId);
+        HttpSession session = request.getSession();
+        Object previous = session.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
+        PlatformAiState state = threadService.createAgent(session.getId(),
+                previous instanceof String stateId ? stateId : null, user, configId);
+        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, state.getStateId());
         return ApiResponse.success(true);
     }
 
@@ -226,7 +232,10 @@ public class PlatformAiController {
         User user = ControllerUtil.getCurrentUser(request);
         String title = body != null ? body.title() : null;
         Integer configId = body != null ? body.configId() : null;
-        return ApiResponse.success(threadService.createThread(request.getSession(), user, title, configId));
+        HttpSession session = request.getSession();
+        Map<String, Object> thread = threadService.createThread(session.getId(), user, title, configId);
+        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, thread.get("threadId"));
+        return ApiResponse.success(thread);
     }
 
     /**
@@ -235,8 +244,12 @@ public class PlatformAiController {
     @PostMapping("/thread/delete")
     public Map<String, Object> deleteThread(@RequestBody PlatformAiDtos.ThreadIdRequest body,
                                             HttpServletRequest request) {
-        threadService.deleteThread(
-                request.getSession(), ControllerUtil.getCurrentUser(request), body.threadId());
+        threadService.deleteThread(ControllerUtil.getCurrentUser(request), body.threadId());
+        HttpSession session = request.getSession();
+        if (body.threadId() != null
+                && body.threadId().equals(session.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID))) {
+            session.removeAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
+        }
         return ApiResponse.success(true);
     }
 
@@ -257,8 +270,9 @@ public class PlatformAiController {
     @PostMapping("/thread/activate")
     public Map<String, Object> activateThread(@RequestBody PlatformAiDtos.ThreadIdRequest body,
                                                HttpServletRequest request) {
-        threadService.activateThread(
-                request.getSession(), ControllerUtil.getCurrentUser(request), body.threadId());
+        PlatformAiState state = threadService.activateThread(
+                ControllerUtil.getCurrentUser(request), body.threadId());
+        request.getSession().setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, state.getStateId());
         return ApiResponse.success(true);
     }
 

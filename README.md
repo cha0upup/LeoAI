@@ -65,7 +65,7 @@ v3.0.1 当前开发基线覆盖运行时、组件、平台服务、Web 控制台
 
 ## Java/PHP 双运行时
 
-Java 与 PHP 是平等的 Agent Runtime。共享模块只定义协议、会话和能力契约，具体实现分别位于 `javacore` 与 `phpcore`，`web` 负责最终组装。
+Java 与 PHP 是平等的 Agent Runtime，具体实现分别位于 `javacore` 与 `phpcore`。`core` 区分共享契约、模型与基础设施包；`web` 负责最终组装，并按包区分适配与应用编排。详细归属见 [模块与包边界](docs/module-boundaries.md)。
 
 ```mermaid
 graph TD

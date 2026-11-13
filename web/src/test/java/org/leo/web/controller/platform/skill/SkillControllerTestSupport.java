@@ -10,7 +10,7 @@ import org.leo.ai.service.skill.SkillManifestService;
 import org.leo.ai.service.skill.SkillOperationLock;
 import org.leo.ai.service.skill.SkillRegistryService;
 import org.leo.core.config.LeoConfig;
-import org.leo.web.service.skill.SkillManagementService;
+import org.leo.web.adapter.skill.SkillManagementService;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;

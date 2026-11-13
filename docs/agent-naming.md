@@ -15,7 +15,7 @@
 | AI 运行状态解析 | `AiRuntimeResolver`，与节点 `AgentRuntime` 区分 |
 | AI 配置与任务工作空间 | `AiAgentConfig` / `AiWorkspaceService`，与远程节点文件系统区分 |
 
-Java 节点包统一为 `org.leo.core.agent`，PHP 节点包为 `org.leo.phpcore.agent`。
+Java 节点实现包为 `org.leo.javacore.agent`，共享能力契约位于 `org.leo.core.agent`，PHP 节点包为 `org.leo.phpcore.agent`。
 节点操作 API 为 `/agent-node/...`，管理 API 为 `/platform/agent-manage/...`；
 项目接口中的节点集合为 `agents`，请求字段使用 `agentId` / `agentIds` / `parentAgentId`。
 控制台路由为 `/main/agent/:tabKey`，节点 Skills scope 为 `agent-node`。

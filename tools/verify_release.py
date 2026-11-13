@@ -89,7 +89,7 @@ def verify_packaged_ssh_crypto(backend):
     if not java or not Path(java).is_file():
         raise ValueError('java is required for packaged SSH crypto verification')
     classes = (backend / 'web/target/test-classes').resolve()
-    main = 'org.leo.web.service.ssh.PackagedSshCryptoProbe'
+    main = 'org.leo.web.adapter.ssh.PackagedSshCryptoProbe'
     if not (classes / (main.replace('.', '/') + '.class')).is_file():
         raise ValueError('Missing compiled packaged SSH crypto probe')
     # Use Boot's nested dependency loader without starting Spring or touching application data.
