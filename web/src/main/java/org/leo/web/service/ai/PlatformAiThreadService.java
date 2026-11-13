@@ -41,15 +41,13 @@ public class PlatformAiThreadService {
 
     public void createAgent(HttpSession httpSession, User user,
                             Integer configId) {
-        PlatformAiState state = recreateState(httpSession);
         AiModelConfig config = channelResolver.optional(configId);
+        PlatformAiState state = recreateState(httpSession);
         if (config != null) state.setAiConfigId(config.getId());
 
-        if (conversationStore.findThread(state.getStateId()) == null) {
-            conversationStore.createPlatformThread(
-                    user.getUserId(), httpSession.getId(), state.getStateId(),
-                    "平台 AI", state.getCreatedAt(), config);
-        }
+        conversationStore.createPlatformThread(
+                user.getUserId(), httpSession.getId(), state.getStateId(),
+                "平台 AI", state.getCreatedAt(), config);
         conversationStore.attachEventJournal(state.getStateId(), state);
     }
 
@@ -91,10 +89,10 @@ public class PlatformAiThreadService {
 
     public Map<String, Object> createThread(HttpSession httpSession, User user,
                                             String title, Integer configId) {
+        AiModelConfig config = channelResolver.optional(configId);
         String threadId = "platform-ai-" + UUID.randomUUID();
         PlatformAiState state = PlatformAiStateStore.create(threadId);
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
-        AiModelConfig config = channelResolver.optional(configId);
         if (config != null) state.setAiConfigId(config.getId());
 
         String safeTitle = title != null && !title.isBlank() ? title : "新对话";

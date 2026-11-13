@@ -9,30 +9,80 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
 import org.leo.web.exception.ApiException;
+import org.springframework.mock.web.MockHttpSession;
 
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.mockito.ArgumentMatchers.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class PlatformAiThreadServiceTest {
 
     private static final String THREAD_ID = "platform-ai-owned";
+    private final MockHttpSession creationSession = new MockHttpSession();
 
     @AfterEach
     void clearState() {
+        Object created = creationSession.getAttribute("platformAiStateId");
+        if (created instanceof String stateId) PlatformAiStateStore.remove(stateId);
         PlatformAiStateStore.remove(THREAD_ID);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void invalidChannelLeavesTheExistingConversationUntouched(boolean recreate) {
+        Fixture fixture = fixture("user-1");
+        PlatformAiState existing = PlatformAiStateStore.create(THREAD_ID);
+        existing.claimExecution();
+        creationSession.setAttribute("platformAiStateId", THREAD_ID);
+        when(fixture.channels.optional(99)).thenThrow(ApiException.notFound("模型已删除"));
+
+        assertThrows(ApiException.class, () -> {
+            if (recreate) fixture.service.createAgent(creationSession, user("user-1"), 99);
+            else fixture.service.createThread(creationSession, user("user-1"), "新对话", 99);
+        });
+
+        assertSame(existing, PlatformAiStateStore.get(THREAD_ID));
+        assertEquals(THREAD_ID, creationSession.getAttribute("platformAiStateId"));
+        assertFalse(existing.isStopRequested());
+        verifyNoInteractions(fixture.conversationStore, fixture.agentRegistry);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void createsFreshThreadsWithoutAnExistenceLookup(boolean recreate) {
+        Fixture fixture = fixture("user-1");
+        AiModelConfig config = new AiModelConfig();
+        config.setId(7);
+        when(fixture.channels.optional(7)).thenReturn(config);
+
+        if (recreate) fixture.service.createAgent(creationSession, user("user-1"), 7);
+        else fixture.service.createThread(creationSession, user("user-1"), "新对话", 7);
+
+        String threadId = (String) creationSession.getAttribute("platformAiStateId");
+        PlatformAiState state = PlatformAiStateStore.get(threadId);
+        assertNotNull(state);
+        assertEquals(7, state.getAiConfigId());
+        verify(fixture.conversationStore).createPlatformThread(
+                eq("user-1"), eq(creationSession.getId()), eq(threadId),
+                eq(recreate ? "平台 AI" : "新对话"), eq(state.getCreatedAt()), same(config));
+        verify(fixture.conversationStore).attachEventJournal(threadId, state);
+        verify(fixture.conversationStore, never()).findThread(anyString());
     }
 
     @Test
@@ -143,10 +193,11 @@ class PlatformAiThreadServiceTest {
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
                 new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
+        AiModelChannelResolver channels = mock(AiModelChannelResolver.class);
         PlatformAiThreadService service = new PlatformAiThreadService(
-                mock(AiModelChannelResolver.class), conversationStore,
+                channels, conversationStore,
                 agentRegistry, new AiThreadQueryService(conversationStore, protocol));
-        return new Fixture(service, conversationStore, agentRegistry, protocol, record);
+        return new Fixture(service, conversationStore, agentRegistry, protocol, record, channels);
     }
 
     private User user(String id) {
@@ -159,6 +210,7 @@ class PlatformAiThreadServiceTest {
                            AiConversationStoreService conversationStore,
                            PlatformAiAgentRegistry agentRegistry,
                            AiTurnProtocolService protocol,
-                           AiThreadRecord record) {
+                           AiThreadRecord record,
+                           AiModelChannelResolver channels) {
     }
 }
