@@ -3,7 +3,8 @@ package org.leo.web.application.ai;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -27,7 +28,7 @@ public class AiThreadQueryService {
     public Map<String, Object> messages(String threadId, Integer requestedOffset,
                                        Integer requestedLimit, Long beforeSequence) {
         if (beforeSequence != null && beforeSequence <= 0) {
-            throw ApiException.badRequest("历史消息游标必须大于 0");
+            throw new UseCaseException(Kind.INVALID_INPUT, "历史消息游标必须大于 0");
         }
         int offset = beforeSequence == null && requestedOffset != null ? Math.max(0, requestedOffset) : 0;
         int limit = requestedLimit != null ? requestedLimit : 50;

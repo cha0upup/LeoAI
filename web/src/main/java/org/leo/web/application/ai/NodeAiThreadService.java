@@ -11,7 +11,8 @@ import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -64,7 +65,7 @@ public class NodeAiThreadService {
         AiModelConfig resolvedChannel;
         try {
             resolvedChannel = channelResolver.optional(resolvedConfigId);
-        } catch (ApiException | IllegalArgumentException | IllegalStateException error) {
+        } catch (UseCaseException | IllegalArgumentException | IllegalStateException error) {
             return new ThreadResolution(thread, error.getMessage());
         }
         if (resolvedChannel != null) resolvedConfigId = resolvedChannel.getId();
@@ -133,7 +134,7 @@ public class NodeAiThreadService {
             AgentNodeSession session, String title, Integer configId,
             String parentThreadId) {
         if (parentThreadId == null || parentThreadId.isBlank()) {
-            throw ApiException.badRequest("缺少 parentThreadId");
+            throw new UseCaseException(Kind.INVALID_INPUT, "缺少 parentThreadId");
         }
         return createThread(session, title, configId, parentThreadId.trim());
     }
@@ -251,7 +252,7 @@ public class NodeAiThreadService {
         if (thread != null) return thread;
         thread = restorePersistedThread(session, threadId, record);
         if (thread == null) {
-            throw ApiException.notFound("线程不存在，threadId: " + threadId);
+            throw new UseCaseException(Kind.NOT_FOUND, "线程不存在，threadId: " + threadId);
         }
         conversationStore.attachEventJournal(threadId, thread);
         return thread;
@@ -293,7 +294,7 @@ public class NodeAiThreadService {
         if (session == null || threadId == null || threadId.isBlank()) return null;
         AiThreadRecord record = conversationStore.findThread(threadId);
         if (record != null && !ownsPersistedThread(session, record)) {
-            throw ApiException.notFound("线程不存在");
+            throw new UseCaseException(Kind.NOT_FOUND, "线程不存在");
         }
         return record;
     }
@@ -314,7 +315,7 @@ public class NodeAiThreadService {
         AiThreadRecord record = findPersistedThread(session, threadId);
         if (session == null || threadId == null || threadId.isBlank()
                 || record == null && session.getAiThread(threadId) == null) {
-            throw ApiException.notFound("线程不存在");
+            throw new UseCaseException(Kind.NOT_FOUND, "线程不存在");
         }
         return record;
     }
@@ -345,7 +346,7 @@ public class NodeAiThreadService {
 
     private void requireHostId(AgentNodeSession session) {
         if (session == null || session.getCurrentHostId() == null || session.getCurrentHostId().isBlank()) {
-            throw ApiException.badRequest("请先选择主机再创建 AI 对话");
+            throw new UseCaseException(Kind.INVALID_INPUT, "请先选择主机再创建 AI 对话");
         }
     }
 

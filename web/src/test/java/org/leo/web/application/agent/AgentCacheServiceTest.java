@@ -5,8 +5,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository.CacheSnapshot;
+import org.leo.web.application.UseCaseException;
 import org.leo.web.application.agent.AgentCacheService.Status;
-import org.leo.web.exception.ApiException;
 
 import java.util.List;
 
@@ -39,7 +39,7 @@ class AgentCacheServiceTest {
     @Test
     void requiresSelectionWhenMultipleHostsAreCached() {
         when(repository.readCache("user", "agent")).thenReturn(new CacheSnapshot(List.of("host-a", "host-b"), null));
-        assertThrows(ApiException.class,
+        assertThrows(UseCaseException.class,
                 () -> service.requireSelectedHostId("user", "agent", null));
         assertEquals("host-b", service.requireSelectedHostId("user", "agent", "host-b"));
     }

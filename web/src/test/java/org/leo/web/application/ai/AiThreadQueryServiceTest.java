@@ -47,7 +47,7 @@ class AiThreadQueryServiceTest {
         Map<String, Object> page = queries.messages("thread", 0, 50, null);
         assertNull(page.get("nextBeforeSequence"));
         assertEquals(false, page.get("hasMore"));
-        assertThrows(org.leo.web.exception.ApiException.class,
+        assertThrows(org.leo.web.application.UseCaseException.class,
                 () -> queries.messages("thread", 0, 50, 0L));
     }
 

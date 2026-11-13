@@ -11,7 +11,8 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentNodeFactory;
 import org.leo.service.agentnode.AgentService;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -76,7 +77,7 @@ public class AgentNodeLifecycleService {
         }
         if (!connectionOk) {
             logger.warn("Agent初始化失败，无主机回复，agentId: {}", agent.getAgentId());
-            throw ApiException.serverError("Agent初始化失败，无主机回复");
+            throw new UseCaseException(Kind.OPERATION_FAILED, "Agent初始化失败，无主机回复");
         }
 
         agentService.updateLastConnectedAt(agent.getAgentId());

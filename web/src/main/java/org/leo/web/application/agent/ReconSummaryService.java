@@ -4,7 +4,8 @@ import org.leo.ai.service.ReconSummaryDigestService;
 import org.leo.ai.service.ReconSummaryOrganizeService;
 import org.leo.core.infrastructure.persistence.session.AgentReconRepository;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 /**
@@ -58,7 +59,7 @@ public class ReconSummaryService {
     }
 
     public SummaryUpdate append(String sessionId, AgentNodeSession session, String content) {
-        if (content == null || content.isBlank()) throw ApiException.badRequest("追加内容为空");
+        if (content == null || content.isBlank()) throw new UseCaseException(Kind.INVALID_INPUT, "追加内容为空");
         String updated = repository.append(sessionId, content);
         if (updated == null) throw new IllegalStateException("追加侦察摘要失败");
         triggerDigestIfNeeded(session);
@@ -72,7 +73,7 @@ public class ReconSummaryService {
 
     public SummaryUpdate organize(String sessionId, AgentNodeSession session) {
         if (!session.hasReconSummary()) {
-            throw ApiException.badRequest("侦察摘要为空，无需整理");
+            throw new UseCaseException(Kind.INVALID_INPUT, "侦察摘要为空，无需整理");
         }
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
         repository.save(sessionId, organized);
@@ -92,7 +93,7 @@ public class ReconSummaryService {
 
     public GeneratedDigest generateDigest(String sessionId, AgentNodeSession session) {
         // 空摘要不视为错误：前端 AI turn 结束后会无差别调用此接口，若主 Agent 这一轮没有
-        // 生成任何侦察数据，应该静默跳过而不是抛 ApiException —— 否则 GlobalExceptionHandler
+        // 生成任何侦察数据，应该静默跳过而不是抛 UseCaseException —— 否则 GlobalExceptionHandler
         // 会打 WARN 日志，制造噪音。返回 digest=null + 友好提示即可，前端拿到后自行决定是否更新 UI。
         if (!session.hasReconSummary()) {
             return new GeneratedDigest(sessionId, null, "尚无侦察摘要，跳过精简版生成");

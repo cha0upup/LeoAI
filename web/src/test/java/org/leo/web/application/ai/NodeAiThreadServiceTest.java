@@ -10,7 +10,7 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
 
 import java.util.List;
 import java.util.Map;
@@ -158,7 +158,7 @@ class NodeAiThreadServiceTest {
             record.setConfigId(2);
             when(fixture.conversationStore.findThread("thread")).thenReturn(record);
         }
-        when(fixture.channels.optional(7)).thenThrow(ApiException.notFound("模型已删除"));
+        when(fixture.channels.optional(7)).thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
 
         NodeAiThreadService.ThreadResolution resolution =
                 fixture.service.ensureThreadReady(session, "thread", 7);
@@ -258,8 +258,8 @@ class NodeAiThreadServiceTest {
         foreign.setUserId("user-1");
         when(fixture.conversationStore.findThread("foreign")).thenReturn(foreign);
 
-        assertEquals(404, assertThrows(ApiException.class,
-                () -> fixture.service.threadEvents(cacheSession(), "foreign", null, null)).getCode());
+        assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
+                () -> fixture.service.threadEvents(cacheSession(), "foreign", null, null)).getKind());
         verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
     }
 
@@ -307,7 +307,7 @@ class NodeAiThreadServiceTest {
                 () -> fixture.service.resetThread(session, "foreign", null),
                 () -> fixture.service.switchChannel(session, "foreign", null));
         for (Runnable operation : operations) {
-            assertEquals(404, assertThrows(ApiException.class, operation::run).getCode());
+            assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class, operation::run).getKind());
         }
         assertSame(cached, session.getAiThread("foreign"));
         assertEquals("original", cached.getTitle());
@@ -330,7 +330,7 @@ class NodeAiThreadServiceTest {
                 () -> fixture.service.resetThread(session, "missing", null),
                 () -> fixture.service.switchChannel(session, "missing", null));
         for (Runnable operation : operations) {
-            assertEquals(404, assertThrows(ApiException.class, operation::run).getCode());
+            assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class, operation::run).getKind());
         }
         verifyNoInteractions(fixture.channels, fixture.agentRegistry);
         verify(fixture.conversationStore, never()).deleteThread(anyString());
@@ -429,7 +429,7 @@ class NodeAiThreadServiceTest {
         AgentNodeSession session = new AgentNodeSession();
         session.setCreateByUser("user-1");
         session.setAgentId("agent-1");
-        assertThrows(ApiException.class, () -> fixture.service.createThread(session, null, null));
+        assertThrows(UseCaseException.class, () -> fixture.service.createThread(session, null, null));
         assertEquals(0, session.listAiThreads().size());
         org.mockito.Mockito.verifyNoInteractions(fixture.sessionWarmupService);
     }
@@ -441,7 +441,7 @@ class NodeAiThreadServiceTest {
         AiThreadRecord foreign = ownedRecord("parent");
         foreign.setHostId("host-other");
         when(fixture.conversationStore.findThread("parent")).thenReturn(foreign);
-        assertThrows(ApiException.class,
+        assertThrows(UseCaseException.class,
                 () -> fixture.service.createChildThread(session, "child", null, "parent"));
         assertEquals(0, session.listAiThreads().size());
         org.mockito.Mockito.verifyNoInteractions(fixture.sessionWarmupService);

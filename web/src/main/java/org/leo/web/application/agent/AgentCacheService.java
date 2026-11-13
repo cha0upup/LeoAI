@@ -1,7 +1,8 @@
 package org.leo.web.application.agent;
 
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -32,11 +33,11 @@ public class AgentCacheService {
 
     public String requireSelectedHostId(String userId, String agentId, String selectedHostId) {
         List<String> hostIds = hostIds(userId, agentId);
-        if (hostIds.isEmpty()) throw ApiException.badRequest("无本地缓存，无法进入缓存模式");
+        if (hostIds.isEmpty()) throw new UseCaseException(Kind.INVALID_INPUT, "无本地缓存，无法进入缓存模式");
         String selected = selectedHostId == null || selectedHostId.isBlank() ? null : selectedHostId.trim();
         if (selected == null && hostIds.size() == 1) return hostIds.get(0);
-        if (selected == null) throw ApiException.badRequest("请选择要进入的缓存后端主机");
-        if (!hostIds.contains(selected)) throw ApiException.badRequest("指定的缓存后端主机不存在");
+        if (selected == null) throw new UseCaseException(Kind.INVALID_INPUT, "请选择要进入的缓存后端主机");
+        if (!hostIds.contains(selected)) throw new UseCaseException(Kind.INVALID_INPUT, "指定的缓存后端主机不存在");
         return selected;
     }
 

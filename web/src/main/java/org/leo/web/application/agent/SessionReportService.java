@@ -5,7 +5,8 @@ import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
 import org.leo.core.infrastructure.persistence.session.AgentReconRepository;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.service.agentnode.AgentService;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -44,7 +45,7 @@ public class SessionReportService {
      *
      * @param session 目标会话（不能为 null）
      * @return 含报告内容和建议文件名的结果
-     * @throws ApiException 若无法确定 agentId
+     * @throws UseCaseException 若无法确定 agentId
      */
     public Report generate(AgentNodeSession session) {
         String userId   = session.getCreateByUser();
@@ -75,7 +76,7 @@ public class SessionReportService {
                 && session.getAgentNode().getAgent() != null) {
             return session.getAgentNode().getAgent().getAgentId();
         }
-        throw ApiException.badRequest("无法确定 agentId，无法生成报告");
+        throw new UseCaseException(Kind.INVALID_INPUT, "无法确定 agentId，无法生成报告");
     }
 
     private void appendHeader(StringBuilder sb, String agentName, String connLink, String reportTime) {

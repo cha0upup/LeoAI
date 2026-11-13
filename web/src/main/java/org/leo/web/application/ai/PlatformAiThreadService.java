@@ -6,7 +6,8 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -52,7 +53,7 @@ public class PlatformAiThreadService {
 
     public void switchChannel(PlatformAiState state, Integer configId) {
         if (state.isExecuting()) {
-            throw ApiException.badRequest("平台 AI 正在执行中，请等待完成或先停止后再切换通道");
+            throw new UseCaseException(Kind.INVALID_INPUT, "平台 AI 正在执行中，请等待完成或先停止后再切换通道");
         }
         AiModelConfig config = channelResolver.optional(configId);
         state.setAiConfigId(config != null ? config.getId() : null);
@@ -127,7 +128,7 @@ public class PlatformAiThreadService {
 
     public PlatformAiState activateThread(User user, String threadId) {
         if (threadId == null || threadId.isBlank()) {
-            throw ApiException.badRequest("缺少 threadId");
+            throw new UseCaseException(Kind.INVALID_INPUT, "缺少 threadId");
         }
         AiThreadRecord record = requireOwnedThread(user, threadId);
         PlatformAiState state = PlatformAiStateStore.get(threadId);
@@ -162,11 +163,11 @@ public class PlatformAiThreadService {
         AiThreadRecord record = conversationStore.findThread(threadId);
         if (record == null
                 || !AiConversationStoreService.SCOPE_PLATFORM.equals(record.getScope())) {
-            throw ApiException.notFound("线程不存在");
+            throw new UseCaseException(Kind.NOT_FOUND, "线程不存在");
         }
         if (user == null || user.getUserId() == null
                 || !user.getUserId().equals(record.getUserId())) {
-            throw ApiException.notFound("线程不存在");
+            throw new UseCaseException(Kind.NOT_FOUND, "线程不存在");
         }
         return record;
     }

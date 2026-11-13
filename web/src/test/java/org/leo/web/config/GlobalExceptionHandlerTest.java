@@ -3,12 +3,15 @@ package org.leo.web.config;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
@@ -23,10 +26,23 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GlobalExceptionHandlerTest {
 
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    @ParameterizedTest
+    @CsvSource({"INVALID_INPUT,400", "NOT_FOUND,404", "OPERATION_FAILED,500"})
+    void mapsUseCaseFailureKindsAtTheHttpBoundary(UseCaseException.Kind kind, int code) throws Exception {
+        MockMvcBuilders.standaloneSetup(new UseCaseFailureController())
+                .setControllerAdvice(handler).build()
+                .perform(get("/use-case-fixture/{kind}", kind))
+                .andExpect(status().is(code))
+                .andExpect(jsonPath("$.code").value(code))
+                .andExpect(jsonPath("$.msg").value("用例失败"));
+    }
 
     @Test
     void returnsAStableInternalErrorWithoutExposingExceptionDetails() {
@@ -93,6 +109,14 @@ class GlobalExceptionHandlerTest {
         assertNotNull(body);
         assertEquals(code, body.get("code"));
         return body;
+    }
+
+    @RestController
+    static class UseCaseFailureController {
+        @GetMapping("/use-case-fixture/{kind}")
+        public Object fail(@PathVariable("kind") UseCaseException.Kind kind) {
+            throw new UseCaseException(kind, "用例失败");
+        }
     }
 
     @RestController

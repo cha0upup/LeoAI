@@ -12,7 +12,8 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
+import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -57,10 +58,10 @@ public class NodeAiDelegationService {
                                        Consumer<AiSseEvent> eventSink,
                                        AiRuntimeState parent) {
         if (session == null || thread == null || parent == null) {
-            throw ApiException.badRequest("Node AI 会话、线程或父任务不存在");
+            throw new UseCaseException(Kind.INVALID_INPUT, "Node AI 会话、线程或父任务不存在");
         }
         if (!turnCoordinator.tryClaim(thread)) {
-            throw ApiException.badRequest("目标 Node AI 线程正在执行中");
+            throw new UseCaseException(Kind.INVALID_INPUT, "目标 Node AI 线程正在执行中");
         }
         String leaseToken;
         try {
@@ -72,7 +73,7 @@ public class NodeAiDelegationService {
         }
         if (leaseToken == null) {
             turnCoordinator.releaseClaim(thread);
-            throw ApiException.badRequest("目标 Node AI 线程正在其他实例执行中");
+            throw new UseCaseException(Kind.INVALID_INPUT, "目标 Node AI 线程正在其他实例执行中");
         }
         thread.bindActiveLeaseToken(leaseToken);
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(thread);

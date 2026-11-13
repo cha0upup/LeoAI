@@ -11,7 +11,7 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
-import org.leo.web.exception.ApiException;
+import org.leo.web.application.UseCaseException;
 
 import java.util.List;
 import java.util.Map;
@@ -47,9 +47,9 @@ class PlatformAiThreadServiceTest {
         Fixture fixture = fixture("user-1");
         PlatformAiState existing = PlatformAiStateStore.create(THREAD_ID);
         existing.claimExecution();
-        when(fixture.channels.optional(99)).thenThrow(ApiException.notFound("模型已删除"));
+        when(fixture.channels.optional(99)).thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
 
-        assertThrows(ApiException.class, () -> {
+        assertThrows(UseCaseException.class, () -> {
             if (recreate) fixture.service.createAgent(SESSION_ID, THREAD_ID, user("user-1"), 99);
             else fixture.service.createThread(SESSION_ID, user("user-1"), "新对话", 99);
         });
@@ -97,7 +97,7 @@ class PlatformAiThreadServiceTest {
     void hidesForeignThreadsAndDoesNotMutateThem() {
         Fixture fixture = fixture("other-user");
 
-        assertThrows(ApiException.class,
+        assertThrows(UseCaseException.class,
                 () -> fixture.service.deleteThread(user("user-1"), THREAD_ID));
 
         verify(fixture.conversationStore, never()).deleteThread(THREAD_ID);
@@ -128,10 +128,10 @@ class PlatformAiThreadServiceTest {
     @Test
     void deniesHistoryQueriesBeforeReadingForeignThreadData() {
         Fixture fixture = fixture("other-user");
-        assertEquals(404, assertThrows(ApiException.class,
-                () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, null)).getCode());
-        assertEquals(404, assertThrows(ApiException.class,
-                () -> fixture.service.events(user("user-1"), THREAD_ID, null, null)).getCode());
+        assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
+                () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, null)).getKind());
+        assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
+                () -> fixture.service.events(user("user-1"), THREAD_ID, null, null)).getKind());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
         verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
     }

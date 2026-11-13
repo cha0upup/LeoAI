@@ -8,11 +8,11 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.web.adapter.ai.AiEventSubscriptionService;
+import org.leo.web.application.UseCaseException;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
-import org.leo.web.exception.ApiException;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -49,8 +49,8 @@ class PlatformAiControllerTest {
         session.setAttribute("platformAiStateId", "previous");
 
         when(threads.createAgent(session.getId(), "previous", user, 99))
-                .thenThrow(ApiException.notFound("模型已删除"));
-        assertThrows(ApiException.class, () -> controller.createAgent(
+                .thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
+        assertThrows(UseCaseException.class, () -> controller.createAgent(
                 new PlatformAiDtos.AiAgentConfigRequest(null, 99), request));
         assertEquals("previous", session.getAttribute("platformAiStateId"));
 

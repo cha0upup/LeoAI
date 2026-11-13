@@ -3,6 +3,7 @@ package org.leo.web.config;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import org.springframework.web.context.request.async.AsyncRequestNotUsableExcept
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -34,14 +36,29 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<HashMap<String, Object>> handleApiException(ApiException e) {
-        if (e.getHttpStatus().is5xxServerError() && e.getHttpStatus() != HttpStatus.SERVICE_UNAVAILABLE) {
-            logger.error("API业务异常: {}", e.getMessage(), e);
+        return businessError(e, e.getHttpStatus(), e.getCode(), e.getDetails());
+    }
+
+    @ExceptionHandler(UseCaseException.class)
+    public ResponseEntity<HashMap<String, Object>> handleUseCaseException(UseCaseException error) {
+        HttpStatus status = switch (error.getKind()) {
+            case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case OPERATION_FAILED -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
+        return businessError(error, status, status.value(), Map.of());
+    }
+
+    private ResponseEntity<HashMap<String, Object>> businessError(
+            RuntimeException error, HttpStatus status, int code, Map<String, Object> details) {
+        if (status.is5xxServerError() && status != HttpStatus.SERVICE_UNAVAILABLE) {
+            logger.error("API业务异常: {}", error.getMessage(), error);
         } else {
-            logger.warn("API业务异常: {}", e.getMessage());
+            logger.warn("API业务异常: {}", error.getMessage());
         }
-        HashMap<String, Object> body = ApiResponse.error(e.getCode(), e.getMessage());
-        body.putAll(e.getDetails());
-        return ResponseEntity.status(e.getHttpStatus()).body(body);
+        HashMap<String, Object> body = ApiResponse.error(code, error.getMessage());
+        body.putAll(details);
+        return ResponseEntity.status(status).body(body);
     }
 
     /**

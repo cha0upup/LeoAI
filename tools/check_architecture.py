@@ -30,7 +30,7 @@ ADAPTER_IMPORTS = {
 WEB_APPLICATION_ADAPTERS = (
     'jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.',
     'org.springframework.http.', 'org.leo.web.controller.', 'org.leo.web.adapter.',
-    'org.leo.web.config.', 'org.leo.web.dto.', 'org.leo.web.util.ControllerUtil',
+    'org.leo.web.config.', 'org.leo.web.dto.', 'org.leo.web.exception.', 'org.leo.web.util.ControllerUtil',
 )
 CORE_CONTRACT_PACKAGES = (
     'org.leo.core.agent.capability', 'org.leo.core.agent.database',

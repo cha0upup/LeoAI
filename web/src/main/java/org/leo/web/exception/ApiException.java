@@ -8,10 +8,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * API 层业务异常。
+ * HTTP 入口及适配器的响应异常。
  *
- * <p>Controller 只负责表达失败语义，统一响应格式由 {@code GlobalExceptionHandler}
- * 生成，避免各接口散落 try/catch 和手写错误 Map。
+ * <p>保留 HTTP 状态及接口专用明细；应用用例使用传输无关的 UseCaseException。
+ * 统一响应格式由 {@code GlobalExceptionHandler} 生成。
  */
 public class ApiException extends RuntimeException {
 
