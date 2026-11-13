@@ -15,7 +15,8 @@ import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
 import org.leo.ai.tools.platform.PluginTools;
 import org.leo.ai.tools.platform.AgentTools;
-import org.leo.ai.tools.platform.ShellGeneratorTools;
+import org.leo.web.adapter.ai.ShellGeneratorTools;
+import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
@@ -56,7 +57,7 @@ class AiToolCatalogContractTest {
             AiWorkspaceCommandTools.class, AiWorkspaceTools.class, PlanTools.class,
             UserInputTools.class, WebResearchTools.class,
             DisguiseTools.class, FingerprintTools.class, PluginTools.class,
-            AgentTools.class, ShellGeneratorTools.class, SkillActivationTools.class,
+            AgentTools.class, ShellGeneratorTools.class, PlatformNodeAiBridgeTools.class, SkillActivationTools.class,
             TeamTools.class, UserTools.class,
             BasicInfoTools.class,
             CommandTools.class, CredentialHarvestTools.class,
@@ -87,6 +88,24 @@ class AiToolCatalogContractTest {
         }
         assertTrue(names.contains("getDatabaseDialectCatalog"),
                 "数据库配置必须暴露权威方言目录，避免模型创造方言 ID");
+    }
+
+    @Test
+    void platformAdaptersExposeTheirToolsAlongsideTheSharedBundle() {
+        PlatformToolBundle bundle = new PlatformToolBundle(
+                mock(AgentTools.class), mock(UserTools.class), mock(TeamTools.class),
+                mock(PluginTools.class), mock(FingerprintTools.class), mock(DisguiseTools.class),
+                mock(AiWorkspaceTools.class), mock(AiWorkspaceCommandTools.class),
+                mock(WebResearchTools.class), mock(PlanTools.class), mock(UserInputTools.class),
+                mock(SkillActivationTools.class));
+        List<Object> tools = bundle.toolsWith(List.of(
+                mock(ShellGeneratorTools.class), mock(PlatformNodeAiBridgeTools.class)));
+        Set<String> names = tools.stream().flatMap(tool -> ToolService.findTools(tool).stream())
+                .map(AiServiceTool::name).collect(java.util.stream.Collectors.toSet());
+
+        assertTrue(names.containsAll(Set.of("getShellGeneratorMeta", "list_node_ai_targets", "dispatch_node_ai")));
+        assertEquals(bundle.tools().size() + 2, tools.size());
+        assertTrue(bundle.tools().stream().noneMatch(ShellGeneratorTools.class::isInstance));
     }
 
     @Test

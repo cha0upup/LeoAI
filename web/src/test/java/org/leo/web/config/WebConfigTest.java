@@ -11,6 +11,7 @@ import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
+import org.leo.web.adapter.ai.ShellGeneratorTools;
 import org.leo.web.interceptor.BootstrapReadinessInterceptor;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -66,6 +67,7 @@ class WebConfigTest {
         DynamicModelProvider models = mock(DynamicModelProvider.class);
         AiModelFailoverService failover = mock(AiModelFailoverService.class);
         PlatformNodeAiBridgeTools tools = mock(PlatformNodeAiBridgeTools.class);
+        ShellGeneratorTools shellTools = mock(ShellGeneratorTools.class);
         StreamingChatModel model = mock(StreamingChatModel.class);
         PlatformAiAgent agent = mock(PlatformAiAgent.class);
         AiModelConfig config = new AiModelConfig();
@@ -75,11 +77,12 @@ class WebConfigTest {
         when(models.buildRuntime(config, null)).thenReturn(new DynamicModelProvider.ModelRuntime(
                 model, null, "responses", "openai", "https://example.test", "test-model", 4096,
                 false, null, supportsTools, false, 32_768));
-        when(factory.createPlatformAiAgent(model, supportsTools, 32_768, tools)).thenReturn(agent);
+        var additionalTools = List.of(shellTools, tools);
+        when(factory.createPlatformAiAgent(model, supportsTools, 32_768, additionalTools)).thenReturn(agent);
 
-        var registry = WebConfig.platformAiAgentRegistry(factory, models, failover, tools);
+        var registry = WebConfig.platformAiAgentRegistry(factory, models, failover, tools, shellTools);
 
         assertSame(agent, registry.resolve(new PlatformAiState("state-1"), config, null).aiAgent());
-        verify(factory).createPlatformAiAgent(model, supportsTools, 32_768, tools);
+        verify(factory).createPlatformAiAgent(model, supportsTools, 32_768, additionalTools);
     }
 }

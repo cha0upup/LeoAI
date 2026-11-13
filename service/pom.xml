@@ -22,11 +22,6 @@
         </dependency>
         <dependency>
             <groupId>org.leo</groupId>
-            <artifactId>jmg</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.leo</groupId>
             <artifactId>phpcore</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

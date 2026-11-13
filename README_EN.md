@@ -64,7 +64,7 @@ The current v3.0.1 development baseline spans runtimes, components, platform ser
 
 ## Java/PHP Dual Runtime
 
-Java and PHP are equal Agent runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root.
+Java and PHP are equal Agent runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root. Generator AI tools and the concrete artifact cache live in `web.adapter.ai`; `service` and `ai` use shared contracts without depending on `jmg`.
 
 ```mermaid
 graph TD

@@ -65,7 +65,7 @@ v3.0.1 当前开发基线覆盖运行时、组件、平台服务、Web 控制台
 
 ## Java/PHP 双运行时
 
-Java 与 PHP 是平等的 Agent Runtime，具体实现分别位于 `javacore` 与 `phpcore`。`core` 区分共享契约、模型与基础设施包；`web` 负责最终组装，并按包区分适配与应用编排。
+Java 与 PHP 是平等的 Agent Runtime，具体实现分别位于 `javacore` 与 `phpcore`。`core` 区分共享契约、模型与基础设施包；`web` 负责最终组装，并按包区分适配与应用编排。生成器 AI 工具及具体制品缓存位于 `web.adapter.ai`，`service`、`ai` 通过共享契约工作，不依赖 `jmg`。
 
 ```mermaid
 graph TD

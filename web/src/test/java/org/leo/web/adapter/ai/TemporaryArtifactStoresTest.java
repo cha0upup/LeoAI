@@ -1,7 +1,8 @@
-package org.leo.service.shell;
+package org.leo.web.adapter.ai;
 
 import org.junit.jupiter.api.Test;
 import org.leo.jmg.generation.CoreArtifact;
+import org.leo.service.shell.WebShellWrapperTemplateStore;
 
 import static org.junit.jupiter.api.Assertions.*;
 

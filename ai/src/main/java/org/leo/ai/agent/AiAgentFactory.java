@@ -111,13 +111,13 @@ public class AiAgentFactory {
     /**
      * 创建平台 Agent，并按运行入口追加可选工具。
      *
-     * <p>桥接 Node AI 的工具由 web 组合根绑定，ai 模块只接收工具对象，
+     * <p>生成器和 Node AI 桥接工具由 web 组合根绑定，ai 模块只接收工具列表，
      * 保持对具体入口与适配器的独立性。
      */
     public PlatformAiAgent createPlatformAiAgent(StreamingChatModel streamingModel,
                                              boolean enableTools,
                                              int modelContextWindowTokens,
-                                             Object additionalTools) {
+                                             List<?> additionalTools) {
         List<Object> tools = platformToolBundle.toolsWith(additionalTools);
         int toolSchemaTokens = enableTools
                 ? toolCatalog.estimateSchemaTokens(tools) : 0;

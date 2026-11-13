@@ -1,4 +1,4 @@
-package org.leo.ai.tools.platform;
+package org.leo.web.adapter.ai;
 
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -14,7 +14,6 @@ import org.leo.core.runtime.AgentRuntime;
 import org.leo.jmg.generation.WebShellWrapperContract;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
-import org.leo.service.shell.CoreArtifactStore;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.service.shell.WebShellWrapperTemplateStore;
 

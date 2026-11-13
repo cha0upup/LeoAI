@@ -1,4 +1,4 @@
-package org.leo.ai.tools.platform;
+package org.leo.web.adapter.ai;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -31,7 +31,6 @@ import org.leo.jmg.mem.packer.jsp.JspLoaderTemplateValidator;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
-import org.leo.service.shell.CoreArtifactStore;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.service.shell.WebShellWrapperTemplateStore;
 import org.springframework.stereotype.Component;

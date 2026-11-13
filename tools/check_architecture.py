@@ -14,8 +14,8 @@ ALLOWED_DEPENDENCIES = {
     'javacore': {'core'},
     'phpcore': {'core'},
     'jmg': {'core'},
-    'service': {'core', 'dao', 'jmg'},
-    'ai': {'core', 'dao', 'service', 'jmg'},
+    'service': {'core', 'dao'},
+    'ai': {'core', 'dao', 'service'},
     'web': {'core', 'dao', 'javacore', 'phpcore', 'service', 'ai', 'jmg'},
 }
 TEST_DEPENDENCIES = {'service': {'javacore', 'phpcore'}}

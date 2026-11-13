@@ -4,7 +4,6 @@ import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
 import org.leo.ai.tools.platform.PluginTools;
 import org.leo.ai.tools.platform.AgentTools;
-import org.leo.ai.tools.platform.ShellGeneratorTools;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
@@ -19,7 +18,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Platform Agent 的完整、不可变工具配置。 */
+/** Platform Agent 的共享、不可变工具配置；入口适配器由组合根追加。 */
 @Component
 public class PlatformToolBundle {
 
@@ -32,7 +31,6 @@ public class PlatformToolBundle {
             PluginTools pluginTools,
             FingerprintTools fingerprintTools,
             DisguiseTools disguiseTools,
-            ShellGeneratorTools shellGeneratorTools,
             AiWorkspaceTools aiWorkspaceTools,
             AiWorkspaceCommandTools aiWorkspaceCommandTools,
             WebResearchTools webResearchTools,
@@ -42,7 +40,7 @@ public class PlatformToolBundle {
         this.tools = List.of(
                 agentTools, userTools, teamTools,
                 pluginTools, fingerprintTools, disguiseTools,
-                shellGeneratorTools, aiWorkspaceTools, aiWorkspaceCommandTools,
+                aiWorkspaceTools, aiWorkspaceCommandTools,
                 webResearchTools, planTools, userInputTools,
                 skillActivationTools);
     }
@@ -51,11 +49,11 @@ public class PlatformToolBundle {
         return tools;
     }
 
-    public List<Object> toolsWith(Object additionalTools) {
-        if (additionalTools == null) return tools;
-        List<Object> combined = new ArrayList<>(tools.size() + 1);
+    public List<Object> toolsWith(List<?> additionalTools) {
+        if (additionalTools == null || additionalTools.isEmpty()) return tools;
+        List<Object> combined = new ArrayList<>(tools.size() + additionalTools.size());
         combined.addAll(tools);
-        combined.add(additionalTools);
+        combined.addAll(additionalTools);
         return List.copyOf(combined);
     }
 }

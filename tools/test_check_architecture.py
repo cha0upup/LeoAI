@@ -46,6 +46,16 @@ class ArchitectureAuditTest(unittest.TestCase):
         issues = audit(self.root)
         self.assertTrue(any('forbidden compile dependency on web' in issue for issue in issues))
         self.assertTrue(any('cycle:' in issue for issue in issues))
+        for module in ('service', 'ai'):
+            with self.subTest(module=module):
+                self.write('pom.xml', f'<project><modules><module>{module}</module></modules></project>')
+                self.module(module, [('jmg', 'compile')])
+                self.write(f'{module}/src/main/java/Example.java',
+                           'import org.leo.jmg.generation.CoreArtifact;')
+                issues = audit(self.root)
+                self.assertEqual(2, len(issues), issues)
+                self.assertTrue(any('forbidden compile dependency on jmg' in issue for issue in issues))
+                self.assertTrue(any('forbidden upward import' in issue for issue in issues))
 
     def test_partial_reactors_keep_module_and_import_boundaries(self):
         self.write('pom.xml', '<project><modules><module>service</module></modules></project>')

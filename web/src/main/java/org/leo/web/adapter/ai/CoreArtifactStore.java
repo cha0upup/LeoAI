@@ -1,4 +1,4 @@
-package org.leo.service.shell;
+package org.leo.web.adapter.ai;
 
 import org.leo.core.util.BoundedTtlCache;
 import org.leo.jmg.generation.CoreArtifact;

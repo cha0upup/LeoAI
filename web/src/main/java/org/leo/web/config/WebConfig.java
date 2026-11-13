@@ -4,6 +4,7 @@ import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
+import org.leo.web.adapter.ai.ShellGeneratorTools;
 import org.leo.web.application.ai.PlatformAiAgentRegistry;
 import org.leo.web.interceptor.BootstrapReadinessInterceptor;
 import org.leo.web.interceptor.LoginInterceptor;
@@ -16,6 +17,7 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
@@ -76,9 +78,11 @@ public class WebConfig implements WebMvcConfigurer {
     @Bean
     public static PlatformAiAgentRegistry platformAiAgentRegistry(
             AiAgentFactory agentFactory, DynamicModelProvider modelProvider,
-            AiModelFailoverService failoverService, PlatformNodeAiBridgeTools bridgeTools) {
+            AiModelFailoverService failoverService, PlatformNodeAiBridgeTools bridgeTools,
+            ShellGeneratorTools shellGeneratorTools) {
         return new PlatformAiAgentRegistry(modelProvider, failoverService, runtime ->
                 agentFactory.createPlatformAiAgent(runtime.streamingModel(),
-                        runtime.supportsFunctionCalling(), runtime.contextWindowTokens(), bridgeTools));
+                        runtime.supportsFunctionCalling(), runtime.contextWindowTokens(),
+                        List.of(shellGeneratorTools, bridgeTools)));
     }
 }

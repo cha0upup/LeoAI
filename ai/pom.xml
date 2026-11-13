@@ -59,11 +59,6 @@
             <artifactId>dao</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.leo</groupId>
-            <artifactId>jmg</artifactId>
-            <version>${project.version}</version>
-        </dependency>
     </dependencies>
 
 </project>
