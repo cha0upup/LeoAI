@@ -26,6 +26,11 @@ class ArchitectureAuditTest(unittest.TestCase):
                       f'<scope>{scope}</scope></dependency>' for target, scope in dependencies)
         self.write(name + '/pom.xml', '<project><dependencies>' + xml + '</dependencies></project>')
 
+    def production_type(self, module, name, body=''):
+        package, _, simple_name = name.rpartition('.')
+        self.write(f'{module}/src/main/java/{name.replace(".", "/")}.java',
+                   f'package {package};\npublic class {simple_name} {{ {body} }}')
+
     def test_accepts_layered_dependencies_and_ignores_non_production_code(self):
         self.write('service/src/main/java/Example.java',
                    'import org.leo.core.Example;\n/* import org.leo.web.X; */\n'
@@ -54,10 +59,13 @@ class ArchitectureAuditTest(unittest.TestCase):
     def test_application_adapters_stay_in_web(self):
         cases = {
             '': ('jakarta.servlet.http.HttpServletRequest', 'javax.servlet.Servlet',
-                 'org.springframework.web.bind.annotation.RestController'),
-            'org/leo/service/ssh/': ('net.schmizz.sshj.SSHClient', 'org.apache.sshd.client.SshClient'),
+                 'org.springframework.web.bind.annotation.RestController',
+                 'jakarta.servlet.*', 'javax.servlet.*', 'org.springframework.web.bind.annotation.*'),
+            'org/leo/service/ssh/': ('net.schmizz.sshj.SSHClient', 'org.apache.sshd.client.SshClient',
+                                    'net.schmizz.*', 'org.apache.sshd.*'),
             'org/leo/service/discovery/': ('java.sql.Connection', 'javax.sql.DataSource',
-                 'org.springframework.jdbc.core.JdbcTemplate', 'org.leo.core.session.AgentNodeSessionContainer'),
+                 'org.springframework.jdbc.core.JdbcTemplate', 'org.leo.core.session.AgentNodeSessionContainer',
+                 'java.sql.*', 'javax.sql.*', 'org.springframework.jdbc.*', 'org.leo.core.session.*'),
         }
         for package, imports in cases.items():
             for name in imports:
@@ -71,11 +79,164 @@ class ArchitectureAuditTest(unittest.TestCase):
                     self.assertIn('application service imports', issues[0])
                     (self.root / path).unlink()
 
+    def test_fully_qualified_adapter_references_observe_the_same_boundaries(self):
+        cases = (
+            ('', 'jakarta.servlet.http.HttpServletRequest'),
+            ('org/leo/service/ssh/', 'net.schmizz.sshj.SSHClient'),
+            ('org/leo/service/discovery/', 'org.springframework.jdbc.core.JdbcTemplate'),
+            ('org/leo/service/discovery/', 'org.leo.core.session.AgentNodeSessionContainer'),
+        )
+        for package, name in cases:
+            with self.subTest(package=package, name=name):
+                path = 'service/src/main/java/' + package + 'Example.java'
+                self.write(path, f'class Example {{ {name} value; }}')
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('application service imports', issues[0])
+                (self.root / path).unlink()
+
+    def test_adapter_boundaries_do_not_match_a_similarly_named_contract(self):
+        name = 'org.leo.core.session.AgentNodeSessionContainerView'
+        self.production_type('core', name)
+        self.write('service/src/main/java/org/leo/service/discovery/Example.java',
+                   f'import {name};\nclass Example {{ {name} value; }}')
+        self.assertEqual([], audit(self.root))
+
     def test_runtime_fixtures_are_test_only_dependencies(self):
         self.module('service', [('javacore', 'test'), ('phpcore', 'test')])
+        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        self.production_type('javacore', name)
+        self.write('service/src/test/java/ExampleTest.java', f'import {name};')
         self.assertEqual([], audit(self.root))
+        self.write('service/src/main/java/Example.java', f'import {name};')
+        self.assertTrue(any('forbidden upward import' in issue for issue in audit(self.root)))
+        (self.root / 'service/src/main/java/Example.java').unlink()
         self.module('service', [('javacore', 'compile')])
         self.assertTrue(any('forbidden compile' in issue for issue in audit(self.root)))
+
+    def test_imports_resolve_to_the_source_module_instead_of_the_package_prefix(self):
+        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        self.production_type('javacore', name,
+                             'public static final Object INSTANCE = null; public class Options {}')
+        cases = (
+            f'import {name};',
+            f'import {name}.Options;',
+            f'import static {name}.INSTANCE;',
+            f'import static {name}.*;',
+            f'import {name}.*;',
+            'import org.leo.core.agent.impl.*;',
+            'import/* separator */ static org . leo . core . agent . impl . JavaAgentNode . INSTANCE;',
+        )
+        for statement in cases:
+            with self.subTest(statement=statement):
+                self.write('service/src/main/java/Example.java', '// header\n' + statement)
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('Example.java:2:', issues[0])
+                self.assertIn('forbidden upward import', issues[0])
+                self.assertIn('javacore', issues[0])
+
+    def test_mixed_packages_keep_explicit_type_ownership_separate(self):
+        self.production_type('core', 'org.leo.core.agent.database.SqlCommand')
+        self.production_type('javacore', 'org.leo.core.agent.database.JavaDatabaseConnectionAdapter')
+        source = 'service/src/main/java/Example.java'
+
+        self.write(source, 'import org.leo.core.agent.database.SqlCommand;')
+        self.assertEqual([], audit(self.root))
+
+        # A wildcard exposes the runtime implementation as well. Explicit
+        # contract imports keep shared-package consumers independent of it.
+        self.write(source, 'import org.leo.core.agent.database.*;')
+        issues = audit(self.root)
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn('javacore', issues[0])
+
+    def test_package_wildcards_do_not_include_subpackages(self):
+        self.production_type('core', 'org.leo.core.agent.AbstractAgentNode')
+        self.production_type('javacore', 'org.leo.core.agent.impl.JavaAgentNode')
+        self.write('service/src/main/java/Example.java', 'import org.leo.core.agent.*;')
+        self.assertEqual([], audit(self.root))
+
+    def test_physical_ownership_also_applies_to_non_leo_namespaces(self):
+        name = 'com.vendor.bridge.Adapter'
+        self.production_type('jmg', name)
+        self.write('core/src/main/java/Example.java', f'import {name};')
+        self.write('web/src/main/java/Example.java', f'import {name};')
+
+        issues = audit(self.root)
+
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn('core/src/main/java/Example.java:1:', issues[0])
+        self.assertIn('jmg', issues[0])
+
+    def test_fully_qualified_references_observe_module_boundaries(self):
+        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        self.production_type('javacore', name)
+        for expression in (f'new {name}()', f'{name}.class', f'{name}.INSTANCE'):
+            with self.subTest(expression=expression):
+                self.production_type('service', 'org.leo.service.Example',
+                                     f'Object value = {expression};')
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('forbidden upward reference', issues[0])
+                self.assertIn('javacore', issues[0])
+
+    def test_comments_and_strings_are_not_source_dependencies(self):
+        name = 'org.leo.core.agent.impl.JavaAgentNode'
+        self.production_type('javacore', name)
+        self.production_type('service', 'org.leo.service.Example',
+                             f'String value = "{name}"; /* new {name}(); */\n'
+                             f'String block = """\nimport {name};\nnew {name}();\n""";')
+        self.assertEqual([], audit(self.root))
+
+    def test_dollar_identifiers_keep_their_full_type_name(self):
+        for simple_name in ('Runtime$', '$Runtime'):
+            with self.subTest(simple_name=simple_name):
+                name = 'org.leo.core.runtimeimpl.' + simple_name
+                self.production_type('javacore', name)
+                self.production_type('service', 'org.leo.service.Example',
+                                     f'Object value = new {name}();')
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn(name, issues[0])
+                self.assertIn('javacore', issues[0])
+
+    def test_indexes_top_level_declarations_and_resolves_nested_type_imports(self):
+        prefix = 'org.leo.core.runtimeimpl'
+        self.write('javacore/src/main/java/Holder.java',
+                   f'package {prefix};\npublic class Holder {{ class Nested {{}} }}\n'
+                   'class Secondary {}\ninterface Contract {}\nenum Mode { DEFAULT }\n'
+                   'record Settings(int value) {}\n@interface Marker {}')
+        for name in ('Holder.Nested', 'Secondary', 'Contract', 'Mode', 'Settings', 'Marker'):
+            with self.subTest(name=name):
+                self.write('service/src/main/java/Example.java', f'import {prefix}.{name};')
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('javacore', issues[0])
+
+    def test_same_module_and_downward_runtime_references_remain_allowed(self):
+        self.write('pom.xml', '<project><modules><module>core</module><module>javacore</module>'
+                   '<module>service</module><module>web</module></modules></project>')
+        self.module('javacore', [('core', 'compile')])
+        self.production_type('core', 'org.leo.core.agent.AbstractAgentNode')
+        self.production_type('javacore', 'org.leo.core.agent.impl.JavaAgentNode',
+                             'org.leo.core.agent.AbstractAgentNode contract;')
+        self.production_type('javacore', 'org.leo.core.agent.impl.OtherNode',
+                             'org.leo.core.agent.impl.JavaAgentNode node;')
+        self.write('web/src/main/java/Example.java', 'import org.leo.core.agent.impl.JavaAgentNode;')
+        self.assertEqual([], audit(self.root))
+
+    def test_duplicate_production_types_are_reported_instead_of_choosing_an_owner(self):
+        name = 'org.leo.core.Shared'
+        self.production_type('core', name)
+        self.production_type('javacore', name)
+
+        issues = audit(self.root)
+
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn('Duplicate production type: ' + name, issues[0])
+        self.assertIn('core/src/main/java/', issues[0])
+        self.assertIn('javacore/src/main/java/', issues[0])
 
     def test_invalid_descriptors_are_reported(self):
         for name in ('pom.xml', 'service/pom.xml'):
