@@ -77,24 +77,24 @@ public class UserArtifactService {
         });
     }
 
-    private String relative(String userId, Path path) { return root(userId).relativize(path).toString().replace('\\', '/'); }
+    private String relative(Path base, Path path) { return base.relativize(path).toString().replace('\\', '/'); }
 
     private String category(String path) {
         String first = path.split("/", 2)[0];
         return CATEGORIES.contains(first) ? first : "imports";
     }
 
-    public Map<String, Object> item(String userId, Path path, BasicFileAttributes attrs) {
-        String relative = relative(userId, path);
+    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs) {
+        String relative = relative(base, path);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("name", path.getFileName().toString());
         result.put("path", relative);
-        result.put("parentPath", path.getParent().equals(root(userId)) ? "" : relative(userId, path.getParent()));
+        result.put("parentPath", relative(base, path.getParent()));
         result.put("isDirectory", attrs.isDirectory());
         result.put("size", attrs.isDirectory() ? 0L : attrs.size());
         result.put("lastModified", attrs.lastModifiedTime().toMillis());
         result.put("category", category(relative));
-        if (attrs.isRegularFile()) result.put("metadata", metadata(userId, relative));
+        if (attrs.isRegularFile()) result.put("metadata", metadata(base, relative));
         return result;
     }
 
@@ -109,7 +109,7 @@ public class UserArtifactService {
             totals[3] = Math.max(totals[3], attrs.lastModifiedTime().toMillis());
             if (attrs.isDirectory()) { totals[1]++; return; }
             totals[0]++; totals[2] += attrs.size();
-            long[] counts = categories.get(category(relative(userId, path)));
+            long[] counts = categories.get(category(relative(base, path)));
             counts[0]++; counts[1] += attrs.size();
             recent.add(Map.entry(path, attrs));
             if (recent.size() > 8) recent.poll();
@@ -117,7 +117,7 @@ public class UserArtifactService {
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
                         .sorted(Comparator.comparingLong((Map.Entry<Path, BasicFileAttributes> entry) -> entry.getValue().lastModifiedTime().toMillis()).reversed())
-                        .map(entry -> item(userId, entry.getKey(), entry.getValue())).toList(),
+                        .map(entry -> item(base, entry.getKey(), entry.getValue())).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
     }
@@ -128,11 +128,12 @@ public class UserArtifactService {
         int current = Math.max(1, page);
         String keyword = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
         List<Map<String, Object>> files = new ArrayList<>();
-        walk(root(userId), (path, attrs) -> {
+        Path base = root(userId);
+        walk(base, (path, attrs) -> {
             if (!attrs.isRegularFile()) return;
-            String relative = relative(userId, path);
+            String relative = relative(base, path);
             if (category != null && !category.isBlank() && !category.equals(category(relative))) return;
-            Map<String, Object> item = item(userId, path, attrs);
+            Map<String, Object> item = item(base, path, attrs);
             Map<?, ?> metadata = (Map<?, ?>) item.get("metadata");
             String module = Objects.toString(metadata.get("sourceModule"), "unrecorded");
             if (source != null && !source.isBlank() && !source.equals(module)) return;
@@ -148,27 +149,27 @@ public class UserArtifactService {
                 "page", current, "pageSize", size, "hasMore", end < files.size());
     }
 
-    private Path metadataPath(String userId, String path) {
+    private Path metadataPath(Path base, String path) {
         try {
             String key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(path.getBytes(StandardCharsets.UTF_8)));
-            Path directory = root(userId).resolve(".artifacts");
+            Path directory = base.resolve(".artifacts");
             if (Files.isSymbolicLink(directory)) throw new IllegalArgumentException("元数据目录含符号链接");
             return directory.resolve(key + ".json");
         } catch (java.security.NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> metadata(String userId, String path) {
+    private Map<String, Object> metadata(Path base, String path) {
         try {
-            Path file = metadataPath(userId, path);
+            Path file = metadataPath(base, path);
             if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 16 * 1024) return Map.of();
             Map<String, Object> result = mapper.readValue(Files.readString(file), Map.class);
             return result == null ? Map.of() : result;
         } catch (Exception ignored) { return Map.of(); }
     }
 
-    private void record(String userId, Path target, Map<String, String> source) throws IOException {
-        String relative = relative(userId, target);
+    private void record(Path base, Path target, Map<String, String> source) throws IOException {
+        String relative = relative(base, target);
         Map<String, Object> record = new LinkedHashMap<>();
         record.put("id", UUID.randomUUID().toString());
         record.put("createdAt", Instant.now().toString());
@@ -183,7 +184,7 @@ public class UserArtifactService {
         String module = String.valueOf(record.getOrDefault("sourceModule", "manual"));
         if (!SOURCES.contains(module)) throw new IllegalArgumentException("未知成果来源");
         record.put("sourceModule", module);
-        Path metadata = metadataPath(userId, relative);
+        Path metadata = metadataPath(base, relative);
         Files.createDirectories(metadata.getParent());
         Path temporary = Files.createTempFile(metadata.getParent(), ".pending-", ".json");
         try {
@@ -194,11 +195,12 @@ public class UserArtifactService {
     }
 
     public void recordManual(String userId, Path target) throws IOException {
-        record(userId, target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
+        record(root(userId), target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
     }
 
     public void removeMetadata(String userId, Path target) throws IOException {
-        Files.deleteIfExists(metadataPath(userId, relative(userId, target)));
+        Path base = root(userId);
+        Files.deleteIfExists(metadataPath(base, relative(base, target)));
     }
 
     public Map<String, Object> archive(String userId, ArchiveRequest request) throws IOException {
@@ -206,6 +208,7 @@ public class UserArtifactService {
         String name = request.filename();
         if (name == null || name.isBlank() || name.length() > 200 || name.startsWith(".")
                 || name.contains("/") || name.contains("\\")) throw new IllegalArgumentException("无效成果文件名");
+        Path base = root(userId);
         Path directory = resolve(userId, request.category(), true);
         Files.createDirectories(directory);
         Path target = directory.resolve(UUID.randomUUID().toString().substring(0, 8) + "-" + name);
@@ -216,7 +219,7 @@ public class UserArtifactService {
         if (request.sourcePath() != null && !request.sourcePath().isBlank()) {
             if (!"task-results".equals(request.category())) throw new IllegalArgumentException("任务文件应归档到任务输出");
             input = resolve(userId, request.sourcePath(), false);
-            Path relative = root(userId).relativize(input);
+            Path relative = base.relativize(input);
             if (relative.getNameCount() < 4 || !"ai-tasks".equals(relative.getName(0).toString())
                     || !"files".equals(relative.getName(2).toString()) || !Files.isRegularFile(input, LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalArgumentException("请选择任务公开输出文件");
@@ -232,8 +235,8 @@ public class UserArtifactService {
         try {
             if (input != null) Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
             else Files.write(target, content, StandardOpenOption.TRUNCATE_EXISTING);
-            record(userId, target, source);
-            return item(userId, target, Files.readAttributes(target, BasicFileAttributes.class));
+            record(base, target, source);
+            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class));
         } catch (Exception error) {
             Files.deleteIfExists(target);
             removeMetadata(userId, target);
