@@ -1,138 +1,84 @@
 package org.leo.web.service.sql;
 
 import org.junit.jupiter.api.Test;
-import org.leo.core.entity.AgentDatabaseConnection;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.leo.core.entity.User;
-import org.leo.core.agent.database.DatabaseConnectionSpec;
-import org.leo.dao.mapper.AgentDatabaseConnectionMapper;
+import org.leo.service.sql.DatabaseConnectionProfileException;
+import org.leo.service.sql.DatabaseConnectionProfileException.Kind;
 import org.leo.service.sql.DatabaseConnectionProfileService;
-import org.leo.service.sql.AgentDatabaseConnectionService;
-import org.leo.service.security.DatabaseCredentialCryptoService;
-import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.leo.web.exception.ApiException;
 
-import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class DatabaseConnectionManagementServiceTest {
 
-    private final AgentDatabaseConnectionMapper mapper = mock(AgentDatabaseConnectionMapper.class);
-    private final DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
-    private final AgentDatabaseConnectionService persistence = new AgentDatabaseConnectionService(mapper, crypto);
-    private final DatabaseConnectionManagementService management = management(persistence);
+    private final DatabaseConnectionProfileService profiles = mock(DatabaseConnectionProfileService.class);
+    private final DatabaseConnectionManagementService management = new DatabaseConnectionManagementService(profiles);
 
     @Test
-    void savesAgentOwnedProfilesWithoutVisibilityScope() {
-        doAnswer(invocation -> {
-            AgentDatabaseConnection saved = invocation.getArgument(0);
-            assertEquals("agent-1", saved.getAgentId());
-            assertEquals("mysql", saved.getDialect());
-            assertTrue(crypto.isEncrypted(saved.getPassword()));
-            return 1;
-        }).when(mapper).insert(any(AgentDatabaseConnection.class));
+    void forwardsContextAndKeepsApplicationResultsUnchanged() {
+        User user = user("user-1");
+        Map<String, Object> params = Map.of("connectionName", "inventory");
+        Map<String, Object> profile = Map.of("connectionId", "connection-1");
+        Map<String, Object> status = Map.of("status", 0);
+        List<Map<String, Object>> rows = List.of(profile);
+        when(profiles.save("user-1", "agent-1", params)).thenReturn(profile);
+        when(profiles.listByAgent("user-1", "agent-1")).thenReturn(rows);
+        when(profiles.setEnabled("user-1", "agent-1", "connection-1", false)).thenReturn(status);
 
-        Map<String, Object> result = management.save(user("creator"),
-                "agent-1", params(null, "secret"));
-
-        assertEquals("inventory", result.get("connectionName"));
-        assertEquals("mysql", connection(result).get("dialect"));
-        assertFalse(result.containsKey("scope"));
-        assertFalse(result.containsKey("canManage"));
-        assertFalse(String.valueOf(result).contains("secret"));
+        assertSame(profile, management.save(user, "agent-1", params));
+        assertSame(rows, management.listByAgent("agent-1", user));
+        assertSame(status, management.setEnabled("connection-1", "agent-1", false, user));
+        management.delete("connection-1", "agent-1", user);
+        verify(profiles).delete("user-1", "agent-1", "connection-1");
     }
 
-    @Test
-    void anyUserConnectedToTheSameAgentCanUpdateAndReuseStoredPassword() {
-        AgentDatabaseConnection existing = existing(persistence, crypto);
-        when(mapper.selectById("connection-1")).thenReturn(existing);
-        when(mapper.update(any(AgentDatabaseConnection.class))).thenReturn(1);
+    @ParameterizedTest
+    @CsvSource({"VALIDATION,400", "NOT_FOUND,404", "FORBIDDEN,403", "PERSISTENCE,500"})
+    void translatesApplicationErrorsWithoutChangingTheMessage(Kind kind, int status) {
+        when(profiles.save("user-1", "agent-1", Map.of()))
+                .thenThrow(new DatabaseConnectionProfileException(kind, "profile error"));
 
-        Map<String, Object> result = management.save(user("teammate"),
-                "agent-1", params("connection-1", ""));
+        ApiException error = assertThrows(ApiException.class,
+                () -> management.save(user("user-1"), "agent-1", Map.of()));
 
-        assertEquals("existing-secret", persistence.toConnectionSpec(existing).getPassword());
-        assertEquals("mysql", connection(result).get("dialect"));
+        assertEquals(status, error.getHttpStatus().value());
+        assertEquals(status, error.getCode());
+        assertEquals("profile error", error.getMessage());
     }
 
-    @Test
-    void managementOperationsRejectConnectionsOwnedByAnotherAgent() {
-        AgentDatabaseConnection existing = existing(persistence, crypto);
-        when(mapper.selectById("connection-1")).thenReturn(existing);
-
-        ApiException deleteError = assertThrows(ApiException.class,
-                () -> management.delete("connection-1", "agent-2", user("teammate")));
-        ApiException statusError = assertThrows(ApiException.class,
-                () -> management.setEnabled("connection-1", "agent-2", false, user("teammate")));
-
-        assertEquals(403, deleteError.getHttpStatus().value());
-        assertEquals(403, statusError.getHttpStatus().value());
+    @ParameterizedTest
+    @MethodSource("unauthenticatedUsers")
+    void rejectsMissingUserContextBeforeCallingTheApplication(User user) {
+        for (Runnable operation : List.<Runnable>of(
+                () -> management.save(user, "agent-1", Map.of()),
+                () -> management.listByAgent("agent-1", user),
+                () -> management.delete("connection-1", "agent-1", user),
+                () -> management.setEnabled("connection-1", "agent-1", false, user))) {
+            assertEquals(401, assertThrows(ApiException.class, operation::run).getHttpStatus().value());
+        }
+        verifyNoInteractions(profiles);
     }
 
-    @Test
-    void mutationsRemainScopedToTheResolvedAgentAtTheMapperBoundary() {
-        AgentDatabaseConnection existing = existing(persistence, crypto);
-        when(mapper.selectById("connection-1")).thenReturn(existing);
-        when(mapper.updateStatusByAgent("connection-1", "agent-1", 0)).thenReturn(1);
-        when(mapper.deleteByIdAndAgent("connection-1", "agent-1")).thenReturn(1);
-
-        management.setEnabled("connection-1", "agent-1", false, user("teammate"));
-        management.delete("connection-1", "agent-1", user("teammate"));
-
-        verify(mapper).updateStatusByAgent("connection-1", "agent-1", 0);
-        verify(mapper).deleteByIdAndAgent("connection-1", "agent-1");
+    private static Stream<User> unauthenticatedUsers() {
+        return Stream.of(null, user(null), user(""), user(" "));
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> connection(Map<String, Object> view) {
-        return (Map<String, Object>) view.get("connection");
-    }
-
-    private AgentDatabaseConnection existing(AgentDatabaseConnectionService persistence,
-                                                DatabaseCredentialCryptoService crypto) {
-        AgentDatabaseConnection connection = new AgentDatabaseConnection();
-        connection.setConnectionId("connection-1");
-        connection.setConnectionName("inventory");
-        connection.setAgentId("agent-1");
-        connection.setCreateUserId("creator");
-        persistence.applyConnectionSpec(connection, DatabaseConnectionSpec.fromMap(Map.of(
-                "dialect", "mysql", "connectionMode", "standard",
-                "host", "db.internal", "port", 3306,
-                "database", "inventory", "username", "app", "password", "existing-secret")));
-        connection.setPassword(crypto.encrypt("existing-secret"));
-        return connection;
-    }
-
-    private Map<String, Object> params(String connectionId, String password) {
-        Map<String, Object> params = new LinkedHashMap<String, Object>();
-        if (connectionId != null) params.put("connectionId", connectionId);
-        params.put("connectionName", "inventory");
-        params.put("connection", Map.of(
-                "dialect", "mysql", "connectionMode", "standard",
-                "host", "db.internal", "port", 3306,
-                "database", "inventory", "username", "app", "password", password));
-        return params;
-    }
-
-    private User user(String id) {
+    private static User user(String id) {
         User user = new User();
         user.setUserId(id);
-        user.setPrivilege("normal");
         return user;
-    }
-
-    private DatabaseConnectionManagementService management(
-            AgentDatabaseConnectionService persistence) {
-        return new DatabaseConnectionManagementService(
-                new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry()));
     }
 }

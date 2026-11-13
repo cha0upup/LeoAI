@@ -1,12 +1,16 @@
 package org.leo.service.sql;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AgentDatabaseConnection;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.dao.mapper.AgentDatabaseConnectionMapper;
 import org.leo.service.security.DatabaseCredentialCryptoService;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,8 +25,9 @@ import static org.mockito.Mockito.when;
 
 class DatabaseConnectionProfileServiceTest {
 
-    @Test
-    void createsSanitizedAgentOwnedProfile() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void createsSanitizedAgentOwnedProfile(boolean useSave) {
         Fixture fixture = fixture();
         doAnswer(invocation -> {
             AgentDatabaseConnection saved = invocation.getArgument(0);
@@ -31,12 +36,16 @@ class DatabaseConnectionProfileServiceTest {
             return 1;
         }).when(fixture.mapper()).insert(any(AgentDatabaseConnection.class));
 
-        Map<String, Object> result = fixture.profile().create(
-                "user-1", "agent-1", Map.of(
-                        "connectionName", "inventory",
-                        "connection", mysqlConnection("db.internal", "secret")));
+        Map<String, Object> params = Map.of("connectionName", "inventory",
+                "connection", mysqlConnection("db.internal", "secret"));
+        Map<String, Object> result = useSave
+                ? fixture.profile().save("user-1", "agent-1", params)
+                : fixture.profile().create("user-1", "agent-1", params);
 
         assertEquals("inventory", result.get("connectionName"));
+        assertEquals("mysql", ((Map<?, ?>) result.get("connection")).get("dialect"));
+        assertFalse(result.containsKey("scope"));
+        assertFalse(result.containsKey("canManage"));
         assertFalse(String.valueOf(result).contains("secret"));
     }
 
@@ -57,8 +66,9 @@ class DatabaseConnectionProfileServiceTest {
         assertEquals(45, result.get("timeoutSeconds"));
     }
 
-    @Test
-    void patchUpdateRetainsUnspecifiedConnectionFieldsAndStoredPassword() {
+    @ParameterizedTest
+    @CsvSource({"false,false", "true,false", "true,true"})
+    void patchUpdateRetainsUnspecifiedConnectionFieldsAndStoredPassword(boolean useSave, boolean blankPassword) {
         Fixture fixture = fixture();
         AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
@@ -68,9 +78,14 @@ class DatabaseConnectionProfileServiceTest {
             return 1;
         }).when(fixture.mapper()).update(any(AgentDatabaseConnection.class));
 
-        fixture.profile().update("user-2", "agent-1", "connection-1", Map.of(
+        Map<String, Object> connection = blankPassword
+                ? Map.of("host", "db-new.internal", "password", "")
+                : Map.of("host", "db-new.internal");
+        Map<String, Object> patch = Map.of("connectionId", "connection-1",
                 "description", "collected from application.yml",
-                "connection", Map.of("host", "db-new.internal")));
+                "connection", connection);
+        if (useSave) fixture.profile().save("user-2", "agent-1", patch);
+        else fixture.profile().update("user-2", "agent-1", "connection-1", patch);
 
         DatabaseConnectionSpec restored = fixture.persistence().toConnectionSpec(existing);
         assertEquals("db-new.internal", restored.getHost());
@@ -130,7 +145,7 @@ class DatabaseConnectionProfileServiceTest {
     }
 
     @Test
-    void resolvesOnlyEnabledProfilesBoundToTheCurrentAgent() {
+    void enforcesAgentOwnershipForAllOperationsAndEnabledStateForExecution() {
         Fixture fixture = fixture();
         AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
@@ -139,11 +154,15 @@ class DatabaseConnectionProfileServiceTest {
                 "user-1", "agent-1", "connection-1");
         assertEquals("existing-secret", resolved.getPassword());
 
-        DatabaseConnectionProfileException mismatch = assertThrows(
-                DatabaseConnectionProfileException.class,
-                () -> fixture.profile().resolveActive(
-                        "user-1", "agent-2", "connection-1"));
-        assertEquals(DatabaseConnectionProfileException.Kind.FORBIDDEN, mismatch.getKind());
+        for (Runnable operation : List.<Runnable>of(
+                () -> fixture.profile().resolveActive("user-1", "agent-2", "connection-1"),
+                () -> fixture.profile().delete("user-1", "agent-2", "connection-1"),
+                () -> fixture.profile().setEnabled("user-1", "agent-2", "connection-1", false),
+                () -> fixture.profile().update("user-1", "agent-2", "connection-1", Map.of()),
+                () -> fixture.profile().save("user-1", "agent-2", Map.of("connectionId", "connection-1")))) {
+            assertEquals(DatabaseConnectionProfileException.Kind.FORBIDDEN,
+                    assertThrows(DatabaseConnectionProfileException.class, operation::run).getKind());
+        }
 
         existing.setStatus(0);
         DatabaseConnectionProfileException disabled = assertThrows(
@@ -154,15 +173,19 @@ class DatabaseConnectionProfileServiceTest {
     }
 
     @Test
-    void deletesWithAgentScopeAtTheMapperBoundary() {
+    void mutationsKeepAgentScopeAtTheMapperBoundary() {
         Fixture fixture = fixture();
         AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
         when(fixture.mapper().deleteByIdAndAgent("connection-1", "agent-1"))
                 .thenReturn(1);
+        when(fixture.mapper().updateStatusByAgent("connection-1", "agent-1", 0)).thenReturn(1);
 
+        assertEquals(Map.of("connectionId", "connection-1", "status", 0),
+                fixture.profile().setEnabled("user-1", "agent-1", "connection-1", false));
         fixture.profile().delete("user-1", "agent-1", "connection-1");
 
+        verify(fixture.mapper()).updateStatusByAgent("connection-1", "agent-1", 0);
         verify(fixture.mapper()).deleteByIdAndAgent("connection-1", "agent-1");
     }
 
