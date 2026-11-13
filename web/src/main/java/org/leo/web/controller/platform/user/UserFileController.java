@@ -23,6 +23,7 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -80,15 +81,16 @@ public class UserFileController {
                 return ApiResponse.badRequest("path不是目录");
             }
 
+            Path base = artifacts.root(user.getUserId());
             List<HashMap<String, Object>> fileList = new ArrayList<>();
             try (var stream = Files.list(target)) {
                 stream.filter(path -> !path.getFileName().toString().startsWith(".")
                                 && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
                         .sorted(Comparator.comparing(p -> p.getFileName().toString().toLowerCase()))
-                        .forEach(path -> fileList.add(toItem(user.getUserId(), path)));
+                        .forEach(path -> fileList.add(toItem(base, path)));
             }
             HashMap<String, Object> data = new HashMap<>();
-            data.put("path", toUserRelativePath(user.getUserId(), target));
+            data.put("path", toUserRelativePath(base, target));
             data.put("count", fileList.size());
             data.put("fileList", fileList);
             return ApiResponse.success(data);
@@ -352,29 +354,29 @@ public class UserFileController {
         return safe.trim();
     }
 
-    private HashMap<String, Object> toItem(String userId, Path path) {
+    private HashMap<String, Object> toItem(Path base, Path path) {
         HashMap<String, Object> item = new HashMap<>();
         item.put("name", path.getFileName().toString());
-        item.put("path", toUserRelativePath(userId, path));
-        item.put("parentPath", toUserRelativePath(userId, getParentPath(userId, path)));
-        item.put("isDirectory", Files.isDirectory(path));
+        item.put("path", toUserRelativePath(base, path));
+        item.put("parentPath", toUserRelativePath(base, path.getParent()));
         try {
-            item.put("size", Files.isDirectory(path) ? 0L : Files.size(path));
-            item.put("lastModified", Files.getLastModifiedTime(path).toMillis());
+            BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+            item.put("isDirectory", attrs.isDirectory());
+            item.put("size", attrs.isDirectory() ? 0L : attrs.size());
+            item.put("lastModified", attrs.lastModifiedTime().toMillis());
         } catch (Exception e) {
+            item.put("isDirectory", Files.isDirectory(path));
             item.put("size", 0L);
             item.put("lastModified", 0L);
         }
         return item;
     }
 
-    private Path getParentPath(String userId, Path path) {
-        Path parent = path.getParent();
-        return parent == null ? artifacts.root(userId) : parent;
+    private String toUserRelativePath(String userId, Path path) {
+        return toUserRelativePath(artifacts.root(userId), path);
     }
 
-    private String toUserRelativePath(String userId, Path path) {
-        Path base = artifacts.root(userId);
+    private String toUserRelativePath(Path base, Path path) {
         Path p = path.toAbsolutePath().normalize();
         if (!p.startsWith(base)) {
             return "";

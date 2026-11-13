@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,9 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -66,7 +69,7 @@ class UserFileControllerTest {
     }
 
     @Test
-    void requiresExplicitOverwriteBeforeReplacingExistingDocument() throws Exception {
+    void requiresExplicitOverwriteAndListsTheReplacementMetadata() throws Exception {
         MockHttpServletRequest request = authenticatedRequest();
 
         var created = controller.createFile(request, "notes/report.md", "first", false);
@@ -77,8 +80,16 @@ class UserFileControllerTest {
         assertEquals(409, conflict.get("code"));
         assertEquals(200, overwritten.get("code"));
         Path file = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
-                .toPath().resolve("notes/report.md");
+                .toPath().toAbsolutePath().normalize().resolve("notes/report.md");
         assertEquals("second", Files.readString(file));
+        long modified = Files.getLastModifiedTime(file).toMillis();
+        try (var reads = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            var listing = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
+            var items = (List<?>) listing.get("fileList");
+            assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
+                    "isDirectory", false, "size", 6L, "lastModified", modified)), items);
+            reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class));
+        }
     }
 
     @Test
