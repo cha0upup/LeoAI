@@ -154,16 +154,7 @@ public class UploadEngineController {
     @RequestMapping(value = "/tasks", method = RequestMethod.POST)
     public HashMap<String, Object> tasks(HttpServletRequest request,
                                          @RequestBody HashMap<String, Object> params) {
-        try {
-            User user = ControllerUtil.getCurrentUser(request);
-            if (user == null) {
-                return ApiResponse.unauthorized("用户未登录");
-            }
-            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
-            Map<String, Object> data = uploadEngineService.listBySessionId(user.getUserId(), sessionId);
-            return ApiResponse.success(data);
-        } catch (Exception e) {
-            return ApiResponse.error("查询上传任务列表失败: " + e.getMessage());
-        }
+        return TransferTaskEndpoint.execute(request, params, "sessionId", "查询上传任务列表失败",
+                (user, sessionId) -> uploadEngineService.listBySessionId(user.getUserId(), sessionId));
     }
 }

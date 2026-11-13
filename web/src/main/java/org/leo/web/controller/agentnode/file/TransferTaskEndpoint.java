@@ -16,18 +16,23 @@ final class TransferTaskEndpoint {
 
     @FunctionalInterface
     interface TaskAction {
-        Map<String, Object> apply(User user, String taskId) throws Exception;
+        Map<String, Object> apply(User user, String id) throws Exception;
     }
 
     static HashMap<String, Object> execute(HttpServletRequest request, Map<String, Object> params,
                                            String errorPrefix, TaskAction action) {
+        return execute(request, params, "taskId", errorPrefix, action);
+    }
+
+    static HashMap<String, Object> execute(HttpServletRequest request, Map<String, Object> params,
+                                           String idParameter, String errorPrefix, TaskAction action) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ApiResponse.success(action.apply(user, taskId));
+            String id = ControllerUtil.getRequiredStringParam(params, idParameter);
+            return ApiResponse.success(action.apply(user, id));
         } catch (Exception e) {
             return ApiResponse.error(errorPrefix + ": " + e.getMessage());
         }

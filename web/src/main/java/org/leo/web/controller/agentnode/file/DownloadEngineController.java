@@ -123,15 +123,11 @@ public class DownloadEngineController {
     @RequestMapping(value = "/retry", method = RequestMethod.POST)
     public HashMap<String, Object> retry(HttpServletRequest request,
                                          @RequestBody HashMap<String, Object> params) {
-        return TransferTaskEndpoint.execute(request, params, "重试下载任务失败", (user, taskId) -> {
+        return TransferTaskEndpoint.mutate(request, params, "FILE_DOWNLOAD_RETRY", "重试下载任务", (user, taskId) -> {
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
             FileCapable fileNode = ControllerUtil.requireCapability(sessionId, FileCapable.class);
-            Map<String, Object> data = downloadEngineService.retry(
+            return downloadEngineService.retry(
                     fileNode, user.getUserId(), sessionId, taskId);
-            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_RETRY", "重试下载任务",
-                    taskId, params, ApiResponse.CODE_SUCCESS, "重试下载任务",
-                    "SUCCESS", null, AuditLogUtil.getClientIp(request), false);
-            return data;
         });
     }
 
@@ -149,17 +145,7 @@ public class DownloadEngineController {
      */
     @RequestMapping(value = "/tasks", method = RequestMethod.POST)
     public HashMap<String, Object> tasks(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
-        try {
-            User user = ControllerUtil.getCurrentUser(request);
-            if (user == null) {
-                return ApiResponse.unauthorized("用户未登录");
-            }
-            String userId = user.getUserId();
-            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
-            Map<String, Object> data = downloadEngineService.listBySessionId(userId, sessionId);
-            return ApiResponse.success(data);
-        } catch (Exception e) {
-            return ApiResponse.error("查询下载任务列表失败: " + e.getMessage());
-        }
+        return TransferTaskEndpoint.execute(request, params, "sessionId", "查询下载任务列表失败",
+                (user, sessionId) -> downloadEngineService.listBySessionId(user.getUserId(), sessionId));
     }
 }

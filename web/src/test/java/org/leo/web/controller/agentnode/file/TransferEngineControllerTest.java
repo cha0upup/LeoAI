@@ -98,6 +98,27 @@ class TransferEngineControllerTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
+    void taskListsUseTheSessionIdAndPreserveOwnerAndErrors(boolean upload) {
+        var request = request();
+        var params = new HashMap<String, Object>(Map.of("sessionId", "session", "taskId", "unrelated"));
+        var snapshot = Map.<String, Object>of("sessionId", "session", "tasks", java.util.List.of());
+        var failure = new IllegalStateException("fixture storage failure");
+        if (upload) when(uploadService.listBySessionId("owner", "session")).thenReturn(snapshot).thenThrow(failure);
+        else when(service.listBySessionId("owner", "session")).thenReturn(snapshot).thenThrow(failure);
+
+        assertEquals(401, tasks(upload, new MockHttpServletRequest(), params).get("code"));
+        assertEquals(500, tasks(upload, request, new HashMap<>()).get("code"));
+        verifyNoInteractions(service, uploadService);
+        var response = tasks(upload, request, params);
+        assertEquals(200, response.get("code"));
+        assertSame(snapshot, response.get("data"));
+        var failed = tasks(upload, request, params);
+        assertEquals(500, failed.get("code"));
+        assertEquals("查询" + (upload ? "上传" : "下载") + "任务列表失败: fixture storage failure", failed.get("msg"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     void pauseValidatesBeforeCallingTheServiceOrWritingAudit(boolean upload) {
         try (var audit = mockStatic(AuditLogUtil.class)) {
             assertEquals(401, pause(upload, new MockHttpServletRequest(), params()).get("code"));
@@ -142,6 +163,11 @@ class TransferEngineControllerTest {
     private HashMap<String, Object> pause(boolean upload, MockHttpServletRequest request,
                                            HashMap<String, Object> params) {
         return upload ? uploadController.pause(request, params) : controller.pause(request, params);
+    }
+
+    private HashMap<String, Object> tasks(boolean upload, MockHttpServletRequest request,
+                                           HashMap<String, Object> params) {
+        return upload ? uploadController.tasks(request, params) : controller.tasks(request, params);
     }
 
     private MockHttpServletRequest request() {
