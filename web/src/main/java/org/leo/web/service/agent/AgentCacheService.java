@@ -19,13 +19,14 @@ public class AgentCacheService {
     }
 
     public CacheCheckResponse status(String userId, String agentId) {
-        boolean available = repository.hasAgentCache(userId, agentId);
+        var cache = repository.readCache(userId, agentId);
+        boolean available = !cache.hostIds().isEmpty();
         return new CacheCheckResponse(available,
-                available ? repository.getAgentCacheSaveTime(userId, agentId) : null);
+                available ? cache.saveTime() : null);
     }
 
     public List<String> hostIds(String userId, String agentId) {
-        return repository.listCachedHostIds(userId, agentId);
+        return repository.readCache(userId, agentId).hostIds();
     }
 
     public String requireSelectedHostId(String userId, String agentId, String selectedHostId) {

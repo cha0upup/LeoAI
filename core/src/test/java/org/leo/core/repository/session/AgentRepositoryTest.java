@@ -7,12 +7,13 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-
-import java.lang.reflect.Field;
-import java.io.File;
-import java.nio.file.Path;
-import java.nio.file.Files;
 import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
+
+import java.io.File;
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.List;
 import java.util.Map;
 
@@ -43,16 +44,26 @@ class AgentRepositoryTest {
     }
 
     @Test
-    void hostCacheIsIsolatedByHostIdAndDiscoveryUsesFingerprint() {
+    void hostCacheIsIsolatedByHostIdAndDiscoveryUsesFingerprint() throws Exception {
         AgentNodeSession session = session("session-a", "agent-a", "host-a");
-        AgentHostCacheRepository repository = new AgentHostCacheRepository(new AtomicFileStore());
+        AtomicFileStore files = spy(new AtomicFileStore());
+        AgentHostCacheRepository repository = new AgentHostCacheRepository(files);
+        assertEquals(new AgentHostCacheRepository.CacheSnapshot(List.of(), null),
+                repository.readCache("user-a", "agent-a"));
 
-        repository.saveBasicInfo(session.getSessionId(), "host-a", Map.of("hostname", "alpha"));
-        repository.saveBasicInfo(session.getSessionId(), "host-b", Map.of("hostname", "beta"));
+        File first = repository.saveBasicInfo(session.getSessionId(), "host-a", Map.of("hostname", "alpha"));
+        File second = repository.saveBasicInfo(session.getSessionId(), "host-b", Map.of("hostname", "beta"));
+        Files.setLastModifiedTime(first.toPath(), FileTime.fromMillis(1000));
+        Files.setLastModifiedTime(second.toPath(), FileTime.fromMillis(2000));
 
         assertEquals("alpha", repository.loadBasicInfo("user-a", "agent-a", "host-a").get("hostname"));
-        assertEquals("beta", repository.loadBasicInfo("user-a", "agent-a", "host-b").get("hostname"));
-        assertEquals(List.of("host-a", "host-b"), repository.listCachedHostIds("user-a", "agent-a"));
+        Map<String, Object> latest = repository.loadBasicInfo("user-a", "agent-a", "host-b");
+        assertEquals("beta", latest.get("hostname"));
+        clearInvocations(files);
+        var cache = repository.readCache("user-a", "agent-a");
+        assertEquals(List.of("host-a", "host-b"), cache.hostIds());
+        assertEquals(latest.get("saveTime"), cache.saveTime());
+        verify(files, times(2)).readJsonMap(any());
 
         repository.saveHostDiscovery("user-a", "agent-a", "fingerprint-1",
                 List.of("host-a", "host-a", "host-b"));

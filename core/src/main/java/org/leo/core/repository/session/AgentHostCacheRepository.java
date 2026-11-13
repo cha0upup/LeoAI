@@ -23,6 +23,7 @@ public class AgentHostCacheRepository {
     private static final String BASIC_INFO_SUBDIR = "basic-info";
     private static final String HOST_DISCOVERY_JSON = "host-discovery.json";
     private static final String SAVE_TIME_KEY = "saveTime";
+    private static final CacheSnapshot EMPTY_CACHE = new CacheSnapshot(List.of(), null);
     private final AtomicFileStore fileStore;
 
     public AgentHostCacheRepository(AtomicFileStore fileStore) {
@@ -68,42 +69,32 @@ public class AgentHostCacheRepository {
         }
     }
 
-    public List<String> listCachedHostIds(String userId, String agentId) {
-        if (agentId == null || agentId.isBlank()) return List.of();
+    public CacheSnapshot readCache(String userId, String agentId) {
+        if (agentId == null || agentId.isBlank()) return EMPTY_CACHE;
         try {
             File hostDir = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), BASIC_INFO_SUBDIR);
             File[] files = hostDir.listFiles((dir, name) -> name.endsWith(".json"));
+            if (files == null || files.length == 0) return EMPTY_CACHE;
             LinkedHashSet<String> ids = new LinkedHashSet<>();
-            if (files != null) {
-                for (File file : files) {
-                    Map<String, Object> data = fileStore.readJsonMap(file);
-                    String id = text(data == null ? null : data.get("hostId"));
-                    if (id != null) ids.add(id);
+            long newestModified = Long.MIN_VALUE;
+            String saveTime = null;
+            for (File file : files) {
+                Map<String, Object> data = fileStore.readJsonMap(file);
+                String id = text(data == null ? null : data.get("hostId"));
+                if (id != null) ids.add(id);
+                long modified = file.lastModified();
+                if (file.length() > 0 && modified > newestModified) {
+                    newestModified = modified;
+                    saveTime = text(data == null ? null : data.get(SAVE_TIME_KEY));
                 }
             }
-            return List.copyOf(ids);
+            return new CacheSnapshot(List.copyOf(ids), saveTime);
         } catch (Exception e) {
-            return List.of();
+            return EMPTY_CACHE;
         }
     }
 
-    public boolean hasAgentCache(String userId, String agentId) {
-        return !listCachedHostIds(userId, agentId).isEmpty();
-    }
-
-    public String getAgentCacheSaveTime(String userId, String agentId) {
-        try {
-            File hostDir = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), BASIC_INFO_SUBDIR);
-            File[] files = hostDir.listFiles((dir, name) -> name.endsWith(".json") && new File(dir, name).length() > 0);
-            if (files == null || files.length == 0) return null;
-            File newest = files[0];
-            for (File file : files) if (file.lastModified() > newest.lastModified()) newest = file;
-            Map<String, Object> data = fileStore.readJsonMap(newest);
-            return text(data == null ? null : data.get(SAVE_TIME_KEY));
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    public record CacheSnapshot(List<String> hostIds, String saveTime) {}
 
     public void saveHostDiscovery(String userId, String agentId, String fingerprint, List<String> hostIds) {
         if (agentId == null || agentId.isBlank()) return;
