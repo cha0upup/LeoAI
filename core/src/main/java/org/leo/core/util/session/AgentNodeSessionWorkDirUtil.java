@@ -209,14 +209,6 @@ public final class AgentNodeSessionWorkDirUtil {
         return session != null ? session.getCreateByUser() : null;
     }
 
-    /**
-     * 从 session 解析 agentId。缓存模式和正常连接模式都支持。
-     */
-    public static String resolveAgentId(AgentNodeSession session) {
-        if (session == null) return null;
-        return session.resolveAgentId();
-    }
-
     private static boolean deleteDir(Path path) {
         try {
             Path normalized = path.toAbsolutePath().normalize();

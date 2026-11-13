@@ -17,7 +17,6 @@ import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.agentnode.AgentInitResponse;
 import org.leo.web.security.PermissionService;
@@ -79,7 +78,7 @@ public class PlatformNodeAiBridgeTools {
             if (!canAccessSession(session, caller.user())) continue;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("sessionId", session.getSessionId());
-            item.put("agentId", resolveAgentId(session));
+            item.put("agentId", session.resolveAgentId());
             item.put("cacheMode", session.isCacheMode());
             item.put("lastActiveAt", session.getLastActiveTime());
             item.put("executing", session.listAiThreads().stream().anyMatch(AiThread::isExecuting));
@@ -115,7 +114,7 @@ public class PlatformNodeAiBridgeTools {
         invocation.setStatus(AiSubagentInvocation.STATUS_PENDING);
         invocation.setCreatedAt(System.currentTimeMillis());
         conversationStore.insertSubagentInvocation(invocation);
-        emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolveAgentId(session));
+        emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
 
         AiThread childThread = null;
         try {
@@ -131,7 +130,7 @@ public class PlatformNodeAiBridgeTools {
             invocation.setChildThreadId(childThreadId);
             invocation.setStatus(AiSubagentInvocation.STATUS_RUNNING);
             conversationStore.updateSubagentInvocation(invocation);
-            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolveAgentId(session));
+            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
 
             AiExecutionPolicy policy = AiExecutionPolicy.from(caller.user());
             AiChatAuditEntry audit = AiChatAuditEntry.agent(
@@ -155,7 +154,7 @@ public class PlatformNodeAiBridgeTools {
             invocation.setCompletedAt(AiSubagentInvocation.isTerminal(status)
                     ? System.currentTimeMillis() : null);
             conversationStore.updateSubagentInvocation(invocation);
-            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolveAgentId(session));
+            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
             return result(invocation, session, summary, null);
         } catch (RuntimeException error) {
             invocation.setStatus(isCancelled(childThread, error)
@@ -163,7 +162,7 @@ public class PlatformNodeAiBridgeTools {
             invocation.setSummary(truncate(error.getMessage(), MAX_SUMMARY_CHARS));
             invocation.setCompletedAt(System.currentTimeMillis());
             conversationStore.updateSubagentInvocation(invocation);
-            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolveAgentId(session));
+            emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
             return result(invocation, session, null, error.getMessage());
         }
     }
@@ -203,7 +202,7 @@ public class PlatformNodeAiBridgeTools {
             if (session == null) throw new IllegalArgumentException("Agent 会话不存在或已过期");
             permissionService.requireSessionAccess(session, user, session.getSessionId());
             if (agentId != null && !agentId.isBlank()
-                    && !agentId.trim().equals(resolveAgentId(session))) {
+                    && !agentId.trim().equals(session.resolveAgentId())) {
                 throw new IllegalArgumentException("sessionId 与 agentId 不匹配");
             }
             return session;
@@ -212,7 +211,7 @@ public class PlatformNodeAiBridgeTools {
         String normalizedAgentId = requireText(agentId, "sessionId 和 agentId 至少提供一个");
         Agent agent = permissionService.requireAccessibleAgentChain(normalizedAgentId, user);
         AgentNodeSession existing = AgentNodeSessionContainer.getAllSessions().values().stream()
-                .filter(session -> normalizedAgentId.equals(resolveAgentId(session)))
+                .filter(session -> normalizedAgentId.equals(session.resolveAgentId()))
                 .filter(session -> canAccessSession(session, user))
                 .max(Comparator.comparingLong(AgentNodeSession::getLastActiveTime))
                 .orElse(null);
@@ -277,16 +276,12 @@ public class PlatformNodeAiBridgeTools {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("invocationId", invocation.getInvocationId());
         result.put("sessionId", session.getSessionId());
-        result.put("agentId", resolveAgentId(session));
+        result.put("agentId", session.resolveAgentId());
         result.put("childThreadId", invocation.getChildThreadId());
         result.put("status", invocation.getStatus());
         if (summary != null) result.put("summary", summary);
         if (error != null) result.put("error", error);
         return result;
-    }
-
-    private static String resolveAgentId(AgentNodeSession session) {
-        return AgentNodeSessionWorkDirUtil.resolveAgentId(session);
     }
 
     private static String childTitle(String task) {

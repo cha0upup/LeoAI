@@ -11,7 +11,6 @@ import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.core.util.session.AgentNodeSessionWorkDirUtil;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -92,7 +91,7 @@ public class NodeAiThreadService {
 
     public Map<String, Object> listThreads(AgentNodeSession session) {
         String userId = session.getCreateByUser();
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
+        String agentId = session.resolveAgentId();
         List<AiThread> memoryThreads = session.listAiThreads();
         List<Map<String, Object>> result = new ArrayList<>();
         Map<String, AiThread> memoryById = new LinkedHashMap<>();
@@ -156,7 +155,7 @@ public class NodeAiThreadService {
         thread.setParentThreadId(parentThreadId);
         sessionWarmupService.warmupAsync(session.getSessionId());
 
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
+        String agentId = session.resolveAgentId();
         if (agentId != null) {
             conversationStore.createAgentThread(
                     session.getCreateByUser(), agentId, session.getCurrentHostId(),
@@ -176,8 +175,7 @@ public class NodeAiThreadService {
         requireOwnedThread(session, threadId);
         session.removeAiThread(threadId);
         agentRegistry.evict(session, threadId);
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
-        if (agentId != null) {
+        if (session.resolveAgentId() != null) {
             conversationStore.deleteThread(threadId);
         }
     }
@@ -303,7 +301,7 @@ public class NodeAiThreadService {
 
     private boolean ownsPersistedThread(AgentNodeSession session, AiThreadRecord record) {
         if (session == null || record == null) return false;
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
+        String agentId = session.resolveAgentId();
         String userId = session.getCreateByUser();
         return AiConversationStoreService.SCOPE_AGENT.equals(record.getScope())
                 && agentId != null && agentId.equals(record.getAgentId())
@@ -326,7 +324,7 @@ public class NodeAiThreadService {
             AgentNodeSession session, AiThread thread,
             AiThreadRecord persisted, AiModelConfig config) {
         if (session == null || thread == null || persisted != null) return null;
-        String agentId = AgentNodeSessionWorkDirUtil.resolveAgentId(session);
+        String agentId = session.resolveAgentId();
         if (agentId == null) return null;
         requireHostId(session);
         try {
@@ -391,7 +389,7 @@ public class NodeAiThreadService {
     private void updateThreadConfig(
             AgentNodeSession session, AiThread thread, AiModelConfig config) {
         try {
-            if (AgentNodeSessionWorkDirUtil.resolveAgentId(session) != null) {
+            if (session.resolveAgentId() != null) {
                 conversationStore.updateConfig(thread.getThreadId(), config);
             }
         } catch (Exception error) {
