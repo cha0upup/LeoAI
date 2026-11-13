@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Agent;
 import org.leo.core.repository.session.AgentHostCacheRepository;
 import org.leo.core.agent.AbstractAgentNode;
-import org.leo.core.session.AgentNodeSession;
 import org.leo.service.agentnode.AgentNodeFactory;
 
 import java.util.ArrayDeque;
@@ -26,26 +25,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AgentHostDiscoveryServiceTest {
-
-    @Test
-    void doesNotProbeDuringSessionCreationFlow() {
-        ProbeNode node = new ProbeNode(List.of(Map.of("code", 200)));
-        AgentNodeSession session = session("session-1", node);
-        session.bindHostId("host-a");
-
-        assertEquals("host-a", session.getCurrentHostId());
-        assertEquals(0, node.probes);
-    }
-
-    @Test
-    void cacheSessionAlsoReturnsSnapshotWithoutProbing() {
-        ProbeNode node = new ProbeNode(List.of(Map.of("code", 500, "msg", "offline")));
-        AgentNodeSession session = session("session-2", node);
-        session.bindHostId("host-a");
-
-        session.setCacheMode(true);
-        assertEquals(0, node.probes);
-    }
 
     @Test
     void failedProbeDoesNotDiscardHostIdsFromOtherBackends() throws Exception {
@@ -114,39 +93,5 @@ class AgentHostDiscoveryServiceTest {
         when(node.testConnection()).thenReturn(response);
         doNothing().when(node).close();
         return node;
-    }
-
-    private static AgentNodeSession session(String sessionId, ProbeNode node) {
-        AgentNodeSession session = new AgentNodeSession();
-        session.setSessionId(sessionId);
-        session.setAgentNode(node);
-        return session;
-    }
-
-    private static final class ProbeNode extends AbstractAgentNode {
-        private final ArrayDeque<Map<String, Object>> responses;
-        private int probes;
-
-        private ProbeNode(List<Map<String, Object>> responses) {
-            this.responses = new ArrayDeque<>(responses);
-        }
-
-        @Override
-        public Map<String, Object> testConnection() {
-            probes++;
-            return responses.isEmpty() ? Map.of("code", 500) : responses.removeFirst();
-        }
-
-        @Override
-        public Set<String> getLoadedComponents() { return Set.of(); }
-
-        @Override
-        public Map<String, Object> invokeComponent(String componentId, Map<String, Object> params) {
-            return Map.of();
-        }
-
-        @Override
-        public void unloadComponent(String componentId) { }
-
     }
 }

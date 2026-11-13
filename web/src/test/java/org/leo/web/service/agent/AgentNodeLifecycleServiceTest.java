@@ -30,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AgentNodeLifecycleServiceTest {
@@ -65,18 +68,20 @@ class AgentNodeLifecycleServiceTest {
     }
 
     @Test
-    void liveConnectionsDoNotCreateAiThreads() throws Exception {
+    void liveConnectionsUseOnePingAndCreateNoAiThreads() throws Exception {
         AbstractAgentNode node = mock(AbstractAgentNode.class);
         when(nodeFactory.createLiveNode(agent, user)).thenReturn(node);
         when(node.getAgent()).thenReturn(agent);
         when(node.testConnection()).thenReturn(Map.of("code", 200, "hostId", "host-1", "components", List.of()));
 
         AgentInitResponse first = lifecycleService.initLiveSession(agent, user, null, null);
+        verify(node).testConnection();
         AgentInitResponse second = lifecycleService.initLiveSession(agent, user, null, null);
 
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSame(node, assertSessionWithoutAiThreads(first, false).getAgentNode());
         assertSame(node, assertSessionWithoutAiThreads(second, false).getAgentNode());
+        verify(node, times(2)).testConnection();
     }
 
     @Test
@@ -95,7 +100,7 @@ class AgentNodeLifecycleServiceTest {
     }
 
     @Test
-    void cacheConnectionsDoNotCreateAiThreads() {
+    void cacheConnectionsAvoidLiveNodesAndAiThreads() {
         when(cacheService.requireSelectedHostId("user-1", "agent-1", null))
                 .thenReturn("host-1");
 
@@ -105,6 +110,7 @@ class AgentNodeLifecycleServiceTest {
         assertNotEquals(first.sessionId(), second.sessionId());
         assertSessionWithoutAiThreads(first, true);
         assertSessionWithoutAiThreads(second, true);
+        verifyNoInteractions(nodeFactory);
     }
 
     private AgentNodeSession assertSessionWithoutAiThreads(AgentInitResponse response, boolean cacheMode) {
@@ -113,6 +119,7 @@ class AgentNodeLifecycleServiceTest {
         assertEquals(cacheMode, response.cacheMode());
         assertEquals("user-1", session.getCreateByUser());
         assertEquals("agent-1", session.resolveAgentId());
+        assertEquals("host-1", session.getCurrentHostId());
         assertTrue(session.listAiThreads().isEmpty());
         assertNull(session.getActiveThreadId());
         return session;
