@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.service.sql.DatabaseConnectionProfileException;
 import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
@@ -56,11 +57,18 @@ class GlobalExceptionHandlerTest {
                 SshConnectionException.Kind.FORBIDDEN, 403, SshConnectionException.Kind.SESSION_EXPIRED, 401,
                 SshConnectionException.Kind.UNSUPPORTED_CAPABILITY, 400, SshConnectionException.Kind.CAPACITY, 429,
                 SshConnectionException.Kind.UNAVAILABLE, 503, SshConnectionException.Kind.PERSISTENCE, 500);
-        return Stream.concat(
+        var profiles = Map.of(DatabaseConnectionProfileException.Kind.VALIDATION, 400,
+                DatabaseConnectionProfileException.Kind.NOT_FOUND, 404,
+                DatabaseConnectionProfileException.Kind.FORBIDDEN, 403,
+                DatabaseConnectionProfileException.Kind.PERSISTENCE, 500);
+        return Stream.of(
                 useCases.entrySet().stream().map(entry -> Arguments.of(
                         new UseCaseException(entry.getKey(), "用例失败"), entry.getValue())),
                 ssh.entrySet().stream().map(entry -> Arguments.of(
-                        new SshConnectionException(entry.getKey(), "SSH 业务失败"), entry.getValue())));
+                        new SshConnectionException(entry.getKey(), "SSH 业务失败"), entry.getValue())),
+                profiles.entrySet().stream().map(entry -> Arguments.of(
+                        new DatabaseConnectionProfileException(entry.getKey(), "配置操作失败"), entry.getValue())))
+                .flatMap(stream -> stream);
     }
 
     @Test

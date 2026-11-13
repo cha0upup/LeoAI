@@ -8,7 +8,7 @@
 | --- | --- |
 | `controller`、`dto`、`security`、`config` | HTTP 入口、请求响应、鉴权和容器装配 |
 | `adapter.ai` | SSE 订阅与发送、附件输入和 AI 工具入口 |
-| `adapter.ssh`、`adapter.sql`、`adapter.skill` | SSH 连接实现、数据库接口错误映射、上传适配 |
+| `adapter.ssh`、`adapter.skill` | SSH 连接实现、上传适配 |
 | `application.ai` | Turn 排队与执行、租约、线程生命周期、timeline 事件和节点 AI 委派 |
 | `application.agent`、`application.artifact` | 节点生命周期、会话维护、报告及用户制品用例 |
 | `infrastructure.concurrent`、`infrastructure.discovery` | 有界执行器与 JDBC 探测结果存储 |
@@ -26,6 +26,8 @@ Controller 负责 HTTP Session 的读取与绑定；线程用例只接收会话�
 应用用例只抛出 `UseCaseException` 的输入无效、资源不存在、操作失败三类语义，不携带 HTTP 状态。现有全局处理器直接映射为 400、404、500，并沿用原有错误响应与日志规则；HTTP 专用状态和明细继续由适配层的 `ApiException` 表达，不逐层包装异常。
 
 SSH 的类型化业务失败同样由全局处理器直接映射，DTO 与 Controller 不再重复转换异常。权限、认证、容量、版本冲突等状态沿用原值；主机指纹确认的 HTTP 专用明细仍使用 `ApiException`，未知连接错误继续在入口脱敏。
+
+数据库连接配置 Controller 直接调用现有 `DatabaseConnectionProfileService`，保留登录用户、会话权限和 Agent 归属校验，不再经过转发服务。业务服务的类型化失败由全局处理器映射为原有状态与消息，业务侧鉴权继续保留。
 
 应用包已解除对 HTTP DTO、HTTP 异常和具体适配器的引用。这仍是包级边界整理，是否拆分独立模块继续以实际需求为准。
 

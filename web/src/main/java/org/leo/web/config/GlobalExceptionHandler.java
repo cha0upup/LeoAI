@@ -3,6 +3,7 @@ package org.leo.web.config;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.ApiResponse;
+import org.leo.service.sql.DatabaseConnectionProfileException;
 import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
@@ -60,6 +61,17 @@ public class GlobalExceptionHandler {
             case SESSION_EXPIRED -> HttpStatus.UNAUTHORIZED;
             case CAPACITY -> HttpStatus.TOO_MANY_REQUESTS;
             case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
+        return businessError(error, status, status.value(), Map.of());
+    }
+
+    @ExceptionHandler(DatabaseConnectionProfileException.class)
+    public ResponseEntity<HashMap<String, Object>> handleDatabaseProfileException(DatabaseConnectionProfileException error) {
+        HttpStatus status = switch (error.getKind()) {
+            case VALIDATION -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
         return businessError(error, status, status.value(), Map.of());

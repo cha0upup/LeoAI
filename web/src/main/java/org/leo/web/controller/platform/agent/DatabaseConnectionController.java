@@ -1,10 +1,9 @@
 package org.leo.web.controller.platform.agent;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
-import org.leo.web.adapter.sql.DatabaseConnectionManagementService;
+import org.leo.service.sql.DatabaseConnectionProfileService;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,60 +19,61 @@ import java.util.Map;
 @RequestMapping("/platform/agent-manage")
 public final class DatabaseConnectionController {
 
-    private final DatabaseConnectionManagementService managementService;
+    private final DatabaseConnectionProfileService profiles;
 
-    public DatabaseConnectionController(DatabaseConnectionManagementService managementService) {
-        this.managementService = managementService;
+    public DatabaseConnectionController(DatabaseConnectionProfileService profiles) {
+        this.profiles = profiles;
     }
 
     @PostMapping("/database-connections")
     public HashMap<String, Object> save(HttpServletRequest request,
                                         @RequestBody HashMap<String, Object> params) {
-        User user = requireUser(request);
-        return ApiResponse.success(managementService.save(user, requireAgentId(params), params));
+        String userId = requireUserId(request);
+        return ApiResponse.success(profiles.save(userId, requireAgentId(params), params));
     }
 
     @PostMapping("/database-connections/list")
     public HashMap<String, Object> list(HttpServletRequest request,
                                         @RequestBody HashMap<String, Object> params) {
-        return ApiResponse.success(managementService.listByAgent(
-                requireAgentId(params), requireUser(request)));
+        String userId = requireUserId(request);
+        return ApiResponse.success(profiles.listByAgent(userId, requireAgentId(params)));
     }
 
     @PostMapping("/database-connections/delete")
     public HashMap<String, Object> delete(HttpServletRequest request,
                                           @RequestBody HashMap<String, Object> params) {
-        managementService.delete(connectionId(params), requireAgentId(params), requireUser(request));
+        String userId = requireUserId(request);
+        profiles.delete(userId, requireAgentId(params), connectionId(params));
         return ApiResponse.success();
     }
 
     @PostMapping("/database-connections/status")
     public HashMap<String, Object> updateStatus(HttpServletRequest request,
                                                 @RequestBody HashMap<String, Object> params) {
+        String userId = requireUserId(request);
         Object enabled = params == null ? null : params.get("enabled");
         if (!(enabled instanceof Boolean value)) {
             throw ApiException.badRequest("enabled必须是布尔值");
         }
-        Map<String, Object> result = managementService.setEnabled(
-                connectionId(params), requireAgentId(params), value, requireUser(request));
+        Map<String, Object> result = profiles.setEnabled(
+                userId, requireAgentId(params), connectionId(params), value);
         return ApiResponse.success(result);
     }
 
-    private User requireUser(HttpServletRequest request) {
+    private String requireUserId(HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         if (user == null || user.getUserId() == null || user.getUserId().isBlank()) {
             throw ApiException.unauthorized("用户未登录");
         }
-        return user;
+        return user.getUserId();
     }
 
     private String requireAgentId(Map<String, Object> params) {
-        AbstractAgentNode node = ControllerUtil.getAbstractAgentNode(params);
-        if (node.getAgent() == null || node.getAgent().getAgentId() == null
-                || node.getAgent().getAgentId().isBlank()) {
+        var agent = ControllerUtil.getAbstractAgentNode(params).getAgent();
+        if (agent == null || agent.getAgentId() == null || agent.getAgentId().isBlank()) {
             throw ApiException.badRequest("无法从会话中获取Agent ID");
         }
-        return node.getAgent().getAgentId();
+        return agent.getAgentId();
     }
 
     private String connectionId(Map<String, Object> params) {
