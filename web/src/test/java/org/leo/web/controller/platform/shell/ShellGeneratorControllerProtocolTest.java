@@ -31,8 +31,8 @@ class ShellGeneratorControllerProtocolTest {
     void setUp() {
         controller = new ShellGeneratorController(disguiseManager, resultStore, scriptGeneratorService);
         when(scriptGeneratorService.getMetadata()).thenReturn(Map.of());
-        when(disguiseManager.getDisguiseById("req")).thenReturn(requestDisguise());
-        when(disguiseManager.getDisguiseById("resp")).thenReturn(responseDisguise());
+        when(disguiseManager.getDisguiseById("req")).thenReturn(disguise());
+        when(disguiseManager.getDisguiseById("resp")).thenReturn(disguise());
     }
 
     @ParameterizedTest
@@ -212,21 +212,12 @@ class ShellGeneratorControllerProtocolTest {
         return params;
     }
 
-    private Disguise requestDisguise() {
+    private Disguise disguise() {
         Disguise disguise = new Disguise();
         disguise.setTrafficDecodeBody(
                 "public byte[] decodeTraffic(byte[] data){return data;}");
         disguise.setTrafficEncodeBody(
                 "public byte[] encodeTraffic(byte[] data){return data;}");
-        return disguise;
-    }
-
-    private Disguise responseDisguise() {
-        Disguise disguise = new Disguise();
-        disguise.setTrafficEncodeBody(
-                "public byte[] encodeTraffic(byte[] data){return data;}");
-        disguise.setTrafficDecodeBody(
-                "public byte[] decodeTraffic(byte[] data){return data;}");
         return disguise;
     }
 

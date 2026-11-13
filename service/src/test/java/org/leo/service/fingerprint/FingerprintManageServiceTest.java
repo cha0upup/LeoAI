@@ -1,5 +1,7 @@
 package org.leo.service.fingerprint;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -10,6 +12,7 @@ import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.importing.ImportConflictPolicy;
+import org.mockito.MockedStatic;
 import org.springframework.core.io.ByteArrayResource;
 
 import java.io.ByteArrayInputStream;
@@ -33,6 +36,7 @@ import static org.mockito.Mockito.*;
 
 class FingerprintManageServiceTest {
     @TempDir Path directory;
+    private MockedStatic<LeoConfig> vfsConfig;
     private final FingerprintManageService service = new FingerprintManageService();
     private final AtomicFileStore store = new AtomicFileStore();
     private final Map<String, Object> rule = Map.of("requests", List.of(Map.of("uri", "/custom")),
@@ -41,196 +45,171 @@ class FingerprintManageServiceTest {
     private final Map<String, Object> cleanInfo = Map.of("version", "any", "author", "tester",
             "description", "Detection method", "remark", "Rule note");
 
+    @BeforeEach
+    void configureVfs() {
+        vfsConfig = mockStatic(LeoConfig.class);
+        vfsConfig.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
+    }
+
+    @AfterEach
+    void releaseVfs() {
+        vfsConfig.close();
+    }
+
     @Test
     void savePersistsCurrentRuleMetadata() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            HashMap<String, Object> definition = sourceDefinition();
-            service.saveFingerprint(definition, user());
-            assertClean(stored());
-            assertTrue(((Map<?, ?>) definition.get("info")).containsKey("vulnerabilities"));
-        }
+        HashMap<String, Object> definition = sourceDefinition();
+        service.saveFingerprint(definition, user());
+        assertClean(stored());
+        assertTrue(((Map<?, ?>) definition.get("info")).containsKey("vulnerabilities"));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"rules.json", "RULES.JSON"})
     void importsCurrentJsonWithoutUnrelatedMetadataAndClosesInput(String filename) throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            byte[] content = JsonUtil.toJsonString(sourceDefinition()).getBytes(StandardCharsets.UTF_8);
-            var input = spy(new ByteArrayInputStream(content));
-            var results = service.importFingerprints(filename, () -> input, ImportConflictPolicy.SKIP, user());
-            assertEquals("imported", results.get(0).status());
-            assertClean(stored());
-            verify(input).close();
-        }
+        byte[] content = JsonUtil.toJsonString(sourceDefinition()).getBytes(StandardCharsets.UTF_8);
+        var input = spy(new ByteArrayInputStream(content));
+        var results = service.importFingerprints(filename, () -> input, ImportConflictPolicy.SKIP, user());
+        assertEquals("imported", results.get(0).status());
+        assertClean(stored());
+        verify(input).close();
     }
 
     @Test
     void currentReadsAndBothExportsOnlyExposeRuleMetadata() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), sourceDefinition());
-            assertClean(service.getFingerprintById("demo_any"));
-            assertEquals(cleanInfo, service.listFingerprints().get(0).get("info"));
-            assertClean(parse(service.exportFingerprint("demo_any")));
-            try (var zip = new ZipInputStream(new ByteArrayInputStream(service.exportFingerprintsZip(List.of("demo_any"))))) {
-                assertEquals("demo_any.json", zip.getNextEntry().getName());
-                assertClean(parse(zip.readAllBytes()));
-                assertNull(zip.getNextEntry());
-            }
+        store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), sourceDefinition());
+        assertClean(service.getFingerprintById("demo_any"));
+        assertEquals(cleanInfo, service.listFingerprints().get(0).get("info"));
+        assertClean(parse(service.exportFingerprint("demo_any")));
+        try (var zip = new ZipInputStream(new ByteArrayInputStream(service.exportFingerprintsZip(List.of("demo_any"))))) {
+            assertEquals("demo_any.json", zip.getNextEntry().getName());
+            assertClean(parse(zip.readAllBytes()));
+            assertNull(zip.getNextEntry());
         }
     }
 
     @Test
     void rejectsOldTopLevelVersionInsteadOfMigratingIt() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            HashMap<String, Object> old = sourceDefinition();
-            old.remove("info");
-            old.put("version", "any");
-            assertEquals("缺少必需参数: info.version",
-                    assertThrows(IllegalArgumentException.class, () -> service.saveFingerprint(old, user())).getMessage());
+        HashMap<String, Object> old = sourceDefinition();
+        old.remove("info");
+        old.put("version", "any");
+        assertEquals("缺少必需参数: info.version",
+                assertThrows(IllegalArgumentException.class, () -> service.saveFingerprint(old, user())).getMessage());
 
-            byte[] content = JsonUtil.toJsonString(old).getBytes(StandardCharsets.UTF_8);
-            var results = service.importFingerprints("rules.json", new ByteArrayResource(content), ImportConflictPolicy.SKIP, user());
-            assertEquals("failed", results.get(0).status());
-        }
+        byte[] content = JsonUtil.toJsonString(old).getBytes(StandardCharsets.UTF_8);
+        var results = service.importFingerprints("rules.json", new ByteArrayResource(content), ImportConflictPolicy.SKIP, user());
+        assertEquals("failed", results.get(0).status());
     }
 
     @Test
     void rejectsStoredRecordsWithoutCurrentIdentity() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            HashMap<String, Object> old = sourceDefinition();
-            old.remove("fingerprintId");
-            store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), old);
-            assertThrows(IllegalArgumentException.class, () -> service.getFingerprintById("demo_any"));
-            assertTrue(service.listFingerprints().isEmpty());
-        }
+        HashMap<String, Object> old = sourceDefinition();
+        old.remove("fingerprintId");
+        store.writeJson(directory.resolve("fingerprint/demo_any.json").toFile(), old);
+        assertThrows(IllegalArgumentException.class, () -> service.getFingerprintById("demo_any"));
+        assertTrue(service.listFingerprints().isEmpty());
     }
 
     @Test
     void failedSaveAndOverwriteImportLeaveThePreviousDefinitionIntact() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            service.saveFingerprint(sourceDefinition(), user());
-            Path path = directory.resolve("fingerprint/demo_any.json");
-            byte[] previous = Files.readAllBytes(path);
-            AtomicFileStore files = spy(new AtomicFileStore());
-            doThrow(new IOException("fixture persistence failure")).when(files).writeJson(any(), anyMap());
-            FingerprintManageService failing = new FingerprintManageService(files);
-            HashMap<String, Object> replacement = sourceDefinition();
-            replacement.put("tags", List.of("replacement"));
-            assertThrows(IOException.class, () -> failing.saveFingerprint(replacement, user()));
-            var results = failing.importFingerprints("rules.json", upload(replacement), ImportConflictPolicy.OVERWRITE, user());
-            assertEquals("failed", results.get(0).status());
-            assertArrayEquals(previous, Files.readAllBytes(path));
-            assertEquals(List.of("web"), service.getFingerprintById("demo_any").get("tags"));
-        }
+        service.saveFingerprint(sourceDefinition(), user());
+        Path path = directory.resolve("fingerprint/demo_any.json");
+        byte[] previous = Files.readAllBytes(path);
+        AtomicFileStore files = spy(new AtomicFileStore());
+        doThrow(new IOException("fixture persistence failure")).when(files).writeJson(any(), anyMap());
+        FingerprintManageService failing = new FingerprintManageService(files);
+        HashMap<String, Object> replacement = sourceDefinition();
+        replacement.put("tags", List.of("replacement"));
+        assertThrows(IOException.class, () -> failing.saveFingerprint(replacement, user()));
+        var results = failing.importFingerprints("rules.json", upload(replacement), ImportConflictPolicy.OVERWRITE, user());
+        assertEquals("failed", results.get(0).status());
+        assertArrayEquals(previous, Files.readAllBytes(path));
+        assertEquals(List.of("web"), service.getFingerprintById("demo_any").get("tags"));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"", "null", "[]", "{broken"})
     void corruptStoredJsonIsNotReportedAsMissingOrAnEmptySuccessfulList(String content) throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            Path path = directory.resolve("fingerprint/demo_any.json");
-            Files.createDirectories(path.getParent());
-            Files.writeString(path, content);
-            assertEquals(FileStoreException.Reason.INVALID_CONTENT,
-                    assertThrows(FileStoreException.class, () -> service.getFingerprintById("demo_any")).getReason());
-            assertThrows(FileStoreException.class, service::listFingerprints);
-            assertEquals(content, Files.readString(path));
-        }
+        Path path = directory.resolve("fingerprint/demo_any.json");
+        Files.createDirectories(path.getParent());
+        Files.writeString(path, content);
+        assertEquals(FileStoreException.Reason.INVALID_CONTENT,
+                assertThrows(FileStoreException.class, () -> service.getFingerprintById("demo_any")).getReason());
+        assertThrows(FileStoreException.class, service::listFingerprints);
+        assertEquals(content, Files.readString(path));
     }
 
     @Test
     void missingFilesAndUnreadablePathsHaveDifferentOutcomes() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            assertThrows(FingerprintManageService.FingerprintNotFoundException.class,
-                    () -> service.getFingerprintById("missing"));
-            Path path = directory.resolve("fingerprint/demo_any.json");
-            Files.createDirectories(path);
-            assertEquals(FileStoreException.Reason.READ_FAILED,
-                    assertThrows(FileStoreException.class, () -> service.getFingerprintById("demo_any")).getReason());
-        }
+        assertThrows(FingerprintManageService.FingerprintNotFoundException.class,
+                () -> service.getFingerprintById("missing"));
+        Path path = directory.resolve("fingerprint/demo_any.json");
+        Files.createDirectories(path);
+        assertEquals(FileStoreException.Reason.READ_FAILED,
+                assertThrows(FileStoreException.class, () -> service.getFingerprintById("demo_any")).getReason());
     }
 
     @Test
     void skipAndRenameImportsProtectEvenACorruptExistingFile() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            Path original = directory.resolve("fingerprint/demo_any.json");
-            Files.createDirectories(original.getParent());
-            Files.writeString(original, "{broken");
-            for (String policy : new String[]{null, "unknown", " rename "}) {
-                var skipped = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse(policy), user());
-                assertEquals("skipped", skipped.get(0).status());
-            }
-            List<String> ids = new ArrayList<>();
-            for (int n = 0; n < 2; n++) {
-                var renamed = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse("rename"), user());
-                assertEquals("renamed", renamed.get(0).status());
-                ids.add(renamed.get(0).fingerprintId());
-                assertNotNull(service.getFingerprintById(ids.get(n)));
-            }
-            assertNotEquals(ids.get(0), ids.get(1));
-            assertEquals("{broken", Files.readString(original));
-            assertEquals("overwritten", service.importFingerprints("rules.json", upload(sourceDefinition()),
-                    ImportConflictPolicy.parse("OVERWRITE"), user()).get(0).status());
-            assertClean(service.getFingerprintById("demo_any"));
+        Path original = directory.resolve("fingerprint/demo_any.json");
+        Files.createDirectories(original.getParent());
+        Files.writeString(original, "{broken");
+        for (String policy : new String[]{null, "unknown", " rename "}) {
+            var skipped = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse(policy), user());
+            assertEquals("skipped", skipped.get(0).status());
         }
+        List<String> ids = new ArrayList<>();
+        for (int n = 0; n < 2; n++) {
+            var renamed = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse("rename"), user());
+            assertEquals("renamed", renamed.get(0).status());
+            ids.add(renamed.get(0).fingerprintId());
+            assertNotNull(service.getFingerprintById(ids.get(n)));
+        }
+        assertNotEquals(ids.get(0), ids.get(1));
+        assertEquals("{broken", Files.readString(original));
+        assertEquals("overwritten", service.importFingerprints("rules.json", upload(sourceDefinition()),
+                ImportConflictPolicy.parse("OVERWRITE"), user()).get(0).status());
+        assertClean(service.getFingerprintById("demo_any"));
     }
 
     @Test
     void zipImportsReportBadEntriesInsteadOfSilentlyOmittingThem() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            var bytes = new java.io.ByteArrayOutputStream();
-            try (var zip = new java.util.zip.ZipOutputStream(bytes)) {
-                for (String name : List.of("bad.json", "good.json")) {
-                    zip.putNextEntry(new java.util.zip.ZipEntry(name));
-                    zip.write((name.equals("bad.json") ? "{broken" : JsonUtil.toJsonString(sourceDefinition()))
-                            .getBytes(StandardCharsets.UTF_8));
-                    zip.closeEntry();
-                }
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(bytes)) {
+            for (String name : List.of("bad.json", "good.json")) {
+                zip.putNextEntry(new java.util.zip.ZipEntry(name));
+                zip.write((name.equals("bad.json") ? "{broken" : JsonUtil.toJsonString(sourceDefinition()))
+                        .getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
             }
-            var results = service.importFingerprints("rules.zip", new ByteArrayResource(bytes.toByteArray()),
-                    ImportConflictPolicy.SKIP, user());
-            assertEquals(2, results.size());
-            assertEquals(1, results.stream().filter(result -> "failed".equals(result.status()) && "bad.json".equals(result.name())).count());
-            assertEquals(1, results.stream().filter(result -> "imported".equals(result.status())).count());
-            assertClean(stored());
         }
+        var results = service.importFingerprints("rules.zip", new ByteArrayResource(bytes.toByteArray()),
+                ImportConflictPolicy.SKIP, user());
+        assertEquals(2, results.size());
+        assertEquals(1, results.stream().filter(result -> "failed".equals(result.status()) && "bad.json".equals(result.name())).count());
+        assertEquals(1, results.stream().filter(result -> "imported".equals(result.status())).count());
+        assertClean(stored());
     }
 
     @Test
     void invalidJsonArrayEntriesAreReportedBeforeAnyRuleIsPersisted() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
-                    upload(List.of(sourceDefinition(), "bad entry")), ImportConflictPolicy.SKIP, user()));
-            assertFalse(Files.exists(directory.resolve("fingerprint/demo_any.json")));
-        }
+        assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
+                upload(List.of(sourceDefinition(), "bad entry")), ImportConflictPolicy.SKIP, user()));
+        assertFalse(Files.exists(directory.resolve("fingerprint/demo_any.json")));
     }
 
     @Test
     void invalidUtf8UploadsAreRejectedInsteadOfSilentlyChangingTheirContents() throws Exception {
-        try (var config = mockStatic(LeoConfig.class)) {
-            config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            byte[] prefix = "{\"name\":\"".getBytes(StandardCharsets.UTF_8);
-            byte[] invalid = java.util.Arrays.copyOf(prefix, prefix.length + 4);
-            invalid[prefix.length] = (byte) 0xC3;
-            invalid[prefix.length + 1] = (byte) 0x28;
-            invalid[prefix.length + 2] = '"';
-            invalid[prefix.length + 3] = '}';
-            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
-                    new ByteArrayResource(invalid),
-                    ImportConflictPolicy.SKIP, user()));
-            assertFalse(Files.exists(directory.resolve("fingerprint")));
-        }
+        byte[] prefix = "{\"name\":\"".getBytes(StandardCharsets.UTF_8);
+        byte[] invalid = java.util.Arrays.copyOf(prefix, prefix.length + 4);
+        invalid[prefix.length] = (byte) 0xC3;
+        invalid[prefix.length + 1] = (byte) 0x28;
+        invalid[prefix.length + 2] = '"';
+        invalid[prefix.length + 3] = '}';
+        assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
+                new ByteArrayResource(invalid),
+                ImportConflictPolicy.SKIP, user()));
+        assertFalse(Files.exists(directory.resolve("fingerprint")));
     }
 
     @Test
@@ -243,6 +222,7 @@ class FingerprintManageServiceTest {
             for (int n = 0; n < 12; n++) {
                 int index = n;
                 results.add(executor.submit(() -> {
+                    // Mockito 静态桩按线程隔离，工作线程需要独立配置。
                     try (var config = mockStatic(LeoConfig.class)) {
                         config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
                         HashMap<String, Object> definition = sourceDefinition();

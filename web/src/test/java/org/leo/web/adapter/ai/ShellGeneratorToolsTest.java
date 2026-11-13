@@ -4,6 +4,8 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
@@ -38,9 +40,7 @@ class ShellGeneratorToolsTest {
         ScriptGeneratorService generators = new ScriptGeneratorService(List.of(
                 phpProvider(captured)));
         ShellResultStore resultStore = new ShellResultStore();
-        DisguiseService disguiseService = mock(DisguiseService.class);
-        when(disguiseService.getDisguiseById("req")).thenReturn(disguise("req"));
-        when(disguiseService.getDisguiseById("resp")).thenReturn(disguise("resp"));
+        DisguiseService disguiseService = mockDisguiseService();
         ShellGeneratorTools tools = tools(disguiseService, resultStore, generators);
 
         Map<String, Object> metadata = tools.getShellGeneratorMeta();
@@ -76,20 +76,16 @@ class ShellGeneratorToolsTest {
         assertEquals("seed-a", request.getOptions().get("seed"));
     }
 
-    @Test
-    void rejectsUnsupportedPhpProtocolAndIncompleteHeaderGuard() {
+    @ParameterizedTest
+    @CsvSource(value = {"httpchunk,null,仅支持 http", "http,X-Test,必须同时设置"}, nullValues = "null")
+    void rejectsInvalidPhpConnectionSettings(String protocol, String headerName, String expectedMessage) {
         ShellGeneratorTools tools = tools(mockDisguiseService(), new ShellResultStore(),
                 new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))));
 
-        AiToolException protocolError = assertThrows(AiToolException.class,
+        AiToolException error = assertThrows(AiToolException.class,
                 () -> tools.generatePhpWebShell(
-                        "req", "resp", "httpchunk", "compact", null, null, 200, "php-test-key", null));
-        assertTrue(protocolError.getMessage().contains("仅支持 http"));
-
-        AiToolException headerError = assertThrows(AiToolException.class,
-                () -> tools.generatePhpWebShell(
-                        "req", "resp", "http", "compact", "X-Test", null, 200, "php-test-key", null));
-        assertTrue(headerError.getMessage().contains("必须同时设置"));
+                        "req", "resp", protocol, "compact", headerName, null, 200, "php-test-key", null));
+        assertTrue(error.getMessage().contains(expectedMessage));
     }
 
     @Test
