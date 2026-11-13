@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
+import org.leo.core.manager.DisguiseManager;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
@@ -18,6 +19,7 @@ import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.service.shell.WebShellWrapperTemplateStore;
+import org.leo.web.controller.platform.shell.ShellGeneratorController;
 
 import java.util.List;
 import java.util.Map;
@@ -35,26 +37,33 @@ import static org.mockito.Mockito.when;
 class ShellGeneratorToolsTest {
 
     @Test
-    void exposesRuntimeMetadataAndGeneratesCachedPhpResult() throws Exception {
+    void httpAndAiExposeTheSameSharedMetadata() {
+        ScriptGeneratorService generators = new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>())));
+        ShellResultStore results = new ShellResultStore();
+        Map<String, Object> ai = tools(mockDisguiseService(), results, generators).getShellGeneratorMeta();
+        ShellGeneratorController controller = new ShellGeneratorController(
+                mock(DisguiseManager.class), results, generators);
+        Map<?, ?> http = (Map<?, ?>) controller.getSupportedTypes().get("data");
+
+        for (String key : List.of("serverInjectorTypes", "serverProtocolInjectorTypes", "injectorCapabilities",
+                "packerTypes", "packerObfuscationSteps", "packerCompatibility", "packerAvailability",
+                "targetJavaVersions", "servletNamespaces", "transportProtocols", "runtimeGenerators")) {
+            assertTrue(ai.containsKey(key), key);
+            assertTrue(http.containsKey(key), key);
+            assertEquals(http.get(key), ai.get(key), key);
+        }
+        assertTrue(((Map<?, ?>) ai.get("runtimeGenerators")).containsKey("php"));
+        assertEquals(controller.getObfuscationSteps().get("data"), ai.get("obfuscationSteps"));
+    }
+
+    @Test
+    void generatesCachedPhpResult() throws Exception {
         AtomicReference<GenerationRequest> captured = new AtomicReference<>();
         ScriptGeneratorService generators = new ScriptGeneratorService(List.of(
                 phpProvider(captured)));
         ShellResultStore resultStore = new ShellResultStore();
         DisguiseService disguiseService = mockDisguiseService();
         ShellGeneratorTools tools = tools(disguiseService, resultStore, generators);
-
-        Map<String, Object> metadata = tools.getShellGeneratorMeta();
-        assertTrue(((Map<?, ?>) metadata.get("runtimeGenerators")).containsKey("php"));
-        assertTrue(((List<?>) metadata.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
-                        && "ValveInjector".equals(item.get("injectorName"))
-                        && Boolean.TRUE.equals(item.get("requiresServerVersion"))));
-        assertTrue(((List<?>) metadata.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
-                        && "AgentContextValve".equals(item.get("injectorName"))
-                        && List.of("AgentJarBase64").equals(item.get("supportedPackers"))));
 
         Map<String, Object> result = tools.generatePhpWebShell(
                 "req", "resp", "http", "portable", "X-Test", "secret", 202, "php-test-key", "seed-a");

@@ -5,16 +5,12 @@ import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.manager.DisguiseManager;
 import org.leo.core.runtime.AgentRuntime;
-import org.leo.jmg.ShellGeneratorConfig;
-import org.leo.jmg.ServletNamespace;
-import org.leo.jmg.TargetJavaVersion;
 import org.leo.jmg.catalog.GeneratorCatalog;
 import org.leo.jmg.generation.MemoryShellGenerationCommand;
 import org.leo.jmg.generation.ShellGenerationOutcome;
 import org.leo.jmg.generation.ShellGenerationService;
 import org.leo.jmg.generation.WebShellGenerationCommand;
 import org.leo.core.util.ApiResponse;
-import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.service.generator.ScriptGeneratorService;
@@ -89,26 +85,7 @@ public class ShellGeneratorController {
      */
     @RequestMapping(value = "/supported-types", method = RequestMethod.GET)
     public HashMap<String, Object> getSupportedTypes() {
-        HashMap<String, Object> result = new HashMap<>();
-
-        result.put("serverInjectorTypes", GeneratorCatalog.getServerInjectorMap());
-        // 协议维度映射：{http/httpchunk/websocket: {serverType: [injectorName]}}
-        // 供前端按当前协议直接取可用服务器与注入器，避免靠名字硬匹配 HTTPCHUNK 别名
-        result.put("serverProtocolInjectorTypes", GeneratorCatalog.getProtocolInjectorMap());
-        result.put("injectorCapabilities", GeneratorCatalog.getCapabilityDescriptors());
-
-        result.put("packerTypes", PackerRegistry.getHierarchy());
-
-        // 每个 packer 声明的混淆步骤 ID 列表（空列表表示不支持混淆层配置）
-        result.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
-        result.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
-        result.put("packerAvailability", PackerRegistry.getAvailabilityMap());
-        result.put("targetJavaVersions", getTargetJavaVersions());
-        result.put("servletNamespaces", ServletNamespace.valuesAsStrings());
-        HashMap<String, Object> transportProtocols = new HashMap<>();
-        transportProtocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
-        transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
-        result.put("transportProtocols", transportProtocols);
+        HashMap<String, Object> result = new HashMap<>(GeneratorCatalog.getMetadata());
         result.put("runtimeGenerators", scriptGeneratorService.getMetadata());
         result.put("memoryShellBuildOptions", getMemoryShellBuildOptions());
 
@@ -393,14 +370,6 @@ public class ShellGeneratorController {
             return false;
         }
         return null;
-    }
-
-    private static List<String> getTargetJavaVersions() {
-        List<String> versions = new ArrayList<String>();
-        for (TargetJavaVersion version : TargetJavaVersion.values()) {
-            versions.add(version.getValue());
-        }
-        return versions;
     }
 
     private static Map<String, Object> getMemoryShellBuildOptions() {

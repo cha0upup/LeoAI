@@ -1,7 +1,11 @@
 package org.leo.jmg.catalog;
 
+import org.leo.jmg.ShellGeneratorConfig;
+import org.leo.jmg.ServletNamespace;
+import org.leo.jmg.TargetJavaVersion;
 import org.leo.jmg.TransportProtocol;
 import org.leo.jmg.mem.ServerType;
+import org.leo.jmg.mem.packer.PackerRegistry;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -128,6 +132,27 @@ public final class GeneratorCatalog {
 
     public static List<InjectorDescriptor> getAllDescriptors() {
         return ALL;
+    }
+
+    /** HTTP 与 AI 共用的 Java 生成器元数据；入口自行追加运行时及展示信息。 */
+    public static Map<String, Object> getMetadata() {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("serverInjectorTypes", getServerInjectorMap());
+        result.put("serverProtocolInjectorTypes", getProtocolInjectorMap());
+        result.put("injectorCapabilities", getCapabilityDescriptors());
+        result.put("packerTypes", PackerRegistry.getHierarchy());
+        result.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
+        result.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
+        result.put("packerAvailability", PackerRegistry.getAvailabilityMap());
+        List<String> versions = new ArrayList<String>();
+        for (TargetJavaVersion version : TargetJavaVersion.values()) versions.add(version.getValue());
+        result.put("targetJavaVersions", Collections.unmodifiableList(versions));
+        result.put("servletNamespaces", ServletNamespace.valuesAsStrings());
+        Map<String, Object> protocols = new LinkedHashMap<String, Object>();
+        protocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
+        protocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
+        result.put("transportProtocols", Collections.unmodifiableMap(protocols));
+        return Collections.unmodifiableMap(result);
     }
 
     public static Map<String, List<String>> getServerInjectorMap() {

@@ -55,34 +55,6 @@ class ShellGeneratorControllerProtocolTest {
         assertEquals(List.of("http", "httpchunk"), protocols.get("webshell"));
         assertEquals(List.of("http", "httpchunk", "websocket"), protocols.get("memoryshell"));
         assertFalse(((List<?>) data.get("injectorCapabilities")).isEmpty());
-        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
-                        && "ValveInjector".equals(item.get("injectorName"))
-                        && Boolean.TRUE.equals(item.get("requiresServerVersion"))));
-        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
-                        && "AgentFilterChain".equals(item.get("injectorName"))
-                        && List.of("AgentJarBase64").equals(item.get("supportedPackers"))
-                        && Boolean.FALSE.equals(item.get("supportsStaticInitialize"))
-                        && Boolean.FALSE.equals(item.get("supportsUrlPattern"))));
-        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "Jetty".equals(item.get("serverType"))
-                        && "HandlerInjector".equals(item.get("injectorName"))
-                        && List.of("7-10", "11").equals(item.get("serverVersions"))));
-        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "Tomcat".equals(item.get("serverType"))
-                        && "ByPassNginxWebSocketInjector".equals(item.get("injectorName"))
-                        && Boolean.TRUE.equals(item.get("supportsHeaderGate"))));
-        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
-                .map(Map.class::cast)
-                .anyMatch(item -> "Tomcat".equals(item.get("serverType"))
-                        && "UpgradeInjector".equals(item.get("injectorName"))
-                        && List.of("Connection: Upgrade", "Upgrade: ${shellClassName}")
-                        .equals(item.get("activationHeaders"))));
         assertTrue(((Map<?, ?>) data.get("packerCompatibility"))
                 .containsKey("AgentJarBase64"));
         assertTrue(((Map<?, ?>) data.get("memoryShellBuildOptions"))

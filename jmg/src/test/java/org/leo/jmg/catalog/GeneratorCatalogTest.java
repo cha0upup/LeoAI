@@ -22,6 +22,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class GeneratorCatalogTest {
 
     @Test
+    void publicMetadataKeepsTheSharedContract() {
+        Map<String, Object> metadata = GeneratorCatalog.getMetadata();
+        assertEquals(new HashSet<String>(java.util.Arrays.asList(
+                "serverInjectorTypes", "serverProtocolInjectorTypes", "injectorCapabilities",
+                "packerTypes", "packerObfuscationSteps", "packerCompatibility", "packerAvailability",
+                "targetJavaVersions", "servletNamespaces", "transportProtocols")), metadata.keySet());
+        assertEquals(java.util.Arrays.asList("auto", "6", "7", "8", "9+", "17+"),
+                metadata.get("targetJavaVersions"));
+    }
+
+    @Test
     void everyDescriptorIsUniqueAndRoundTripsThroughResolver() {
         Set<String> keys = new HashSet<String>();
 
@@ -175,6 +186,13 @@ class GeneratorCatalogTest {
                 contextValve.getShellTemplateName());
         assertFalse(filterChain.supportsStaticInitialize());
         assertFalse(filterChain.supportsUrlPattern());
+        for (String name : java.util.Arrays.asList("AgentFilterChain", "AgentContextValve")) {
+            assertTrue(GeneratorCatalog.getCapabilityDescriptors().stream()
+                    .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
+                            && name.equals(item.get("injectorName"))
+                            && java.util.Collections.singletonList("AgentJarBase64")
+                            .equals(item.get("supportedPackers"))));
+        }
         assertTrue(GeneratorCatalog.getCapabilityDescriptors().stream()
                 .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
                         && "AgentFilterChain".equals(item.get("injectorName"))
@@ -204,6 +222,11 @@ class GeneratorCatalogTest {
         assertEquals("org.leo.jmg.mem.shell.http.LeoAgentChunkTpl",
                 upgrade.getShellTemplateName());
         assertFalse(upgrade.supportsUrlPattern());
+        assertTrue(GeneratorCatalog.getCapabilityDescriptors().stream()
+                .anyMatch(item -> "Tomcat".equals(item.get("serverType"))
+                        && "UpgradeInjector".equals(item.get("injectorName"))
+                        && java.util.Arrays.asList("Connection: Upgrade", "Upgrade: ${shellClassName}")
+                        .equals(item.get("activationHeaders"))));
     }
 
     @Test

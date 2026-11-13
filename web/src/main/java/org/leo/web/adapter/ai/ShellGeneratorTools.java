@@ -12,9 +12,6 @@ import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.runtime.AgentRuntime;
-import org.leo.jmg.ShellGeneratorConfig;
-import org.leo.jmg.ServletNamespace;
-import org.leo.jmg.TargetJavaVersion;
 import org.leo.jmg.catalog.GeneratorCatalog;
 import org.leo.jmg.generation.CoreArtifact;
 import org.leo.jmg.generation.CoreArtifactGenerationCommand;
@@ -25,7 +22,6 @@ import org.leo.jmg.generation.ShellGenerationService;
 import org.leo.jmg.generation.WebShellWrapperContract;
 import org.leo.jmg.generation.WebShellWrapperResult;
 import org.leo.jmg.generation.WebShellWrapperService;
-import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.PackerResources;
 import org.leo.jmg.mem.packer.jsp.JspLoaderTemplateValidator;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
@@ -124,20 +120,7 @@ public class ShellGeneratorTools {
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getShellGeneratorMeta() {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("serverInjectorTypes", GeneratorCatalog.getServerInjectorMap());
-        data.put("serverProtocolInjectorTypes", GeneratorCatalog.getProtocolInjectorMap());
-        data.put("injectorCapabilities", GeneratorCatalog.getCapabilityDescriptors());
-        data.put("packerTypes", PackerRegistry.getHierarchy());
-        data.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
-        data.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
-        data.put("packerAvailability", PackerRegistry.getAvailabilityMap());
-        data.put("targetJavaVersions", targetJavaVersions());
-        data.put("servletNamespaces", ServletNamespace.valuesAsStrings());
-        Map<String, Object> transportProtocols = new LinkedHashMap<>();
-        transportProtocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
-        transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
-        data.put("transportProtocols", transportProtocols);
+        Map<String, Object> data = new LinkedHashMap<>(GeneratorCatalog.getMetadata());
         data.put("obfuscationSteps", JspObfuscationStepCatalog.getDescriptors());
         data.put("runtimeGenerators", scriptGeneratorService.getMetadata());
         return data;
@@ -633,13 +616,5 @@ public class ShellGeneratorTools {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    private List<String> targetJavaVersions() {
-        java.util.ArrayList<String> values = new java.util.ArrayList<>();
-        for (TargetJavaVersion version : TargetJavaVersion.values()) {
-            values.add(version.getValue());
-        }
-        return values;
     }
 }
