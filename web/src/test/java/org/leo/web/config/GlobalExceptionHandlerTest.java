@@ -1,16 +1,30 @@
 package org.leo.web.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.SqlCapable;
+import org.leo.core.entity.Agent;
 import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.service.sql.AgentDatabaseConnectionService;
+import org.leo.service.sql.AgentNodeSqlService;
 import org.leo.service.sql.DatabaseConnectionProfileException;
+import org.leo.service.sql.SqlExecutionException;
+import org.leo.service.sql.SqlExportService;
 import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
+import org.leo.web.controller.agentnode.sql.AgentNodeSqlController;
 import org.leo.web.exception.ApiException;
+import org.leo.web.security.DatabaseConnectionResolver;
+import org.leo.web.util.AuditLogUtil;
+import org.leo.web.util.ControllerUtil;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -29,7 +44,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -86,29 +104,71 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void includesDatabaseErrorDetailsInTheUnifiedApiResponse() {
-        ApiException error = ApiException.databaseError(
-                503,
-                "connection interrupted",
-                Map.of("errorCategory", "CONNECTION_ERROR", "retryable", true, "sqlState", "08006"));
-
-        Map<String, Object> body = errorBody(handler.handleApiException(error), 503);
-
-        assertEquals("CONNECTION_ERROR", body.get("errorCategory"));
-        assertEquals(true, body.get("retryable"));
-        assertEquals("08006", body.get("sqlState"));
+    void preservesHttpSpecificConflictDetails() {
+        ApiException error = ApiException.conflict("请确认主机指纹",
+                Map.of("errorCode", "SSH_HOST_KEY_CONFIRMATION_REQUIRED", "fingerprint", "pin", "previousFingerprint", ""));
+        Map<String, Object> body = errorBody(handler.handleApiException(error), 409);
+        assertEquals("SSH_HOST_KEY_CONFIRMATION_REQUIRED", body.get("errorCode"));
+        assertEquals("pin", body.get("fingerprint"));
+        assertEquals("", body.get("previousFingerprint"));
     }
 
-    @Test
-    void keepsDatabaseAuthenticationSeparateFromApplicationLoginState() {
-        ApiException error = ApiException.databaseError(
-                401,
-                "database credentials rejected",
-                Map.of("databaseCode", 401, "errorCategory", "AUTHENTICATION_ERROR"));
+    @ParameterizedTest
+    @CsvSource({"400,400", "429,429", "500,500", "502,502", "503,503", "504,504",
+            "200,422", "401,422", "403,422", "404,422", "799,422"})
+    void normalizesDatabaseCodesWithoutLosingStructuredDetailsOrChangingLoginState(int databaseCode, int httpCode)
+            throws Exception {
+        var error = new SqlExecutionException(databaseCode, "database error", "SQL_ERROR", "40001", true, 1213);
+        MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
+                .setControllerAdvice(handler).build()
+                .perform(get("/business-failure-fixture"))
+                .andExpect(status().is(httpCode))
+                .andExpect(jsonPath("$.code").value(httpCode))
+                .andExpect(jsonPath("$.msg").value("database error"))
+                .andExpect(jsonPath("$.databaseCode").value(databaseCode))
+                .andExpect(jsonPath("$.errorCategory").value("SQL_ERROR"))
+                .andExpect(jsonPath("$.sqlState").value("40001"))
+                .andExpect(jsonPath("$.retryable").value(true))
+                .andExpect(jsonPath("$.vendorCode").value(1213))
+                .andExpect(result -> assertSame(error, result.getResolvedException()));
+    }
 
-        Map<String, Object> body = errorBody(handler.handleApiException(error), 422);
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void sqlEndpointsPreserveTheOriginalFailureAndAuditOnlyAuditedOperations(boolean audited) throws Exception {
+        AgentNodeSqlService sql = mock(AgentNodeSqlService.class);
+        DatabaseConnectionResolver resolver = mock(DatabaseConnectionResolver.class);
+        var controller = new AgentNodeSqlController(sql, mock(SqlExportService.class),
+                mock(AgentDatabaseConnectionService.class), resolver);
+        var node = mock(AbstractAgentNode.class, withSettings().extraInterfaces(SqlCapable.class));
+        Agent agent = new Agent();
+        agent.setAgentId("agent-1");
+        when(node.getAgent()).thenReturn(agent);
+        Map<String, Object> connection = Map.of("dialect", "mysql", "host", "db.internal",
+                "database", "inventory", "username", "app", "password", "private-password");
+        when(resolver.resolve(connection, "agent-1", null)).thenReturn(connection);
+        var failure = new SqlExecutionException(503, "connection interrupted", "CONNECTION_ERROR", "08006", true, null);
+        when(sql.getDatabases((SqlCapable) node, connection)).thenThrow(failure);
+        when(sql.executeSql((SqlCapable) node, connection, "select 1", null)).thenThrow(failure);
+        Map<String, Object> payload = new HashMap<>(Map.of("sessionId", "session-1", "connection", connection));
+        if (audited) payload.put("sql", "select 1");
 
-        assertEquals(401, body.get("databaseCode"));
+        try (var context = mockStatic(ControllerUtil.class); var audit = mockStatic(AuditLogUtil.class)) {
+            context.when(() -> ControllerUtil.requireCapability("session-1", SqlCapable.class)).thenReturn((SqlCapable) node);
+            context.when(() -> ControllerUtil.getAbstractAgentNode("session-1")).thenReturn(node);
+            MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(handler).build()
+                    .perform(post(audited ? "/agent-node/sql/query/execute" : "/agent-node/sql/metadata/databases")
+                            .contentType(MediaType.APPLICATION_JSON).content(new ObjectMapper().writeValueAsBytes(payload)))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(result -> assertSame(failure, result.getResolvedException()));
+
+            if (audited) {
+                audit.verify(() -> AuditLogUtil.logFailure(eq(node), eq("SQL_EXEC"), eq("执行SQL"), nullable(String.class),
+                        argThat(params -> !params.toString().contains("private-password")), eq(failure.getMessage()), isNull()));
+            } else {
+                audit.verifyNoInteractions();
+            }
+        }
     }
 
     @ParameterizedTest
@@ -140,10 +200,10 @@ class GlobalExceptionHandlerTest {
 
     @RestController
     static class BusinessFailureController {
-        private final RuntimeException error;
-        BusinessFailureController(RuntimeException error) { this.error = error; }
+        private final Exception error;
+        BusinessFailureController(Exception error) { this.error = error; }
         @GetMapping("/business-failure-fixture")
-        public Object fail() {
+        public Object fail() throws Exception {
             throw error;
         }
     }

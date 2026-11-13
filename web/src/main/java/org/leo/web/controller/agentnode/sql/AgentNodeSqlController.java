@@ -1,20 +1,20 @@
 package org.leo.web.controller.agentnode.sql;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.User;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.agent.capability.SqlCapable;
+import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
+import org.leo.service.sql.AgentDatabaseConnectionService;
 import org.leo.service.sql.AgentNodeSqlService;
 import org.leo.service.sql.SqlExecutionException;
 import org.leo.service.sql.SqlExportService;
 import org.leo.service.sql.SqlObjectRef;
-import org.leo.service.sql.AgentDatabaseConnectionService;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionPayload;
+import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.CreateDatabaseRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.CreateTableRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.DeleteRowRequest;
-import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExecuteRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportDatabaseRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportResumeRequest;
@@ -65,7 +65,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/query/execute")
-    public Map<String, Object> executeQuery(@RequestBody ExecuteRequest request) {
+    public Map<String, Object> executeQuery(@RequestBody ExecuteRequest request) throws SqlExecutionException {
         return auditedSqlCall("执行SQL失败", request, "SQL_EXEC", "执行SQL",
                 sqlOperationPath(request, null, request == null ? null : request.sql()), node -> {
             String sqlScript = requireText(request.sql(), "sql");
@@ -77,7 +77,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/connections/test")
-    public Map<String, Object> testConnection(@RequestBody ConnectionRequest request) {
+    public Map<String, Object> testConnection(@RequestBody ConnectionRequest request) throws SqlExecutionException {
         return sqlCall("连接失败", () -> {
             SqlCapable node = sqlNode(request);
             Map<String, Object> connection = resolveConnection(request);
@@ -94,7 +94,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/runtime-capabilities")
-    public Map<String, Object> runtimeCapabilities(@RequestBody ConnectionRequest request) {
+    public Map<String, Object> runtimeCapabilities(@RequestBody ConnectionRequest request) throws SqlExecutionException {
         return sqlCall("数据库运行时能力探测失败", () -> ApiResponse.success(
                 "ok",
                 agentNodeSqlService.getRuntimeCapabilities(
@@ -107,14 +107,14 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/metadata/databases")
-    public Map<String, Object> getDatabases(@RequestBody ConnectionRequest request) {
+    public Map<String, Object> getDatabases(@RequestBody ConnectionRequest request) throws SqlExecutionException {
         return sqlCall("获取数据库列表失败", () -> ApiResponse.success(
                 "ok",
                 agentNodeSqlService.getDatabases(sqlNode(request), resolveConnection(request))));
     }
 
     @PostMapping("/metadata/tables")
-    public Map<String, Object> getTables(@RequestBody ObjectRequest request) {
+    public Map<String, Object> getTables(@RequestBody ObjectRequest request) throws SqlExecutionException {
         return sqlCall("获取表列表失败", () -> ApiResponse.success(
                 "ok",
                 agentNodeSqlService.getTables(
@@ -124,7 +124,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/metadata/table-columns")
-    public Map<String, Object> getTableColumns(@RequestBody ObjectRequest request) {
+    public Map<String, Object> getTableColumns(@RequestBody ObjectRequest request) throws SqlExecutionException {
         return sqlCall("获取表字段失败", () -> ApiResponse.success(
                 "ok",
                 agentNodeSqlService.getTableColumns(
@@ -134,7 +134,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/data/query-table")
-    public Map<String, Object> queryTable(@RequestBody QueryTableRequest request) {
+    public Map<String, Object> queryTable(@RequestBody QueryTableRequest request) throws SqlExecutionException {
         return auditedSqlCall("查询表数据失败", request, "SQL_QUERY_TABLE", "查询表数据",
                 sqlOperationPath(request, request == null ? null : request.objectRef(), null), node -> ApiResponse.success(
                 "ok",
@@ -152,7 +152,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/tables/create")
-    public Map<String, Object> createTable(@RequestBody CreateTableRequest request) {
+    public Map<String, Object> createTable(@RequestBody CreateTableRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建表失败", request, "SQL_TABLE_CREATE", "创建数据表",
                 sqlOperationPath(request, request == null ? null : request.objectRef(), null), node -> ApiResponse.success(
                 "创建成功",
@@ -164,7 +164,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/databases/create")
-    public Map<String, Object> createDatabase(@RequestBody CreateDatabaseRequest request) {
+    public Map<String, Object> createDatabase(@RequestBody CreateDatabaseRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建数据库失败", request, "SQL_DATABASE_CREATE", "创建数据库",
                 sqlOperationPath(request, null, request == null ? null : request.database()), node -> ApiResponse.success(
                 "创建成功",
@@ -175,7 +175,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/rows/insert")
-    public Map<String, Object> insertRow(@RequestBody InsertRowRequest request) {
+    public Map<String, Object> insertRow(@RequestBody InsertRowRequest request) throws SqlExecutionException {
         return auditedSqlCall("插入数据失败", request, "SQL_ROW_INSERT", "插入数据",
                 sqlOperationPath(request, request == null ? null : request.objectRef(), null), node -> ApiResponse.success(
                 "创建成功",
@@ -187,7 +187,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/rows/update")
-    public Map<String, Object> updateRow(@RequestBody UpdateRowRequest request) {
+    public Map<String, Object> updateRow(@RequestBody UpdateRowRequest request) throws SqlExecutionException {
         return auditedSqlCall("更新数据失败", request, "SQL_ROW_UPDATE", "更新数据",
                 sqlOperationPath(request, request == null ? null : request.objectRef(), null), node -> ApiResponse.success(
                 "更新成功",
@@ -200,7 +200,7 @@ public class AgentNodeSqlController {
     }
 
     @PostMapping("/rows/delete")
-    public Map<String, Object> deleteRow(@RequestBody DeleteRowRequest request) {
+    public Map<String, Object> deleteRow(@RequestBody DeleteRowRequest request) throws SqlExecutionException {
         return auditedSqlCall("删除数据失败", request, "SQL_ROW_DELETE", "删除数据",
                 sqlOperationPath(request, request == null ? null : request.objectRef(), null), node -> ApiResponse.success(
                 "删除成功",
@@ -213,7 +213,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/table")
     public Map<String, Object> exportTable(HttpServletRequest httpRequest,
-                                           @RequestBody ExportTableRequest request) {
+                                           @RequestBody ExportTableRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_TABLE", "导出数据表",
                 sqlOperationPath(request, request == null ? null : request.objectRef(),
                         request == null ? null : request.format()), node -> {
@@ -230,7 +230,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/database")
     public Map<String, Object> exportDatabase(HttpServletRequest httpRequest,
-                                              @RequestBody ExportDatabaseRequest request) {
+                                              @RequestBody ExportDatabaseRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_DATABASE", "导出数据库",
                 sqlOperationPath(request, request == null ? null : request.objectRef(),
                         request == null ? null : request.format()), node -> {
@@ -250,7 +250,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/progress")
     public Map<String, Object> exportProgress(HttpServletRequest httpRequest,
-                                              @RequestBody ExportTaskRequest request) {
+                                              @RequestBody ExportTaskRequest request) throws SqlExecutionException {
         return sqlCall("获取导出任务进度失败", () -> ApiResponse.success(
                 "ok",
                 sqlExportService.progress(requireUser(httpRequest).getUserId(), request.taskId())));
@@ -258,7 +258,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/pause")
     public Map<String, Object> pauseExport(HttpServletRequest httpRequest,
-                                           @RequestBody ExportTaskRequest request) {
+                                           @RequestBody ExportTaskRequest request) throws SqlExecutionException {
         return sqlCall("暂停导出任务失败", () -> {
             User user = requireUser(httpRequest);
             Map<String, Object> result = ApiResponse.success(
@@ -273,7 +273,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/stop")
     public Map<String, Object> stopExport(HttpServletRequest httpRequest,
-                                          @RequestBody ExportTaskRequest request) {
+                                          @RequestBody ExportTaskRequest request) throws SqlExecutionException {
         return sqlCall("停止导出任务失败", () -> {
             User user = requireUser(httpRequest);
             Map<String, Object> result = ApiResponse.success(
@@ -288,7 +288,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/resume")
     public Map<String, Object> resumeExport(HttpServletRequest httpRequest,
-                                            @RequestBody ExportResumeRequest request) {
+                                            @RequestBody ExportResumeRequest request) throws SqlExecutionException {
         return auditedSqlCall("恢复导出任务失败", request, "SQL_EXPORT_RESUME", "恢复SQL导出任务",
                 request == null ? null : request.taskId(), node -> {
             User user = requireUser(httpRequest);
@@ -303,7 +303,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/tasks")
     public Map<String, Object> exportTasks(HttpServletRequest httpRequest,
-                                           @RequestBody ExportSessionRequest request) {
+                                           @RequestBody ExportSessionRequest request) throws SqlExecutionException {
         return sqlCall("获取导出任务列表失败", () -> ApiResponse.success(
                 "ok",
                 sqlExportService.listBySessionId(requireUser(httpRequest).getUserId(), request.sessionId())));
@@ -311,19 +311,17 @@ public class AgentNodeSqlController {
 
     @GetMapping("/export/tasks/{taskId}")
     public Map<String, Object> exportTaskStatus(HttpServletRequest request,
-                                                @PathVariable("taskId") String taskId) {
+                                                @PathVariable("taskId") String taskId) throws SqlExecutionException {
         return sqlCall("获取导出任务状态失败", () -> ApiResponse.success(
                 "ok",
                 sqlExportService.progress(requireUser(request).getUserId(), taskId)));
     }
 
-    private Map<String, Object> sqlCall(String failureMessage, SqlAction action) {
+    private Map<String, Object> sqlCall(String failureMessage, SqlAction action) throws SqlExecutionException {
         try {
             return action.execute();
-        } catch (ApiException e) {
+        } catch (ApiException | SqlExecutionException e) {
             throw e;
-        } catch (SqlExecutionException e) {
-            throw ApiException.databaseError(e.getStatusCode(), e.getMessage(), e.details());
         } catch (IllegalArgumentException e) {
             throw ApiException.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -336,7 +334,7 @@ public class AgentNodeSqlController {
                                                String operationType,
                                                String operationName,
                                                String operationPath,
-                                               SqlNodeAction action) {
+                                               SqlNodeAction action) throws SqlExecutionException {
         SqlCapable node = null;
         AbstractAgentNode auditNode = null;
         Map<String, Object> auditParams = auditParams(request);
@@ -347,18 +345,12 @@ public class AgentNodeSqlController {
             AuditLogUtil.logSuccess(auditNode, operationType, operationName, operationPath, auditParams,
                     ApiResponse.CODE_SUCCESS, "操作成功", AuditLogUtil.getClientIp());
             return result;
-        } catch (ApiException e) {
+        } catch (ApiException | SqlExecutionException e) {
             if (auditNode != null) {
                 AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,
                         e.getMessage(), AuditLogUtil.getClientIp());
             }
             throw e;
-        } catch (SqlExecutionException e) {
-            if (auditNode != null) {
-                AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,
-                        e.getMessage(), AuditLogUtil.getClientIp());
-            }
-            throw ApiException.databaseError(e.getStatusCode(), e.getMessage(), e.details());
         } catch (IllegalArgumentException e) {
             if (auditNode != null) {
                 AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,

@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.sql.DatabaseConnectionProfileException;
+import org.leo.service.sql.SqlExecutionException;
 import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
@@ -77,8 +78,22 @@ public class GlobalExceptionHandler {
         return businessError(error, status, status.value(), Map.of());
     }
 
+    @ExceptionHandler(SqlExecutionException.class)
+    public ResponseEntity<HashMap<String, Object>> handleSqlExecutionException(SqlExecutionException error) {
+        HttpStatus status = switch (error.getStatusCode()) {
+            case 400 -> HttpStatus.BAD_REQUEST;
+            case 429 -> HttpStatus.TOO_MANY_REQUESTS;
+            case 500 -> HttpStatus.INTERNAL_SERVER_ERROR;
+            case 502 -> HttpStatus.BAD_GATEWAY;
+            case 503 -> HttpStatus.SERVICE_UNAVAILABLE;
+            case 504 -> HttpStatus.GATEWAY_TIMEOUT;
+            default -> HttpStatus.UNPROCESSABLE_ENTITY;
+        };
+        return businessError(error, status, status.value(), error.details());
+    }
+
     private ResponseEntity<HashMap<String, Object>> businessError(
-            RuntimeException error, HttpStatus status, int code, Map<String, Object> details) {
+            Exception error, HttpStatus status, int code, Map<String, Object> details) {
         if (status.is5xxServerError() && status != HttpStatus.SERVICE_UNAVAILABLE) {
             logger.error("API业务异常: {}", error.getMessage(), error);
         } else {

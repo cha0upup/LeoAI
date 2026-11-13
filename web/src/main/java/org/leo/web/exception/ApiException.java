@@ -47,21 +47,6 @@ public class ApiException extends RuntimeException {
         return details;
     }
 
-    public static ApiException databaseError(int code,
-                                             String message,
-                                             Map<String, Object> details) {
-        HttpStatus status = switch (code) {
-            case 400 -> HttpStatus.BAD_REQUEST;
-            case 429 -> HttpStatus.TOO_MANY_REQUESTS;
-            case 500 -> HttpStatus.INTERNAL_SERVER_ERROR;
-            case 502 -> HttpStatus.BAD_GATEWAY;
-            case 503 -> HttpStatus.SERVICE_UNAVAILABLE;
-            case 504 -> HttpStatus.GATEWAY_TIMEOUT;
-            default -> HttpStatus.UNPROCESSABLE_ENTITY;
-        };
-        return new ApiException(status.value(), status, message, details);
-    }
-
     public static ApiException badRequest(String message) {
         return new ApiException(ApiResponse.CODE_BAD_REQUEST, HttpStatus.BAD_REQUEST, message);
     }
