@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<HashMap<String, Object>> handleApiException(ApiException e) {
-        return businessError(e, e.getHttpStatus(), e.getCode(), e.getDetails());
+        return businessError(e, e.getHttpStatus(), e.getDetails());
     }
 
     @ExceptionHandler(UseCaseException.class)
@@ -49,7 +49,7 @@ public class GlobalExceptionHandler {
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case OPERATION_FAILED -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
-        return businessError(error, status, status.value(), Map.of());
+        return businessError(error, status, Map.of());
     }
 
     @ExceptionHandler(SshConnectionException.class)
@@ -64,7 +64,7 @@ public class GlobalExceptionHandler {
             case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
-        return businessError(error, status, status.value(), Map.of());
+        return businessError(error, status, Map.of());
     }
 
     @ExceptionHandler(DatabaseConnectionProfileException.class)
@@ -75,7 +75,7 @@ public class GlobalExceptionHandler {
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
-        return businessError(error, status, status.value(), Map.of());
+        return businessError(error, status, Map.of());
     }
 
     @ExceptionHandler(SqlExecutionException.class)
@@ -89,18 +89,18 @@ public class GlobalExceptionHandler {
             case 504 -> HttpStatus.GATEWAY_TIMEOUT;
             default -> HttpStatus.UNPROCESSABLE_ENTITY;
         };
-        return businessError(error, status, status.value(), error.details());
+        return businessError(error, status, error.details());
     }
 
     private ResponseEntity<HashMap<String, Object>> businessError(
-            Exception error, HttpStatus status, int code, Map<String, Object> details) {
+            Exception error, HttpStatus status, Map<String, Object> details) {
         if (status.is5xxServerError() && status != HttpStatus.SERVICE_UNAVAILABLE) {
             logger.error("API业务异常: {}", error.getMessage(), error);
         } else {
             logger.warn("API业务异常: {}", error.getMessage());
         }
-        HashMap<String, Object> body = ApiResponse.error(code, error.getMessage());
-        body.putAll(details);
+        HashMap<String, Object> body = ApiResponse.error(status.value(), error.getMessage());
+        details.forEach(body::putIfAbsent);
         return ResponseEntity.status(status).body(body);
     }
 

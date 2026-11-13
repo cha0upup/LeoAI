@@ -58,6 +58,7 @@ class GlobalExceptionHandlerTest {
     @ParameterizedTest
     @MethodSource("businessFailures")
     void mapsOriginalBusinessFailuresAtTheHttpBoundary(RuntimeException error, int code) throws Exception {
+        if (error instanceof ApiException apiError) assertEquals(code, apiError.getCode());
         MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
                 .setControllerAdvice(handler).build()
                 .perform(get("/business-failure-fixture"))
@@ -80,6 +81,14 @@ class GlobalExceptionHandlerTest {
                 DatabaseConnectionProfileException.Kind.FORBIDDEN, 403,
                 DatabaseConnectionProfileException.Kind.PERSISTENCE, 500);
         return Stream.of(
+                Stream.of(Arguments.of(ApiException.badRequest("HTTP 错误"), 400),
+                        Arguments.of(ApiException.unauthorized("HTTP 错误"), 401),
+                        Arguments.of(ApiException.forbidden("HTTP 错误"), 403),
+                        Arguments.of(ApiException.notFound("HTTP 错误"), 404),
+                        Arguments.of(ApiException.conflict("HTTP 错误"), 409),
+                        Arguments.of(ApiException.tooManyRequests("HTTP 错误"), 429),
+                        Arguments.of(ApiException.serverError("HTTP 错误"), 500),
+                        Arguments.of(ApiException.serviceUnavailable("HTTP 错误"), 503)),
                 useCases.entrySet().stream().map(entry -> Arguments.of(
                         new UseCaseException(entry.getKey(), "用例失败"), entry.getValue())),
                 ssh.entrySet().stream().map(entry -> Arguments.of(
@@ -104,10 +113,12 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void preservesHttpSpecificConflictDetails() {
+    void keepsEnvelopeStatusAndMessageAuthoritativeWhilePreservingConflictDetails() {
         ApiException error = ApiException.conflict("请确认主机指纹",
-                Map.of("errorCode", "SSH_HOST_KEY_CONFIRMATION_REQUIRED", "fingerprint", "pin", "previousFingerprint", ""));
+                Map.of("code", 200, "msg", "overridden", "errorCode", "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
+                        "fingerprint", "pin", "previousFingerprint", ""));
         Map<String, Object> body = errorBody(handler.handleApiException(error), 409);
+        assertEquals("请确认主机指纹", body.get("msg"));
         assertEquals("SSH_HOST_KEY_CONFIRMATION_REQUIRED", body.get("errorCode"));
         assertEquals("pin", body.get("fingerprint"));
         assertEquals("", body.get("previousFingerprint"));

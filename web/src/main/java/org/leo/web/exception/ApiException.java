@@ -1,6 +1,5 @@
 package org.leo.web.exception;
 
-import org.leo.core.util.ApiResponse;
 import org.springframework.http.HttpStatus;
 
 import java.util.Collections;
@@ -15,20 +14,17 @@ import java.util.Map;
  */
 public class ApiException extends RuntimeException {
 
-    private final int code;
     private final HttpStatus httpStatus;
     private final Map<String, Object> details;
 
-    private ApiException(int code, HttpStatus httpStatus, String message) {
-        this(code, httpStatus, message, Map.of());
+    private ApiException(HttpStatus httpStatus, String message) {
+        this(httpStatus, message, Map.of());
     }
 
-    private ApiException(int code,
-                         HttpStatus httpStatus,
+    private ApiException(HttpStatus httpStatus,
                          String message,
                          Map<String, Object> details) {
         super(message);
-        this.code = code;
         this.httpStatus = httpStatus;
         this.details = details == null
                 ? Map.of()
@@ -36,7 +32,7 @@ public class ApiException extends RuntimeException {
     }
 
     public int getCode() {
-        return code;
+        return httpStatus.value();
     }
 
     public HttpStatus getHttpStatus() {
@@ -48,38 +44,38 @@ public class ApiException extends RuntimeException {
     }
 
     public static ApiException badRequest(String message) {
-        return new ApiException(ApiResponse.CODE_BAD_REQUEST, HttpStatus.BAD_REQUEST, message);
+        return new ApiException(HttpStatus.BAD_REQUEST, message);
     }
 
     public static ApiException unauthorized(String message) {
-        return new ApiException(ApiResponse.CODE_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, message);
+        return new ApiException(HttpStatus.UNAUTHORIZED, message);
     }
 
     public static ApiException forbidden(String message) {
-        return new ApiException(ApiResponse.CODE_FORBIDDEN, HttpStatus.FORBIDDEN, message);
+        return new ApiException(HttpStatus.FORBIDDEN, message);
     }
 
     public static ApiException notFound(String message) {
-        return new ApiException(ApiResponse.CODE_NOT_FOUND, HttpStatus.NOT_FOUND, message);
+        return new ApiException(HttpStatus.NOT_FOUND, message);
     }
 
     public static ApiException conflict(String message) {
-        return new ApiException(409, HttpStatus.CONFLICT, message);
+        return new ApiException(HttpStatus.CONFLICT, message);
     }
+
     public static ApiException conflict(String message, Map<String, Object> details) {
-        return new ApiException(409, HttpStatus.CONFLICT, message, details);
+        return new ApiException(HttpStatus.CONFLICT, message, details);
     }
 
     public static ApiException serviceUnavailable(String message) {
-        return new ApiException(503, HttpStatus.SERVICE_UNAVAILABLE, message);
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, message);
     }
 
     public static ApiException tooManyRequests(String message) {
-        return new ApiException(ApiResponse.CODE_TOO_MANY_REQUESTS,
-                HttpStatus.TOO_MANY_REQUESTS, message);
+        return new ApiException(HttpStatus.TOO_MANY_REQUESTS, message);
     }
 
     public static ApiException serverError(String message) {
-        return new ApiException(ApiResponse.CODE_ERROR, HttpStatus.INTERNAL_SERVER_ERROR, message);
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, message);
     }
 }
