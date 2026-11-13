@@ -3,6 +3,7 @@ package org.leo.web.config;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.ApiResponse;
+import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
@@ -45,6 +46,21 @@ public class GlobalExceptionHandler {
             case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case OPERATION_FAILED -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
+        return businessError(error, status, status.value(), Map.of());
+    }
+
+    @ExceptionHandler(SshConnectionException.class)
+    public ResponseEntity<HashMap<String, Object>> handleSshException(SshConnectionException error) {
+        HttpStatus status = switch (error.getKind()) {
+            case VALIDATION, UNSUPPORTED_CAPABILITY -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case CONFLICT -> HttpStatus.CONFLICT;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case SESSION_EXPIRED -> HttpStatus.UNAUTHORIZED;
+            case CAPACITY -> HttpStatus.TOO_MANY_REQUESTS;
+            case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
         return businessError(error, status, status.value(), Map.of());
     }

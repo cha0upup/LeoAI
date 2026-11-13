@@ -3,15 +3,16 @@ package org.leo.web.config;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
+import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
@@ -19,11 +20,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,14 +37,30 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @ParameterizedTest
-    @CsvSource({"INVALID_INPUT,400", "NOT_FOUND,404", "OPERATION_FAILED,500"})
-    void mapsUseCaseFailureKindsAtTheHttpBoundary(UseCaseException.Kind kind, int code) throws Exception {
-        MockMvcBuilders.standaloneSetup(new UseCaseFailureController())
+    @MethodSource("businessFailures")
+    void mapsOriginalBusinessFailuresAtTheHttpBoundary(RuntimeException error, int code) throws Exception {
+        MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
                 .setControllerAdvice(handler).build()
-                .perform(get("/use-case-fixture/{kind}", kind))
+                .perform(get("/business-failure-fixture"))
                 .andExpect(status().is(code))
                 .andExpect(jsonPath("$.code").value(code))
-                .andExpect(jsonPath("$.msg").value("用例失败"));
+                .andExpect(jsonPath("$.msg").value(error.getMessage()))
+                .andExpect(result -> assertSame(error, result.getResolvedException()));
+    }
+
+    private static Stream<Arguments> businessFailures() {
+        var useCases = Map.of(UseCaseException.Kind.INVALID_INPUT, 400,
+                UseCaseException.Kind.NOT_FOUND, 404, UseCaseException.Kind.OPERATION_FAILED, 500);
+        var ssh = Map.of(SshConnectionException.Kind.VALIDATION, 400,
+                SshConnectionException.Kind.NOT_FOUND, 404, SshConnectionException.Kind.CONFLICT, 409,
+                SshConnectionException.Kind.FORBIDDEN, 403, SshConnectionException.Kind.SESSION_EXPIRED, 401,
+                SshConnectionException.Kind.UNSUPPORTED_CAPABILITY, 400, SshConnectionException.Kind.CAPACITY, 429,
+                SshConnectionException.Kind.UNAVAILABLE, 503, SshConnectionException.Kind.PERSISTENCE, 500);
+        return Stream.concat(
+                useCases.entrySet().stream().map(entry -> Arguments.of(
+                        new UseCaseException(entry.getKey(), "用例失败"), entry.getValue())),
+                ssh.entrySet().stream().map(entry -> Arguments.of(
+                        new SshConnectionException(entry.getKey(), "SSH 业务失败"), entry.getValue())));
     }
 
     @Test
@@ -112,10 +131,12 @@ class GlobalExceptionHandlerTest {
     }
 
     @RestController
-    static class UseCaseFailureController {
-        @GetMapping("/use-case-fixture/{kind}")
-        public Object fail(@PathVariable("kind") UseCaseException.Kind kind) {
-            throw new UseCaseException(kind, "用例失败");
+    static class BusinessFailureController {
+        private final RuntimeException error;
+        BusinessFailureController(RuntimeException error) { this.error = error; }
+        @GetMapping("/business-failure-fixture")
+        public Object fail() {
+            throw error;
         }
     }
 

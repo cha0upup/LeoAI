@@ -50,25 +50,25 @@ class SshTerminalControllerTest {
             for (String invalidHost : List.of("", "bad/path", "bad host")) {
                 var invalid = new SshProfileSaveRequest("parent", null, null, "name", invalidHost, 22,
                         "user", "password", "secret", null, null);
-                assertThrows(ApiException.class, () -> controller.saveProfile(invalid, new MockHttpServletRequest()));
+                assertThrows(SshConnectionException.class, () -> controller.saveProfile(invalid, new MockHttpServletRequest()));
             }
             for (int invalidPort : List.of(0, 65536)) {
                 var invalid = new SshProfileSaveRequest("parent", null, null, "name", "host", invalidPort,
                         "user", "password", "secret", null, null);
-                assertThrows(ApiException.class, () -> controller.saveProfile(invalid, new MockHttpServletRequest()));
+                assertThrows(SshConnectionException.class, () -> controller.saveProfile(invalid, new MockHttpServletRequest()));
             }
             assertThrows(ApiException.class, () -> controller.saveProfile(null, new MockHttpServletRequest()));
             assertThrows(ApiException.class, () -> controller.connectProfile(null, new MockHttpServletRequest()));
-            assertThrows(ApiException.class, () -> controller.profiles(new SessionIdRequest("bad:id"), new MockHttpServletRequest()));
+            assertThrows(SshConnectionException.class, () -> controller.profiles(new SessionIdRequest("bad:id"), new MockHttpServletRequest()));
             for (String session : java.util.Arrays.asList(null, "", " bad", "bad:id")) {
                 var save = new SshProfileSaveRequest(session, null, null, "name", "host", 22,
                         "user", "password", "secret", null, null);
                 var connect = new SshProfileConnectRequest(session, "process", java.util.UUID.randomUUID().toString(),
                         1L, request().fingerprint());
-                assertEquals(400, assertThrows(ApiException.class,
-                        () -> controller.saveProfile(save, new MockHttpServletRequest())).getCode());
-                assertEquals(400, assertThrows(ApiException.class,
-                        () -> controller.connectProfile(connect, new MockHttpServletRequest())).getCode());
+                assertEquals(SshConnectionException.Kind.VALIDATION, assertThrows(SshConnectionException.class,
+                        () -> controller.saveProfile(save, new MockHttpServletRequest())).getKind());
+                assertEquals(SshConnectionException.Kind.VALIDATION, assertThrows(SshConnectionException.class,
+                        () -> controller.connectProfile(connect, new MockHttpServletRequest())).getKind());
             }
             util.verifyNoInteractions(); verifyNoInteractions(ssh, profiles);
         }
@@ -159,17 +159,17 @@ class SshTerminalControllerTest {
             verify(profiles).delete("owner", parent, id, 1L);
             when(profiles.get("owner", parent, id)).thenThrow(
                     new SshConnectionException(SshConnectionException.Kind.NOT_FOUND, "fixture missing"));
-            assertEquals(404, assertThrows(ApiException.class,
-                    () -> controller.getProfile(new SshProfileRequest("parent", id, null), http)).getCode());
+            assertEquals(SshConnectionException.Kind.NOT_FOUND, assertThrows(SshConnectionException.class,
+                    () -> controller.getProfile(new SshProfileRequest("parent", id, null), http)).getKind());
             when(profiles.save(eq("owner"), eq(parent), any(SshProfileSaveCommand.class))).thenThrow(
                     new SshConnectionException(SshConnectionException.Kind.CAPACITY, "fixture limit"));
-            assertEquals(429, assertThrows(ApiException.class,
+            assertEquals(SshConnectionException.Kind.CAPACITY, assertThrows(SshConnectionException.class,
                     () -> controller.saveProfile(new SshProfileSaveRequest("parent", null, null, "fixture", "host", 22,
-                            "user", "password", "secret", null, null), http)).getCode());
+                            "user", "password", "secret", null, null), http)).getKind());
             doThrow(new SshConnectionException(SshConnectionException.Kind.CONFLICT, "fixture version"))
                     .when(profiles).delete("owner", parent, id, 1L);
-            assertEquals(409, assertThrows(ApiException.class,
-                    () -> controller.deleteProfile(new SshProfileRequest("parent", id, 1L), http)).getCode());
+            assertEquals(SshConnectionException.Kind.CONFLICT, assertThrows(SshConnectionException.class,
+                    () -> controller.deleteProfile(new SshProfileRequest("parent", id, 1L), http)).getKind());
             verifyNoInteractions(ssh);
         }
     }
