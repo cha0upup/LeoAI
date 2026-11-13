@@ -11,13 +11,15 @@ final class DatabaseConnectionViewPolicy {
     private static final Pattern INLINE_SECRET = Pattern.compile(
             "(?i)(^|[?&;])((?:password|passwd|pwd|token|access_token|secret|api_key)=)([^&;]*)");
     private static final Pattern AUTHORITY_PASSWORD = Pattern.compile("(://[^:/?#]+:)[^@/?#]+(@)");
+    private static final Pattern NON_KEY_CHARACTERS = Pattern.compile("[^A-Za-z0-9]");
 
     private DatabaseConnectionViewPolicy() { }
 
-    static Map<String, Object> publicValues(Map<String, Object> source) {
+    static Map<String, Object> publicValues(Map<?, ?> source) {
         Map<String, Object> safe = new LinkedHashMap<>();
         source.forEach((key, value) -> {
-            if (!isSecretKey(key)) safe.put(key, sanitizeValue(value));
+            String name = String.valueOf(key);
+            if (!isSecretKey(name)) safe.put(name, sanitizeValue(value));
         });
         return safe;
     }
@@ -55,14 +57,7 @@ final class DatabaseConnectionViewPolicy {
     }
 
     private static Object sanitizeValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> safe = new LinkedHashMap<>();
-            map.forEach((key, item) -> {
-                String name = String.valueOf(key);
-                if (!isSecretKey(name)) safe.put(name, sanitizeValue(item));
-            });
-            return safe;
-        }
+        if (value instanceof Map<?, ?> map) return publicValues(map);
         if (value instanceof List<?> list) return list.stream().map(DatabaseConnectionViewPolicy::sanitizeValue).toList();
         if (value instanceof String text) {
             String sanitized = INLINE_SECRET.matcher(text).replaceAll("$1$2***");
@@ -72,7 +67,8 @@ final class DatabaseConnectionViewPolicy {
     }
 
     private static boolean isSecretKey(String key) {
-        String normalized = key == null ? "" : key.replaceAll("[^A-Za-z0-9]", "").toLowerCase(Locale.ROOT);
+        String normalized = key == null ? "" : NON_KEY_CHARACTERS.matcher(key)
+                .replaceAll("").toLowerCase(Locale.ROOT);
         return normalized.contains("password") || normalized.contains("passwd") || normalized.equals("pwd")
                 || normalized.contains("secret") || normalized.contains("token")
                 || normalized.contains("credential") || normalized.contains("privatekey")

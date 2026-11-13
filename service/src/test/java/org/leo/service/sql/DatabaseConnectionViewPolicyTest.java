@@ -35,8 +35,12 @@ class DatabaseConnectionViewPolicyTest {
     void nestedPublicContainersHideSecretsWithoutMutatingTheStoredConfiguration() {
         var nested = new LinkedHashMap<String, Object>(Map.of("token", "hidden", "label", "original"));
         var stored = new LinkedHashMap<String, Object>(Map.of("host", "db.internal", "options", nested,
-                "items", List.of(nested), "jdbcUrl", "jdbc:vendor://app:secret@db.internal/db?password=query-secret&charset=UTF-8"));
+                "items", List.of(nested), "mixed", Map.of(7, "visible", "pass-word", "hidden"),
+                "jdbcUrl", "jdbc:vendor://app:secret@db.internal/db?password=query-secret&charset=UTF-8"));
         var view = DatabaseConnectionViewPolicy.publicValues(stored);
+        assertEquals(Map.of("label", "original"), view.get("options"));
+        assertEquals(List.of(Map.of("label", "original")), view.get("items"));
+        assertEquals(Map.of("7", "visible"), view.get("mixed"));
         assertEquals("jdbc:vendor://app:***@db.internal/db?password=***&charset=UTF-8", view.get("jdbcUrl"));
         ((Map<String, Object>) view.get("options")).put("label", "changed");
         ((Map<String, Object>) ((List<?>) view.get("items")).get(0)).put("label", "changed-list");
