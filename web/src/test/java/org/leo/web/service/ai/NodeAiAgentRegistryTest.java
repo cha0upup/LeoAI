@@ -1,6 +1,5 @@
 package org.leo.web.service.ai;
 
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiAgentFactory;
@@ -32,8 +31,7 @@ class NodeAiAgentRegistryTest {
         AiModelFailoverService failoverService = mock(AiModelFailoverService.class);
         AiModelConfig config = config(9);
         StreamingChatModel streamingModel = mock(StreamingChatModel.class);
-        ChatModel chatModel = mock(ChatModel.class);
-        DynamicModelProvider.ModelRuntime modelRuntime = runtime(streamingModel, chatModel);
+        DynamicModelProvider.ModelRuntime modelRuntime = runtime(streamingModel);
         NodeAiAgent firstAgent = mock(NodeAiAgent.class);
         NodeAiAgent secondAgent = mock(NodeAiAgent.class);
         when(failoverService.selectForExecution(config)).thenReturn(
@@ -58,7 +56,7 @@ class NodeAiAgentRegistryTest {
         assertSame(first, reused);
         assertNotSame(first, rebuilt);
         assertSame(secondAgent, rebuilt.aiAgent());
-        assertSame(rebuilt, registry.find(session, thread.getThreadId()));
+        assertSame(rebuilt, registry.resolve(session, thread, config, "high"));
         verify(modelProvider, times(2)).buildRuntime(eq(config), any());
 
         registry.evict(session, thread.getThreadId());
@@ -73,10 +71,9 @@ class NodeAiAgentRegistryTest {
         return config;
     }
 
-    private static DynamicModelProvider.ModelRuntime runtime(
-            StreamingChatModel streamingModel, ChatModel chatModel) {
+    private static DynamicModelProvider.ModelRuntime runtime(StreamingChatModel streamingModel) {
         return new DynamicModelProvider.ModelRuntime(
-                streamingModel, chatModel, "chat-completions", "openai",
+                streamingModel, null, "chat-completions", "openai",
                 "https://example.test", "test-model", 4096,
                 false, null, true, false, 16_384);
     }

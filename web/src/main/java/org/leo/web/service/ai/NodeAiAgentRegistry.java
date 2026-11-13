@@ -75,10 +75,6 @@ public class NodeAiAgentRegistry {
         });
     }
 
-    public AiRuntime find(AgentNodeSession session, String threadId) {
-        return aiRuntimes.get(conversationCacheKey(session, threadId));
-    }
-
     public void evict(AgentNodeSession session, String threadId) {
         aiRuntimes.remove(conversationCacheKey(session, threadId));
     }
@@ -89,7 +85,7 @@ public class NodeAiAgentRegistry {
         aiRuntimes.keySet().removeIf(key -> key.startsWith(prefix));
     }
 
-    static String conversationCacheKey(AgentNodeSession session, String threadId) {
+    private static String conversationCacheKey(AgentNodeSession session, String threadId) {
         String sessionId = session != null ? session.getSessionId() : "";
         return sessionId + ":" + (threadId != null ? threadId : "");
     }

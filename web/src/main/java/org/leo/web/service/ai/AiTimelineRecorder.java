@@ -29,11 +29,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 串行保证；{@code eventLog} 用 {@link CopyOnWriteArrayList} 仅是为了让 SSE drain 线程并发读取
  * 时不会 ConcurrentModificationException。
  */
-public final class AiTimelineRecorder {
+final class AiTimelineRecorder {
 
     /** 事件下发回调；实现方负责 SSE 安全下发 + thread/state 端 {@code recordSseEvent} 持久化。 */
     @FunctionalInterface
-    public interface Sink {
+    interface Sink {
         void emit(String name, Object data);
     }
 
@@ -43,16 +43,16 @@ public final class AiTimelineRecorder {
     private final StringBuilder textSegment = new StringBuilder();
     private final List<AiSseEvent> eventLog = new CopyOnWriteArrayList<>();
 
-    public AiTimelineRecorder(Sink sink) {
+    AiTimelineRecorder(Sink sink) {
         this.sink = sink;
     }
 
     /** SSE 重放 / 持久化用的事件序列；并发安全，可由 SSE drain 线程读取。 */
-    public List<AiSseEvent> eventLog() {
+    List<AiSseEvent> eventLog() {
         return eventLog;
     }
 
-    public boolean hasPendingThinking() {
+    boolean hasPendingThinking() {
         return thinking.length() > 0;
     }
 
@@ -62,7 +62,7 @@ public final class AiTimelineRecorder {
      * 进入文本流。若仍有未 flush 的 thinking，先 {@link #flushThinking()} 保证事件顺序为
      * thinking → text；之后 token 进入直播 delta 和持久化 textSegment 缓冲。
      */
-    public void appendVisibleDelta(String text) {
+    void appendVisibleDelta(String text) {
         if (text == null || text.isEmpty()) return;
         if (thinking.length() > 0) flushThinking();
         delta.append(text);
@@ -73,7 +73,7 @@ public final class AiTimelineRecorder {
      * 进入思考流。若仍有未 finalize 的 textSegment，先 {@link #finalizeTextSegment()}
      * 保证事件顺序为 text → thinking。
      */
-    public void appendThinking(String text) {
+    void appendThinking(String text) {
         if (text == null || text.isEmpty()) return;
         if (textSegment.length() > 0) finalizeTextSegment();
         thinking.append(text);
@@ -82,7 +82,7 @@ public final class AiTimelineRecorder {
     // ── 边界 flush ──────────────────────────────────────────────────────────
 
     /** 把累积的 delta 攒批后以 {@code delta} 事件下发；不入 eventLog（仅直播）。 */
-    public void flushDelta() {
+    void flushDelta() {
         if (delta.length() == 0) return;
         String payload = delta.toString();
         delta.setLength(0);
@@ -90,7 +90,7 @@ public final class AiTimelineRecorder {
     }
 
     /** thinking 缓冲落地为 {@code node{kind:"thinking"}} 事件并写入 eventLog。 */
-    public void flushThinking() {
+    void flushThinking() {
         if (thinking.length() == 0) return;
         String content = thinking.toString();
         thinking.setLength(0);
@@ -101,7 +101,7 @@ public final class AiTimelineRecorder {
      * textSegment 缓冲落地为 {@code node{kind:"text"}} 事件并写入 eventLog。
      * 先 {@link #flushDelta()} 让前端直播流闭合，再发节点；空白片段直接丢弃。
      */
-    public void finalizeTextSegment() {
+    private void finalizeTextSegment() {
         flushDelta();
         if (textSegment.length() == 0) return;
         String content = textSegment.toString();
@@ -120,7 +120,7 @@ public final class AiTimelineRecorder {
     }
 
     /** 边界统一处理：先 flush thinking，再 finalize textSegment（会顺带 flush delta）。 */
-    public void onBoundary() {
+    void onBoundary() {
         flushThinking();
         finalizeTextSegment();
     }
@@ -128,7 +128,7 @@ public final class AiTimelineRecorder {
     // ── 外部事件 ────────────────────────────────────────────────────────────
 
     /** 工具 start/patch、plan、subagent 等"由服务方组装并下发"的事件写入 eventLog。 */
-    public void recordExternal(String name, Object data) {
+    void recordExternal(String name, Object data) {
         eventLog.add(new AiSseEvent(name, data));
     }
 }
