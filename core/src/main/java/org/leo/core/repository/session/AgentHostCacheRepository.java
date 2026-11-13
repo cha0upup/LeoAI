@@ -38,9 +38,7 @@ public class AgentHostCacheRepository {
             AgentNodeSession session = requireSession(sessionId);
             File hostDir = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(
                     session.getCreateByUser(), session.resolveAgentId()), BASIC_INFO_SUBDIR);
-            if (!hostDir.exists()) hostDir.mkdirs();
-            Map<String, Object> root = new LinkedHashMap<>();
-            root.putAll(basicInfo);
+            Map<String, Object> root = new LinkedHashMap<>(basicInfo);
             root.put("hostId", hostId.trim());
             root.put(SAVE_TIME_KEY, Instant.now().toString());
             return fileStore.writeJson(new File(hostDir, encodeHostId(hostId.trim()) + ".json"), root);

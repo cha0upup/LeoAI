@@ -31,9 +31,8 @@ public class AgentWebRuntimeRepository {
             AgentNodeSession session = requireSession(sessionId);
             String hostId = session.getCurrentHostId();
             if (hostId == null || hostId.isBlank()) return null;
-            Map<String, Object> structured = new LinkedHashMap<>();
+            Map<String, Object> structured = new LinkedHashMap<>(snapshot);
             structured.put("saveTime", Instant.now().toString());
-            structured.putAll(snapshot);
             structured.put("hostId", hostId.trim());
             File dir = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(
                     session.getCreateByUser(), session.resolveAgentId()), WEB_RUNTIME_SUBDIR);

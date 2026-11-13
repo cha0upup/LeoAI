@@ -35,7 +35,6 @@ public class AgentSessionFileRepository {
             String relative = "/".equals(serverPath) ? "" : AgentNodeSessionWorkDirUtil.toRelativePathUnderFile(serverPath);
             Path target = relative.isEmpty() ? base : base.resolve(relative).normalize();
             if (!target.startsWith(base)) return null;
-            Files.createDirectories(target);
             Map<String, Object> structured = new LinkedHashMap<>();
             structured.put("path", requestedPath == null ? "root" : requestedPath);
             structured.put("absolutePath", results.get("absolutePath"));

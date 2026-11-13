@@ -14,12 +14,15 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
@@ -149,28 +152,52 @@ class AgentRepositoryTest {
         File file = repository.save("first", "original");
         byte[] corrupt = {(byte) 0xC3, (byte) 0x28};
         Files.write(file.toPath(), corrupt);
-        org.junit.jupiter.api.Assertions.assertEquals(FileStoreException.Reason.INVALID_CONTENT,
+        assertEquals(FileStoreException.Reason.INVALID_CONTENT,
                 assertThrows(FileStoreException.class, () -> repository.load("first")).getReason());
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> repository.append("first", "addition"));
         assertTrue(error.getCause() instanceof FileStoreException);
-        org.junit.jupiter.api.Assertions.assertArrayEquals(corrupt, Files.readAllBytes(file.toPath()));
+        assertArrayEquals(corrupt, Files.readAllBytes(file.toPath()));
         assertEquals("original", first.getReconSummary());
     }
 
     @Test
-    void webRuntimeSnapshotsAreIsolatedByHostId() {
+    void fileListingsAndDownloadChunksCreateTheirOwnDirectories() throws Exception {
+        AgentNodeSession session = session("files", "agent-a", "host-a");
+        AtomicFileStore files = new AtomicFileStore();
+        AgentSessionFileRepository repository = new AgentSessionFileRepository(files);
+
+        File listing = repository.saveFileList(session.getSessionId(), "/var/log",
+                Map.of("code", 200, "absolutePath", "/var/log", "count", 0, "fileList", List.of()));
+        assertNotNull(listing);
+        assertEquals("/var/log", files.readJsonMap(listing).get("absolutePath"));
+
+        String downloadPath = "/downloads/nested/data.bin";
+        File download = repository.appendDownloadChunk(session.getSessionId(), downloadPath, 0, new byte[]{1, 2});
+        assertNotNull(download);
+        assertEquals(download, repository.appendDownloadChunk(session.getSessionId(), downloadPath, 2, new byte[]{3}));
+        assertArrayEquals(new byte[]{1, 2, 3}, Files.readAllBytes(download.toPath()));
+    }
+
+    @Test
+    void webRuntimeSnapshotsKeepHostIsolationAndServerOwnedMetadata() {
         AgentNodeSession first = session("session-a", "agent-a", "host-a");
         AgentNodeSession second = session("session-b", "agent-a", "host-b");
         AgentWebRuntimeRepository repository = new AgentWebRuntimeRepository(new AtomicFileStore());
 
-        repository.save(first.getSessionId(), Map.of("schemaVersion", 2, "runtime", "tomcat"));
+        Map<String, Object> input = Map.of("schemaVersion", 2, "runtime", "tomcat",
+                "hostId", "caller-host", "saveTime", "caller-time");
+        repository.save(first.getSessionId(), input);
         repository.save(second.getSessionId(), Map.of("schemaVersion", 2, "runtime", "jetty"));
 
-        assertEquals("tomcat", repository.load(first.getCreateByUser(), first.resolveAgentId(), first.getCurrentHostId()).get("runtime"));
+        Map<String, Object> stored = repository.load(
+                first.getCreateByUser(), first.resolveAgentId(), first.getCurrentHostId());
+        assertEquals("tomcat", stored.get("runtime"));
         assertEquals("jetty", repository.load(second.getCreateByUser(), second.resolveAgentId(), second.getCurrentHostId()).get("runtime"));
-        assertEquals("host-a", repository.load(first.getCreateByUser(), first.resolveAgentId(), first.getCurrentHostId()).get("hostId"));
+        assertEquals("host-a", stored.get("hostId"));
         assertEquals("host-b", repository.load(second.getCreateByUser(), second.resolveAgentId(), second.getCurrentHostId()).get("hostId"));
+        assertDoesNotThrow(() -> Instant.parse((String) stored.get("saveTime")));
+        assertEquals("caller-time", input.get("saveTime"));
     }
 
     @Test
