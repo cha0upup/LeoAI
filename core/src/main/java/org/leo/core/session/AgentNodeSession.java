@@ -64,7 +64,7 @@ public class AgentNodeSession {
      */
     private volatile String reconSummaryDigest;
     /**
-     * Digest 失效标记：每次 setReconSummary / appendReconSummary 后置为 true。
+     * Digest 失效标记：正文内容变化后置为 true。
      */
     private final AtomicBoolean reconSummaryDigestDirty = new AtomicBoolean(true);
     /** AI 工具结果自动追加到侦察摘要的开关（默认开启）。
@@ -329,18 +329,15 @@ public class AgentNodeSession {
     public String getReconSummary() { return reconSummary; }
 
     public synchronized void setReconSummary(String reconSummary) {
+        if (Objects.equals(this.reconSummary, reconSummary)) return;
         this.reconSummary = reconSummary;
         reconSummaryDigestDirty.set(true);
     }
 
     public synchronized void appendReconSummary(String content) {
         if (content == null || content.isBlank()) return;
-        if (this.reconSummary == null || this.reconSummary.isBlank()) {
-            this.reconSummary = content;
-        } else {
-            this.reconSummary = this.reconSummary + "\n\n" + content;
-        }
-        reconSummaryDigestDirty.set(true);
+        setReconSummary(this.reconSummary == null || this.reconSummary.isBlank()
+                ? content : this.reconSummary + "\n\n" + content);
     }
 
     public boolean hasReconSummary() {
@@ -348,9 +345,12 @@ public class AgentNodeSession {
     }
 
     public String  getReconSummaryDigest()              { return reconSummaryDigest; }
-    public void    setReconSummaryDigest(String digest)  {
+    public synchronized boolean setReconSummaryDigestIfCurrent(String sourceSummary, String digest) {
+        if (sourceSummary == null || sourceSummary.isBlank()
+                || !Objects.equals(reconSummary, sourceSummary)) return false;
         this.reconSummaryDigest = digest;
         reconSummaryDigestDirty.set(false);
+        return true;
     }
     public boolean isReconSummaryDigestDirty()           { return reconSummaryDigestDirty.get(); }
     public boolean hasFreshReconSummaryDigest() {

@@ -18,7 +18,7 @@ import java.util.List;
  * 侦察摘要精简版（Digest）生成服务。
  *
  * <p>当完整摘要超过 {@value #DIGEST_THRESHOLD} 字符时，调用 LLM 将其压缩为
- * 最多 500 字符的要点列表，写入 {@link AgentNodeSession#setReconSummaryDigest(String)}。
+ * 最多 500 字符的要点列表，按源正文校验后写入会话。
  * NodeAiSystemPromptProvider 优先注入 digest 版本，节省 token 预算。
  */
 @Service
@@ -51,16 +51,14 @@ public class ReconSummaryDigestService {
     }
 
     /**
-     * 同步生成 digest 并写入 session。
+     * 复用有效 digest 或同步生成；正文已变化时丢弃过期结果并返回 null。
      */
     public String generateAndSave(AgentNodeSession session) {
         String summary = session == null ? null : session.getReconSummary();
         if (summary == null || summary.isBlank()) {
             throw new IllegalStateException("摘要为空，无法生成精简版");
         }
-        String digest = callAi(summary);
-        session.setReconSummaryDigest(digest);
-        return digest;
+        return generateDigest(session, summary);
     }
 
     /**
@@ -72,10 +70,11 @@ public class ReconSummaryDigestService {
         String summary = session.getReconSummary();
         if (summary == null || summary.length() < DIGEST_THRESHOLD) return;
         try {
-            String digest = callAi(summary);
-            session.setReconSummaryDigest(digest);
-            log.debug("ReconSummaryDigest 异步生成完成，sessionId={}, digestLen={}",
-                    session.getSessionId(), digest.length());
+            String digest = generateDigest(session, summary);
+            if (digest != null) {
+                log.debug("ReconSummaryDigest 已就绪，sessionId={}, digestLen={}",
+                        session.getSessionId(), digest.length());
+            }
         } catch (Exception e) {
             log.warn("ReconSummaryDigest 异步生成失败，sessionId={}: {}", session.getSessionId(), e.getMessage());
         }
@@ -103,6 +102,12 @@ public class ReconSummaryDigestService {
                     + "\n\n... [侦察摘要过长，已截断。完整精简版正在生成中]";
         }
         return summary;
+    }
+
+    private String generateDigest(AgentNodeSession session, String summary) {
+        if (session.hasFreshReconSummaryDigest()) return session.getReconSummaryDigest();
+        String digest = callAi(summary);
+        return session.setReconSummaryDigestIfCurrent(summary, digest) ? digest : null;
     }
 
     private String callAi(String summary) {

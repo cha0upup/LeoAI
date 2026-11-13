@@ -7,16 +7,64 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.session.AgentNodeSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class ReconSummaryCredentialPreservationTest {
+class ReconSummaryProcessingTest {
+
+    @Test
+    void unchangedSummaryReusesItsDigestAndAnAppendInvalidatesIt() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.chat(any(ChatRequest.class))).thenReturn(response("digest"));
+        AgentNodeSession session = new AgentNodeSession();
+        String summary = "x".repeat(ReconSummaryDigestService.DIGEST_THRESHOLD);
+        session.setReconSummary(summary);
+        ReconSummaryDigestService service = new ReconSummaryDigestService(model);
+
+        assertEquals("digest", service.generateAndSave(session));
+        session.setReconSummary(summary);
+        assertEquals("digest", service.generateAndSave(session));
+        service.generateAndSaveAsync(session);
+        assertTrue(session.hasFreshReconSummaryDigest());
+        verify(model).chat(any(ChatRequest.class));
+
+        session.appendReconSummary("additional context");
+        assertTrue(session.isReconSummaryDigestDirty());
+        service.generateAndSaveAsync(session);
+        assertTrue(session.hasFreshReconSummaryDigest());
+        verify(model, times(2)).chat(any(ChatRequest.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void aSummaryChangedDuringGenerationRejectsTheOutdatedResult(boolean async) {
+        ChatModel model = mock(ChatModel.class);
+        AgentNodeSession session = new AgentNodeSession();
+        session.setReconSummary("x".repeat(ReconSummaryDigestService.DIGEST_THRESHOLD));
+        when(model.chat(any(ChatRequest.class))).thenAnswer(invocation -> {
+            session.setReconSummary("updated summary");
+            return response("outdated digest");
+        });
+        ReconSummaryDigestService service = new ReconSummaryDigestService(model);
+
+        if (async) service.generateAndSaveAsync(session);
+        else assertNull(service.generateAndSave(session));
+
+        assertEquals("updated summary", session.getReconSummary());
+        assertNull(session.getReconSummaryDigest());
+        assertTrue(session.isReconSummaryDigestDirty());
+    }
 
     @Test
     void digestKeepsCredentialsInModelInputAndOutput() {

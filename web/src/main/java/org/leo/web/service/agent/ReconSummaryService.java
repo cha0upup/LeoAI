@@ -76,9 +76,7 @@ public class ReconSummaryService {
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
         repository.save(sessionId, organized);
         session.setReconSummary(organized);
-        if (organized.length() >= ReconSummaryDigestService.DIGEST_THRESHOLD) {
-            reconSummaryDigestService.generateAndSaveAsync(session);
-        }
+        triggerDigestIfNeeded(session);
         return new OrganizeResponse(sessionId, organized, "侦察摘要已整理并保存");
     }
 
@@ -100,7 +98,8 @@ public class ReconSummaryService {
             return new DigestGenerateResponse(sessionId, null, "尚无侦察摘要，跳过精简版生成");
         }
         String digest = reconSummaryDigestService.generateAndSave(session);
-        return new DigestGenerateResponse(sessionId, digest, "精简版已生成");
+        return new DigestGenerateResponse(sessionId, digest,
+                digest != null ? "精简版已生成" : "摘要已更新，跳过过期精简结果");
     }
 
     public AutoAppendToggleResponse toggleAutoAppend(String sessionId, AgentNodeSession session) {
