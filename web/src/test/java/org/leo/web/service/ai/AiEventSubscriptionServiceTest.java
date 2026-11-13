@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
@@ -11,12 +12,20 @@ import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.session.AiThread;
 import org.mockito.ArgumentCaptor;
+import org.mockito.stubbing.Answer;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -188,6 +197,231 @@ class AiEventSubscriptionServiceTest {
         verify(eventStore).hasLatestTurnCompletedEvent("thread-queued");
         verify(writer, never()).sendStatus(emitter, AiRunStatus.IDLE);
         verify(emitter).complete();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {2, 8, 16})
+    void sharesJournalReadsAcrossConcurrentSubscribersAndReleasesTheCache(int subscriberCount)
+            throws Exception {
+        AiEventSubscriptionService shared = new AiEventSubscriptionService(
+                executor, writer, eventStore, () -> 0L);
+        AiThread thread = new AiThread("shared", "test");
+        assertTrue(thread.claimExecution());
+
+        runOverlappingSubscribers(shared, thread, IntStream.range(0, subscriberCount)
+                .mapToObj(index -> 0L).toList(), null);
+
+        verify(eventStore).listEventsAfter("shared", 0L, 200);
+        verify(eventStore).findLastEventSeq("shared");
+        verify(eventStore).listInProgressProtocolTurns("shared");
+        assertTrue(thread.isExecuting());
+
+        // The last disconnect must discard cached empty pages, even if the clock
+        // has not advanced and a later subscriber reuses the same cursor.
+        thread.markCompleted();
+        thread.clearExecuting();
+        AiSseEvent event = thread.recordSseEvent("delta", "after reconnect");
+        when(eventStore.listEventsAfter("shared", 0L, 200)).thenReturn(List.of(event));
+        when(eventStore.findLastEventSeq("shared")).thenReturn(event.seq());
+        when(eventStore.findThread("shared")).thenReturn(threadRecord(AiRunStatus.COMPLETED));
+        when(eventStore.hasLatestTurnCompletedEvent("shared")).thenReturn(true);
+        SseEmitter reconnected = mock(SseEmitter.class);
+
+        shared.stream("test", "shared", thread, reconnected, 0L, new AtomicBoolean(false));
+
+        verify(eventStore, times(2)).listEventsAfter("shared", 0L, 200);
+        verify(writer).sendEvent(reconnected, event);
+        verify(writer).sendStatus(reconnected, AiRunStatus.COMPLETED);
+        verify(reconnected).complete();
+    }
+
+    @Test
+    void overlappingSubscribersKeepIndependentReplayCursors() throws Exception {
+        AiEventSubscriptionService shared = new AiEventSubscriptionService(
+                executor, writer, eventStore, () -> 0L);
+        AiThread thread = new AiThread("independent", "test");
+        assertTrue(thread.claimExecution());
+        List<AiSseEvent> events = IntStream.range(0, 3)
+                .mapToObj(index -> thread.recordSseEvent("delta", "event-" + index)).toList();
+        when(eventStore.listEventsAfter(eq("independent"), anyLong(), eq(200)))
+                .thenAnswer(invocation -> events.stream()
+                        .filter(event -> event.seq() > (long) invocation.getArgument(1)).toList());
+
+        List<SseEmitter> emitters = runOverlappingSubscribers(
+                shared, thread, List.of(0L, 1L), events.get(2));
+
+        for (AiSseEvent event : events) verify(writer).sendEvent(emitters.get(0), event);
+        verify(writer, never()).sendEvent(emitters.get(1), events.get(0));
+        verify(writer).sendEvent(emitters.get(1), events.get(1));
+        verify(writer).sendEvent(emitters.get(1), events.get(2));
+        verify(eventStore).listEventsAfter("independent", 0L, 200);
+        verify(eventStore).listEventsAfter("independent", 1L, 200);
+        verify(eventStore, never()).listInProgressProtocolTurns("independent");
+    }
+
+    @Test
+    void refreshesCachedEmptyPagesToObserveEventsFromAnotherRuntime() throws Exception {
+        AtomicLong clock = new AtomicLong();
+        AiEventSubscriptionService shared = new AiEventSubscriptionService(
+                executor, writer, eventStore, clock::get);
+        AiThread thread = new AiThread("refresh", "test");
+        assertTrue(thread.claimExecution());
+        SseEmitter first = mock(SseEmitter.class);
+        SseEmitter second = mock(SseEmitter.class);
+        AtomicBoolean firstClosed = new AtomicBoolean(false);
+        AtomicBoolean secondClosed = new AtomicBoolean(false);
+        CountDownLatch firstRead = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            firstRead.countDown();
+            assertTrue(releaseFirst.await(2, TimeUnit.SECONDS));
+            firstClosed.set(true);
+            return null;
+        }).when(writer).sendHeartbeat(eq(first), any());
+        doAnswer(invocation -> {
+            secondClosed.set(true);
+            return null;
+        }).when(writer).sendEvent(eq(second), any(AiSseEvent.class));
+        AiSseEvent remoteEvent = new AiSseEvent(1L, 1L, "delta", "remote", null, null, null, null);
+        when(eventStore.listEventsAfter("refresh", 0L, 200))
+                .thenReturn(List.of(), List.of(remoteEvent));
+        var workers = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> running = workers.submit(() -> shared.stream(
+                    "test", "refresh", thread, first, 0L, firstClosed));
+            assertTrue(firstRead.await(2, TimeUnit.SECONDS));
+            clock.set(TimeUnit.MILLISECONDS.toNanos(200));
+
+            shared.stream("test", "refresh", thread, second, 0L, secondClosed);
+
+            releaseFirst.countDown();
+            running.get(2, TimeUnit.SECONDS);
+        } finally {
+            releaseFirst.countDown();
+            workers.shutdownNow();
+        }
+
+        assertEquals(0L, thread.getLastSseEventSeq());
+        verify(eventStore, times(2)).listEventsAfter("refresh", 0L, 200);
+        verify(eventStore).listInProgressProtocolTurns("refresh");
+        verify(writer).sendEvent(second, remoteEvent);
+        assertTrue(thread.isExecuting());
+    }
+
+    @Test
+    void journalReadFailureDoesNotPoisonTheNextSubscription() throws Exception {
+        AiEventSubscriptionService shared = new AiEventSubscriptionService(
+                executor, writer, eventStore, () -> 0L);
+        AiThread thread = new AiThread("read-failure", "test");
+        thread.markCompleted();
+        AiSseEvent event = thread.recordSseEvent("delta", "persisted");
+        when(eventStore.listEventsAfter("read-failure", 0L, 200))
+                .thenThrow(new IllegalStateException("database busy"))
+                .thenReturn(List.of(event));
+        when(eventStore.findLastEventSeq("read-failure")).thenReturn(event.seq());
+        when(eventStore.findThread("read-failure")).thenReturn(threadRecord(AiRunStatus.COMPLETED));
+        when(eventStore.hasLatestTurnCompletedEvent("read-failure")).thenReturn(true);
+        SseEmitter failed = mock(SseEmitter.class);
+        SseEmitter reconnected = mock(SseEmitter.class);
+
+        shared.stream("test", "read-failure", thread, failed, 0L, new AtomicBoolean(false));
+        shared.stream("test", "read-failure", thread, reconnected, 0L, new AtomicBoolean(false));
+
+        verify(failed).complete();
+        verify(writer).sendEvent(reconnected, event);
+        verify(writer).sendStatus(reconnected, AiRunStatus.COMPLETED);
+        verify(reconnected).complete();
+    }
+
+    @Test
+    void newerEventsInvalidateACachedTerminalStateBeforeItsExpiry() throws Exception {
+        AiEventSubscriptionService shared = new AiEventSubscriptionService(
+                executor, writer, eventStore, () -> 0L);
+        AiThread thread = new AiThread("new-turn", "test");
+        thread.markCompleted();
+        AiSseEvent oldEvent = new AiSseEvent(1L, 1L, "turn/completed", "old", null, null, null, null);
+        AiSseEvent queuedEvent = new AiSseEvent(2L, 2L, "turn/queued", "new", null, null, null, null);
+        AiTurnRecord queued = new AiTurnRecord();
+        queued.setDispatchStatus("queued");
+        when(eventStore.listEventsAfter("new-turn", 0L, 200)).thenReturn(List.of(oldEvent));
+        when(eventStore.listEventsAfter("new-turn", 1L, 200)).thenReturn(List.of(queuedEvent));
+        when(eventStore.findLastEventSeq("new-turn")).thenReturn(1L, 2L);
+        when(eventStore.listInProgressProtocolTurns("new-turn"))
+                .thenReturn(List.of(), List.of(queued));
+        when(eventStore.findThread("new-turn")).thenReturn(threadRecord(AiRunStatus.COMPLETED));
+        when(eventStore.hasLatestTurnCompletedEvent("new-turn")).thenReturn(true);
+        SseEmitter first = mock(SseEmitter.class);
+        SseEmitter second = mock(SseEmitter.class);
+        AtomicBoolean secondClosed = new AtomicBoolean(false);
+        CountDownLatch terminalRead = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            terminalRead.countDown();
+            assertTrue(releaseFirst.await(2, TimeUnit.SECONDS));
+            return null;
+        }).when(writer).sendStatus(first, AiRunStatus.COMPLETED);
+        doAnswer(invocation -> {
+            secondClosed.set(true);
+            return null;
+        }).when(writer).sendEvent(second, queuedEvent);
+        var workers = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> running = workers.submit(() -> shared.stream(
+                    "test", "new-turn", thread, first, 0L, new AtomicBoolean(false)));
+            assertTrue(terminalRead.await(2, TimeUnit.SECONDS));
+
+            shared.stream("test", "new-turn", thread, second, 1L, secondClosed);
+
+            releaseFirst.countDown();
+            running.get(2, TimeUnit.SECONDS);
+        } finally {
+            releaseFirst.countDown();
+            workers.shutdownNow();
+        }
+
+        verify(eventStore, times(2)).listInProgressProtocolTurns("new-turn");
+        verify(writer).sendEvent(second, queuedEvent);
+        verify(writer, never()).sendStatus(eq(second), any());
+        verify(second).complete();
+    }
+
+    private List<SseEmitter> runOverlappingSubscribers(AiEventSubscriptionService shared,
+                                                      AiThread thread, List<Long> cursors,
+                                                      AiSseEvent lastEvent)
+            throws Exception {
+        Map<SseEmitter, AtomicBoolean> closed = new LinkedHashMap<>();
+        for (int index = 0; index < cursors.size(); index++) {
+            closed.put(mock(SseEmitter.class), new AtomicBoolean(false));
+        }
+        CountDownLatch readers = new CountDownLatch(cursors.size());
+        Answer<Void> lastWrite = invocation -> {
+            readers.countDown();
+            assertTrue(readers.await(2, TimeUnit.SECONDS));
+            closed.get(invocation.getArgument(0)).set(true);
+            return null;
+        };
+        if (lastEvent == null) {
+            doAnswer(lastWrite).when(writer).sendHeartbeat(any(SseEmitter.class), any());
+        } else {
+            doAnswer(lastWrite).when(writer).sendEvent(any(SseEmitter.class), eq(lastEvent));
+        }
+        List<SseEmitter> emitters = new ArrayList<>(closed.keySet());
+        List<Future<?>> results = new ArrayList<>();
+        var workers = Executors.newFixedThreadPool(cursors.size());
+        try {
+            for (int index = 0; index < cursors.size(); index++) {
+                SseEmitter emitter = emitters.get(index);
+                long cursor = cursors.get(index);
+                results.add(workers.submit(() -> shared.stream("test", thread.getThreadId(),
+                        thread, emitter, cursor, closed.get(emitter))));
+            }
+            for (Future<?> result : results) result.get(3, TimeUnit.SECONDS);
+        } finally {
+            closed.values().forEach(flag -> flag.set(true));
+            workers.shutdownNow();
+        }
+        for (SseEmitter emitter : emitters) verify(emitter).complete();
+        return emitters;
     }
 
     private static AiThreadRecord threadRecord(String status) {

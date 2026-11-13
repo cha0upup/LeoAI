@@ -7,6 +7,7 @@ import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -14,14 +15,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongSupplier;
 
 /**
  * 为运行中的 AI 线程提供可重放、可重新附着的 SSE 订阅。
  *
  * <p>订阅只读取运行时事件日志，不消费执行队列，也不持有或改变任务执行权。
  * 浏览器刷新、网络切换和多个视图同时观察同一线程时，各订阅拥有独立游标。
+ * 同一线程的订阅在一个轮询周期内共享日志页与状态查询，不缓存发送结果或执行权。
  */
 @Component
 public class AiEventSubscriptionService {
@@ -31,17 +36,30 @@ public class AiEventSubscriptionService {
     private static final int PAGE_SIZE = 200;
     private static final long POLL_MILLIS = 200L;
     private static final long HEARTBEAT_INTERVAL_MILLIS = 5_000L;
+    private static final int MAX_CACHED_PAGES = 8;
+    private static final long CACHE_NANOS = TimeUnit.MILLISECONDS.toNanos(POLL_MILLIS);
 
     private final AiSseExecutor executor;
     private final AiSseEmitterWriter writer;
     private final AiConversationStoreService eventStore;
+    private final LongSupplier nanoTime;
+    private final ConcurrentHashMap<String, SharedJournal> journals = new ConcurrentHashMap<>();
 
+    @Autowired
     public AiEventSubscriptionService(AiSseExecutor executor,
                                       AiSseEmitterWriter writer,
                                       AiConversationStoreService eventStore) {
+        this(executor, writer, eventStore, System::nanoTime);
+    }
+
+    AiEventSubscriptionService(AiSseExecutor executor,
+                              AiSseEmitterWriter writer,
+                              AiConversationStoreService eventStore,
+                              LongSupplier nanoTime) {
         this.executor = executor;
         this.writer = writer;
         this.eventStore = eventStore;
+        this.nanoTime = nanoTime;
     }
 
     public SseEmitter subscribe(String source,
@@ -80,10 +98,10 @@ public class AiEventSubscriptionService {
                 AtomicBoolean closed) {
         long cursor = Math.max(0L, afterSeq);
         long lastHeartbeatAt = 0L;
+        SharedJournal journal = acquireJournal(threadId);
         try {
             while (!closed.get()) {
-                List<AiSseEvent> events =
-                        eventStore.listEventsAfter(threadId, cursor, PAGE_SIZE);
+                List<AiSseEvent> events = journal.eventsAfter(cursor);
                 for (AiSseEvent event : events) {
                     if (closed.get()) return;
                     writer.sendEvent(emitter, event);
@@ -98,22 +116,15 @@ public class AiEventSubscriptionService {
                 boolean heartbeatDue = now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS;
                 // 执行期间只追增量事件；心跳和终态检查时再读取持久化状态。
                 if (!executing || heartbeatDue) {
+                    JournalState persisted = journal.state(executing);
                     long serverLastSeq = Math.max(
                             runtime.getLastSseEventSeq(),
-                            eventStore.findLastEventSeq(threadId));
-                    List<AiTurnRecord> inProgressTurns =
-                            eventStore.listInProgressProtocolTurns(threadId);
-                    boolean protocolExecuting = !inProgressTurns.isEmpty();
-                    String status = runtime.getRunStatus();
-                    if (protocolExecuting) {
-                        String dispatchStatus = inProgressTurns.get(0).getDispatchStatus();
-                        status = dispatchStatus != null ? dispatchStatus : "running";
-                    } else if (!executing) {
-                        AiThreadRecord persistedThread = eventStore.findThread(threadId);
-                        if (persistedThread != null) status = persistedThread.getRunStatus();
-                    }
+                            persisted.lastSeq());
+                    boolean protocolExecuting = persisted.protocolExecuting();
+                    String status = persisted.status() != null
+                            ? persisted.status() : runtime.getRunStatus();
                     if (!runtime.isExecuting() && !protocolExecuting && cursor >= serverLastSeq
-                            && eventStore.hasLatestTurnCompletedEvent(threadId)) {
+                            && persisted.turnCompleted()) {
                         if (isTerminal(status)) {
                             writer.sendStatus(emitter, status);
                         }
@@ -129,7 +140,7 @@ public class AiEventSubscriptionService {
                         lastHeartbeatAt = now;
                     }
                 }
-                Thread.sleep(POLL_MILLIS);
+                if (!closed.get()) Thread.sleep(POLL_MILLIS);
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
@@ -139,9 +150,90 @@ public class AiEventSubscriptionService {
                     source != null ? source : "AI", error.getMessage());
         } finally {
             closed.set(true);
+            releaseJournal(threadId, journal);
             AiSseEmitterWriter.safeComplete(emitter);
         }
     }
+
+    private SharedJournal acquireJournal(String threadId) {
+        return journals.compute(threadId, (id, current) -> {
+            SharedJournal journal = current != null ? current : new SharedJournal(id);
+            journal.subscribers++;
+            return journal;
+        });
+    }
+
+    private void releaseJournal(String threadId, SharedJournal journal) {
+        journals.computeIfPresent(threadId, (id, current) -> {
+            if (current != journal) return current;
+            return --current.subscribers == 0 ? null : current;
+        });
+    }
+
+    /** Short-lived, bounded read sharing only. Socket writes never hold this lock. */
+    private final class SharedJournal {
+        private final String threadId;
+        private final LinkedHashMap<Long, EventPage> pages = new LinkedHashMap<>(16, 0.75f, true);
+        private int subscribers;
+        private JournalState state;
+        private long stateReadAt;
+
+        private SharedJournal(String threadId) {
+            this.threadId = threadId;
+        }
+
+        synchronized List<AiSseEvent> eventsAfter(long cursor) {
+            long now = nanoTime.getAsLong();
+            pages.values().removeIf(page -> now - page.readAt() >= CACHE_NANOS);
+            EventPage page = pages.get(cursor);
+            if (page == null) {
+                List<AiSseEvent> events = List.copyOf(
+                        eventStore.listEventsAfter(threadId, cursor, PAGE_SIZE));
+                page = new EventPage(nanoTime.getAsLong(), events);
+                pages.put(cursor, page);
+                if (pages.size() > MAX_CACHED_PAGES) {
+                    pages.remove(pages.keySet().iterator().next());
+                }
+            }
+            // A newer journal event can belong to a new queued Turn. Never use
+            // an older terminal snapshot to close a subscriber that observed it.
+            if (state != null && !page.events().isEmpty()
+                    && page.events().get(page.events().size() - 1).seq() > state.lastSeq()) {
+                state = null;
+            }
+            return page.events();
+        }
+
+        synchronized JournalState state(boolean executing) {
+            long now = nanoTime.getAsLong();
+            if (state != null && state.executing() == executing
+                    && now - stateReadAt < CACHE_NANOS) {
+                return state;
+            }
+            long lastSeq = eventStore.findLastEventSeq(threadId);
+            List<AiTurnRecord> inProgress = eventStore.listInProgressProtocolTurns(threadId);
+            boolean protocolExecuting = !inProgress.isEmpty();
+            String status = null;
+            if (protocolExecuting) {
+                status = inProgress.get(0).getDispatchStatus();
+                if (status == null) status = "running";
+            } else if (!executing) {
+                AiThreadRecord thread = eventStore.findThread(threadId);
+                if (thread != null) status = thread.getRunStatus();
+            }
+            boolean completed = !executing && !protocolExecuting
+                    && eventStore.hasLatestTurnCompletedEvent(threadId);
+            state = new JournalState(executing, lastSeq, protocolExecuting, status, completed);
+            stateReadAt = nanoTime.getAsLong();
+            return state;
+        }
+    }
+
+    private record EventPage(long readAt, List<AiSseEvent> events) { }
+
+    private record JournalState(boolean executing, long lastSeq,
+                                boolean protocolExecuting, String status,
+                                boolean turnCompleted) { }
 
     private boolean isTerminal(String status) {
         return "completed".equals(status)
