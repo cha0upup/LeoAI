@@ -13,13 +13,14 @@ import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.importing.ImportConflictPolicy;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -30,6 +31,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -238,11 +240,16 @@ public class DisguiseService {
     /**
      * 导入 .disguise 或 .zip 文件，按冲突策略处理，返回逐条结果。
      */
-    public synchronized List<ImportResult> importDisguises(MultipartFile file, ImportConflictPolicy policy, User user) throws Exception {
+    public synchronized List<ImportResult> importDisguises(String filename, InputStreamSource source,
+                                                        ImportConflictPolicy policy, User user) throws Exception {
         ensureLoggedIn(user);
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("文件不能为空");
-        String fname = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
-        byte[] bytes = file.getBytes();
+        if (source == null) throw new IllegalArgumentException("文件不能为空");
+        String fname = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
+        byte[] bytes;
+        try (InputStream input = source.getInputStream()) {
+            bytes = input.readAllBytes();
+        }
+        if (bytes.length == 0) throw new IllegalArgumentException("文件不能为空");
         if (fname.endsWith(".zip")) {
             return importFromZip(bytes, policy, user);
         } else if (fname.endsWith(FILE_SUFFIX)) {

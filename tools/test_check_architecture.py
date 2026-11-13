@@ -56,11 +56,8 @@ class ArchitectureAuditTest(unittest.TestCase):
         self.assertEqual(3, len(issues))
         self.assertEqual(2, sum('forbidden upward import' in issue for issue in issues))
 
-    def test_application_adapters_stay_in_web(self):
+    def test_service_adapter_implementations_stay_out(self):
         cases = {
-            '': ('jakarta.servlet.http.HttpServletRequest', 'javax.servlet.Servlet',
-                 'org.springframework.web.bind.annotation.RestController',
-                 'jakarta.servlet.*', 'javax.servlet.*', 'org.springframework.web.bind.annotation.*'),
             'org/leo/service/ssh/': ('net.schmizz.sshj.SSHClient', 'org.apache.sshd.client.SshClient',
                                     'net.schmizz.*', 'org.apache.sshd.*'),
             'org/leo/service/discovery/': ('java.sql.Connection', 'javax.sql.DataSource',
@@ -78,6 +75,33 @@ class ArchitectureAuditTest(unittest.TestCase):
                     self.assertEqual(1, len(issues), issues)
                     self.assertIn('application service imports', issues[0])
                     (self.root / path).unlink()
+
+    def test_business_modules_keep_http_types_out_and_accept_stream_sources(self):
+        names = ('org.springframework.web.multipart.MultipartFile',
+                 'org.springframework.web.multipart.*', 'org.springframework.web.*',
+                 'org.springframework.web.bind.annotation.RestController',
+                 'org.springframework.web.bind.annotation.*',
+                 'org.springframework.http.HttpStatus', 'org.springframework.http.*',
+                 'jakarta.servlet.http.HttpServletRequest', 'jakarta.servlet.*',
+                 'javax.servlet.Servlet', 'javax.servlet.*')
+        for module in ('service', 'ai'):
+            self.write('pom.xml', f'<project><modules><module>{module}</module>'
+                       '<module>web</module></modules></project>')
+            self.module(module)
+            for name in names:
+                bodies = [f'import {name};']
+                if '*' not in name:
+                    bodies.append(f'class Example {{ {name} value; }}')
+                for body in bodies:
+                    with self.subTest(module=module, body=body):
+                        self.write(f'{module}/src/main/java/Example.java', f'package org.leo.{module};\n' + body)
+                        self.write('web/src/main/java/Example.java', 'package org.leo.web;\n' + body)
+                        issues = audit(self.root)
+                        self.assertEqual(1, len(issues), issues)
+                        self.assertIn('HTTP adapter API', issues[0])
+            self.write(f'{module}/src/main/java/Example.java',
+                       'import org.springframework.core.io.InputStreamSource;')
+            self.assertEqual([], audit(self.root))
 
     def test_fully_qualified_adapter_references_observe_the_same_boundaries(self):
         cases = (

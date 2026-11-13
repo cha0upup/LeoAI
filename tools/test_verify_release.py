@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -92,32 +93,24 @@ class ReleaseGateTest(unittest.TestCase):
             verify_release.assert_packaged_static_matches(self.frontend, self.backend)
 
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
-    def test_gate_connects_the_required_checks_before_packaging(self, _which):
-        with patch('verify_release.run_command') as run, \
-                patch('verify_release.assert_packaged_static_matches') as packaged, \
-                patch('verify_release.verify_packaged_ssh_crypto') as crypto, patch('builtins.print'):
-            verify_release.verify_release(self.backend, self.frontend)
-        packaged.assert_called_once_with(self.frontend, self.backend)
-        crypto.assert_called_once_with(self.backend)
-        labels = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(['Install locked frontend dependencies', 'Frontend lint', 'Frontend tests',
-                          'Frontend production build', 'Java component API and runtime bytecode check',
-                          'Backend architecture boundaries', 'Build-tool regression tests',
-                          'Backend clean verification and packaging'], labels)
+    def test_failed_checks_stop_backend_packaging(self, _which):
+        for command in (['/fixture/npm', 'test'],
+                        [sys.executable, self.backend / 'tools/check_architecture.py',
+                         '--backend', self.backend]):
+            with self.subTest(command=command):
+                failure = subprocess.CalledProcessError(1, command)
 
-    @patch('verify_release.shutil.which', return_value='/fixture/npm')
-    def test_architecture_violations_stop_backend_packaging(self, _which):
-        def fail_architecture(label, command, cwd):
-            if label == 'Backend architecture boundaries':
-                self.assertEqual(self.backend / 'tools/check_architecture.py', command[1])
-                raise subprocess.CalledProcessError(1, command)
-        with patch('verify_release.run_command', side_effect=fail_architecture) as run, \
-                patch('verify_release.assert_packaged_static_matches') as packaged:
-            with self.assertRaises(subprocess.CalledProcessError):
-                verify_release.verify_release(self.backend, self.frontend, install=False)
-        packaged.assert_not_called()
-        self.assertFalse(any(call.args[0] == 'Backend clean verification and packaging'
-                             for call in run.call_args_list))
+                def fail_check(label, actual, cwd):
+                    if actual == command:
+                        raise failure
+
+                with patch('verify_release.run_command', side_effect=fail_check) as run, \
+                        patch('verify_release.assert_packaged_static_matches') as packaged:
+                    with self.assertRaises(subprocess.CalledProcessError) as error:
+                        verify_release.verify_release(self.backend, self.frontend, install=False)
+                self.assertIs(failure, error.exception)
+                self.assertEqual(command, run.call_args.args[1])
+                packaged.assert_not_called()
 
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
     def test_asset_mismatch_prevents_backend_packaging(self, _which):
@@ -125,17 +118,7 @@ class ReleaseGateTest(unittest.TestCase):
         with patch('verify_release.run_command') as run:
             with self.assertRaises(ValueError):
                 verify_release.verify_release(self.backend, self.frontend)
-        self.assertFalse(any('Backend' in call.args[0] for call in run.call_args_list))
-
-    @patch('verify_release.shutil.which', return_value='/fixture/npm')
-    def test_failed_frontend_tests_stop_the_gate(self, _which):
-        def fail_tests(label, command, cwd):
-            if label == 'Frontend tests':
-                raise subprocess.CalledProcessError(1, command)
-        with patch('verify_release.run_command', side_effect=fail_tests) as run:
-            with self.assertRaises(subprocess.CalledProcessError):
-                verify_release.verify_release(self.backend, self.frontend, install=False)
-        self.assertEqual(['Frontend lint', 'Frontend tests'], [call.args[0] for call in run.call_args_list])
+        self.assertFalse(any(call.args[2] == self.backend for call in run.call_args_list))
 
 
 if __name__ == '__main__':

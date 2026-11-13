@@ -13,7 +13,7 @@ import org.leo.core.manager.DisguiseManager;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.importing.ImportConflictPolicy;
-import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.core.io.ByteArrayResource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -51,7 +51,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                assertEquals("imported", service.importDisguises(upload(original, key),
+                assertEquals("imported", service.importDisguises("fixture.disguise", upload(original, key),
                         ImportConflictPolicy.SKIP, user()).get(0).status());
                 Disguise installed = manager.getDisguiseById(id);
                 Path target = directory.resolve("disguise/" + id + ".disguise");
@@ -65,7 +65,7 @@ class DisguiseServiceTest {
                 DisguiseService failingService = new DisguiseService(manager, List.of(), failingStore);
                 if (importing) {
                     original.setRemark("replacement");
-                    var result = failingService.importDisguises(upload(original, key),
+                    var result = failingService.importDisguises("fixture.disguise", upload(original, key),
                             ImportConflictPolicy.OVERWRITE, user());
                     assertEquals("failed", result.get(0).status());
                 } else {
@@ -95,7 +95,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                var result = new DisguiseService(manager, List.of(), failingStore).importDisguises(upload(definition, key),
+                var result = new DisguiseService(manager, List.of(), failingStore).importDisguises("fixture.disguise", upload(definition, key),
                         ImportConflictPolicy.SKIP, user());
                 assertEquals("failed", result.get(0).status());
                 assertNull(manager.getDisguiseById(id));
@@ -113,7 +113,7 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                service.importDisguises(upload(definition, key), ImportConflictPolicy.SKIP, user());
+                service.importDisguises("fixture.disguise", upload(definition, key), ImportConflictPolicy.SKIP, user());
                 Disguise previous = manager.getDisguiseById(id);
                 AtomicFileStore files = spy(new AtomicFileStore());
                 doAnswer(invocation -> {
@@ -161,9 +161,9 @@ class DisguiseServiceTest {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             try {
-                service.importDisguises(upload(definition, key), ImportConflictPolicy.SKIP, user());
+                service.importDisguises("fixture.disguise", upload(definition, key), ImportConflictPolicy.SKIP, user());
                 for (int n = 0; n < 2; n++) {
-                    var result = service.importDisguises(upload(definition, key), ImportConflictPolicy.RENAME, user());
+                    var result = service.importDisguises("fixture.disguise", upload(definition, key), ImportConflictPolicy.RENAME, user());
                     assertEquals("imported", result.get(0).status());
                     ids.add(result.get(0).disguiseId());
                 }
@@ -194,9 +194,9 @@ class DisguiseServiceTest {
             Files.writeString(path, "corrupt existing definition");
             try {
                 assertNull(manager.getDisguiseById(id));
-                assertEquals("skipped", service.importDisguises(upload(definition, key),
+                assertEquals("skipped", service.importDisguises("fixture.disguise", upload(definition, key),
                         ImportConflictPolicy.parse(null), user()).get(0).status());
-                var result = service.importDisguises(upload(definition, key), ImportConflictPolicy.parse("RENAME"), user());
+                var result = service.importDisguises("fixture.disguise", upload(definition, key), ImportConflictPolicy.parse("RENAME"), user());
                 assertEquals("imported", result.get(0).status());
                 renamedId = result.get(0).disguiseId();
                 assertEquals("corrupt existing definition", Files.readString(path));
@@ -214,9 +214,8 @@ class DisguiseServiceTest {
         return user;
     }
 
-    private MockMultipartFile upload(Disguise definition, String key) throws Exception {
-        return new MockMultipartFile("file", "fixture.disguise", "application/octet-stream",
-                AesUtil.encrypt(definition.toString(), key).getBytes(StandardCharsets.UTF_8));
+    private ByteArrayResource upload(Disguise definition, String key) throws Exception {
+        return new ByteArrayResource(AesUtil.encrypt(definition.toString(), key).getBytes(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -251,8 +250,7 @@ class DisguiseServiceTest {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getPluginEncryptKey).thenReturn(key);
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            var result = service.importDisguises(new MockMultipartFile("file", "old.disguise",
-                    "application/octet-stream", bytes), ImportConflictPolicy.SKIP, user);
+            var result = service.importDisguises("fixture.disguise", new ByteArrayResource(bytes), ImportConflictPolicy.SKIP, user);
             assertEquals("failed", result.get(0).status());
             assertNull(manager.getDisguiseById(oldId));
 
@@ -260,8 +258,7 @@ class DisguiseServiceTest {
             byte[] currentBytes = AesUtil.encrypt(JsonUtil.toJsonString(definition), key)
                     .getBytes(StandardCharsets.UTF_8);
             try {
-                var currentResult = service.importDisguises(new MockMultipartFile("file", "current.disguise",
-                        "application/octet-stream", currentBytes), ImportConflictPolicy.SKIP, user);
+                var currentResult = service.importDisguises("fixture.disguise", new ByteArrayResource(currentBytes), ImportConflictPolicy.SKIP, user);
                 assertEquals("imported", currentResult.get(0).status());
                 assertEquals(3, manager.getDisguiseById(oldId).getProtocolVersion());
             } finally {

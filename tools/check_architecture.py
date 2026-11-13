@@ -116,9 +116,9 @@ def boundary_reason(module, relative_source, source_package, name, targets, kind
     reason = None
     if forbidden:
         reason = f'forbidden upward {kind}: {name} (module: {", ".join(sorted(forbidden))})'
-    if module == 'service' and any(matches_boundary(name, prefix) for prefix in
-                                   ('jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.bind.annotation.')):
-        reason = 'application service imports HTTP server API: ' + name
+    if module in ('service', 'ai') and any(matches_boundary(name, prefix) for prefix in
+            ('jakarta.servlet.', 'javax.servlet.', 'org.springframework.web.', 'org.springframework.http.')):
+        reason = 'application service imports HTTP adapter API: ' + name
     if any(relative_source.startswith(package) and any(matches_boundary(name, prefix) for prefix in prefixes)
            for package, prefixes in ADAPTER_IMPORTS.items()):
         reason = 'application service imports adapter implementation: ' + name

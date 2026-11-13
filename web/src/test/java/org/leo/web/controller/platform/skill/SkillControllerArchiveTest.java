@@ -76,7 +76,8 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         try (var fileSystem = FileSystems.newFileSystem(destination, Map.of("create", "true"))) {
             var scopeRoot = fileSystem.getPath("/agent-node");
 
-            var results = archives.importSkills(upload(archive), scopeRoot, "alpha", ImportOverwritePolicy.SKIP);
+            var results = archives.importSkills(() -> new ByteArrayInputStream(archive),
+                    scopeRoot, "alpha", ImportOverwritePolicy.SKIP);
 
             assertEquals(1, results.size());
             assertEquals(ImportResult.Status.IMPORTED, results.get(0).status());

@@ -10,7 +10,7 @@ import org.leo.core.infrastructure.persistence.session.AtomicFileStore;
 import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.importing.ImportConflictPolicy;
-import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.core.io.ByteArrayResource;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -52,15 +52,17 @@ class FingerprintManageServiceTest {
         }
     }
 
-    @Test
-    void importsCurrentJsonWithoutUnrelatedMetadata() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"rules.json", "RULES.JSON"})
+    void importsCurrentJsonWithoutUnrelatedMetadataAndClosesInput(String filename) throws Exception {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
             byte[] content = JsonUtil.toJsonString(sourceDefinition()).getBytes(StandardCharsets.UTF_8);
-            var results = service.importFingerprints(new MockMultipartFile("file", "current.json",
-                    "application/json", content), ImportConflictPolicy.SKIP, user());
+            var input = spy(new ByteArrayInputStream(content));
+            var results = service.importFingerprints(filename, () -> input, ImportConflictPolicy.SKIP, user());
             assertEquals("imported", results.get(0).status());
             assertClean(stored());
+            verify(input).close();
         }
     }
 
@@ -91,8 +93,7 @@ class FingerprintManageServiceTest {
                     assertThrows(IllegalArgumentException.class, () -> service.saveFingerprint(old, user())).getMessage());
 
             byte[] content = JsonUtil.toJsonString(old).getBytes(StandardCharsets.UTF_8);
-            var results = service.importFingerprints(new MockMultipartFile("file", "old.json",
-                    "application/json", content), ImportConflictPolicy.SKIP, user());
+            var results = service.importFingerprints("rules.json", new ByteArrayResource(content), ImportConflictPolicy.SKIP, user());
             assertEquals("failed", results.get(0).status());
         }
     }
@@ -122,7 +123,7 @@ class FingerprintManageServiceTest {
             HashMap<String, Object> replacement = sourceDefinition();
             replacement.put("tags", List.of("replacement"));
             assertThrows(IOException.class, () -> failing.saveFingerprint(replacement, user()));
-            var results = failing.importFingerprints(upload(replacement), ImportConflictPolicy.OVERWRITE, user());
+            var results = failing.importFingerprints("rules.json", upload(replacement), ImportConflictPolicy.OVERWRITE, user());
             assertEquals("failed", results.get(0).status());
             assertArrayEquals(previous, Files.readAllBytes(path));
             assertEquals(List.of("web"), service.getFingerprintById("demo_any").get("tags"));
@@ -165,19 +166,19 @@ class FingerprintManageServiceTest {
             Files.createDirectories(original.getParent());
             Files.writeString(original, "{broken");
             for (String policy : new String[]{null, "unknown", " rename "}) {
-                var skipped = service.importFingerprints(upload(sourceDefinition()), ImportConflictPolicy.parse(policy), user());
+                var skipped = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse(policy), user());
                 assertEquals("skipped", skipped.get(0).status());
             }
             List<String> ids = new ArrayList<>();
             for (int n = 0; n < 2; n++) {
-                var renamed = service.importFingerprints(upload(sourceDefinition()), ImportConflictPolicy.parse("rename"), user());
+                var renamed = service.importFingerprints("rules.json", upload(sourceDefinition()), ImportConflictPolicy.parse("rename"), user());
                 assertEquals("renamed", renamed.get(0).status());
                 ids.add(renamed.get(0).fingerprintId());
                 assertNotNull(service.getFingerprintById(ids.get(n)));
             }
             assertNotEquals(ids.get(0), ids.get(1));
             assertEquals("{broken", Files.readString(original));
-            assertEquals("overwritten", service.importFingerprints(upload(sourceDefinition()),
+            assertEquals("overwritten", service.importFingerprints("rules.json", upload(sourceDefinition()),
                     ImportConflictPolicy.parse("OVERWRITE"), user()).get(0).status());
             assertClean(service.getFingerprintById("demo_any"));
         }
@@ -196,7 +197,7 @@ class FingerprintManageServiceTest {
                     zip.closeEntry();
                 }
             }
-            var results = service.importFingerprints(new MockMultipartFile("file", "rules.zip", "application/zip", bytes.toByteArray()),
+            var results = service.importFingerprints("rules.zip", new ByteArrayResource(bytes.toByteArray()),
                     ImportConflictPolicy.SKIP, user());
             assertEquals(2, results.size());
             assertEquals(1, results.stream().filter(result -> "failed".equals(result.status()) && "bad.json".equals(result.name())).count());
@@ -209,7 +210,7 @@ class FingerprintManageServiceTest {
     void invalidJsonArrayEntriesAreReportedBeforeAnyRuleIsPersisted() throws Exception {
         try (var config = mockStatic(LeoConfig.class)) {
             config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
-            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints(
+            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
                     upload(List.of(sourceDefinition(), "bad entry")), ImportConflictPolicy.SKIP, user()));
             assertFalse(Files.exists(directory.resolve("fingerprint/demo_any.json")));
         }
@@ -225,8 +226,8 @@ class FingerprintManageServiceTest {
             invalid[prefix.length + 1] = (byte) 0x28;
             invalid[prefix.length + 2] = '"';
             invalid[prefix.length + 3] = '}';
-            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints(
-                    new MockMultipartFile("file", "bad.json", "application/json", invalid),
+            assertThrows(IllegalArgumentException.class, () -> service.importFingerprints("rules.json",
+                    new ByteArrayResource(invalid),
                     ImportConflictPolicy.SKIP, user()));
             assertFalse(Files.exists(directory.resolve("fingerprint")));
         }
@@ -247,7 +248,7 @@ class FingerprintManageServiceTest {
                         HashMap<String, Object> definition = sourceDefinition();
                         definition.put("tags", List.of("writer-" + index));
                         start.await();
-                        return service.importFingerprints(upload(definition), ImportConflictPolicy.SKIP, user()).get(0).status();
+                        return service.importFingerprints("rules.json", upload(definition), ImportConflictPolicy.SKIP, user()).get(0).status();
                     }
                 }));
             }
@@ -265,9 +266,8 @@ class FingerprintManageServiceTest {
         }
     }
 
-    private MockMultipartFile upload(Object definition) {
-        return new MockMultipartFile("file", "rules.json", "application/json",
-                JsonUtil.toJsonString(definition).getBytes(StandardCharsets.UTF_8));
+    private ByteArrayResource upload(Object definition) {
+        return new ByteArrayResource(JsonUtil.toJsonString(definition).getBytes(StandardCharsets.UTF_8));
     }
 
     private HashMap<String, Object> sourceDefinition() {

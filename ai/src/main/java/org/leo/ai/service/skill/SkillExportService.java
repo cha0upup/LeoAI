@@ -3,9 +3,9 @@ package org.leo.ai.service.skill;
 import org.leo.service.importing.ImportOverwritePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -99,10 +99,11 @@ public class SkillExportService {
      * </ul>
      * 每个目标的冲突检查和落盘使用与文件编辑相同的 SkillOperationLock。
      *
+     * @param archive 可重复打开的输入源；预览和解包会分别打开并关闭流。
      * @param defaultName 当 zip 是单 skill（根有 SKILL.md）时，作为目标 name。
      *                    若为 null 或空，单 skill 会被拒绝（无法决定目录名）。
      */
-    public List<ImportResult> importSkills(MultipartFile file,
+    public List<ImportResult> importSkills(InputStreamSource archive,
                                            Path scopeRoot,
                                            String defaultName,
                                            ImportOverwritePolicy policy) throws IOException {
@@ -110,7 +111,7 @@ public class SkillExportService {
         try {
             // 阶段 1：解压到临时目录，按顶层目录拆分。
             // tempRoot/{skillName}/<files>
-            extractToTemp(file, tempRoot, defaultName);
+            extractToTemp(archive, tempRoot, defaultName);
 
             // 阶段 2：逐项加锁后写入目标 scopeRoot/{name}/，按 policy 处理冲突
             String scope = scopeRoot.getFileName() != null
@@ -141,11 +142,11 @@ public class SkillExportService {
         });
     }
 
-    private void extractToTemp(MultipartFile file, Path tempRoot, String defaultName) throws IOException {
+    private void extractToTemp(InputStreamSource archive, Path tempRoot, String defaultName) throws IOException {
         // 先 peek 一下顶层结构：是单 skill（根有 SKILL.md）还是多 skill（顶层都是目录）
-        boolean rootHasSkillMd = peekRootSkillMd(file);
+        boolean rootHasSkillMd = peekRootSkillMd(archive);
 
-        try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
+        try (ZipInputStream zis = new ZipInputStream(archive.getInputStream())) {
             ZipEntry entry;
             long totalRead = 0L;
             int  fileCount = 0;
@@ -226,10 +227,10 @@ public class SkillExportService {
 
     /**
      * 第一遍 peek：检查 zip 根是否直接有 SKILL.md。
-     * 因为 ZipInputStream 一次性消费，需要 file.getInputStream() 重新读取。
+     * 输入源需要支持每次打开独立流，供预览和解包分别读取。
      */
-    private boolean peekRootSkillMd(MultipartFile file) throws IOException {
-        try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
+    private boolean peekRootSkillMd(InputStreamSource archive) throws IOException {
+        try (ZipInputStream zis = new ZipInputStream(archive.getInputStream())) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName().replace('\\', '/');

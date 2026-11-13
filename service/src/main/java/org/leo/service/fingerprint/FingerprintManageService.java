@@ -11,8 +11,8 @@ import org.leo.service.importing.ImportConflictPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -400,18 +401,20 @@ public class FingerprintManageService {
      *   <li>.zip（内含若干 .json，格式同上）</li>
      * </ul>
      */
-    public synchronized List<ImportResult> importFingerprints(MultipartFile file,
+    public synchronized List<ImportResult> importFingerprints(String filename, InputStreamSource source,
                                                   ImportConflictPolicy policy,
                                                   User user) throws Exception {
         ensureLoggedIn(user);
-        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
+        String normalizedFilename = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
         List<Map<String, Object>> records;
         List<ImportResult> results = new ArrayList<>();
 
-        if (filename.endsWith(".zip")) {
-            records = parseZip(file.getInputStream(), results);
-        } else if (filename.endsWith(".json")) {
-            records = parseJson(file.getBytes());
+        if (normalizedFilename.endsWith(".zip")) {
+            records = parseZip(source.getInputStream(), results);
+        } else if (normalizedFilename.endsWith(".json")) {
+            try (InputStream input = source.getInputStream()) {
+                records = parseJson(input.readAllBytes());
+            }
         } else {
             throw new IllegalArgumentException("仅支持 .json 或 .zip 文件");
         }

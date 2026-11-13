@@ -22,7 +22,7 @@ LeoAI is a post-exploitation management platform designed for red team operators
 
 </div>
 
-> **Node naming**: execution nodes use Agent / AgentNode; AI interfaces use NodeAiAgent / PlatformAiAgent. See the [Agent naming and deployment guide](docs/agent-naming.md).
+> **Node naming**: execution nodes use Agent / AgentNode; AI interfaces use NodeAiAgent / PlatformAiAgent.
 >
 > **Development baseline**: this version is not officially released. Only the current `schema.sql` is maintained; no old-database migrations are bundled. Use a fresh database path or data directory after schema changes. Startup does not delete existing databases or VFS files.
 
@@ -87,7 +87,7 @@ graph TD
 | **Networking** | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels |
 | **Discovery** | Declared dynamically through Runtime Profile | Declared dynamically through Runtime Profile |
 
-The exact PHP feature set depends on the target environment: database operations require the matching PDO driver, archives require `ZipArchive`, and persistent proxy/tunnel workers require at least one of `shell_exec`, `exec`, or `popen`. See [docs/runtime-modules.md](docs/runtime-modules.md) for module boundaries and the full capability matrix.
+The exact PHP feature set depends on the target environment: database operations require the matching PDO driver, archives require `ZipArchive`, and persistent proxy/tunnel workers require at least one of `shell_exec`, `exec`, or `popen`.
 
 ---
 
@@ -260,6 +260,8 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 ### Step 1: Get the JAR
 
 > Validate this development version as a fresh installation. Use a new working directory or SQLite path; startup creates the current schema directly without adding columns to old databases or migrating them.
+>
+> Historical databases, old configuration packages, and old session caches are incompatible. Back up the database and VFS before redeployment, deploy matching frontend and backend versions, and recreate node configurations. Rebuild node scripts, plugins referencing old Java package names, and cached artifacts. For rollback, restore the old version together with its matching data directory.
 >
 > For Docker, use a fresh persistent data volume or data directory. Restarting or rebuilding a container still reuses its existing data volume and does not rebuild the database.
 

@@ -156,7 +156,7 @@ public class FingerprintManageController {
         try {
             ImportConflictPolicy policy = ImportConflictPolicy.parse(conflictPolicy);
             List<ImportResult> results = fingerprintManageService.importFingerprints(
-                    file, policy, ControllerUtil.getCurrentUser(request));
+                    file.getOriginalFilename(), file, policy, ControllerUtil.getCurrentUser(request));
             HashMap<String, Object> data = new HashMap<>();
             data.put("results", results.stream().map(ImportResult::toMap).toList());
             return ApiResponse.success(data);

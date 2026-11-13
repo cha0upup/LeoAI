@@ -22,7 +22,7 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 </div>
 
-> **节点命名**：执行节点统一使用 Agent / AgentNode，AI 智能体使用 NodeAiAgent / PlatformAiAgent，详见 [Agent 命名与部署说明](docs/agent-naming.md)。
+> **节点命名**：执行节点统一使用 Agent / AgentNode，AI 智能体使用 NodeAiAgent / PlatformAiAgent。
 >
 > **开发基线**：当前版本尚未正式发布，只维护当前 `schema.sql`，不附带旧库迁移。数据库结构调整后，请使用新的数据库路径或数据目录进行开发验证；启动过程不删除现有数据库或 VFS 文件。
 
@@ -65,7 +65,7 @@ v3.0.1 当前开发基线覆盖运行时、组件、平台服务、Web 控制台
 
 ## Java/PHP 双运行时
 
-Java 与 PHP 是平等的 Agent Runtime，具体实现分别位于 `javacore` 与 `phpcore`。`core` 区分共享契约、模型与基础设施包；`web` 负责最终组装，并按包区分适配与应用编排。详细归属见 [模块与包边界](docs/module-boundaries.md)。
+Java 与 PHP 是平等的 Agent Runtime，具体实现分别位于 `javacore` 与 `phpcore`。`core` 区分共享契约、模型与基础设施包；`web` 负责最终组装，并按包区分适配与应用编排。
 
 ```mermaid
 graph TD
@@ -88,7 +88,7 @@ graph TD
 | **网络能力** | HTTP、扫描、SOCKS5/HTTP 代理、正反向隧道 | HTTP、扫描、SOCKS5/HTTP 代理、正反向隧道 |
 | **能力发现** | Runtime Profile 动态声明 | Runtime Profile 动态声明 |
 
-PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相应 PDO Driver，压缩需要 `ZipArchive`，持续代理/隧道 Worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。更完整的模块边界与能力矩阵见 [docs/runtime-modules.md](docs/runtime-modules.md)。
+PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相应 PDO Driver，压缩需要 `ZipArchive`，持续代理/隧道 Worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。
 
 ---
 
@@ -312,6 +312,8 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 ### 第一步：获取 JAR
 
 > 当前版本按全新部署验证。使用新的运行目录或 SQLite 路径启动，系统直接创建当前表结构，不执行旧库补列或迁移。
+>
+> 历史数据库、旧配置包及旧会话缓存不兼容。重新部署前先备份数据库与 VFS，同步部署当前前后端，并重新创建节点配置；节点脚本、引用旧 Java 包名的插件及缓存制品需要重新构建。回滚时同时恢复旧版本和对应数据目录。
 >
 > Docker 部署请使用新的持久化数据卷或数据目录。仅重启、重新构建容器仍会复用旧数据卷，不会重建数据库。
 
