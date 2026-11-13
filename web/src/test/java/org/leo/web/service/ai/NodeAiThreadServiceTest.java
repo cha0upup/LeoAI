@@ -37,57 +37,48 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class NodeAiThreadServiceTest {
 
     @ParameterizedTest
-    @ValueSource(strings = {"reset", "switch"})
-    void restoresOwnedThreadOnceBeforeApplyingTheRequestedChannel(String action) {
+    @CsvSource({"load,false", "reset,false", "switch,false", "load,true", "reset,true", "switch,true"})
+    void restoresOnlyMissingThreadsAndKeepsExistingJournalBindings(String action, boolean inMemory) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
-        AiThreadRecord record = ownedRecord("stored");
-        record.setTitle("stored title");
-        record.setConfigId(2);
-        when(fixture.conversationStore.findThread("stored")).thenReturn(record);
+        AiThread cached = inMemory ? session.createAiThread("thread", "runtime title") : null;
+        if (cached != null) {
+            cached.setAiConfigId(2);
+        } else {
+            AiThreadRecord record = ownedRecord("thread");
+            record.setTitle("stored title");
+            record.setConfigId(2);
+            when(fixture.conversationStore.findThread("thread")).thenReturn(record);
+        }
         AiModelConfig config = new AiModelConfig();
-        config.setId(7);
-        when(fixture.channels.optional(7)).thenReturn(config);
-
-        applyThreadAction(fixture, session, action, "stored", 7);
-
-        AiThread restored = session.getAiThread("stored");
-        assertNotNull(restored);
-        assertEquals("stored title", restored.getTitle());
-        assertEquals(7, restored.getAiConfigId());
-        assertEquals("reset".equals(action), restored.isStopRequested());
-        verify(fixture.conversationStore).findThread("stored");
-        verify(fixture.conversationStore).attachEventJournal("stored", restored);
-        verify(fixture.conversationStore).updateConfig("stored", config);
-        verify(fixture.channels).optional(7);
-        verify(fixture.agentRegistry).evict(session, "stored");
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"reset", "switch"})
-    void cachedThreadsKeepTheirIdentityAndDoNotReattachTheJournal(String action) {
-        Fixture fixture = fixture();
-        AgentNodeSession session = cacheSession();
-        AiThread cached = session.createAiThread("cached", "runtime title");
-        cached.setAiConfigId(2);
-        AiModelConfig config = new AiModelConfig();
-        config.setId(2);
-        when(fixture.channels.optional(2)).thenReturn(config);
-
-        applyThreadAction(fixture, session, action, "cached", null);
-
-        assertSame(cached, session.getAiThread("cached"));
-        assertEquals(2, cached.getAiConfigId());
-        verify(fixture.channels).optional(2);
-        verify(fixture.conversationStore, never()).attachEventJournal(anyString(), same(cached));
-    }
-
-    private static void applyThreadAction(Fixture fixture, AgentNodeSession session,
-                                          String action, String threadId, Integer configId) {
+        config.setId(inMemory ? 2 : 7);
+        when(fixture.channels.optional(config.getId())).thenReturn(config);
+        Integer requestedConfig = inMemory ? null : 7;
         switch (action) {
-            case "reset" -> fixture.service.resetThread(session, threadId, configId);
-            case "switch" -> fixture.service.switchChannel(session, threadId, configId);
+            case "load" -> fixture.service.requireThread(session, "thread");
+            case "reset" -> fixture.service.resetThread(session, "thread", requestedConfig);
+            case "switch" -> fixture.service.switchChannel(session, "thread", requestedConfig);
             default -> throw new IllegalArgumentException(action);
+        }
+
+        AiThread thread = session.getAiThread("thread");
+        assertNotNull(thread);
+        assertEquals(inMemory ? "runtime title" : "stored title", thread.getTitle());
+        assertEquals("load".equals(action) ? 2 : config.getId(), thread.getAiConfigId());
+        assertEquals("reset".equals(action), thread.isStopRequested());
+        verify(fixture.conversationStore).findThread("thread");
+        if (cached != null) {
+            assertSame(cached, thread);
+            verify(fixture.conversationStore, never()).attachEventJournal(anyString(), same(thread));
+        } else {
+            verify(fixture.conversationStore).attachEventJournal("thread", thread);
+        }
+        if ("load".equals(action)) {
+            verifyNoInteractions(fixture.channels, fixture.agentRegistry);
+        } else {
+            verify(fixture.conversationStore).updateConfig("thread", config);
+            verify(fixture.channels).optional(config.getId());
+            verify(fixture.agentRegistry).evict(session, "thread");
         }
     }
 
@@ -150,26 +141,36 @@ class NodeAiThreadServiceTest {
         assertNull(resolution.errorMessage());
         assertEquals(expectedConfig, thread.getAiConfigId());
         verify(fixture.channels).optional(expectedConfig);
+        verify(fixture.conversationStore).attachEventJournal(thread.getThreadId(), thread);
         verify(fixture.conversationStore, never()).createAgentThread(
                 eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), nullable(AiModelConfig.class));
     }
 
-    @Test
-    void channelResolutionFailureStopsBeforePersistenceOrWarmup() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void channelResolutionFailureStopsBeforePersistenceOrWarmup(boolean inMemory) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
-        AiThread thread = session.createAiThread("transient", "未持久化");
-        thread.setAiConfigId(2);
+        if (inMemory) {
+            session.createAiThread("thread", "未持久化").setAiConfigId(2);
+        } else {
+            AiThreadRecord record = ownedRecord("thread");
+            record.setConfigId(2);
+            when(fixture.conversationStore.findThread("thread")).thenReturn(record);
+        }
         when(fixture.channels.optional(7)).thenThrow(ApiException.notFound("模型已删除"));
 
         NodeAiThreadService.ThreadResolution resolution =
-                fixture.service.ensureThreadReady(session, thread.getThreadId(), 7);
+                fixture.service.ensureThreadReady(session, "thread", 7);
 
-        assertSame(thread, resolution.thread());
+        AiThread thread = resolution.thread();
+        assertNotNull(thread);
+        assertSame(session.getAiThread("thread"), thread);
         assertEquals("模型已删除", resolution.errorMessage());
         assertEquals(2, thread.getAiConfigId());
         verify(fixture.conversationStore, never()).createAgentThread(
                 anyString(), anyString(), anyString(), anyString(), same(thread), nullable(AiModelConfig.class));
+        verify(fixture.conversationStore, never()).attachEventJournal(anyString(), same(thread));
         verifyNoInteractions(fixture.sessionWarmupService, fixture.agentRegistry);
     }
 
@@ -201,6 +202,7 @@ class NodeAiThreadServiceTest {
         assertEquals(10L, thread.getCreatedAt());
         assertEquals(20L, thread.getLastActiveAt());
         assertEquals("parent-thread", thread.getParentThreadId());
+        verify(fixture.conversationStore).attachEventJournal("stored-thread", thread);
         verify(fixture.conversationStore, never()).createAgentThread(
                 eq("user-1"), eq("agent-1"), eq("host-1"), eq("session-1"), same(thread), isNull());
     }
@@ -219,21 +221,32 @@ class NodeAiThreadServiceTest {
         verify(fixture.conversationStore).deleteThread("thread-1");
     }
 
-    @Test
-    void eventsKeepDatabaseSequenceWhenRuntimeSequenceIsBehind() {
+    @ParameterizedTest
+    @CsvSource(value = {"true,null,idle", "false,completed,completed", "false,failed,failed", "false,null,idle"}, nullValues = "null")
+    void eventHistoryReadsWithoutRestoringOrRebindingRuntime(
+            boolean inMemory, String persistedStatus, String expectedStatus) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
-        AiThread thread = session.createAiThread("thread-1", "test");
-        thread.configureEventJournal(3L, null);
+        AiThread thread = inMemory ? session.createAiThread("thread-1", "test") : null;
+        if (thread != null) thread.configureEventJournal(3L, null);
+        session.createAiThread("active", "当前对话");
+        if (!inMemory) {
+            AiThreadRecord record = ownedRecord("thread-1");
+            record.setRunStatus(persistedStatus);
+            when(fixture.conversationStore.findThread("thread-1")).thenReturn(record);
+        }
         when(fixture.conversationStore.findLastEventSeq("thread-1")).thenReturn(20L);
 
         Map<String, Object> data = fixture.service.threadEvents(session, "thread-1", 1L, null);
 
         assertEquals(20L, data.get("lastSeq"));
-        assertEquals("idle", data.get("runStatus"));
+        assertEquals(expectedStatus, data.get("runStatus"));
         assertFalse(data.containsKey("status"));
+        assertSame(thread, session.getAiThread("thread-1"));
+        assertEquals("active", session.getActiveThreadId());
         verify(fixture.conversationStore).listEventsAfter("thread-1", 1L, 200);
-        verify(fixture.conversationStore).attachEventJournal("thread-1", thread);
+        verify(fixture.conversationStore, never()).attachEventJournal(anyString(), nullable(AiThread.class));
+        verify(fixture.conversationStore, never()).findLatestPlanJson(anyString());
     }
 
     @Test
@@ -286,6 +299,7 @@ class NodeAiThreadServiceTest {
         List<Runnable> operations = List.of(
                 () -> fixture.service.threadMessages(session, "foreign", 0, 50, null),
                 () -> fixture.service.threadMessages(session, "foreign", 0, 50, 20L),
+                () -> fixture.service.threadEvents(session, "foreign", 0L, 200),
                 () -> fixture.service.renameThread(session, "foreign", "changed"),
                 () -> fixture.service.deleteThread(session, "foreign"),
                 () -> fixture.service.requireThread(session, "foreign"),
@@ -298,6 +312,7 @@ class NodeAiThreadServiceTest {
         assertSame(cached, session.getAiThread("foreign"));
         assertEquals("original", cached.getTitle());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
+        verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
     }
@@ -308,6 +323,7 @@ class NodeAiThreadServiceTest {
         AgentNodeSession session = cacheSession();
         List<Runnable> operations = List.of(
                 () -> fixture.service.threadMessages(session, "missing", 0, 50, null),
+                () -> fixture.service.threadEvents(session, "missing", 0L, 200),
                 () -> fixture.service.renameThread(session, "missing", "changed"),
                 () -> fixture.service.deleteThread(session, "missing"),
                 () -> fixture.service.requireThread(session, "missing"),
@@ -320,6 +336,7 @@ class NodeAiThreadServiceTest {
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
+        verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
         assertEquals(0, session.listAiThreads().size());
     }
 

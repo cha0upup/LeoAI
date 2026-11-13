@@ -85,10 +85,9 @@ public class NodeAiThreadService {
         return new ThreadResolution(thread, null);
     }
 
+    /** 缓存读取沿用日志绑定；执行前的游标同步由 ensureThreadReady 负责。 */
     public AiThread requireThread(AgentNodeSession session, String threadId) {
-        AiThread thread = resolveRequiredThread(session, threadId, requireOwnedThread(session, threadId));
-        conversationStore.attachEventJournal(threadId, thread);
-        return thread;
+        return resolveRequiredThread(session, threadId, requireOwnedThread(session, threadId));
     }
 
     public Map<String, Object> listThreads(AgentNodeSession session) {
@@ -198,11 +197,16 @@ public class NodeAiThreadService {
         return threadQueries.messages(threadId, requestedOffset, requestedLimit, beforeSequence);
     }
 
+    /** 历史事件查询不装载运行时，避免改变活跃线程或重绑事件日志。 */
     public Map<String, Object> threadEvents(
             AgentNodeSession session, String threadId,
             Long requestedAfterSeq, Integer requestedLimit) {
-        AiThread thread = requireThread(session, threadId);
-        return threadQueries.events(threadId, thread, thread.getRunStatus(), requestedAfterSeq, requestedLimit);
+        AiThreadRecord persisted = requireOwnedThread(session, threadId);
+        AiThread thread = session.getAiThread(threadId);
+        String runStatus = persisted != null ? persisted.getRunStatus() : null;
+        if (thread != null) runStatus = thread.getRunStatus();
+        return threadQueries.events(threadId, thread,
+                runStatus != null ? runStatus : AiRunStatus.IDLE, requestedAfterSeq, requestedLimit);
     }
 
     public Map<String, Object> resetThread(
@@ -247,10 +251,12 @@ public class NodeAiThreadService {
 
     private AiThread resolveRequiredThread(AgentNodeSession session, String threadId, AiThreadRecord record) {
         AiThread thread = session.getAiThread(threadId);
-        if (thread == null) thread = restorePersistedThread(session, threadId, record);
+        if (thread != null) return thread;
+        thread = restorePersistedThread(session, threadId, record);
         if (thread == null) {
             throw ApiException.notFound("线程不存在，threadId: " + threadId);
         }
+        conversationStore.attachEventJournal(threadId, thread);
         return thread;
     }
 
@@ -266,7 +272,6 @@ public class NodeAiThreadService {
         thread.setAiConfigId(record.getConfigId());
         thread.setParentThreadId(record.getParentThreadId());
         restoreLatestPlan(thread, threadId);
-        conversationStore.attachEventJournal(threadId, thread);
         return thread;
     }
 

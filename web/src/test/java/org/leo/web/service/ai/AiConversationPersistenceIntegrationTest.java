@@ -266,6 +266,11 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(true, older.get("hasMore"));
         assertEquals(106L, older.get("nextBeforeSequence"));
         assertEquals(java.util.Set.of("messages", "nextBeforeSequence", "hasMore"), older.keySet());
+        Map<String, Object> oldest = query.messages("thread-1", 0, 50, 3L);
+        assertEquals(1L, oldest.get("nextBeforeSequence"));
+        assertEquals(false, oldest.get("hasMore"));
+        assertEquals(false, query.messages("thread-1", 0, 50, 1L).get("hasMore"));
+        assertFalse(store.hasMessagesBefore("missing-thread", 206L));
         assertEquals(206, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE thread_id='thread-1'", Integer.class));
     }
 

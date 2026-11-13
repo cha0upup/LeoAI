@@ -321,10 +321,10 @@ public interface AiConversationMapper {
                                             @Param("beforeSequence") long beforeSequence,
                                             @Param("limit") int limit);
 
-    @Select("SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId} "
-            + "AND message_seq < #{beforeSequence}")
-    int countMessagesBefore(@Param("threadId") String threadId,
-                            @Param("beforeSequence") long beforeSequence);
+    @Select("SELECT EXISTS (SELECT 1 FROM ai_messages WHERE thread_id = #{threadId} "
+            + "AND message_seq < #{beforeSequence})")
+    boolean hasMessagesBefore(@Param("threadId") String threadId,
+                              @Param("beforeSequence") long beforeSequence);
 
     @Select("SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId}")
     int countMessages(@Param("threadId") String threadId);

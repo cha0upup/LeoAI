@@ -549,7 +549,7 @@ public class AiConversationStoreService {
     }
 
     public boolean hasMessagesBefore(String threadId, long beforeSequence) {
-        return mapper.countMessagesBefore(threadId, beforeSequence) > 0;
+        return mapper.hasMessagesBefore(threadId, beforeSequence);
     }
 
     /**
