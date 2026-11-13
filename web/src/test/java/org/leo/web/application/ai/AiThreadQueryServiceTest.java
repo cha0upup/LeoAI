@@ -1,13 +1,20 @@
 package org.leo.web.application.ai;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.ai.platform.PlatformAiState;
+import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
+import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiUserInputRequest;
+import org.leo.core.session.AgentNodeSession;
 
 import java.util.List;
 import java.util.Map;
@@ -18,9 +25,159 @@ import static org.mockito.Mockito.*;
 
 class AiThreadQueryServiceTest {
 
+    private static final String PLATFORM_THREAD_ID = "platform-query-test";
+
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
     private final AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
     private final AiThreadQueryService queries = new AiThreadQueryService(store, protocol);
+
+    @BeforeEach
+    void useFallbackProtocolStatus() {
+        when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
+                new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
+    }
+
+    @AfterEach
+    void releasePlatformState() {
+        PlatformAiStateStore.remove(PLATFORM_THREAD_ID);
+    }
+
+    @Test
+    void transientThreadListIncludesEachRuntimeOnceAndKeepsMessageCounts() {
+        AgentNodeSession session = new AgentNodeSession();
+        session.restoreAiThread("older", "older", 1L, 10L);
+        session.restoreAiThread("newer", "newer", 2L, 20L);
+        String activeThreadId = session.getActiveThreadId();
+        when(store.countMessages("older")).thenReturn(4);
+        when(store.countMessages("newer")).thenReturn(7);
+
+        Map<String, Object> data = queries.listNodeThreads(session);
+        List<?> threads = (List<?>) data.get("threads");
+
+        assertEquals(2, threads.size());
+        Map<?, ?> first = (Map<?, ?>) threads.get(0);
+        Map<?, ?> second = (Map<?, ?>) threads.get(1);
+        assertEquals("newer", first.get("threadId"));
+        assertEquals(7, first.get("messageCount"));
+        assertEquals("older", second.get("threadId"));
+        assertEquals(4, second.get("messageCount"));
+        assertFalse(first.containsKey("hasCheckpoint"));
+        assertFalse(first.containsKey("configName"));
+        assertEquals(activeThreadId, data.get("activeThreadId"));
+        assertEquals(activeThreadId, session.getActiveThreadId());
+        verify(store, never()).listAgentThreads(anyString(), anyString(), anyString());
+        verify(store, never()).attachEventJournal(anyString(), any());
+    }
+
+    @Test
+    void persistedAndRuntimeThreadsMergeWithoutLosingConfiguration() {
+        AgentNodeSession session = new AgentNodeSession();
+        session.setCreateByUser("user-1");
+        session.setCacheMode(true);
+        session.setAgentId("agent-1");
+        session.bindHostId("host-1");
+        var runtime = session.restoreAiThread("shared", "runtime title", 1L, 100L);
+        runtime.setAiConfigId(2);
+        runtime.setParentThreadId("runtime-parent");
+        session.restoreAiThread("runtime-only", "runtime only", 1L, 50L);
+        AiThreadRecord shared = new AiThreadRecord();
+        shared.setThreadId("shared");
+        shared.setTitle("stored shared title");
+        shared.setCreatedAt(999L);
+        shared.setLastActiveAt(999L);
+        shared.setConfigId(7);
+        shared.setParentThreadId("stored-parent");
+        shared.setMessageCount(8);
+        shared.setConfigName("channel");
+        shared.setConfigProtocol("openai");
+        shared.setConfigModel("model");
+        AiThreadRecord stored = new AiThreadRecord();
+        stored.setThreadId("stored-only");
+        stored.setTitle("stored title");
+        stored.setLastActiveAt(200L);
+        when(store.listAgentThreads("user-1", "agent-1", "host-1"))
+                .thenReturn(List.of(shared, stored));
+
+        List<?> threads = (List<?>) queries.listNodeThreads(session).get("threads");
+
+        assertEquals(3, threads.size());
+        Map<?, ?> storedItem = (Map<?, ?>) threads.get(0);
+        Map<?, ?> sharedItem = (Map<?, ?>) threads.get(1);
+        assertEquals("stored-only", storedItem.get("threadId"));
+        assertEquals(false, storedItem.get("inMemory"));
+        assertEquals(0, storedItem.get("messageCount"));
+        assertEquals("idle", storedItem.get("runStatus"));
+        assertEquals("shared", sharedItem.get("threadId"));
+        assertEquals("runtime title", sharedItem.get("title"));
+        assertEquals(1L, sharedItem.get("createdAt"));
+        assertEquals(100L, sharedItem.get("lastActiveAt"));
+        assertEquals(2, sharedItem.get("configId"));
+        assertEquals("runtime-parent", sharedItem.get("parentThreadId"));
+        assertEquals(true, sharedItem.get("inMemory"));
+        assertFalse(sharedItem.containsKey("hasCheckpoint"));
+        assertFalse(storedItem.containsKey("hasCheckpoint"));
+        assertFalse(((Map<?, ?>) threads.get(2)).containsKey("hasCheckpoint"));
+        assertEquals(8, sharedItem.get("messageCount"));
+        assertEquals("channel", sharedItem.get("configName"));
+        assertEquals("openai", sharedItem.get("configProtocol"));
+        assertEquals("model", sharedItem.get("configModel"));
+        verify(store, never()).countMessages("shared");
+        verify(store, never()).attachEventJournal(anyString(), any());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(longs = {1L, Long.MAX_VALUE})
+    void platformListPreservesConfigurationAndUsesLatestActivityAndProtocolState(Long lastActiveAt) {
+        AiThreadRecord record = new AiThreadRecord();
+        record.setThreadId(PLATFORM_THREAD_ID);
+        record.setConfigId(7);
+        record.setConfigName("channel");
+        record.setConfigProtocol("openai");
+        record.setConfigModel("model");
+        record.setLastActiveAt(lastActiveAt);
+        when(store.listPlatformThreads("user-1")).thenReturn(List.of(record));
+        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_THREAD_ID);
+        state.setAiConfigId(99);
+        when(protocol.snapshotThread(PLATFORM_THREAD_ID, state.getRunStatus()))
+                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));
+
+        Map<String, Object> item = queries.listPlatformThreads("user-1").get(0);
+
+        assertEquals("queued", item.get("runStatus"));
+        assertEquals(true, item.get("executing"));
+        assertEquals(7, item.get("configId"));
+        assertEquals("channel", item.get("configName"));
+        assertEquals("openai", item.get("configProtocol"));
+        assertEquals("model", item.get("configModel"));
+        assertEquals(0, item.get("messageCount"));
+        assertEquals(Math.max(lastActiveAt != null ? lastActiveAt : 0L, state.getLastActiveAt()),
+                item.get("lastActiveAt"));
+        assertFalse(item.containsKey("inMemory"));
+        assertFalse(item.containsKey("parentThreadId"));
+        assertFalse(state.isExecuting());
+        verify(store, never()).attachEventJournal(anyString(), any());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"completed", "failed"})
+    void platformListPassesPersistedStatusDirectlyToTheProtocolSnapshot(String status) {
+        AiThreadRecord record = new AiThreadRecord();
+        record.setThreadId(PLATFORM_THREAD_ID);
+        record.setConfigId(7);
+        record.setRunStatus(status);
+        record.setLastActiveAt(100L);
+        when(store.listPlatformThreads("user-1")).thenReturn(List.of(record));
+
+        Map<String, Object> item = queries.listPlatformThreads("user-1").get(0);
+
+        assertEquals(status, item.get("runStatus"));
+        assertEquals(false, item.get("executing"));
+        assertEquals(100L, item.get("lastActiveAt"));
+        assertNull(PlatformAiStateStore.get(PLATFORM_THREAD_ID));
+        verify(protocol).snapshotThread(PLATFORM_THREAD_ID, status);
+    }
 
     @Test
     void returnsStableCursorMetadataAndClampsPageSize() {

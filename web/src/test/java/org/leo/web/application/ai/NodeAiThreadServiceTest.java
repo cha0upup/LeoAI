@@ -350,69 +350,6 @@ class NodeAiThreadServiceTest {
         return record;
     }
 
-    @Test
-    void transientThreadListIncludesEachRuntimeOnceAndKeepsMessageCounts() {
-        Fixture fixture = fixture();
-        AgentNodeSession session = new AgentNodeSession();
-        session.restoreAiThread("older", "older", 1L, 10L);
-        session.restoreAiThread("newer", "newer", 2L, 20L);
-        when(fixture.conversationStore.countMessages("older")).thenReturn(4);
-        when(fixture.conversationStore.countMessages("newer")).thenReturn(7);
-
-        Map<String, Object> data = fixture.service.listThreads(session);
-        List<?> threads = (List<?>) data.get("threads");
-
-        assertEquals(2, threads.size());
-        Map<?, ?> first = (Map<?, ?>) threads.get(0);
-        Map<?, ?> second = (Map<?, ?>) threads.get(1);
-        assertEquals("newer", first.get("threadId"));
-        assertEquals(7, first.get("messageCount"));
-        assertEquals("older", second.get("threadId"));
-        assertEquals(4, second.get("messageCount"));
-        assertFalse(first.containsKey("hasCheckpoint"));
-        verify(fixture.conversationStore, never()).listAgentThreads(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void persistedAndRuntimeThreadsMergeWithoutLosingConfiguration() {
-        Fixture fixture = fixture();
-        AgentNodeSession session = cacheSession();
-        session.restoreAiThread("shared", "runtime title", 1L, 100L);
-        session.restoreAiThread("runtime-only", "runtime only", 1L, 50L);
-        AiThreadRecord shared = new AiThreadRecord();
-        shared.setThreadId("shared");
-        shared.setMessageCount(8);
-        shared.setConfigName("channel");
-        shared.setConfigProtocol("openai");
-        shared.setConfigModel("model");
-        AiThreadRecord stored = new AiThreadRecord();
-        stored.setThreadId("stored-only");
-        stored.setTitle("stored title");
-        stored.setLastActiveAt(200L);
-        when(fixture.conversationStore.listAgentThreads("user-1", "agent-1", "host-1"))
-                .thenReturn(List.of(shared, stored));
-
-        List<?> threads = (List<?>) fixture.service.listThreads(session).get("threads");
-
-        assertEquals(3, threads.size());
-        Map<?, ?> storedItem = (Map<?, ?>) threads.get(0);
-        Map<?, ?> sharedItem = (Map<?, ?>) threads.get(1);
-        assertEquals("stored-only", storedItem.get("threadId"));
-        assertEquals(false, storedItem.get("inMemory"));
-        assertEquals(0, storedItem.get("messageCount"));
-        assertEquals("idle", storedItem.get("runStatus"));
-        assertEquals("shared", sharedItem.get("threadId"));
-        assertEquals("runtime title", sharedItem.get("title"));
-        assertEquals(true, sharedItem.get("inMemory"));
-        assertFalse(sharedItem.containsKey("hasCheckpoint"));
-        assertFalse(storedItem.containsKey("hasCheckpoint"));
-        assertFalse(((Map<?, ?>) threads.get(2)).containsKey("hasCheckpoint"));
-        assertEquals(8, sharedItem.get("messageCount"));
-        assertEquals("channel", sharedItem.get("configName"));
-        assertEquals("openai", sharedItem.get("configProtocol"));
-        assertEquals("model", sharedItem.get("configModel"));
-    }
-
     private static AgentNodeSession cacheSession() {
         AgentNodeSession session = new AgentNodeSession();
         session.setSessionId("session-1");

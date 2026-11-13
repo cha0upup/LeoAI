@@ -16,9 +16,9 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 平台 AI 线程生命周期与查询用例。
+ * 平台 AI 线程生命周期与归属校验用例。
  *
- * <p>只负责状态装载、线程 CRUD、通道切换和历史读取，不参与模型执行。
+ * <p>负责状态装载、线程 CRUD、通道切换及历史读取授权；列表视图由 AiThreadQueryService 组织。
  */
 @Service
 public class PlatformAiThreadService {
@@ -59,32 +59,6 @@ public class PlatformAiThreadService {
         state.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(state.getStateId());
         conversationStore.updateConfig(state.getStateId(), config);
-    }
-
-    public List<Map<String, Object>> listThreads(User user) {
-        List<AiThreadRecord> records = conversationStore.listPlatformThreads(user.getUserId());
-        if (records == null) return List.of();
-        return records.stream().map(record -> {
-            PlatformAiState runtime = PlatformAiStateStore.get(record.getThreadId());
-            long persistedLastActiveAt =
-                    record.getLastActiveAt() != null ? record.getLastActiveAt() : 0L;
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("threadId", record.getThreadId());
-            item.put("title", record.getTitle());
-            item.put("createdAt", record.getCreatedAt());
-            item.put("lastActiveAt", runtime != null
-                    ? Math.max(persistedLastActiveAt, runtime.getLastActiveAt())
-                    : record.getLastActiveAt());
-            item.put("messageCount",
-                    record.getMessageCount() != null ? record.getMessageCount() : 0);
-            threadQueries.applyProtocolSnapshot(item, record.getThreadId(),
-                    runtime != null ? runtime.getRunStatus() : record.getRunStatus());
-            item.put("configId", record.getConfigId());
-            item.put("configName", record.getConfigName());
-            item.put("configProtocol", record.getConfigProtocol());
-            item.put("configModel", record.getConfigModel());
-            return item;
-        }).toList();
     }
 
     public Map<String, Object> createThread(String sessionId, User user,

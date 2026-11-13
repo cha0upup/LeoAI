@@ -14,6 +14,7 @@ import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.adapter.ai.AiAttachmentPrompt;
 import org.leo.web.adapter.ai.AiEventSubscriptionService;
+import org.leo.web.application.ai.AiThreadQueryService;
 import org.leo.web.application.ai.AiTurnCommandPayload;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
@@ -44,6 +45,7 @@ public class PlatformAiController {
 
     private static final String SESSION_ATTR_PLATFORM_AI_STATE_ID = "platformAiStateId";
     private final PlatformAiThreadService threadService;
+    private final AiThreadQueryService threadQueries;
     private final AiModelConfigService aiModelConfigService;
     private final AiTurnTelemetryRegistry telemetryRegistry;
     private final AiEventSubscriptionService eventSubscriptionService;
@@ -51,12 +53,14 @@ public class PlatformAiController {
     private final AiTurnQueueService turnQueueService;
 
     public PlatformAiController(PlatformAiThreadService threadService,
+                                AiThreadQueryService threadQueries,
                                 AiModelConfigService aiModelConfigService,
                                 AiTurnTelemetryRegistry telemetryRegistry,
                                 AiEventSubscriptionService eventSubscriptionService,
                                 AiTurnProtocolService turnProtocolService,
                                 AiTurnQueueService turnQueueService) {
         this.threadService = threadService;
+        this.threadQueries = threadQueries;
         this.aiModelConfigService = aiModelConfigService;
         this.telemetryRegistry = telemetryRegistry;
         this.eventSubscriptionService = eventSubscriptionService;
@@ -220,7 +224,7 @@ public class PlatformAiController {
     @PostMapping("/threads")
     public Map<String, Object> threads(HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
-        return ApiResponse.success(threadService.listThreads(user));
+        return ApiResponse.success(threadQueries.listPlatformThreads(user.getUserId()));
     }
 
     /**

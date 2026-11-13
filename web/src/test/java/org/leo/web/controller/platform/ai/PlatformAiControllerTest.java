@@ -9,6 +9,7 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.web.adapter.ai.AiEventSubscriptionService;
 import org.leo.web.application.UseCaseException;
+import org.leo.web.application.ai.AiThreadQueryService;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
@@ -29,19 +30,24 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class PlatformAiControllerTest {
+    private final PlatformAiThreadService threads = mock(PlatformAiThreadService.class);
+    private final AiThreadQueryService queries = mock(AiThreadQueryService.class);
+    private final AiModelConfigService configs = mock(AiModelConfigService.class);
+    private final AiTurnQueueService queue = mock(AiTurnQueueService.class);
+    private final PlatformAiController controller = new PlatformAiController(threads, queries, configs,
+            mock(AiTurnTelemetryRegistry.class), mock(AiEventSubscriptionService.class),
+            mock(AiTurnProtocolService.class), queue);
+
     @Test
     void ownsHttpSessionBindingAndPreservesItWhenTheUseCaseFails() {
-        PlatformAiThreadService threads = mock(PlatformAiThreadService.class);
-        PlatformAiController controller = new PlatformAiController(threads,
-                mock(AiModelConfigService.class), mock(AiTurnTelemetryRegistry.class),
-                mock(AiEventSubscriptionService.class), mock(AiTurnProtocolService.class),
-                mock(AiTurnQueueService.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
         var session = request.getSession();
         User user = new User();
@@ -73,8 +79,29 @@ class PlatformAiControllerTest {
     }
 
     @Test
+    void threadListRequiresLoginAndQueriesOnlyTheCurrentUser() throws Exception {
+        PermissionService permissions = mock(PermissionService.class);
+        var mvc = MockMvcBuilders.standaloneSetup(controller)
+                .addInterceptors(new LoginInterceptor(permissions)).build();
+
+        mvc.perform(post("/platform/ai/threads")).andExpect(status().isUnauthorized());
+        verifyNoInteractions(queries, threads, queue);
+
+        User user = new User();
+        user.setUserId("user-1");
+        user.setPrivilege("normal");
+        when(permissions.getCurrentUser(any())).thenReturn(user);
+        when(queries.listPlatformThreads("user-1")).thenReturn(List.of(Map.of("threadId", "owned")));
+
+        mvc.perform(post("/platform/ai/threads").sessionAttr("user", user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].threadId").value("owned"));
+        verify(queries).listPlatformThreads("user-1");
+        verifyNoInteractions(threads, queue);
+    }
+
+    @Test
     void ordinaryChatCatalogIncludesTheSameEffortContractAndModeAsAdminWithoutConnectionSecrets() throws Exception {
-        AiModelConfigService configs = mock(AiModelConfigService.class);
         AiModelConfig glm = config(1, "glm-5.3");
         glm.setReasoningEffort("high");
         AiModelConfig kimi = config(2, "kimi-k2.7-code");
@@ -84,11 +111,6 @@ class PlatformAiControllerTest {
         when(configs.listEnabled()).thenReturn(List.of(glm, kimi, gemini, disabledThinking));
         when(configs.capabilitiesForModel(any())).thenReturn(new ProviderCapabilities(true, "recognized", "system",
                 1_000_000, 128_000, true, true, true, true, true, false, true));
-        PlatformAiThreadService threads = mock(PlatformAiThreadService.class);
-        AiTurnQueueService queue = mock(AiTurnQueueService.class);
-        PlatformAiController controller = new PlatformAiController(threads, configs,
-                mock(AiTurnTelemetryRegistry.class), mock(AiEventSubscriptionService.class),
-                mock(AiTurnProtocolService.class), queue);
         PermissionService permissions = mock(PermissionService.class);
         User user = new User();
         user.setPrivilege("normal");
@@ -109,7 +131,7 @@ class PlatformAiControllerTest {
                 .andExpect(jsonPath("$.data[0].baseUrl").doesNotExist())
                 .andExpect(jsonPath("$.data[0].headersJson").doesNotExist())
                 .andExpect(content().string(not(containsString("private-fixture"))));
-        verifyNoInteractions(threads, queue);
+        verifyNoInteractions(threads, queries, queue);
     }
 
     private static AiModelConfig config(int id, String model) {

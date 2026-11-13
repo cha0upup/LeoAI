@@ -3,7 +3,6 @@ package org.leo.web.application.ai;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -136,45 +135,6 @@ class PlatformAiThreadServiceTest {
         verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
     }
 
-    @Test
-    void listPreservesConfigurationAndUsesProtocolState() {
-        Fixture fixture = fixture("user-1");
-        fixture.record.setConfigName("channel");
-        fixture.record.setConfigProtocol("openai");
-        fixture.record.setConfigModel("model");
-        when(fixture.conversationStore.listPlatformThreads("user-1")).thenReturn(List.of(fixture.record));
-        PlatformAiState state = PlatformAiStateStore.create(THREAD_ID);
-        when(fixture.protocol.snapshotThread(THREAD_ID, state.getRunStatus()))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));
-
-        Map<String, Object> item = fixture.service.listThreads(user("user-1")).get(0);
-
-        assertEquals("queued", item.get("runStatus"));
-        assertEquals(true, item.get("executing"));
-        assertEquals(7, item.get("configId"));
-        assertEquals("channel", item.get("configName"));
-        assertEquals("openai", item.get("configProtocol"));
-        assertEquals("model", item.get("configModel"));
-        assertEquals(0, item.get("messageCount"));
-        assertFalse(state.isExecuting());
-    }
-
-    @ParameterizedTest
-    @NullSource
-    @ValueSource(strings = {"completed", "failed"})
-    void listPassesPersistedStatusDirectlyToTheProtocolSnapshot(String status) {
-        Fixture fixture = fixture("user-1");
-        fixture.record.setRunStatus(status);
-        fixture.record.setLastActiveAt(100L);
-        when(fixture.conversationStore.listPlatformThreads("user-1")).thenReturn(List.of(fixture.record));
-
-        Map<String, Object> item = fixture.service.listThreads(user("user-1")).get(0);
-
-        assertEquals(status, item.get("runStatus"));
-        assertEquals(false, item.get("executing"));
-        verify(fixture.protocol).snapshotThread(THREAD_ID, status);
-    }
-
     private Fixture fixture(String ownerId) {
         AiConversationStoreService conversationStore =
                 mock(AiConversationStoreService.class);
@@ -192,7 +152,7 @@ class PlatformAiThreadServiceTest {
         PlatformAiThreadService service = new PlatformAiThreadService(
                 channels, conversationStore,
                 agentRegistry, new AiThreadQueryService(conversationStore, protocol));
-        return new Fixture(service, conversationStore, agentRegistry, protocol, record, channels);
+        return new Fixture(service, conversationStore, agentRegistry, record, channels);
     }
 
     private User user(String id) {
@@ -204,7 +164,6 @@ class PlatformAiThreadServiceTest {
     private record Fixture(PlatformAiThreadService service,
                            AiConversationStoreService conversationStore,
                            PlatformAiAgentRegistry agentRegistry,
-                           AiTurnProtocolService protocol,
                            AiThreadRecord record,
                            AiModelChannelResolver channels) {
     }

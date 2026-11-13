@@ -17,18 +17,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Node AI 线程生命周期与查询用例。
+ * Node AI 线程生命周期与归属校验用例。
  *
- * <p>只负责线程装载、CRUD、配置切换和历史查询；主 Turn 与委派 Turn 分别由
+ * <p>负责线程装载、CRUD、配置切换及历史读取授权；列表视图由 AiThreadQueryService 组织。
+ * 主 Turn 与委派 Turn 分别由
  * {@link NodeAiTurnService} 和 {@link NodeAiDelegationService} 执行。
  */
 @Service
@@ -88,41 +85,6 @@ public class NodeAiThreadService {
     /** 缓存读取沿用日志绑定；执行前的游标同步由 ensureThreadReady 负责。 */
     public AiThread requireThread(AgentNodeSession session, String threadId) {
         return resolveRequiredThread(session, threadId, requireOwnedThread(session, threadId));
-    }
-
-    public Map<String, Object> listThreads(AgentNodeSession session) {
-        String userId = session.getCreateByUser();
-        String agentId = session.resolveAgentId();
-        List<AiThread> memoryThreads = session.listAiThreads();
-        List<Map<String, Object>> result = new ArrayList<>();
-        Map<String, AiThread> memoryById = new LinkedHashMap<>();
-        for (AiThread thread : memoryThreads) {
-            memoryById.put(thread.getThreadId(), thread);
-        }
-        if (agentId != null) {
-            for (AiThreadRecord record :
-                    conversationStore.listAgentThreads(userId, agentId, session.getCurrentHostId())) {
-                AiThread thread = memoryById.remove(record.getThreadId());
-                Map<String, Object> item = thread != null
-                        ? threadToMap(thread, safeMessageCount(record.getMessageCount()))
-                        : threadRecordToMap(record);
-                item.put("configName", record.getConfigName());
-                item.put("configProtocol", record.getConfigProtocol());
-                item.put("configModel", record.getConfigModel());
-                result.add(item);
-            }
-        }
-        for (AiThread thread : memoryById.values()) {
-            result.add(threadToMap(
-                    thread, conversationStore.countMessages(thread.getThreadId())));
-        }
-        result.sort(Comparator.comparingLong((Map<String, Object> item) ->
-                item.get("lastActiveAt") instanceof Number time ? time.longValue() : 0L).reversed());
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("threads", result);
-        data.put("activeThreadId", session.getActiveThreadId());
-        return data;
     }
 
     public Map<String, Object> createThread(
@@ -357,35 +319,6 @@ public class NodeAiThreadService {
         return record != null ? record.getConfigId() : null;
     }
 
-    private Map<String, Object> threadToMap(AiThread thread, int messageCount) {
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("threadId", thread.getThreadId());
-        item.put("title", thread.getTitle());
-        item.put("createdAt", thread.getCreatedAt());
-        item.put("lastActiveAt", thread.getLastActiveAt());
-        item.put("messageCount", messageCount);
-        item.put("configId", thread.getAiConfigId());
-        threadQueries.applyProtocolSnapshot(item, thread.getThreadId(), thread.getRunStatus());
-        item.put("parentThreadId", thread.getParentThreadId());
-        item.put("inMemory", true);
-        return item;
-    }
-
-    private Map<String, Object> threadRecordToMap(AiThreadRecord record) {
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("threadId", record.getThreadId());
-        item.put("title", record.getTitle());
-        item.put("createdAt", record.getCreatedAt());
-        item.put("lastActiveAt", record.getLastActiveAt());
-        item.put("messageCount", safeMessageCount(record.getMessageCount()));
-        item.put("configId", record.getConfigId());
-        threadQueries.applyProtocolSnapshot(item, record.getThreadId(), record.getRunStatus() != null
-                ? record.getRunStatus() : AiRunStatus.IDLE);
-        item.put("parentThreadId", record.getParentThreadId());
-        item.put("inMemory", false);
-        return item;
-    }
-
     private void updateThreadConfig(
             AgentNodeSession session, AiThread thread, AiModelConfig config) {
         try {
@@ -396,10 +329,6 @@ public class NodeAiThreadService {
             logger.warn("更新线程通道配置失败, threadId={}: {}",
                     thread.getThreadId(), error.getMessage());
         }
-    }
-
-    private static int safeMessageCount(Integer count) {
-        return count != null ? count : 0;
     }
 
     public record ThreadResolution(AiThread thread, String errorMessage) {

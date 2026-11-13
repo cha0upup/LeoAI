@@ -1,17 +1,25 @@
 package org.leo.web.application.ai;
 
+import org.leo.ai.platform.PlatformAiState;
+import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
+import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.session.AgentNodeSession;
+import org.leo.core.session.AiThread;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Shared history queries; callers retain responsibility for thread authorization. */
+/** 线程列表、历史查询和视图装配；调用方负责用户及会话授权。 */
 @Service
 public class AiThreadQueryService {
 
@@ -22,6 +30,43 @@ public class AiThreadQueryService {
                                 AiTurnProtocolService turnProtocolService) {
         this.conversationStore = conversationStore;
         this.turnProtocolService = turnProtocolService;
+    }
+
+    public Map<String, Object> listNodeThreads(AgentNodeSession session) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, AiThread> memoryById = new LinkedHashMap<>();
+        for (AiThread thread : session.listAiThreads()) memoryById.put(thread.getThreadId(), thread);
+        String agentId = session.resolveAgentId();
+        if (agentId != null) {
+            for (AiThreadRecord record : conversationStore.listAgentThreads(
+                    session.getCreateByUser(), agentId, session.getCurrentHostId())) {
+                result.add(nodeThread(memoryById.remove(record.getThreadId()), record));
+            }
+        }
+        for (AiThread thread : memoryById.values()) result.add(nodeThread(thread, null));
+        result.sort(Comparator.comparingLong((Map<String, Object> item) ->
+                item.get("lastActiveAt") instanceof Number time ? time.longValue() : 0L).reversed());
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("threads", result);
+        data.put("activeThreadId", session.getActiveThreadId());
+        return data;
+    }
+
+    public List<Map<String, Object>> listPlatformThreads(String userId) {
+        List<AiThreadRecord> records = conversationStore.listPlatformThreads(userId);
+        if (records == null) return List.of();
+        return records.stream().map(record -> {
+            PlatformAiState runtime = PlatformAiStateStore.get(record.getThreadId());
+            Map<String, Object> item = recordSummary(record);
+            if (runtime != null) {
+                long persistedTime = record.getLastActiveAt() != null ? record.getLastActiveAt() : 0L;
+                item.put("lastActiveAt", Math.max(persistedTime, runtime.getLastActiveAt()));
+            }
+            applyProtocolSnapshot(item, record.getThreadId(),
+                    runtime != null ? runtime.getRunStatus() : record.getRunStatus());
+            return item;
+        }).toList();
     }
 
     /** 游标按稳定消息序号向前翻页，新增消息不会使旧页偏移。 */
@@ -62,8 +107,41 @@ public class AiThreadQueryService {
         return data;
     }
 
-    public void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
+    private void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
         target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
+    }
+
+    private Map<String, Object> nodeThread(AiThread thread, AiThreadRecord record) {
+        Map<String, Object> item = record != null ? recordSummary(record) : new LinkedHashMap<>();
+        String threadId = thread != null ? thread.getThreadId() : record.getThreadId();
+        if (thread != null) {
+            item.put("threadId", threadId);
+            item.put("title", thread.getTitle());
+            item.put("createdAt", thread.getCreatedAt());
+            item.put("lastActiveAt", thread.getLastActiveAt());
+            item.put("configId", thread.getAiConfigId());
+        }
+        if (record == null) item.put("messageCount", conversationStore.countMessages(threadId));
+        String status = thread != null ? thread.getRunStatus()
+                : record.getRunStatus() != null ? record.getRunStatus() : AiRunStatus.IDLE;
+        applyProtocolSnapshot(item, threadId, status);
+        item.put("parentThreadId", thread != null ? thread.getParentThreadId() : record.getParentThreadId());
+        item.put("inMemory", thread != null);
+        return item;
+    }
+
+    private static Map<String, Object> recordSummary(AiThreadRecord record) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("threadId", record.getThreadId());
+        item.put("title", record.getTitle());
+        item.put("createdAt", record.getCreatedAt());
+        item.put("lastActiveAt", record.getLastActiveAt());
+        item.put("messageCount", record.getMessageCount() != null ? record.getMessageCount() : 0);
+        item.put("configId", record.getConfigId());
+        item.put("configName", record.getConfigName());
+        item.put("configProtocol", record.getConfigProtocol());
+        item.put("configModel", record.getConfigModel());
+        return item;
     }
 
     private static Map<String, Object> eventPayload(AiSseEvent event) {

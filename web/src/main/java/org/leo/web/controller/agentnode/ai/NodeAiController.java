@@ -8,6 +8,7 @@ import org.leo.core.session.AiThread;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.adapter.ai.AiAttachmentPrompt;
 import org.leo.web.adapter.ai.AiEventSubscriptionService;
+import org.leo.web.application.ai.AiThreadQueryService;
 import org.leo.web.application.ai.AiTurnCommandPayload;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
@@ -31,15 +32,18 @@ import java.util.Map;
 public class NodeAiController {
 
     private final NodeAiThreadService aiThreadService;
+    private final AiThreadQueryService threadQueries;
     private final AiEventSubscriptionService eventSubscriptionService;
     private final AiTurnProtocolService turnProtocolService;
     private final AiTurnQueueService turnQueueService;
 
     public NodeAiController(NodeAiThreadService aiThreadService,
-                                  AiEventSubscriptionService eventSubscriptionService,
-                                  AiTurnProtocolService turnProtocolService,
-                                  AiTurnQueueService turnQueueService) {
+                            AiThreadQueryService threadQueries,
+                            AiEventSubscriptionService eventSubscriptionService,
+                            AiTurnProtocolService turnProtocolService,
+                            AiTurnQueueService turnQueueService) {
         this.aiThreadService = aiThreadService;
+        this.threadQueries = threadQueries;
         this.eventSubscriptionService = eventSubscriptionService;
         this.turnProtocolService = turnProtocolService;
         this.turnQueueService = turnQueueService;
@@ -130,7 +134,7 @@ public class NodeAiController {
     @RequestMapping("/thread/list")
     public HashMap<String, Object> listThreads(@RequestBody AiSessionRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        return ApiResponse.success(aiThreadService.listThreads(session));
+        return ApiResponse.success(threadQueries.listNodeThreads(session));
     }
 
     /**
