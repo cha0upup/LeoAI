@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
-/** Persistent reconnaissance summaries isolated by user, Agent and HostId. */
+/** 按用户、Agent、HostId 隔离摘要，统一规范化并在持久化成功后同步对应会话。 */
 @Repository
 public class AgentReconRepository {
 

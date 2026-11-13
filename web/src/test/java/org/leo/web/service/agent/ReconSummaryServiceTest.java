@@ -16,6 +16,29 @@ class ReconSummaryServiceTest {
     private final ReconSummaryService service = new ReconSummaryService(organizer, digest, repository);
 
     @Test
+    void mutationsDoNotOverwriteNewerStatePublishedDuringPersistence() {
+        AgentNodeSession session = new AgentNodeSession();
+        doAnswer(invocation -> {
+            session.setReconSummary("newer summary");
+            return null;
+        }).when(repository).save(eq("session"), nullable(String.class));
+        when(repository.append("session", "addition")).thenAnswer(invocation -> {
+            session.setReconSummary("newer summary");
+            return "appended summary";
+        });
+        when(organizer.organize("newer summary")).thenReturn("organized summary");
+
+        service.set("session", session, "replacement");
+        assertEquals("newer summary", session.getReconSummary());
+        service.append("session", session, "addition");
+        assertEquals("newer summary", session.getReconSummary());
+        service.clear("session", session);
+        assertEquals("newer summary", session.getReconSummary());
+        service.organize("session", session);
+        assertEquals("newer summary", session.getReconSummary());
+    }
+
+    @Test
     void diskFailureNeverPublishesAnUnsavedSetClearOrOrganizedSummary() {
         AgentNodeSession session = new AgentNodeSession();
         session.setReconSummary("original");

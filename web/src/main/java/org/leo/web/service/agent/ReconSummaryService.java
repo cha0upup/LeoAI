@@ -47,9 +47,7 @@ public class ReconSummaryService {
     public ReconSummaryMutateResponse set(String sessionId,
                                           AgentNodeSession session,
                                           String summary) {
-        String normalized = summary == null || summary.isBlank() ? null : summary.strip();
-        repository.save(sessionId, normalized);
-        session.setReconSummary(normalized);
+        repository.save(sessionId, summary);
         triggerDigestIfNeeded(session);
         return new ReconSummaryMutateResponse(sessionId, session.getReconSummary(), "侦察摘要已更新");
     }
@@ -58,14 +56,12 @@ public class ReconSummaryService {
         if (content == null || content.isBlank()) throw ApiException.badRequest("追加内容为空");
         String updated = repository.append(sessionId, content);
         if (updated == null) throw new IllegalStateException("追加侦察摘要失败");
-        session.setReconSummary(updated);
         triggerDigestIfNeeded(session);
         return new ReconSummaryMutateResponse(sessionId, updated, "侦察摘要已追加");
     }
 
     public ReconSummaryMutateResponse clear(String sessionId, AgentNodeSession session) {
         repository.save(sessionId, null);
-        session.setReconSummary(null);
         return new ReconSummaryMutateResponse(sessionId, null, "侦察摘要已清空");
     }
 
@@ -75,7 +71,6 @@ public class ReconSummaryService {
         }
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
         repository.save(sessionId, organized);
-        session.setReconSummary(organized);
         triggerDigestIfNeeded(session);
         return new OrganizeResponse(sessionId, organized, "侦察摘要已整理并保存");
     }

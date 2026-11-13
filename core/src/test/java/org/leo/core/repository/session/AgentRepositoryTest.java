@@ -90,10 +90,15 @@ class AgentRepositoryTest {
         assertNull(differentHost.getReconSummary());
         assertEquals("first\n\nsecond", repository.load("user-a", "agent-a", "host-a"));
 
-        repository.save(first.getSessionId(), "replacement");
+        repository.save(first.getSessionId(), " replacement ");
         assertEquals("replacement", first.getReconSummary());
         assertEquals("replacement", second.getReconSummary());
         assertNull(repository.load("user-a", "agent-b", "host-a"));
+
+        repository.save(first.getSessionId(), " ");
+        assertNull(first.getReconSummary());
+        assertNull(second.getReconSummary());
+        assertNull(repository.load(first.getSessionId()));
     }
 
     @Test
