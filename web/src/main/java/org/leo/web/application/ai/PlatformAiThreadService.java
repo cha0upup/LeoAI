@@ -41,14 +41,8 @@ public class PlatformAiThreadService {
     public PlatformAiState createAgent(String sessionId, String previousStateId,
                                        User user, Integer configId) {
         AiModelConfig config = channelResolver.optional(configId);
-        PlatformAiState state = recreateState(previousStateId);
-        if (config != null) state.setAiConfigId(config.getId());
-
-        conversationStore.createPlatformThread(
-                user.getUserId(), sessionId, state.getStateId(),
-                "平台 AI", state.getCreatedAt(), config);
-        conversationStore.attachEventJournal(state.getStateId(), state);
-        return state;
+        removeRuntime(previousStateId, "平台 AI 会话已重建");
+        return createState(sessionId, user, "平台 AI", config);
     }
 
     public void switchChannel(PlatformAiState state, Integer configId) {
@@ -64,18 +58,11 @@ public class PlatformAiThreadService {
     public Map<String, Object> createThread(String sessionId, User user,
                                             String title, Integer configId) {
         AiModelConfig config = channelResolver.optional(configId);
-        String threadId = "platform-ai-" + UUID.randomUUID();
-        PlatformAiState state = PlatformAiStateStore.create(threadId);
-        if (config != null) state.setAiConfigId(config.getId());
-
         String safeTitle = title != null && !title.isBlank() ? title : "新对话";
-        conversationStore.createPlatformThread(
-                user.getUserId(), sessionId, threadId,
-                safeTitle, state.getCreatedAt(), config);
-        conversationStore.attachEventJournal(threadId, state);
+        PlatformAiState state = createState(sessionId, user, safeTitle, config);
 
         Map<String, Object> info = new LinkedHashMap<>();
-        info.put("threadId", threadId);
+        info.put("threadId", state.getStateId());
         info.put("title", safeTitle);
         info.put("configId", state.getAiConfigId());
         return info;
@@ -84,12 +71,7 @@ public class PlatformAiThreadService {
     public void deleteThread(User user, String threadId) {
         if (threadId == null || threadId.isBlank()) return;
         requireOwnedThread(user, threadId);
-        PlatformAiState state = PlatformAiStateStore.get(threadId);
-        if (state != null) {
-            state.stopGeneration("线程已删除");
-            PlatformAiStateStore.remove(threadId);
-        }
-        agentRegistry.evict(threadId);
+        removeRuntime(threadId, "线程已删除");
         conversationStore.deleteThread(threadId);
     }
 
@@ -157,14 +139,22 @@ public class PlatformAiThreadService {
         return state;
     }
 
-    private PlatformAiState recreateState(String previousStateId) {
-        if (previousStateId != null && !previousStateId.isBlank()) {
-            PlatformAiState existingState = PlatformAiStateStore.get(previousStateId);
-            if (existingState != null) existingState.stopGeneration("平台 AI 会话已重建");
-            PlatformAiStateStore.remove(previousStateId);
-            agentRegistry.evict(previousStateId);
+    private PlatformAiState createState(String sessionId, User user, String title, AiModelConfig config) {
+        PlatformAiState state = PlatformAiStateStore.create("platform-ai-" + UUID.randomUUID());
+        if (config != null) state.setAiConfigId(config.getId());
+        conversationStore.createPlatformThread(
+                user.getUserId(), sessionId, state.getStateId(), title, state.getCreatedAt(), config);
+        conversationStore.attachEventJournal(state.getStateId(), state);
+        return state;
+    }
+
+    private void removeRuntime(String stateId, String reason) {
+        if (stateId == null || stateId.isBlank()) return;
+        PlatformAiState state = PlatformAiStateStore.get(stateId);
+        if (state != null) {
+            state.stopGeneration(reason);
+            PlatformAiStateStore.remove(stateId);
         }
-        String stateId = "platform-ai-" + UUID.randomUUID();
-        return PlatformAiStateStore.create(stateId);
+        agentRegistry.evict(stateId);
     }
 }

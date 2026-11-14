@@ -3,6 +3,7 @@ package org.leo.web.application.ai;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -17,10 +18,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -59,25 +62,65 @@ class PlatformAiThreadServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void createsFreshThreadsWithoutAnExistenceLookup(boolean recreate) {
+    @CsvSource(value = {
+            "true,null,平台 AI,7",
+            "true,null,平台 AI,null",
+            "false,null,新对话,7",
+            "false,' ',新对话,null",
+            "false,custom title,custom title,7"
+    }, nullValues = "null")
+    void createsFreshThreadsWithoutAnExistenceLookup(
+            boolean recreate, String title, String expectedTitle, Integer configId) {
         Fixture fixture = fixture("user-1");
-        AiModelConfig config = new AiModelConfig();
-        config.setId(7);
-        when(fixture.channels.optional(7)).thenReturn(config);
+        AiModelConfig config = null;
+        if (configId != null) {
+            config = new AiModelConfig();
+            config.setId(configId);
+        }
+        when(fixture.channels.optional(configId)).thenReturn(config);
 
-        String threadId = recreate
-                ? fixture.service.createAgent(SESSION_ID, null, user("user-1"), 7).getStateId()
-                : (String) fixture.service.createThread(SESSION_ID, user("user-1"), "新对话", 7).get("threadId");
+        String threadId;
+        if (recreate) {
+            threadId = fixture.service.createAgent(SESSION_ID, null, user("user-1"), configId).getStateId();
+        } else {
+            Map<String, Object> result = fixture.service.createThread(SESSION_ID, user("user-1"), title, configId);
+            assertEquals(expectedTitle, result.get("title"));
+            assertEquals(configId, result.get("configId"));
+            threadId = (String) result.get("threadId");
+        }
         createdThreadId = threadId;
         PlatformAiState state = PlatformAiStateStore.get(threadId);
         assertNotNull(state);
-        assertEquals(7, state.getAiConfigId());
+        assertEquals(configId, state.getAiConfigId());
         verify(fixture.conversationStore).createPlatformThread(
                 eq("user-1"), eq(SESSION_ID), eq(threadId),
-                eq(recreate ? "平台 AI" : "新对话"), eq(state.getCreatedAt()), same(config));
+                eq(expectedTitle), eq(state.getCreatedAt()), same(config));
         verify(fixture.conversationStore).attachEventJournal(threadId, state);
         verify(fixture.conversationStore, never()).findThread(anyString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deletionAndRecreationStopTheOldRuntimeAndEvictItsAgent(boolean recreate) {
+        Fixture fixture = fixture("user-1");
+        PlatformAiState previous = PlatformAiStateStore.create(THREAD_ID);
+        previous.claimExecution();
+
+        if (recreate) {
+            PlatformAiState replacement = fixture.service.createAgent(SESSION_ID, THREAD_ID, user("user-1"), null);
+            createdThreadId = replacement.getStateId();
+            assertNotEquals(THREAD_ID, createdThreadId);
+            assertSame(replacement, PlatformAiStateStore.get(createdThreadId));
+            verify(fixture.conversationStore, never()).deleteThread(THREAD_ID);
+        } else {
+            fixture.service.deleteThread(user("user-1"), THREAD_ID);
+            verify(fixture.conversationStore).deleteThread(THREAD_ID);
+        }
+
+        assertNull(PlatformAiStateStore.get(THREAD_ID));
+        assertTrue(previous.isStopRequested());
+        assertEquals(recreate ? "平台 AI 会话已重建" : "线程已删除", previous.getStopReason());
+        verify(fixture.agentRegistry).evict(THREAD_ID);
     }
 
     @Test
