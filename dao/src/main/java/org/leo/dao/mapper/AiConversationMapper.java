@@ -332,6 +332,7 @@ public interface AiConversationMapper {
     /**
      * 模型上下文消息：成功 Turn，以及确实产生了可恢复 assistant 进度的中断 Turn。
      * 后者仍保持 discarded 展示状态，但 user/assistant 两条消息会一起进入后续记忆。
+     * 选取最近的若干条消息，再按稳定消息序号升序返回。
      */
     @Select("SELECT * FROM (SELECT m.* FROM ai_messages m WHERE m.thread_id = #{threadId} "
             + "AND (m.status = 'committed' OR (m.status = 'discarded' AND EXISTS ("

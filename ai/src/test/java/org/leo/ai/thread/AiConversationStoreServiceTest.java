@@ -1,8 +1,6 @@
 package org.leo.ai.thread;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiEventRecord;
@@ -98,46 +96,6 @@ class AiConversationStoreServiceTest {
         assertTrue(metadata.getValue().contains("\"boundarySequence\":42"));
         assertTrue(metadata.getValue().contains("\"boundaryHash\":\"hash-42\""));
         assertTrue(metadata.getValue().contains("\"version\":1"));
-    }
-
-    @Test
-    void contextMessagesKeepTheirStableSequence() {
-        AiMessageRecord row = new AiMessageRecord();
-        row.setMessageSeq(7L);
-        row.setRole("assistant");
-        row.setContent("answer");
-        when(mapper.recentContextMessages("thread-1", 20)).thenReturn(List.of(row));
-        when(mapper.findContextMessageBySequence("thread-1", 7L)).thenReturn(row);
-
-        assertEquals(7L, service.contextMessages("thread-1", 20).get(0).sequence());
-        assertEquals("answer", service.contextMessage("thread-1", 7L).content());
-    }
-
-    @Test
-    void exposesRecoverableDiscardedMessagesAsModelContext() {
-        AiMessageRecord user = new AiMessageRecord();
-        user.setMessageSeq(7L);
-        user.setRole("user");
-        user.setContent("收集系统信息");
-        AiMessageRecord recovery = new AiMessageRecord();
-        recovery.setMessageSeq(8L);
-        recovery.setRole("assistant");
-        recovery.setStatus("discarded");
-        recovery.setContent("");
-        recovery.setRecoveryContext("[执行在此处中断；以下是可用于继续任务的已完成进度]");
-        when(mapper.recentContextMessages("thread-1", 20))
-                .thenReturn(List.of(user, recovery));
-        when(mapper.findContextMessageBySequence("thread-1", 8L))
-                .thenReturn(recovery);
-
-        List<AiConversationStoreService.ConversationMessage> context =
-                service.contextMessages("thread-1", 20);
-
-        assertEquals(2, context.size());
-        assertEquals("收集系统信息", context.get(0).content());
-        assertEquals(8L, service.contextMessage("thread-1", 8L).sequence());
-        assertEquals(recovery.getRecoveryContext(), context.get(1).content());
-        assertEquals(recovery.getRecoveryContext(), service.contextMessage("thread-1", 8L).content());
     }
 
     @Test
@@ -307,39 +265,6 @@ class AiConversationStoreServiceTest {
         assertEquals("cancelled", runCaptor.getValue().getErrorCategory());
         assertEquals("用户取消", runCaptor.getValue().getErrorMessage());
         assertEquals("用户取消", runCaptor.getValue().getRawErrorMessage());
-    }
-
-    @ParameterizedTest
-    @CsvSource({"0,50,0,50", "-8,20,0,20", "7,20,7,20", "0,0,0,1",
-            "0,200,0,200", "0,201,0,200", "0,-1,0,200", "0,-2147483648,0,200"})
-    void preservesMessagePaginationBounds(int offset, int limit, int expectedOffset, int expectedLimit) {
-        service.listMessages("thread-1", offset, limit);
-
-        verify(mapper).listMessages("thread-1", expectedOffset, expectedLimit);
-    }
-
-    @Test
-    void exposesTurnMetadataInMessageShape() {
-        AiMessageRecord row = new AiMessageRecord();
-        row.setMessageId("message-1");
-        row.setThreadId("thread-1");
-        row.setTurnId("turn-1");
-        row.setRunId("run-1");
-        row.setMessageSeq(3L);
-        row.setStatus(AiConversationStoreService.MESSAGE_COMMITTED);
-        row.setRole("user");
-        row.setContent("hello");
-        row.setTimestamp(100L);
-        when(mapper.listMessages("thread-1", 0, 20)).thenReturn(List.of(row));
-
-        Map<String, Object> message = service.listMessages("thread-1", 0, 20).get(0);
-
-        assertEquals("message-1", message.get("messageId"));
-        assertEquals("hello", message.get("content"));
-        assertEquals("turn-1", message.get("turnId"));
-        assertEquals("run-1", message.get("runId"));
-        assertEquals(3L, message.get("sequence"));
-        assertEquals(AiConversationStoreService.MESSAGE_COMMITTED, message.get("status"));
     }
 
     @Test

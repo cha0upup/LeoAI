@@ -7,7 +7,7 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
+import org.leo.ai.thread.ConversationMessage;
 import org.leo.ai.thread.AiConversationStoreService;
 
 import java.util.List;

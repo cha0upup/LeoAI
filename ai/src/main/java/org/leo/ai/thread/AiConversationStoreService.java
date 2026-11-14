@@ -3,7 +3,6 @@ package org.leo.ai.thread;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
@@ -549,7 +548,7 @@ public class AiConversationStoreService {
     }
 
     public boolean hasMessagesBefore(String threadId, long beforeSequence) {
-        return mapper.hasMessagesBefore(threadId, beforeSequence);
+        return messages.hasBefore(threadId, beforeSequence);
     }
 
     /**
@@ -557,22 +556,15 @@ public class AiConversationStoreService {
      * discarded Turn，使用户在异常中止后输入“继续”时可以从已有结果衔接。
      */
     public List<ConversationMessage> contextMessages(String threadId, int limit) {
-        return mapper.recentContextMessages(
-                        threadId, Math.max(1, Math.min(limit, 200))).stream()
-                .map(record -> new ConversationMessage(
-                        record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record)))
-                .toList();
+        return messages.contextMessages(threadId, limit);
     }
 
     public ConversationMessage contextMessage(String threadId, long messageSequence) {
-        AiMessageRecord record = mapper.findContextMessageBySequence(
-                threadId, messageSequence);
-        return record == null ? null : new ConversationMessage(
-                record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record));
+        return messages.contextMessage(threadId, messageSequence);
     }
 
     public int countMessages(String threadId) {
-        return mapper.countMessages(threadId);
+        return messages.count(threadId);
     }
 
     /**
@@ -582,16 +574,7 @@ public class AiConversationStoreService {
      * @return plan JSON 字符串，找不到则返回 null
      */
     public String findLatestPlanJson(String threadId) {
-        if (threadId == null || threadId.isBlank()) return null;
-        List<AiMessageRecord> recent = mapper.recentContextMessages(threadId, 50);
-        if (recent == null) return null;
-        for (AiMessageRecord record : recent) {
-            String planJson = record.getPlanJson();
-            if (planJson != null && !planJson.isBlank() && !"null".equals(planJson)) {
-                return planJson;
-            }
-        }
-        return null;
+        return messages.findLatestPlanJson(threadId);
     }
 
     private static void requireFencedWrite(int updated, String target, String id) {
@@ -626,8 +609,6 @@ public class AiConversationStoreService {
                                 String userMessageId, String assistantMessageId,
                                 long startedAt, String leaseToken) {
     }
-
-    public record ConversationMessage(Long sequence, String role, String content) {}
 
     public record ConversationCheckpoint(String summary,
                                          long boundarySequence,

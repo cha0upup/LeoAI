@@ -5,7 +5,7 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
-import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
+import org.leo.ai.thread.ConversationMessage;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

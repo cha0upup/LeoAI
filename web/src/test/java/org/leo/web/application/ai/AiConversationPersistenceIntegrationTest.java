@@ -201,6 +201,23 @@ class AiConversationPersistenceIntegrationTest {
         assertFalse(store.listMessages("thread-1", 0, 20).toString().contains("可用于继续任务"));
     }
 
+    @Test
+    void restoresNewestEligiblePlanSnapshotWithoutChangingMemoryOrder() {
+        var turn = reserve();
+        for (int sequence = 3; sequence <= 6; sequence++) appendMessage(turn.id(), sequence);
+        jdbc.update("UPDATE ai_messages SET status='committed' WHERE thread_id='thread-1'");
+        jdbc.update("UPDATE ai_messages SET plan_json=? WHERE thread_id='thread-1' AND message_seq=2", "{\"step\":\"older\"}");
+        String latest = "{\"step\":\"latest\"}";
+        jdbc.update("UPDATE ai_messages SET plan_json=? WHERE message_id='message-3'", latest);
+        jdbc.update("UPDATE ai_messages SET plan_json=' ' WHERE message_id='message-4'");
+        jdbc.update("UPDATE ai_messages SET plan_json='null' WHERE message_id='message-5'");
+        jdbc.update("UPDATE ai_messages SET status='pending', plan_json=? WHERE message_id='message-6'", "{\"step\":\"pending\"}");
+
+        assertEquals(latest, store.findLatestPlanJson("thread-1"));
+        assertEquals(List.of(1L, 2L, 3L, 4L, 5L), store.contextMessages("thread-1", 20).stream()
+                .map(ConversationMessage::sequence).toList());
+    }
+
     private AiConversationStoreService.PersistedTurn beginRun(AiTurnProtocolService.TurnSnapshot turn) {
         return store.beginTurn(turn.id(), turn.userItemId(), turn.assistantItemId(), "thread-1", null,
                 "fixture", "fixture", null, 1L, null, AiTurnTrace.start("fixture", "thread-1", 1L), null);

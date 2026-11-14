@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiConversationStoreService.ConversationCheckpoint;
-import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
+import org.leo.ai.thread.ConversationMessage;
 
 import java.util.ArrayList;
 import java.util.List;

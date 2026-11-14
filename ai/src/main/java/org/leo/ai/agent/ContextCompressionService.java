@@ -9,7 +9,7 @@ import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.PromptDataBoundary;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiConversationStoreService.ConversationCheckpoint;
-import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
+import org.leo.ai.thread.ConversationMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

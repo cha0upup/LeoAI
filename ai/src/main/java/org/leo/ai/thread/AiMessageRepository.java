@@ -43,13 +43,51 @@ public class AiMessageRepository {
 
     public List<Map<String, Object>> list(String threadId, int offset, int limit) {
         int safeOffset = Math.max(0, offset);
-        int safeLimit = limit < 0 ? 200 : Math.max(1, Math.min(limit, 200));
+        int safeLimit = limit < 0 ? 200 : boundedLimit(limit);
         return toMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
     }
 
     public List<Map<String, Object>> listBefore(String threadId, long beforeSequence, int limit) {
-        int safeLimit = Math.max(1, Math.min(limit, 200));
+        int safeLimit = boundedLimit(limit);
         return toMaps(mapper.listMessagesBefore(threadId, beforeSequence, safeLimit));
+    }
+
+    public boolean hasBefore(String threadId, long beforeSequence) {
+        return mapper.hasMessagesBefore(threadId, beforeSequence);
+    }
+
+    public int count(String threadId) {
+        return mapper.countMessages(threadId);
+    }
+
+    public List<ConversationMessage> contextMessages(String threadId, int limit) {
+        return mapper.recentContextMessages(threadId, boundedLimit(limit)).stream()
+                .map(AiMessageRepository::toContext).toList();
+    }
+
+    public ConversationMessage contextMessage(String threadId, long messageSequence) {
+        AiMessageRecord record = mapper.findContextMessageBySequence(threadId, messageSequence);
+        return record == null ? null : toContext(record);
+    }
+
+    public String findLatestPlanJson(String threadId) {
+        if (threadId == null || threadId.isBlank()) return null;
+        List<AiMessageRecord> recent = mapper.recentContextMessages(threadId, 50);
+        if (recent == null) return null;
+        // Context rows are chronological; plan restoration needs the newest snapshot.
+        for (int index = recent.size() - 1; index >= 0; index--) {
+            String planJson = recent.get(index).getPlanJson();
+            if (planJson != null && !planJson.isBlank() && !"null".equals(planJson)) return planJson;
+        }
+        return null;
+    }
+
+    private static int boundedLimit(int limit) {
+        return Math.max(1, Math.min(limit, 200));
+    }
+
+    private static ConversationMessage toContext(AiMessageRecord record) {
+        return new ConversationMessage(record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record));
     }
 
     private static List<Map<String, Object>> toMaps(List<AiMessageRecord> records) {
