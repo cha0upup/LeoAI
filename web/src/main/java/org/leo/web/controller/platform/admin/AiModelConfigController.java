@@ -369,8 +369,7 @@ public class AiModelConfigController {
         m.put("capabilityModelName", configService.capabilityModelName(c));
         m.put("capabilityContextWindowTokens", capabilities.contextWindowTokens());
         m.put("capabilityMaxOutputTokens", capabilities.maxOutputTokens());
-        m.put("effectiveContextWindowTokens", ModelRequestOptions.inputWindow(c.getProviderKey(), c.getModel(),
-                clampPositive(c.getContextWindowTokens(), capabilities.contextWindowTokens())));
+        m.put("effectiveContextWindowTokens", ModelRequestOptions.effectiveInputWindow(c, capabilities));
         m.put("effectiveMaxOutputTokens", clampPositive(c.getMaxOutputTokens(), capabilities.maxOutputTokens()));
         m.put("supportsTextGeneration", capabilities.supportsTextGeneration());
         m.put("supportsReasoning", capabilities.supportsReasoning());

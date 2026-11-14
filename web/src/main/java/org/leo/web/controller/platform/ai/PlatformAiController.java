@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,19 +98,19 @@ public class PlatformAiController {
     }
 
     private List<Map<String, Object>> availableModelCatalog() {
-        return aiModelConfigService.listEnabled().stream()
-                .filter(config -> {
-                    ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
-                    return capabilities.supportsTextGeneration()
-                            && capabilities.supportsStreaming()
-                            && capabilities.maxOutputTokens() > 0;
-                })
-                .map(this::toCatalogItem)
-                .toList();
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (AiModelConfig config : aiModelConfigService.listEnabled()) {
+            ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
+            if (capabilities.supportsTextGeneration()
+                    && capabilities.supportsStreaming()
+                    && capabilities.maxOutputTokens() > 0) {
+                items.add(toCatalogItem(config, capabilities));
+            }
+        }
+        return items;
     }
 
-    private Map<String, Object> toCatalogItem(AiModelConfig config) {
-        ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
+    private Map<String, Object> toCatalogItem(AiModelConfig config, ProviderCapabilities capabilities) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", config.getId());
         item.put("name", config.getName());
@@ -119,7 +120,7 @@ public class PlatformAiController {
         item.put("protocol", config.getProtocol());
         item.put("isActive", config.getIsActive());
         item.put("enabled", config.getEnabled());
-        item.put("contextWindowTokens", aiModelConfigService.getContextWindowTokens(config));
+        item.put("contextWindowTokens", ModelRequestOptions.effectiveInputWindow(config, capabilities));
         item.put("maxOutputTokens", config.getMaxOutputTokens() != null
                 ? Math.min(config.getMaxOutputTokens(), capabilities.maxOutputTokens())
                 : capabilities.maxOutputTokens());

@@ -68,8 +68,9 @@ public record ModelRequestPlan(String modelName, int maxTokens, boolean doReason
         int max = probe ? thinking ? 1024 : 256
                 : config.getMaxOutputTokens() == null ? caps.maxOutputTokens() : Math.min(config.getMaxOutputTokens(), caps.maxOutputTokens());
         if (max <= 0) throw invalid("maxOutputTokens", "模型输出上限应大于 0");
-        int context = ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(), caps.contextWindowTokens());
-        if (!probe && config.getContextWindowTokens() != null) context = Math.min(context, config.getContextWindowTokens());
+        int context = probe
+                ? ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(), caps.contextWindowTokens())
+                : ModelRequestOptions.effectiveInputWindow(config, caps);
         Map<String, Object> custom = new LinkedHashMap<>();
         if (intent != null) {
             if (family.equals("openrouter")) {

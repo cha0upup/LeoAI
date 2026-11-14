@@ -449,18 +449,6 @@ public class AiModelConfigService {
         return getActive();
     }
 
-    /** 返回指定模型的实际上下文硬上限，线程级选模必须使用该方法。 */
-    public int getContextWindowTokens(AiModelConfig config) {
-        if (config == null) return 32_768;
-        ProviderCapabilities capabilities = capabilitiesForModel(config);
-        Integer custom = config.getContextWindowTokens();
-        if (custom != null && custom > 0) {
-            return ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(),
-                    Math.min(custom, capabilities.contextWindowTokens()));
-        }
-        return ModelRequestOptions.inputWindow(config.getProviderKey(), config.getModel(), capabilities.contextWindowTokens());
-    }
-
     private static boolean flag(Integer value) {
         return Integer.valueOf(1).equals(value);
     }

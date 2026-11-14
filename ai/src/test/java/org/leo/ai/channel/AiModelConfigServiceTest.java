@@ -90,28 +90,6 @@ class AiModelConfigServiceTest {
     }
 
     @Test
-    void clampsCustomContextWindowToCapabilityLimit() {
-        AiModelConfig model = new AiModelConfig();
-        model.setModel("model-a");
-        model.setContextWindowTokens(65_536);
-
-        AiModelCapability capability = new AiModelCapability();
-        capability.setModelName("model-a");
-        capability.setContextWindowTokens(32_768);
-        capability.setMaxOutputTokens(4_096);
-        capability.setSupportsTextGeneration(1);
-        capability.setSupportsReasoning(0);
-        capability.setSupportsStreaming(1);
-        capability.setSupportsFunctionCalling(1);
-        capability.setSupportsStructuredOutput(0);
-        capability.setSupportsWebSearch(0);
-        capability.setSupportsParallelToolCalls(0);
-        when(capabilityMapper.findByModelName("model-a")).thenReturn(capability);
-
-        assertEquals(32_768, service.getContextWindowTokens(model));
-    }
-
-    @Test
     void appliesOnlyConclusiveProbeFlagsToNewCapability() {
         AiModelConfig model = new AiModelConfig();
         model.setProviderId(1);

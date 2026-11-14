@@ -38,6 +38,13 @@ public record ModelRequestOptions(boolean thinkingRequired, List<String> reasoni
         return OPENAI.contains(model) && !gateway(providerKey) ? Math.min(contextWindow, 922_000) : contextWindow;
     }
 
+    /** Applies the configured local budget to the model input limit for inference and catalog views. */
+    public static int effectiveInputWindow(AiModelConfig config, ProviderCapabilities caps) {
+        int limit = inputWindow(config.getProviderKey(), config.getModel(), caps.contextWindowTokens());
+        Integer configured = config.getContextWindowTokens();
+        return configured != null && configured > 0 ? Math.min(configured, limit) : limit;
+    }
+
     static boolean gateway(String key) {
         return "openrouter".equalsIgnoreCase(key) || "ollama".equalsIgnoreCase(key)
                 || "litellm".equalsIgnoreCase(key) || "oneapi".equalsIgnoreCase(key);

@@ -90,18 +90,41 @@ class ModelRequestPlanTest {
         assertTrue(ModelRequestPlan.preview(openai, CAPS).valid());
     }
 
-    @Test
-    void tokenLimitsAreClampedAndContextRemainsALocalBudget() {
-        AiModelConfig config = config("gpt-6.1-sol");
+    @ParameterizedTest
+    @CsvSource(value = {
+            "custom,gpt-6.1-sol,null,1050000,922000",
+            "custom,gpt-6.1-sol,1000000,1050000,922000",
+            "custom,gpt-6.1-sol,65536,1050000,65536",
+            "custom,model-a,65536,32768,32768",
+            "custom,model-a,null,32768,32768",
+            "custom,model-a,16384,32768,16384",
+            "openrouter,openai/gpt-6.1-sol,1000000,1050000,1000000"
+    }, nullValues = "null")
+    void tokenLimitsAreClampedAndContextRemainsALocalBudget(
+            String provider, String model, Integer budget, int contextLimit, int expected) {
+        AiModelConfig config = config(model);
+        config.setProviderKey(provider);
         config.setProtocol("responses");
         config.setMaxOutputTokens(200_000);
-        config.setContextWindowTokens(1_000_000);
-        ModelRequestPlan plan = ModelRequestPlan.resolve(config, CAPS, null, false, false);
-        assertEquals(922_000, plan.contextWindowTokens());
+        config.setContextWindowTokens(budget);
+        ProviderCapabilities caps = new ProviderCapabilities(true, "recognized", "system",
+                contextLimit, 128_000, true, true, true, true, true, false, true);
+        ModelRequestPlan plan = ModelRequestPlan.resolve(config, caps, null, false, false);
+        assertEquals(expected, plan.contextWindowTokens());
+        assertEquals(expected, ModelRequestOptions.effectiveInputWindow(config, caps));
         assertEquals(128_000, plan.preview().requestParameters().get("max_output_tokens"));
         assertEquals("clamped", decision(plan, "maxOutputTokens").status());
         assertEquals("local", decision(plan, "contextWindowTokens").status());
         assertFalse(plan.preview().requestParameters().containsKey("contextWindowTokens"));
+    }
+
+    @Test
+    void probeUsesTheModelInputLimitRatherThanTheConversationBudget() {
+        AiModelConfig config = config("gpt-6.1-sol");
+        config.setProtocol("responses");
+        config.setContextWindowTokens(65_536);
+
+        assertEquals(922_000, ModelRequestPlan.resolve(config, CAPS, null, false, true).contextWindowTokens());
     }
 
     @Test

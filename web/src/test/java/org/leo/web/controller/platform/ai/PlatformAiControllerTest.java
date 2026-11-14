@@ -1,6 +1,8 @@
 package org.leo.web.controller.platform.ai;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
@@ -104,13 +106,15 @@ class PlatformAiControllerTest {
     void ordinaryChatCatalogIncludesTheSameEffortContractAndModeAsAdminWithoutConnectionSecrets() throws Exception {
         AiModelConfig glm = config(1, "glm-5.3");
         glm.setReasoningEffort("high");
+        glm.setContextWindowTokens(65_536);
         AiModelConfig kimi = config(2, "kimi-k2.7-code");
+        kimi.setMaxOutputTokens(4096);
         AiModelConfig gemini = config(3, "gemini-4-argon");
         AiModelConfig disabledThinking = config(4, "deepseek-flash");
         disabledThinking.setThinkingEnabled(0);
-        when(configs.listEnabled()).thenReturn(List.of(glm, kimi, gemini, disabledThinking));
-        when(configs.capabilitiesForModel(any())).thenReturn(new ProviderCapabilities(true, "recognized", "system",
-                1_000_000, 128_000, true, true, true, true, true, false, true));
+        List<AiModelConfig> models = List.of(glm, kimi, gemini, disabledThinking);
+        when(configs.listEnabled()).thenReturn(models);
+        when(configs.capabilitiesForModel(any())).thenReturn(capabilities(true, true, 128_000));
         PermissionService permissions = mock(PermissionService.class);
         User user = new User();
         user.setPrivilege("normal");
@@ -123,7 +127,11 @@ class PlatformAiControllerTest {
                 .andExpect(jsonPath("$.data[0].requestOptions.reasoningEfforts", contains("low", "high", "max")))
                 .andExpect(jsonPath("$.data[0].requestOptions.source").value("official"))
                 .andExpect(jsonPath("$.data[0].reasoningEffort").value("high"))
+                .andExpect(jsonPath("$.data[0].contextWindowTokens").value(65_536))
+                .andExpect(jsonPath("$.data[0].maxOutputTokens").value(128_000))
                 .andExpect(jsonPath("$.data[1].supportsReasoning").value(true))
+                .andExpect(jsonPath("$.data[1].contextWindowTokens").value(1_000_000))
+                .andExpect(jsonPath("$.data[1].maxOutputTokens").value(4096))
                 .andExpect(jsonPath("$.data[1].requestOptions.reasoningEfforts").isEmpty())
                 .andExpect(jsonPath("$.data[2].requestOptions.reasoningEfforts", contains("minimal", "low", "medium", "high")))
                 .andExpect(jsonPath("$.data[3].thinkingEnabled").value(0))
@@ -131,7 +139,37 @@ class PlatformAiControllerTest {
                 .andExpect(jsonPath("$.data[0].baseUrl").doesNotExist())
                 .andExpect(jsonPath("$.data[0].headersJson").doesNotExist())
                 .andExpect(content().string(not(containsString("private-fixture"))));
+        for (AiModelConfig model : models) verify(configs).capabilitiesForModel(model);
         verifyNoInteractions(threads, queries, queue);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"models", "availability"})
+    void catalogAndAvailabilityUseTheSameEligibilityRulesAndReadEachCapabilityOnce(String endpoint) {
+        AiModelConfig usable = config(1, "usable");
+        AiModelConfig noText = config(2, "no-text");
+        AiModelConfig noStream = config(3, "no-stream");
+        AiModelConfig noOutput = config(4, "no-output");
+        List<AiModelConfig> models = List.of(usable, noText, noStream, noOutput);
+        when(configs.listEnabled()).thenReturn(models);
+        when(configs.capabilitiesForModel(usable)).thenReturn(capabilities(true, true, 4096));
+        when(configs.capabilitiesForModel(noText)).thenReturn(capabilities(false, true, 4096));
+        when(configs.capabilitiesForModel(noStream)).thenReturn(capabilities(true, false, 4096));
+        when(configs.capabilitiesForModel(noOutput)).thenReturn(capabilities(true, true, 0));
+
+        if ("models".equals(endpoint)) {
+            List<?> items = (List<?>) controller.models().get("data");
+            assertEquals(1, items.size());
+            assertEquals(usable.getId(), ((Map<?, ?>) items.get(0)).get("id"));
+        } else {
+            assertEquals(Map.of("available", true, "enabledCount", 1), controller.availability().get("data"));
+        }
+        for (AiModelConfig model : models) verify(configs).capabilitiesForModel(model);
+    }
+
+    private static ProviderCapabilities capabilities(boolean text, boolean streaming, int outputLimit) {
+        return new ProviderCapabilities(true, "recognized", "system", 1_000_000, outputLimit,
+                text, true, streaming, true, true, false, true);
     }
 
     private static AiModelConfig config(int id, String model) {

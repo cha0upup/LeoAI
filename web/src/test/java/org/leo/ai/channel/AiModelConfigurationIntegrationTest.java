@@ -318,12 +318,6 @@ class AiModelConfigurationIntegrationTest {
         assertFalse(configs.capabilitiesForModel(null, "mimo-v2.5").recognized());
         assertFalse(configs.capabilitiesForModel(null, "mimo-v2.5-pro").recognized());
         assertEquals(1_050_000, configs.capabilitiesForModel("openai", "gpt-6.1-sol").contextWindowTokens());
-        AiModelConfig inputBudget = new AiModelConfig();
-        inputBudget.setProviderKey("openai");
-        inputBudget.setModel("gpt-6.1-sol");
-        assertEquals(922_000, configs.getContextWindowTokens(inputBudget));
-        inputBudget.setContextWindowTokens(65_536);
-        assertEquals(65_536, configs.getContextWindowTokens(inputBudget));
         assertEquals(65_536, configs.capabilitiesForModel("gemini", "gemini-4-argon").maxOutputTokens());
     }
 
