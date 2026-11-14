@@ -145,7 +145,7 @@ class AgentDatabaseConnectionServiceTest {
         Map<String, Object> safeConnection = (Map<String, Object>) service
                 .toConnectionView(connection).get("connection");
 
-        Map<String, Object> merged = service.mergeProtectedValues(connection, safeConnection);
+        Map<String, Object> merged = service.mergeConnectionValues(connection, safeConnection);
         DatabaseConnectionSpec restored = DatabaseConnectionSpec.fromMap(merged);
 
         assertEquals("stored-token", restored.getOptions().get("apiToken"));
@@ -173,7 +173,7 @@ class AgentDatabaseConnectionServiceTest {
         var view = isolated.toConnectionView(stored);
         @SuppressWarnings("unchecked")
         Map<String, Object> values = (Map<String, Object>) view.get("connection");
-        var restored = isolated.mergeProtectedValues(stored, values);
+        var restored = isolated.mergeConnectionValues(stored, values);
         assertEquals("mysql", restored.get("dialect"));
         assertFalse(view.toString().contains("opaque-ciphertext"));
         org.mockito.Mockito.verifyNoInteractions(isolatedCrypto, mapper);

@@ -5,7 +5,6 @@ import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.springframework.stereotype.Service;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -135,15 +134,13 @@ public final class DatabaseConnectionProfileService {
             throw failure(VALIDATION, "connection 不能为空");
         }
         if (existing != null && nested == null) {
-            return DatabaseConnectionSpec.fromMap(currentConnectionValues(existing));
+            nested = Map.of();
         }
         if (!(nested instanceof Map<?, ?> source)) {
             throw failure(VALIDATION, "connection 必须是对象");
         }
 
-        Map<String, Object> supplied = connectionService.mergeProtectedValues(existing, stringKeyMap(source));
-        Map<String, Object> values = existing == null
-                ? supplied : mergeMaps(currentConnectionValues(existing), supplied);
+        Map<String, Object> values = connectionService.mergeConnectionValues(existing, source);
         try {
             String dialect = text(values.get("dialect"));
             if (dialect != null && sqlDialectRegistry.supports(dialect)) {
@@ -199,12 +196,6 @@ public final class DatabaseConnectionProfileService {
         }
     }
 
-    private Map<String, Object> currentConnectionValues(AgentDatabaseConnection existing) {
-        Map<String, Object> current = connectionService.toConnectionSpec(existing).toMap();
-        current.put("password", "");
-        return current;
-    }
-
     private AgentDatabaseConnection requireAgentConnection(String connectionId,
                                                              String agentId) {
         String normalizedId = text(connectionId);
@@ -247,26 +238,6 @@ public final class DatabaseConnectionProfileService {
         } catch (NumberFormatException error) {
             throw failure(VALIDATION, name + "必须是整数");
         }
-    }
-
-    private Map<String, Object> stringKeyMap(Map<?, ?> source) {
-        Map<String, Object> result = new LinkedHashMap<String, Object>();
-        source.forEach((key, value) -> result.put(String.valueOf(key), value));
-        return result;
-    }
-
-    private Map<String, Object> mergeMaps(Map<String, Object> base,
-                                          Map<String, Object> patch) {
-        Map<String, Object> merged = new LinkedHashMap<String, Object>(base);
-        patch.forEach((key, value) -> {
-            Object current = merged.get(key);
-            if (current instanceof Map<?, ?> currentMap && value instanceof Map<?, ?> patchMap) {
-                merged.put(key, mergeMaps(stringKeyMap(currentMap), stringKeyMap(patchMap)));
-            } else {
-                merged.put(key, value);
-            }
-        });
-        return merged;
     }
 
     private String nullableText(Object value) {

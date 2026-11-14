@@ -130,15 +130,15 @@ public class AgentDatabaseConnectionService {
     }
 
     /**
-     * Restores protected values omitted or masked by {@link #toConnectionView}
-     * when an existing profile is edited. This keeps read responses
-     * non-sensitive without turning masked placeholders into persisted
-     * credentials.
+     * Applies partial edits and restores unchanged masks from {@link #toConnectionView}.
+     * The separately encrypted password stays opaque until runtime resolution;
+     * an omitted or blank password is preserved by {@link #applyConnectionSpec}.
      */
-    public Map<String, Object> mergeProtectedValues(AgentDatabaseConnection source,
-                                                    Map<String, Object> incoming) {
-        return DatabaseConnectionViewPolicy.restoreProtectedValues(
-                source == null ? Map.of() : storedConnectionValues(source), incoming);
+    public Map<String, Object> mergeConnectionValues(AgentDatabaseConnection source,
+                                                      Map<?, ?> incoming) {
+        Map<String, Object> stored = source == null ? Map.of() : storedConnectionValues(source);
+        if (source != null) stored.put("password", "");
+        return DatabaseConnectionViewPolicy.mergeForEdit(stored, incoming);
     }
 
     private Map<String, Object> storedConnectionValues(AgentDatabaseConnection source) {

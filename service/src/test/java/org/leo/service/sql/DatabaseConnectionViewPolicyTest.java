@@ -24,7 +24,7 @@ class DatabaseConnectionViewPolicyTest {
             assertFalse(view.containsKey("API_KEY"));
             assertFalse(view.containsKey("PRIVATE_KEY"));
             assertEquals(Map.of("region", "cn"), view.get("options"));
-            assertEquals(stored, DatabaseConnectionViewPolicy.restoreProtectedValues(stored, view));
+            assertEquals(stored, DatabaseConnectionViewPolicy.mergeForEdit(stored, view));
         } finally {
             Locale.setDefault(previous);
         }
@@ -58,7 +58,7 @@ class DatabaseConnectionViewPolicyTest {
                         "jdbcUrl", "jdbc:vendor://app:url-secret@db.internal/db?token=query-secret",
                         "connectionProperties", Map.of("privateKey", "stored-key", "charset", "UTF-8"))));
         var view = DatabaseConnectionViewPolicy.publicValues(stored);
-        var restored = DatabaseConnectionViewPolicy.restoreProtectedValues(stored, view);
+        var restored = DatabaseConnectionViewPolicy.mergeForEdit(stored, view);
         assertEquals(stored, restored);
         assertFalse(view.toString().contains("stored-token"));
         assertFalse(view.toString().contains("stored-key"));
@@ -77,7 +77,7 @@ class DatabaseConnectionViewPolicyTest {
         patch.put("password", "");
         patch.put("jdbcUrl", "jdbc:vendor://app:***@new-host/db?token=***");
         patch.put("options", Map.of("privateKey", "new-key", "region", "eu"));
-        var restored = DatabaseConnectionViewPolicy.restoreProtectedValues(stored, patch);
+        var restored = DatabaseConnectionViewPolicy.mergeForEdit(stored, patch);
         assertTrue(restored.containsKey("apiToken"));
         assertNull(restored.get("apiToken"));
         assertEquals("", restored.get("password"));
@@ -87,10 +87,40 @@ class DatabaseConnectionViewPolicyTest {
     }
 
     @Test
+    void partialEditsKeepOmittedValuesAndNormalizeNestedKeysWithoutMutatingInputs() {
+        var options = Map.of("apiToken", "stored-token", "region", "cn", "charset", "UTF-8");
+        var stored = Map.<String, Object>of("host", "old.internal", "options", options,
+                "runtimeOptions", Map.of(7, Map.of("driverClass", "custom.Driver", "jdbcUrl", "jdbc:custom:old")));
+        var incoming = Map.<String, Object>of("host", "new.internal", "options", Map.of("region", "eu"),
+                "runtimeOptions", Map.of(7, Map.of("jdbcUrl", "jdbc:custom:new")));
+
+        var merged = DatabaseConnectionViewPolicy.mergeForEdit(stored, incoming);
+
+        assertEquals("new.internal", merged.get("host"));
+        assertEquals(Map.of("apiToken", "stored-token", "region", "eu", "charset", "UTF-8"), merged.get("options"));
+        assertEquals(Map.of("7", Map.of("driverClass", "custom.Driver", "jdbcUrl", "jdbc:custom:new")), merged.get("runtimeOptions"));
+        assertEquals(options, stored.get("options"));
+        assertEquals(Map.of("region", "eu"), incoming.get("options"));
+    }
+
+    @Test
+    void explicitSecretContainerEditsKeepTheirSuppliedMasksAndUnspecifiedFields() {
+        String storedUrl = "jdbc:vendor://host/db?password=secret";
+        String maskedUrl = "jdbc:vendor://host/db?password=***";
+        var stored = Map.of("credentials", Map.of("endpoint", storedUrl, "region", "cn"));
+        var incoming = Map.of("credentials", Map.of("endpoint", maskedUrl));
+
+        var merged = DatabaseConnectionViewPolicy.mergeForEdit(stored, incoming);
+
+        assertEquals(Map.of("endpoint", maskedUrl, "region", "cn"), merged.get("credentials"));
+        assertEquals(storedUrl, stored.get("credentials").get("endpoint"));
+    }
+
+    @Test
     void creatingAProfileRetainsTheSuppliedValuesWithoutInventingStoredCredentials() {
         var incoming = Map.<String, Object>of("username", "app", "password", "new-password",
                 "runtimeOptions", Map.of("java", Map.of("jdbcUrl", "jdbc:vendor://host/db?token=***")));
-        var restored = DatabaseConnectionViewPolicy.restoreProtectedValues(Map.of(), incoming);
+        var restored = DatabaseConnectionViewPolicy.mergeForEdit(Map.of(), incoming);
         assertEquals(incoming, restored);
         assertNotSame(incoming, restored);
     }

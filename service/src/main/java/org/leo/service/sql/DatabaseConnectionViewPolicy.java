@@ -24,36 +24,33 @@ final class DatabaseConnectionViewPolicy {
         return safe;
     }
 
-    /** Only omitted secret fields and exact, unchanged masked strings recover their stored values. */
-    static Map<String, Object> restoreProtectedValues(Map<String, Object> stored, Map<String, Object> incoming) {
-        Map<String, Object> merged = new LinkedHashMap<>(incoming);
-        restoreInto(stored, merged);
-        return merged;
+    /** Omitted fields survive patches; only exact, unchanged public masks restore stored strings. */
+    static Map<String, Object> mergeForEdit(Map<?, ?> stored, Map<?, ?> incoming) {
+        return mergeForEdit(stored, incoming, true);
     }
 
-    @SuppressWarnings("unchecked")
-    private static void restoreInto(Map<String, Object> stored, Map<String, Object> incoming) {
-        stored.forEach((key, storedValue) -> {
-            if (isSecretKey(key)) {
-                if (!incoming.containsKey(key)) incoming.put(key, storedValue);
-                return;
-            }
-            Object incomingValue = incoming.get(key);
+    private static Map<String, Object> mergeForEdit(Map<?, ?> stored, Map<?, ?> incoming,
+                                                   boolean restoreMasks) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        stored.forEach((key, value) -> merged.put(String.valueOf(key), value));
+        incoming.forEach((key, incomingValue) -> {
+            String name = String.valueOf(key);
+            Object storedValue = merged.get(name);
+            // Secret containers are not public masked views; their explicit edits bypass mask restoration.
+            boolean restoreMask = restoreMasks && !isSecretKey(name);
             if (storedValue instanceof Map<?, ?> storedMap
                     && incomingValue instanceof Map<?, ?> incomingMap) {
-                Map<String, Object> writable = new LinkedHashMap<>();
-                incomingMap.forEach((nestedKey, value) -> writable.put(String.valueOf(nestedKey), value));
-                restoreInto((Map<String, Object>) storedMap, writable);
-                incoming.put(key, writable);
-                return;
-            }
-            if (storedValue instanceof String storedText
+                merged.put(name, mergeForEdit(storedMap, incomingMap, restoreMask));
+            } else if (restoreMask && storedValue instanceof String storedText
                     && incomingValue instanceof String incomingText
                     && incomingText.contains("***")
                     && incomingText.equals(sanitizeValue(storedText))) {
-                incoming.put(key, storedText);
+                merged.put(name, storedText);
+            } else {
+                merged.put(name, incomingValue);
             }
         });
+        return merged;
     }
 
     private static Object sanitizeValue(Object value) {

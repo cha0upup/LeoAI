@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,6 +65,32 @@ class DatabaseConnectionProfileServiceTest {
 
         assertFalse(result.containsKey("maxConnections"));
         assertEquals(45, result.get("timeoutSeconds"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void editingMetadataOrConnectionFieldsKeepsTheStoredPasswordOpaque(boolean patchConnection) {
+        Fixture fixture = fixture();
+        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
+        existing.setPassword("opaque-ciphertext");
+        when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
+        when(fixture.mapper().update(any(AgentDatabaseConnection.class))).thenReturn(1);
+        DatabaseCredentialCryptoService crypto = mock(DatabaseCredentialCryptoService.class);
+        when(crypto.isEncrypted("opaque-ciphertext")).thenReturn(true);
+        when(crypto.decrypt(any())).thenThrow(new IllegalStateException("editing must not decrypt the password"));
+        var profiles = new DatabaseConnectionProfileService(
+                new AgentDatabaseConnectionService(fixture.mapper(), crypto), new SqlDialectRegistry());
+        Map<String, Object> patch = patchConnection
+                ? Map.of("description", "edited", "connection", Map.of("host", "new.internal"))
+                : Map.of("description", "edited");
+
+        var result = profiles.update("user-1", "agent-1", "connection-1", patch);
+
+        assertEquals("edited", result.get("description"));
+        assertEquals(patchConnection ? "new.internal" : "db.internal", ((Map<?, ?>) result.get("connection")).get("host"));
+        assertEquals("opaque-ciphertext", existing.getPassword());
+        verify(crypto, never()).decrypt(any());
+        verify(crypto, never()).encrypt(any());
     }
 
     @ParameterizedTest
