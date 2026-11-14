@@ -29,6 +29,7 @@ public class ProjectService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Set<String> PERMISSIONS = Set.of("private", "team", "public");
     private static final Set<String> STATUSES = Set.of(Project.STATUS_ACTIVE, Project.STATUS_ARCHIVED);
+    private static final int MAX_PARENT_DEPTH = 100;
 
     private final ProjectMapper projectMapper;
     private final AgentService agentService;
@@ -163,7 +164,9 @@ public class ProjectService {
     public boolean containsAgent(String projectId, String agentId) {
         if (projectId == null || agentId == null) return false;
         String currentId = agentId;
-        for (int depth = 0; depth < 100 && currentId != null && !currentId.isBlank(); depth++) {
+        Set<String> visited = new HashSet<>();
+        for (int depth = 0; depth < MAX_PARENT_DEPTH && currentId != null
+                && !currentId.isBlank() && visited.add(currentId); depth++) {
             if (projectMapper.containsAgent(projectId, currentId) > 0) return true;
             Agent current = agentService.findAgentById(currentId);
             if (current == null || current.getParentAgentId() == null
@@ -202,8 +205,9 @@ public class ProjectService {
     public Map<String, List<Project>> listVisibleMemberships(Collection<String> agentIds, User user) {
         Map<String, List<Project>> result = new LinkedHashMap<>();
         Map<String, List<Project>> projectsByEntryId = new HashMap<>();
+        Map<String, Agent> ancestors = new HashMap<>();
         for (String agentId : normalizedIds(agentIds)) {
-            String entryId = resolveEntryAgentId(agentId);
+            String entryId = resolveEntryAgentId(agentId, ancestors);
             if (entryId == null) {
                 result.put(agentId, List.of());
                 continue;
@@ -223,11 +227,19 @@ public class ProjectService {
      * 避免生成在项目根列表中不可见的孤立关系。
      */
     public String resolveEntryAgentId(String agentId) {
+        return resolveEntryAgentId(agentId, new HashMap<>());
+    }
+
+    private String resolveEntryAgentId(String agentId, Map<String, Agent> ancestors) {
         String currentId = trimToNull(agentId);
         if (currentId == null) return null;
         Set<String> visited = new HashSet<>();
-        for (int depth = 0; depth < 100 && visited.add(currentId); depth++) {
-            Agent current = agentService.findAgentById(currentId);
+        for (int depth = 0; depth < MAX_PARENT_DEPTH && visited.add(currentId); depth++) {
+            // Missing ancestors are also reused within this operation.
+            if (!ancestors.containsKey(currentId)) {
+                ancestors.put(currentId, agentService.findAgentById(currentId));
+            }
+            Agent current = ancestors.get(currentId);
             if (current == null) return null;
             String parentId = trimToNull(current.getParentAgentId());
             if (parentId == null || "root".equals(parentId)) return current.getAgentId();
@@ -237,8 +249,9 @@ public class ProjectService {
     }
 
     private List<String> normalizedEntryIds(Collection<String> ids) {
+        Map<String, Agent> ancestors = new HashMap<>();
         return normalizedIds(ids).stream()
-                .map(this::resolveEntryAgentId)
+                .map(id -> resolveEntryAgentId(id, ancestors))
                 .filter(id -> id != null && !id.isBlank())
                 .distinct()
                 .toList();

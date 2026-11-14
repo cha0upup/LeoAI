@@ -1,24 +1,34 @@
 package org.leo.service.project;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.User;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class ProjectServiceTest {
@@ -66,53 +76,114 @@ class ProjectServiceTest {
     }
 
     @Test
-    void exposesEntryProjectMembershipsOnChildNodes() {
+    void batchesSharedAndMissingAncestorsWithoutRepeatingMembershipQueries() {
         User user = new User();
         user.setUserId("user-1");
         user.setPrivilege("normal");
         Project visible = project("user-1", null, "private");
         visible.setProjectId("project-1");
+        Project hidden = project("other-user", null, "private");
 
-        when(agentService.findAgentById("child")).thenReturn(agent("child", "gateway"));
+        when(agentService.findAgentById("child-a")).thenReturn(agent("child-a", "gateway"));
+        when(agentService.findAgentById("child-b")).thenReturn(agent("child-b", "gateway"));
         when(agentService.findAgentById("gateway")).thenReturn(agent("gateway", "root"));
-        when(mapper.findProjectsByAgentId("gateway")).thenReturn(List.of(visible));
+        when(agentService.findAgentById("orphan-a")).thenReturn(agent("orphan-a", "missing"));
+        when(agentService.findAgentById("orphan-b")).thenReturn(agent("orphan-b", "missing"));
+        when(mapper.findProjectsByAgentId("gateway")).thenReturn(List.of(visible, hidden));
 
-        Map<String, List<Project>> result = service.listVisibleMemberships(List.of("child"), user);
+        Map<String, List<Project>> result = service.listVisibleMemberships(
+                Arrays.asList(" child-a ", "child-b", "gateway", "child-a", null, " ", "orphan-a", "orphan-b"), user);
 
-        assertEquals(List.of(visible), result.get("child"));
+        assertEquals(List.of("child-a", "child-b", "gateway", "orphan-a", "orphan-b"), List.copyOf(result.keySet()));
+        for (String id : List.of("child-a", "child-b", "gateway")) assertEquals(List.of(visible), result.get(id));
+        assertEquals(List.of(), result.get("orphan-a"));
+        assertEquals(List.of(), result.get("orphan-b"));
+        for (String id : List.of("child-a", "child-b", "gateway", "orphan-a", "orphan-b", "missing")) {
+            verify(agentService).findAgentById(id);
+        }
+        verify(mapper).findProjectsByAgentId("gateway");
+        verifyNoMoreInteractions(mapper);
     }
 
     @Test
-    void appliesOwnerAndTeamVisibilityWithoutGrantingPrivateProjects() {
+    void laterMembershipQueriesReadChangedAncestry() {
         User user = new User();
         user.setUserId("user-1");
-        user.setTeamId("team-1");
-        user.setPrivilege("normal");
+        Project first = projectWithId("first-project");
+        first.setOwnerUserId("user-1");
+        Project second = projectWithId("second-project");
+        second.setOwnerUserId("user-1");
+        when(agentService.findAgentById("child"))
+                .thenReturn(agent("child", "first"), agent("child", "second"));
+        when(agentService.findAgentById("first")).thenReturn(agent("first", "root"));
+        when(agentService.findAgentById("second")).thenReturn(agent("second", "root"));
+        when(mapper.findProjectsByAgentId("first")).thenReturn(List.of(first));
+        when(mapper.findProjectsByAgentId("second")).thenReturn(List.of(second));
 
-        Project owned = project("user-1", null, "private");
-        Project team = project("user-2", "team-1", "team");
-        Project privateProject = project("user-2", "team-1", "private");
-
-        assertTrue(service.canView(owned, user));
-        assertTrue(service.canView(team, user));
-        assertFalse(service.canView(privateProject, user));
+        assertEquals(List.of(first), service.listVisibleMemberships(List.of("child"), user).get("child"));
+        assertEquals(List.of(second), service.listVisibleMemberships(List.of("child"), user).get("child"));
+        verify(agentService, times(2)).findAgentById("child");
     }
 
-    @Test
-    void separatesPublicVisibilityFromProjectContentEditing() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void relationChangesResolveSharedEntryOnceAndDeduplicateSelectedNodes(boolean attach) {
+        when(agentService.findAgentById("child-a")).thenReturn(agent("child-a", "gateway"));
+        when(agentService.findAgentById("child-b")).thenReturn(agent("child-b", "gateway"));
+        when(agentService.findAgentById("gateway")).thenReturn(agent("gateway", "root"));
+        List<String> ids = Arrays.asList(" child-a ", "child-b", "gateway", "child-a", null, " ");
+
+        if (attach) {
+            when(mapper.attachAgent(any())).thenReturn(true);
+            assertEquals(1, service.attachAgents("project-1", ids, null, null, null, "user-1"));
+            var relation = ArgumentCaptor.forClass(ProjectAgent.class);
+            verify(mapper).attachAgent(relation.capture());
+            assertEquals("gateway", relation.getValue().getAgentId());
+        } else {
+            when(mapper.detachAgent("project-1", "gateway")).thenReturn(true);
+            assertEquals(1, service.detachAgents("project-1", ids));
+            verify(mapper).detachAgent("project-1", "gateway");
+        }
+        for (String id : List.of("child-a", "child-b", "gateway")) verify(agentService).findAgentById(id);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void rejectsMissingOrCyclicAncestorsWithoutRepeatedMembershipChecks(boolean cycle) {
+        when(agentService.findAgentById("child")).thenReturn(agent("child", "parent"));
+        when(agentService.findAgentById("parent")).thenReturn(cycle ? agent("parent", "child") : null);
+
+        assertNull(service.resolveEntryAgentId("child"));
+        assertFalse(service.containsAgent("project-1", "child"));
+
+        verify(agentService, times(2)).findAgentById("child");
+        verify(agentService, times(2)).findAgentById("parent");
+        verify(mapper).containsAgent("project-1", "child");
+        verify(mapper).containsAgent("project-1", "parent");
+        verifyNoMoreInteractions(mapper);
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "normal,user-1,null,private,true,true,true",
+            "normal,user-2,team-1,team,true,true,false",
+            "normal,user-2,team-2,team,false,false,false",
+            "normal,user-2,team-1,private,false,false,false",
+            "normal,user-2,team-2,public,true,false,false",
+            "admin,user-2,team-2,private,true,true,true"
+    }, nullValues = "null")
+    void separatesProjectVisibilityEditingAndManagement(
+            String privilege, String owner, String team, String permission,
+            boolean visible, boolean editable, boolean manageable) {
         User user = new User();
         user.setUserId("user-1");
         user.setTeamId("team-1");
-        user.setPrivilege("normal");
+        user.setPrivilege(privilege);
+        Project project = project(owner, team, permission);
 
-        Project publicProject = project("user-2", "team-2", "public");
-        Project teamProject = project("user-2", "team-1", "team");
-        Project ownedProject = project("user-1", null, "private");
-
-        assertTrue(service.canView(publicProject, user));
-        assertFalse(service.canEditContent(publicProject, user));
-        assertTrue(service.canEditContent(teamProject, user));
-        assertTrue(service.canEditContent(ownedProject, user));
+        assertEquals(visible, service.canView(project, user));
+        assertEquals(editable, service.canEditContent(project, user));
+        assertEquals(manageable, service.canManage(project, user));
     }
 
     @Test
