@@ -5,11 +5,10 @@ import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
-import org.leo.core.session.AgentNodeSession;
-import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentDirectoryService;
+import org.leo.web.application.agent.SessionLifecycleManager;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
@@ -27,7 +26,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,12 +37,14 @@ public class ProjectController {
     private final ProjectService projectService;
     private final PermissionService permissionService;
     private final AgentDirectoryService directoryService;
+    private final SessionLifecycleManager sessionLifecycle;
 
     public ProjectController(ProjectService projectService, PermissionService permissionService,
-                             AgentDirectoryService directoryService) {
+                             AgentDirectoryService directoryService, SessionLifecycleManager sessionLifecycle) {
         this.projectService = projectService;
         this.permissionService = permissionService;
         this.directoryService = directoryService;
+        this.sessionLifecycle = sessionLifecycle;
     }
 
     @GetMapping
@@ -53,7 +53,7 @@ public class ProjectController {
         List<Project> visibleProjects = projectService.listVisible(user);
         if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
         Map<String, Integer> hostCounts = projectService.countAgentsByProject();
-        Map<String, Integer> sessionCounts = countActiveSessionsByProject(user);
+        Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user);
         List<ProjectSummary> projects = visibleProjects.stream()
                 .map(project -> new ProjectSummary(
                         project,
@@ -110,7 +110,7 @@ public class ProjectController {
         Project project = requireManageable(body != null ? body.projectId() : null, user);
         String projectId = project.getProjectId();
         int detachedHostCount = projectService.delete(project);
-        int retainedSessionCount = clearProjectFromActiveSessions(projectId);
+        int retainedSessionCount = sessionLifecycle.detachProject(projectId);
         return ApiResponse.success(Map.of(
                 "projectId", projectId,
                 "detachedHostCount", detachedHostCount,
@@ -219,26 +219,4 @@ public class ProjectController {
                 directoryService.describe(agents, agent -> permissionService.canAccessAgentChain(agent, user)));
     }
 
-    private Map<String, Integer> countActiveSessionsByProject(User user) {
-        Map<String, Integer> counts = new HashMap<>();
-        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
-            if (session == null) continue;
-            String projectId = session.getProjectId();
-            if (projectId != null && AccessPolicy.canAccessSession(session, user)) {
-                counts.merge(projectId, 1, Integer::sum);
-            }
-        }
-        return counts;
-    }
-
-    private int clearProjectFromActiveSessions(String projectId) {
-        int changed = 0;
-        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
-            if (session != null && projectId.equals(session.getProjectId())) {
-                session.setProjectId(null);
-                changed++;
-            }
-        }
-        return changed;
-    }
 }

@@ -18,9 +18,11 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
+import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
+import org.leo.web.application.agent.SessionLifecycleManager;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.interceptor.LoginInterceptor;
@@ -65,7 +67,7 @@ class ProjectListIntegrationTest {
         permissions = new PermissionService(agents, users);
         controller = new ProjectController(
                 new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents), permissions,
-                new AgentDirectoryService(agents));
+                new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)));
     }
 
     @AfterEach

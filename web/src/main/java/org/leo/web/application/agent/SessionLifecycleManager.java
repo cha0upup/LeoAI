@@ -2,7 +2,9 @@ package org.leo.web.application.agent;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.leo.core.entity.User;
 import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
+import org.leo.core.security.AccessPolicy;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
@@ -11,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -74,6 +77,30 @@ public final class SessionLifecycleManager {
             }
         }
         return expired;
+    }
+
+    public Map<String, Integer> countByProject(User user) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
+            if (session == null) continue;
+            String projectId = session.getProjectId();
+            if (projectId != null && AccessPolicy.canAccessSession(session, user)) {
+                counts.merge(projectId, 1, Integer::sum);
+            }
+        }
+        return counts;
+    }
+
+    /** Removes a deleted project association while keeping sessions and their resources alive. */
+    public int detachProject(String projectId) {
+        int changed = 0;
+        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
+            if (session != null && projectId.equals(session.getProjectId())) {
+                session.setProjectId(null);
+                changed++;
+            }
+        }
+        return changed;
     }
 
     private String requireId(String sessionId) {
