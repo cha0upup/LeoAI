@@ -8,7 +8,6 @@ import org.leo.core.entity.User;
 import org.leo.core.infrastructure.persistence.session.AgentReconRepository;
 import org.leo.core.rpc.AgentRpcEnvelopeMapper;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentNodeFactory;
 import org.leo.service.agentnode.AgentService;
 import org.leo.web.application.UseCaseException;
@@ -60,31 +59,31 @@ public class AgentNodeLifecycleService {
                                               String projectId, String selectedHostId) throws Exception {
         String sessionId = UUID.randomUUID().toString();
 
-        AbstractAgentNode node = null;
-        boolean connectionOk = false;
+        AgentNodeSession session = null;
         int attempts = selectedHostId == null || selectedHostId.isBlank() ? 1 : 8;
-        for (int attempt = 0; attempt < attempts && !connectionOk; attempt++) {
-            node = agentNodeFactory.createLiveNode(agent, user);
-            connectionOk = doInitConn(node, sessionId,
-                    user != null ? user.getUserId() : null, projectId, selectedHostId);
-            if (!connectionOk) {
-                try {
-                    node.close();
-                } catch (Exception ex) {
-                    logger.debug("关闭未命中目标 HostId 的节点失败: {}", ex.getMessage());
+        for (int attempt = 0; attempt < attempts && session == null; attempt++) {
+            AbstractAgentNode node = agentNodeFactory.createLiveNode(agent, user);
+            try {
+                session = initConnectedSession(node, sessionId,
+                        user != null ? user.getUserId() : null, projectId, selectedHostId);
+            } finally {
+                if (session == null) {
+                    try {
+                        node.close();
+                    } catch (Exception ex) {
+                        logger.debug("关闭未建立会话的节点失败: {}", ex.getMessage());
+                    }
                 }
             }
         }
-        if (!connectionOk) {
+        if (session == null) {
             logger.warn("Agent初始化失败，无主机回复，agentId: {}", agent.getAgentId());
             throw new UseCaseException(Kind.OPERATION_FAILED, "Agent初始化失败，无主机回复");
         }
 
         agentService.updateLastConnectedAt(agent.getAgentId());
         logger.info("Agent初始化成功，agentId: {}, sessionId: {}", agent.getAgentId(), sessionId);
-        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
-        return new SessionInfo(sessionId, projectId, false,
-                session != null ? session.getCapabilities() : List.of());
+        return new SessionInfo(sessionId, projectId, false, session.getCapabilities());
     }
 
     public SessionInfo initCacheSession(Agent agent, User user, String projectId, String selectedHostId) {
@@ -100,31 +99,23 @@ public class AgentNodeLifecycleService {
         session.setProjectId(projectId);
         if (hostId != null) session.bindHostId(hostId);
 
-        try {
-            String savedSummary = reconRepository.load(userId, agentId, session.getCurrentHostId());
-            if (savedSummary != null) {
-                session.setReconSummary(savedSummary);
-            }
-        } catch (Exception ex) {
-            logger.warn("缓存模式回填数据失败, agentId={}: {}", agentId, ex.getMessage());
-        }
-
+        loadPersistedReconSummary(session);
         sessionLifecycleManager.register(session);
 
         logger.info("缓存模式 session 已创建, agentId={}, sessionId={}", agentId, sessionId);
         return new SessionInfo(sessionId, projectId, true, session.getCapabilities());
     }
 
-    private boolean doInitConn(AbstractAgentNode node, String sessionId,
-                               String userId, String projectId, String selectedHostId) throws Exception {
+    private AgentNodeSession initConnectedSession(AbstractAgentNode node, String sessionId,
+                                                  String userId, String projectId, String selectedHostId) throws Exception {
         Map<String, Object> result = node.testConnection();
-        if (!AgentRpcEnvelopeMapper.isCurrentPingResult(result)) return false;
+        if (!AgentRpcEnvelopeMapper.isCurrentPingResult(result)) return null;
 
         String hostId = ((String) result.get("hostId")).trim();
         List<?> components = (List<?>) result.get("components");
         if (selectedHostId != null && !selectedHostId.isBlank()
                 && !selectedHostId.trim().equals(hostId)) {
-            return false;
+            return null;
         }
 
         seedNodeContext(node, hostId, components);
@@ -133,11 +124,11 @@ public class AgentNodeLifecycleService {
                 System.currentTimeMillis(), userId);
         session.setProjectId(projectId);
         session.bindHostId(hostId);
-        loadPersistedReconSummary(session, node, userId);
+        loadPersistedReconSummary(session);
         sessionLifecycleManager.register(session);
 
         logger.debug("测试连接成功，hostId: {}, sessionId: {}", hostId, sessionId);
-        return true;
+        return session;
     }
 
     private void seedNodeContext(AbstractAgentNode node, String hostId, List<?> components) {
@@ -155,13 +146,11 @@ public class AgentNodeLifecycleService {
         return result;
     }
 
-    private void loadPersistedReconSummary(AgentNodeSession session, AbstractAgentNode node, String userId) {
+    private void loadPersistedReconSummary(AgentNodeSession session) {
         try {
-            if (node.getAgent() == null) {
-                return;
-            }
-            String agentId = node.getAgent().getAgentId();
-            String savedSummary = reconRepository.load(userId, agentId, session.getCurrentHostId());
+            String agentId = session.resolveAgentId();
+            if (agentId == null) return;
+            String savedSummary = reconRepository.load(session.getCreateByUser(), agentId, session.getCurrentHostId());
             if (savedSummary != null) {
                 session.setReconSummary(savedSummary);
                 logger.debug("已回填侦察摘要, agentId={}, length={}", agentId, savedSummary.length());
