@@ -4,22 +4,26 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.mockito.MockedStatic;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,18 +35,22 @@ class AgentRepositoryTest {
     @TempDir
     Path vfsRoot;
 
-    private String previousVfsPath;
+    private MockedStatic<LeoConfig> config;
 
     @BeforeEach
-    void setUp() throws Exception {
-        previousVfsPath = setVfsPath(vfsRoot.toString());
+    void setUp() {
+        config = mockStatic(LeoConfig.class);
+        config.when(LeoConfig::getVfsPath).thenReturn(vfsRoot.toString());
         AgentNodeSessionContainer.clearAllSessions();
     }
 
     @AfterEach
-    void tearDown() throws Exception {
-        AgentNodeSessionContainer.clearAllSessions();
-        setVfsPath(previousVfsPath);
+    void tearDown() {
+        try {
+            AgentNodeSessionContainer.clearAllSessions();
+        } finally {
+            config.close();
+        }
     }
 
     @Test
@@ -63,7 +71,8 @@ class AgentRepositoryTest {
         assertEquals("beta", latest.get("hostname"));
         clearInvocations(files);
         var cache = repository.readCache("user-a", "agent-a");
-        assertEquals(List.of("host-a", "host-b"), cache.hostIds());
+        assertEquals(2, cache.hostIds().size());
+        assertEquals(Set.of("host-a", "host-b"), Set.copyOf(cache.hostIds()));
         assertEquals(latest.get("saveTime"), cache.saveTime());
         verify(files, times(2)).readJsonMap(any());
 
@@ -219,6 +228,40 @@ class AgentRepositoryTest {
         assertNull(repository.load(current.getCreateByUser(), current.resolveAgentId(), current.getCurrentHostId()));
     }
 
+    @ParameterizedTest
+    @CsvSource(value = {"null,''", "'',''", "'   ',''", "' user-a ',users/user-a"}, nullValues = "null")
+    void workDirectoryCreationAndDeletionShareUserScopeWithoutRemovingSiblingData(
+            String userId, String relativeRoot) throws Exception {
+        Path base = vfsRoot.resolve(relativeRoot);
+        AgentNodeSession session = session("scoped-session", "agent-a", "host-a");
+        session.setCreateByUser(userId);
+        Path agentDir = AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, " agent-a ").toPath();
+        Path fileDir = AgentNodeSessionWorkDirUtil.getSessionFileDir(" " + session.getSessionId() + " ").toPath();
+        assertEquals(base.resolve("agents/agent-a"), agentDir);
+        assertEquals(base.resolve("sessions/scoped-session/file"), fileDir);
+        Path agentData = Files.writeString(agentDir.resolve("retained.txt"), "agent data");
+        Files.writeString(fileDir.resolve("cached.txt"), "session cache");
+        Path otherUser = AgentNodeSessionWorkDirUtil.getAgentWorkDir("user-b", "agent-a").toPath();
+        Path otherData = Files.writeString(otherUser.resolve("retained.txt"), "other user");
+
+        Path workspaceData = null;
+        if (userId == null || userId.isBlank()) {
+            assertThrows(IllegalArgumentException.class, () -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
+        } else {
+            Path workspace = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath();
+            assertEquals(base.resolve("workspace"), workspace);
+            workspaceData = Files.writeString(workspace.resolve("personal.txt"), "personal data");
+        }
+
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteSessionWorkDir(" scoped-session "));
+        assertFalse(Files.exists(base.resolve("sessions/scoped-session")));
+        assertTrue(Files.exists(agentData));
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteAgentWorkDir(userId, " agent-a "));
+        assertFalse(Files.exists(agentDir));
+        assertEquals("other user", Files.readString(otherData));
+        if (workspaceData != null) assertEquals("personal data", Files.readString(workspaceData));
+    }
+
     private AgentNodeSession session(String sessionId, String agentId, String hostId) {
         AgentNodeSession session = new AgentNodeSession();
         session.setSessionId(sessionId);
@@ -229,11 +272,4 @@ class AgentRepositoryTest {
         return session;
     }
 
-    private String setVfsPath(String path) throws Exception {
-        Field field = LeoConfig.class.getDeclaredField("VFS_PATH");
-        field.setAccessible(true);
-        String previous = (String) field.get(null);
-        field.set(null, path);
-        return previous;
-    }
 }

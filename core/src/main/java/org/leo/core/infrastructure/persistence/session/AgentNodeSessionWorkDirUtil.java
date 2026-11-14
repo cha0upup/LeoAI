@@ -62,8 +62,7 @@ public final class AgentNodeSessionWorkDirUtil {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId 不能为空");
         }
-        File userDir = new File(new File(getRootDir(), USERS_SUBDIR), userId.trim());
-        File workspaceDir = new File(userDir, WORKSPACE_SUBDIR);
+        File workspaceDir = new File(getUserRootDir(userId), WORKSPACE_SUBDIR);
         if (!workspaceDir.exists()) {
             workspaceDir.mkdirs();
         }
@@ -73,12 +72,7 @@ public final class AgentNodeSessionWorkDirUtil {
     // ── session 级目录 ────────────────────────────────────────────────────────
 
     private static File getSessionRootDirByUser(String userId) {
-        File root = getRootDir();
-        if (userId == null || userId.isBlank()) {
-            return new File(root, SESSIONS_SUBDIR);
-        }
-        File userDir = new File(new File(root, USERS_SUBDIR), userId.trim());
-        return new File(userDir, SESSIONS_SUBDIR);
+        return new File(getUserRootDir(userId), SESSIONS_SUBDIR);
     }
 
     /**
@@ -121,13 +115,7 @@ public final class AgentNodeSessionWorkDirUtil {
         if (agentId == null || agentId.isBlank()) {
             throw new IllegalArgumentException("agentId 不能为空");
         }
-        File root = getRootDir();
-        File agentsRoot;
-        if (userId != null && !userId.isBlank()) {
-            agentsRoot = new File(new File(new File(root, USERS_SUBDIR), userId.trim()), AGENTS_SUBDIR);
-        } else {
-            agentsRoot = new File(root, AGENTS_SUBDIR);
-        }
+        File agentsRoot = new File(getUserRootDir(userId), AGENTS_SUBDIR);
         File agentDir = new File(agentsRoot, agentId.trim());
         if (!agentDir.exists()) {
             agentDir.mkdirs();
@@ -167,13 +155,7 @@ public final class AgentNodeSessionWorkDirUtil {
             throw new IllegalArgumentException("agentId 不能为空");
         }
         try {
-            File root = getRootDir();
-            Path agentsRoot;
-            if (userId != null && !userId.isBlank()) {
-                agentsRoot = new File(new File(new File(root, USERS_SUBDIR), userId.trim()), AGENTS_SUBDIR).toPath();
-            } else {
-                agentsRoot = new File(root, AGENTS_SUBDIR).toPath();
-            }
+            Path agentsRoot = new File(getUserRootDir(userId), AGENTS_SUBDIR).toPath();
             return deleteDir(agentsRoot.resolve(agentId.trim()));
         } catch (Exception e) {
             return false;
@@ -204,8 +186,14 @@ public final class AgentNodeSessionWorkDirUtil {
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────
 
+    private static File getUserRootDir(String userId) {
+        File root = getRootDir();
+        return userId == null || userId.isBlank()
+                ? root : new File(new File(root, USERS_SUBDIR), userId.trim());
+    }
+
     private static String resolveSessionOwnerUserId(String sessionId) {
-        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId);
+        AgentNodeSession session = AgentNodeSessionContainer.getSession(sessionId.trim());
         return session != null ? session.getCreateByUser() : null;
     }
 
