@@ -18,7 +18,8 @@ public class AiContextCheckpointRepository {
         this.mapper = mapper;
     }
 
-    public AiConversationStoreService.ConversationCheckpoint find(String threadId) {
+    public ConversationCheckpoint find(String threadId) {
+        if (blank(threadId)) return null;
         AiThreadRecord thread = mapper.findThread(threadId);
         if (thread == null || blank(thread.getContextSummary())
                 || blank(thread.getContextCheckpointJson())) return null;
@@ -30,7 +31,7 @@ public class AiContextCheckpointRepository {
             if (version == null || boundarySequence == null || blank(boundaryHash)) {
                 return null;
             }
-            return new AiConversationStoreService.ConversationCheckpoint(
+            return new ConversationCheckpoint(
                     thread.getContextSummary(), boundarySequence, boundaryHash, version);
         } catch (RuntimeException ignored) {
             return null;

@@ -7,8 +7,9 @@ import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.ChatModel;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.PromptDataBoundary;
-import org.leo.ai.thread.AiConversationStoreService;
-import org.leo.ai.thread.AiConversationStoreService.ConversationCheckpoint;
+import org.leo.ai.thread.AiContextCheckpointRepository;
+import org.leo.ai.thread.AiMessageRepository;
+import org.leo.ai.thread.ConversationCheckpoint;
 import org.leo.ai.thread.ConversationMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,16 +49,19 @@ public class ContextCompressionService {
 
     private final ChatModel chatModel;
     private final TokenCountEstimator tokenEstimator;
-    private final AiConversationStoreService conversationStore;
+    private final AiMessageRepository messages;
+    private final AiContextCheckpointRepository checkpoints;
     private final AiTurnTelemetryRegistry telemetryRegistry;
 
     public ContextCompressionService(ChatModel chatModel,
                                      TokenCountEstimator tokenEstimator,
-                                     AiConversationStoreService conversationStore,
+                                     AiMessageRepository messages,
+                                     AiContextCheckpointRepository checkpoints,
                                      AiTurnTelemetryRegistry telemetryRegistry) {
         this.chatModel = chatModel;
         this.tokenEstimator = tokenEstimator;
-        this.conversationStore = conversationStore;
+        this.messages = messages;
+        this.checkpoints = checkpoints;
         this.telemetryRegistry = telemetryRegistry;
         for (int i = 0; i < compressionLocks.length; i++) {
             compressionLocks[i] = new Object();
@@ -107,10 +111,10 @@ public class ContextCompressionService {
         }
         String threadId = threadIdFromMemoryId(memoryId);
         try {
-            ConversationCheckpoint persisted = conversationStore.findContextCheckpoint(threadId);
+            ConversationCheckpoint persisted = checkpoints.find(threadId);
             if (persisted == null || persisted.version() != CHECKPOINT_VERSION) return null;
 
-            ConversationMessage boundary = conversationStore.contextMessage(
+            ConversationMessage boundary = messages.contextMessage(
                     threadId, persisted.boundarySequence());
             CompressionCheckpoint.DurableMessage durableBoundary = boundary != null
                     ? CompressionCheckpoint.durableMessage(boundary.role(), boundary.content())
@@ -123,7 +127,7 @@ public class ContextCompressionService {
             }
 
             List<ConversationMessage> recent = visibleMessages(
-                    conversationStore.contextMessages(threadId, 200));
+                    messages.contextMessages(threadId, 200));
             List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
             if (current.size() != currentMessages.size() || current.size() > recent.size()) {
                 return null;
@@ -183,7 +187,7 @@ public class ContextCompressionService {
             if (current.isEmpty() || summarizedDurableCount == 0) return;
 
             List<ConversationMessage> recent = visibleMessages(
-                    conversationStore.contextMessages(threadId, 200));
+                    messages.contextMessages(threadId, 200));
             int overlap = durableSuffixPrefixOverlap(recent, current);
             int durableBoundary = Math.min(summarizedDurableCount, overlap);
             if (durableBoundary <= 0) return;
@@ -194,7 +198,7 @@ public class ContextCompressionService {
                     CompressionCheckpoint.durableMessage(boundary.role(), boundary.content());
             if (durableMessage == null) return;
 
-            conversationStore.updateContextCheckpoint(
+            checkpoints.update(
                     threadId, summaryMessage.text(), requireSequence(boundary),
                     durableMessage.fingerprint(), CHECKPOINT_VERSION);
             recordTelemetry("compression.checkpoint_persisted");
@@ -209,7 +213,7 @@ public class ContextCompressionService {
     /** 清除与当前内存同步失效的持久化 checkpoint。 */
     void clearPersistedCheckpoint(String memoryId) {
         try {
-            conversationStore.clearContextCheckpoint(threadIdFromMemoryId(memoryId));
+            checkpoints.clear(threadIdFromMemoryId(memoryId));
         } catch (RuntimeException e) {
             recordTelemetry("compression.checkpoint_clear_failed");
             log.debug("清除上下文 checkpoint 失败: memoryId={}, errorType={}",

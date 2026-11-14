@@ -40,7 +40,6 @@ public class AiConversationStoreService {
     private final AiUserInputRepository userInput;
     private final AiSubagentInvocationRepository subagentInvocations;
     private final AiMessageRepository messages;
-    private final AiContextCheckpointRepository checkpoints;
 
     public AiConversationStoreService(AiConversationMapper mapper,
                                       AiEventJournalRepository eventJournal,
@@ -49,8 +48,7 @@ public class AiConversationStoreService {
                                       AiProtocolTurnRepository protocolTurn,
                                       AiUserInputRepository userInput,
                                       AiSubagentInvocationRepository subagentInvocations,
-                                      AiMessageRepository messages,
-                                      AiContextCheckpointRepository checkpoints) {
+                                      AiMessageRepository messages) {
         this.mapper = mapper;
         this.eventJournal = eventJournal;
         this.executionLease = executionLease;
@@ -59,7 +57,6 @@ public class AiConversationStoreService {
         this.userInput = userInput;
         this.subagentInvocations = subagentInvocations;
         this.messages = messages;
-        this.checkpoints = checkpoints;
     }
 
     public List<AiThreadRecord> listAgentThreads(String userId, String agentId, String hostId) {
@@ -155,22 +152,6 @@ public class AiConversationStoreService {
         row.setLastActiveAt(System.currentTimeMillis());
         applyConfig(row, config);
         mapper.updateThreadConfig(row);
-    }
-
-    public ConversationCheckpoint findContextCheckpoint(String threadId) {
-        return checkpoints.find(threadId);
-    }
-
-    public void updateContextCheckpoint(String threadId,
-                                        String contextSummary,
-                                        long boundarySequence,
-                                        String boundaryHash,
-                                        int version) {
-        checkpoints.update(threadId, contextSummary, boundarySequence, boundaryHash, version);
-    }
-
-    public void clearContextCheckpoint(String threadId) {
-        checkpoints.clear(threadId);
     }
 
     public void deleteThread(String threadId) {
@@ -551,18 +532,6 @@ public class AiConversationStoreService {
         return messages.hasBefore(threadId, beforeSequence);
     }
 
-    /**
-     * 返回可用于模型记忆的持久化消息。除了成功消息，也包含有实际执行进度的
-     * discarded Turn，使用户在异常中止后输入“继续”时可以从已有结果衔接。
-     */
-    public List<ConversationMessage> contextMessages(String threadId, int limit) {
-        return messages.contextMessages(threadId, limit);
-    }
-
-    public ConversationMessage contextMessage(String threadId, long messageSequence) {
-        return messages.contextMessage(threadId, messageSequence);
-    }
-
     public int countMessages(String threadId) {
         return messages.count(threadId);
     }
@@ -610,9 +579,4 @@ public class AiConversationStoreService {
                                 long startedAt, String leaseToken) {
     }
 
-    public record ConversationCheckpoint(String summary,
-                                         long boundarySequence,
-                                         String boundaryHash,
-                                         int version) {
-    }
 }

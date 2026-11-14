@@ -8,7 +8,6 @@ import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiOrphanedRunRecord;
 import org.leo.core.entity.AiTurnRecord;
-import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.dao.mapper.AiConversationMapper;
@@ -42,7 +41,7 @@ class AiConversationStoreServiceTest {
             mapper, eventJournal, new AiExecutionLeaseRepository(mapper, eventJournal),
             new AiTurnTerminalRepository(mapper), new AiProtocolTurnRepository(mapper),
             new AiUserInputRepository(mapper), new AiSubagentInvocationRepository(mapper),
-            new AiMessageRepository(mapper), new AiContextCheckpointRepository(mapper));
+            new AiMessageRepository(mapper));
 
     @Test
     void startupFailureDiscardsMessagesAndPersistsOneReplayableTerminalEvent() {
@@ -65,37 +64,6 @@ class AiConversationStoreServiceTest {
                 payload.capture(), isNull(), anyLong());
         assertTrue(payload.getValue().contains("session expired"));
         assertTrue(payload.getValue().contains("\"status\":\"failed\""));
-    }
-
-    @Test
-    void storesAndRestoresVersionedContextCheckpointMetadata() {
-        AiThreadRecord thread = new AiThreadRecord();
-        thread.setThreadId("thread-1");
-        thread.setContextSummary("[历史摘要]\nsummary");
-        thread.setContextCheckpointJson("""
-                {"version":1,"boundarySequence":42,"boundaryHash":"hash-42"}
-                """);
-        when(mapper.findThread("thread-1")).thenReturn(thread);
-
-        AiConversationStoreService.ConversationCheckpoint checkpoint =
-                service.findContextCheckpoint("thread-1");
-
-        assertNotNull(checkpoint);
-        assertEquals("[历史摘要]\nsummary", checkpoint.summary());
-        assertEquals(42L, checkpoint.boundarySequence());
-        assertEquals("hash-42", checkpoint.boundaryHash());
-        assertEquals(1, checkpoint.version());
-
-        service.updateContextCheckpoint(
-                "thread-1", checkpoint.summary(), checkpoint.boundarySequence(),
-                checkpoint.boundaryHash(), checkpoint.version());
-        ArgumentCaptor<String> metadata = ArgumentCaptor.forClass(String.class);
-        verify(mapper).updateThreadContextCheckpoint(
-                eq("thread-1"), eq("[历史摘要]\nsummary"),
-                metadata.capture(), anyLong());
-        assertTrue(metadata.getValue().contains("\"boundarySequence\":42"));
-        assertTrue(metadata.getValue().contains("\"boundaryHash\":\"hash-42\""));
-        assertTrue(metadata.getValue().contains("\"version\":1"));
     }
 
     @Test

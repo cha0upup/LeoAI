@@ -6,7 +6,8 @@ import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.skill.SkillRegistryService;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiContextCheckpointRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -111,10 +112,11 @@ public class AiAgentConfig {
     public ContextCompressionService contextCompressionService(
             DelegatingChatModel chatModel,
             TokenCountEstimator tokenEstimator,
-            AiConversationStoreService conversationStore,
+            AiMessageRepository messages,
+            AiContextCheckpointRepository checkpoints,
             AiTurnTelemetryRegistry telemetryRegistry) {
         return new ContextCompressionService(
-                chatModel, tokenEstimator, conversationStore, telemetryRegistry);
+                chatModel, tokenEstimator, messages, checkpoints, telemetryRegistry);
     }
 
     // ── 模型 Bean ────────────────────────────────────────────────────────────

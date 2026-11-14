@@ -16,7 +16,8 @@ import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.AiPlanCoordinator;
 import org.leo.ai.service.AutoReconAppendService;
 import org.leo.ai.service.skill.SkillRegistryService;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiContextCheckpointRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.List;
@@ -44,7 +45,7 @@ class AiAgentConfigTest {
                     NodeAiToolBundle.class, PlatformToolBundle.class,
                     AutoReconAppendService.class, AiToolAuthorizationPolicy.class,
                     AiRuntimeResolver.class, AiPlanCoordinator.class,
-                    AiConversationStoreService.class, SkillRegistryService.class)) {
+                    AiMessageRepository.class, AiContextCheckpointRepository.class, SkillRegistryService.class)) {
                 registerMock(context, type);
             }
             context.refresh();

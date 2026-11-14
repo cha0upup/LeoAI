@@ -5,6 +5,7 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.thread.ConversationMessage;
 import org.springframework.stereotype.Component;
 
@@ -17,11 +18,10 @@ import java.util.List;
 @Component
 public class ManagedConversationMemory {
 
-    private final org.leo.ai.thread.AiConversationStoreService conversationStore;
+    private final AiMessageRepository messages;
 
-    public ManagedConversationMemory(
-            org.leo.ai.thread.AiConversationStoreService conversationStore) {
-        this.conversationStore = conversationStore;
+    public ManagedConversationMemory(AiMessageRepository messages) {
+        this.messages = messages;
     }
 
     /**
@@ -31,7 +31,7 @@ public class ManagedConversationMemory {
         if (memory == null) {
             return null;
         }
-        replaceMessages(memory, toChatMessages(conversationStore.contextMessages(
+        replaceMessages(memory, toChatMessages(messages.contextMessages(
                 threadIdFromMemoryId(memory.id()), 200)));
         return memory;
     }
@@ -50,7 +50,7 @@ public class ManagedConversationMemory {
         if (memory == null) {
             return false;
         }
-        List<ChatMessage> rebuilt = toChatMessages(conversationStore.contextMessages(
+        List<ChatMessage> rebuilt = toChatMessages(messages.contextMessages(
                 threadIdFromMemoryId(memoryId), 200));
         replaceMessages(memory, rebuilt);
         return true;

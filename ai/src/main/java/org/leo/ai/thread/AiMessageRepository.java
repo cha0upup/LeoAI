@@ -60,6 +60,7 @@ public class AiMessageRepository {
         return mapper.countMessages(threadId);
     }
 
+    /** Model memory includes committed messages and interrupted turns with recoverable progress. */
     public List<ConversationMessage> contextMessages(String threadId, int limit) {
         return mapper.recentContextMessages(threadId, boundedLimit(limit)).stream()
                 .map(AiMessageRepository::toContext).toList();

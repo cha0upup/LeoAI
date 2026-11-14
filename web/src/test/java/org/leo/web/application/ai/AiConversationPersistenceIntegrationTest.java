@@ -31,6 +31,7 @@ class AiConversationPersistenceIntegrationTest {
     private AnnotationConfigApplicationContext context;
     private JdbcTemplate jdbc;
     private AiConversationStoreService store;
+    private AiMessageRepository messages;
     private AiTurnProtocolService protocol;
 
     @BeforeEach
@@ -54,6 +55,7 @@ class AiConversationPersistenceIntegrationTest {
                 AiContextCheckpointRepository.class);
         context.refresh();
         store = context.getBean(AiConversationStoreService.class);
+        messages = context.getBean(AiMessageRepository.class);
         protocol = new AiTurnProtocolService(store);
         store.createPlatformThread("fixture-user", "fixture-session", "thread-1", "fixture", 1L, null);
     }
@@ -61,6 +63,23 @@ class AiConversationPersistenceIntegrationTest {
     @AfterEach
     void tearDown() {
         if (context != null) context.close();
+    }
+
+    @Test
+    void contextCheckpointsRoundTripIndependentlyOfTurnStorage() {
+        var checkpoints = context.getBean(AiContextCheckpointRepository.class);
+        assertNull(checkpoints.find("thread-1"));
+
+        checkpoints.update("thread-1", "summary", 42L, "hash-42", 2);
+
+        assertEquals(new ConversationCheckpoint("summary", 42L, "hash-42", 2), checkpoints.find("thread-1"));
+        assertEquals("summary", store.findThread("thread-1").getContextSummary());
+        checkpoints.clear("thread-1");
+        assertNull(checkpoints.find("thread-1"));
+        var cleared = store.findThread("thread-1");
+        assertNull(cleared.getContextSummary());
+        assertNull(cleared.getContextCheckpointJson());
+        assertTrue(store.listMessages("thread-1", 0, 20).isEmpty());
     }
 
     @Test
@@ -152,11 +171,11 @@ class AiConversationPersistenceIntegrationTest {
         assertFalse(assistant.toString().contains("可用于继续任务"));
         assertEquals(recovery, jdbc.queryForObject("SELECT recovery_context FROM ai_messages WHERE message_id=?",
                 String.class, running.assistantMessageId()));
-        var memory = store.contextMessages("thread-1", 20);
+        var memory = messages.contextMessages("thread-1", 20);
         assertEquals(2, memory.size(), "the original user request must accompany a recovery-only assistant message");
         assertEquals("fixture", memory.get(0).content());
         assertEquals(recovery, memory.get(1).content());
-        assertEquals(recovery, store.contextMessage("thread-1", memory.get(1).sequence()).content());
+        assertEquals(recovery, messages.contextMessage("thread-1", memory.get(1).sequence()).content());
 
         var row = new AiMessageRecord();
         row.setContent("visible");
@@ -177,10 +196,10 @@ class AiConversationPersistenceIntegrationTest {
             assertFalse(assistant.containsKey("recoveryContext"));
             assertFalse(assistant.toString().contains(recovery));
         }
-        assertEquals(recovery, store.contextMessage("thread-1", 2).content());
+        assertEquals(recovery, messages.contextMessage("thread-1", 2).content());
         assertEquals(reply, jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         jdbc.update("UPDATE ai_messages SET recovery_context=NULL WHERE message_id=?", turn.assistantItemId());
-        assertEquals(reply, store.contextMessage("thread-1", 2).content());
+        assertEquals(reply, messages.contextMessage("thread-1", 2).content());
         assertEquals(reply, store.listMessagesBefore("thread-1", 3, 20).get(1).get("content"));
     }
 
@@ -197,7 +216,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(1, store.recoverOrphanedRuns("thread-1", 1000).size());
         assertEquals(nodes, jdbc.queryForObject("SELECT nodes_json FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         assertEquals("partial reply", jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
-        assertTrue(store.contextMessage("thread-1", 2).content().contains("可用于继续任务"));
+        assertTrue(messages.contextMessage("thread-1", 2).content().contains("可用于继续任务"));
         assertFalse(store.listMessages("thread-1", 0, 20).toString().contains("可用于继续任务"));
     }
 
@@ -214,7 +233,7 @@ class AiConversationPersistenceIntegrationTest {
         jdbc.update("UPDATE ai_messages SET status='pending', plan_json=? WHERE message_id='message-6'", "{\"step\":\"pending\"}");
 
         assertEquals(latest, store.findLatestPlanJson("thread-1"));
-        assertEquals(List.of(1L, 2L, 3L, 4L, 5L), store.contextMessages("thread-1", 20).stream()
+        assertEquals(List.of(1L, 2L, 3L, 4L, 5L), messages.contextMessages("thread-1", 20).stream()
                 .map(ConversationMessage::sequence).toList());
     }
 

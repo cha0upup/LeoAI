@@ -8,7 +8,7 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.thread.ConversationMessage;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiMessageRepository;
 
 import java.util.List;
 
@@ -20,6 +20,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class ManagedConversationMemoryTest {
+    private final AiMessageRepository messages = mock(AiMessageRepository.class);
+    private final ManagedConversationMemory managedMemory = new ManagedConversationMemory(messages);
 
     @Test
     void initializesFreshConversationWithEmptyMemory() {
@@ -28,11 +30,10 @@ class ManagedConversationMemoryTest {
                 .id(memoryId)
                 .maxMessages(20)
                 .build();
-        AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.contextMessages(memoryId, 200)).thenReturn(List.of());
+        when(messages.contextMessages(memoryId, 200)).thenReturn(List.of());
 
         ChatMemory initialized =
-                new ManagedConversationMemory(conversationStore).initialize(memory);
+                managedMemory.initialize(memory);
 
         assertEquals(memory, initialized);
         assertTrue(initialized.messages().isEmpty());
@@ -56,12 +57,11 @@ class ManagedConversationMemoryTest {
 
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         when(agent.getChatMemory(memoryId)).thenReturn(memory);
-        AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.contextMessages("thread-1", 200)).thenReturn(List.of(
+        when(messages.contextMessages("thread-1", 200)).thenReturn(List.of(
                 new ConversationMessage(null, "user", "已提交问题"),
                 new ConversationMessage(null, "assistant", "已提交回答")));
 
-        boolean rebuilt = new ManagedConversationMemory(conversationStore).rebuild(agent, memoryId);
+        boolean rebuilt = managedMemory.rebuild(agent, memoryId);
 
         assertTrue(rebuilt);
         assertEquals(2, memory.messages().size());
@@ -77,8 +77,7 @@ class ManagedConversationMemoryTest {
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         when(agent.getChatMemory("missing")).thenReturn(null);
 
-        assertFalse(new ManagedConversationMemory(mock(AiConversationStoreService.class))
-                .rebuild(agent, "missing"));
+        assertFalse(managedMemory.rebuild(agent, "missing"));
     }
 
     @Test
@@ -92,11 +91,9 @@ class ManagedConversationMemoryTest {
 
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         when(agent.getChatMemory(memoryId)).thenReturn(memory);
-        AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.contextMessages("fresh-thread", 200)).thenReturn(List.of());
+        when(messages.contextMessages("fresh-thread", 200)).thenReturn(List.of());
 
-        assertTrue(new ManagedConversationMemory(conversationStore)
-                .rebuild(agent, memoryId));
+        assertTrue(managedMemory.rebuild(agent, memoryId));
         assertTrue(memory.messages().isEmpty());
     }
 }
