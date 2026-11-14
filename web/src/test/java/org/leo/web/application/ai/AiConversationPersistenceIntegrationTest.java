@@ -32,6 +32,7 @@ class AiConversationPersistenceIntegrationTest {
     private JdbcTemplate jdbc;
     private AiConversationStoreService store;
     private AiMessageRepository messages;
+    private AiExecutionLeaseRepository leases;
     private AiTurnProtocolService protocol;
 
     @BeforeEach
@@ -56,6 +57,7 @@ class AiConversationPersistenceIntegrationTest {
         context.refresh();
         store = context.getBean(AiConversationStoreService.class);
         messages = context.getBean(AiMessageRepository.class);
+        leases = context.getBean(AiExecutionLeaseRepository.class);
         protocol = new AiTurnProtocolService(store);
         store.createPlatformThread("fixture-user", "fixture-session", "thread-1", "fixture", 1L, null);
     }
@@ -213,11 +215,25 @@ class AiConversationPersistenceIntegrationTest {
         context.getBean(AiEventJournalRepository.class).append("thread-1", new AiSseEvent(1, 1, "delta", "partial reply", null,
                 turn.id(), turn.assistantItemId(), running.runId()), null);
 
-        assertEquals(1, store.recoverOrphanedRuns("thread-1", 1000).size());
+        assertEquals(1, leases.recoverOrphanedRuns("thread-1", 1000).size());
         assertEquals(nodes, jdbc.queryForObject("SELECT nodes_json FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         assertEquals("partial reply", jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         assertTrue(messages.contextMessage("thread-1", 2).content().contains("可用于继续任务"));
         assertFalse(store.listMessages("thread-1", 0, 20).toString().contains("可用于继续任务"));
+    }
+
+    @Test
+    void orphanRecoveryRollsBackIfItsCompletionEventCannotBePersisted() {
+        var turn = reserve();
+        var running = beginRun(turn);
+        jdbc.execute("CREATE TRIGGER reject_event BEFORE INSERT ON ai_events BEGIN SELECT RAISE(ABORT, 'event rejected'); END");
+
+        assertThrows(RuntimeException.class, () -> leases.recoverOrphanedRuns("thread-1", 1000));
+
+        assertEquals("running", jdbc.queryForObject("SELECT status FROM ai_runs WHERE run_id=?", String.class, running.runId()));
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='pending'", Integer.class));
+        assertEquals("inProgress", store.findProtocolTurn(turn.id()).getProtocolStatus());
+        assertTrue(store.listEventsAfter("thread-1", 0, 200).isEmpty());
     }
 
     @Test

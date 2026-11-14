@@ -11,7 +11,6 @@ import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
-import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +33,6 @@ public class AiConversationStoreService {
 
     private final AiConversationMapper mapper;
     private final AiEventJournalRepository eventJournal;
-    private final AiExecutionLeaseRepository executionLease;
     private final AiTurnTerminalRepository turnTerminal;
     private final AiProtocolTurnRepository protocolTurn;
     private final AiUserInputRepository userInput;
@@ -43,7 +41,6 @@ public class AiConversationStoreService {
 
     public AiConversationStoreService(AiConversationMapper mapper,
                                       AiEventJournalRepository eventJournal,
-                                      AiExecutionLeaseRepository executionLease,
                                       AiTurnTerminalRepository turnTerminal,
                                       AiProtocolTurnRepository protocolTurn,
                                       AiUserInputRepository userInput,
@@ -51,7 +48,6 @@ public class AiConversationStoreService {
                                       AiMessageRepository messages) {
         this.mapper = mapper;
         this.eventJournal = eventJournal;
-        this.executionLease = executionLease;
         this.turnTerminal = turnTerminal;
         this.protocolTurn = protocolTurn;
         this.userInput = userInput;
@@ -277,11 +273,6 @@ public class AiConversationStoreService {
         return current;
     }
 
-    public boolean hasInterruptRequestedTurn(String threadId) {
-        return !isBlank(threadId)
-                && mapper.countInterruptRequestedTurns(threadId) > 0;
-    }
-
     public AiTurnRecord completeProtocolTurn(
             String turnId, String protocolStatus, String errorMessage,
             long completedAt, String leaseToken) {
@@ -339,41 +330,6 @@ public class AiConversationStoreService {
 
     public boolean hasLatestTurnCompletedEvent(String threadId) {
         return eventJournal.hasLatestTurnCompleted(threadId);
-    }
-
-    // ── 跨实例执行租约与孤儿 Run 收口 ───────────────────────────────────────
-
-    public boolean acquireThreadLease(AiThreadLeaseRecord lease) {
-        return executionLease.acquire(lease);
-    }
-
-    public boolean renewThreadLease(AiThreadLeaseRecord lease) {
-        return executionLease.renew(lease);
-    }
-
-    public boolean releaseThreadLease(AiThreadLeaseRecord lease) {
-        return executionLease.release(lease);
-    }
-
-    public List<AiThreadLeaseRecord> listExpiredThreadLeases(long now) {
-        return executionLease.listExpired(now);
-    }
-
-    public List<String> listThreadsWithStuckRunningTurns(long now) {
-        return executionLease.listStuckThreads(now);
-    }
-
-    public boolean claimExpiredThreadLease(AiThreadLeaseRecord expired,
-                                           AiThreadLeaseRecord recovery) {
-        return executionLease.claimExpired(expired, recovery);
-    }
-
-    /**
-     * 将失去执行实例的 running Run 原子收口，并写入可重放的 turn/completed。
-     */
-    @Transactional
-    public List<AiSseEvent> recoverOrphanedRuns(String threadId, long finishedAt) {
-        return executionLease.recoverOrphanedRuns(threadId, finishedAt);
     }
 
     // ── 子 Agent 派发记录 ───────────────────────────────────────────────────

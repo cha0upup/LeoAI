@@ -1,6 +1,7 @@
 package org.leo.web.application.ai;
 
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiExecutionLeaseRepository;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,8 @@ public class AiExecutionLeaseService {
     private static final Logger logger =
             LoggerFactory.getLogger(AiExecutionLeaseService.class);
 
-    private final AiConversationStoreService store;
+    private final AiExecutionLeaseRepository leases;
+    private final AiProtocolTurnRepository protocolTurns;
     private final ConcurrentMap<String, LocalLease> localLeases =
             new ConcurrentHashMap<>();
     private final String ownerId =
@@ -34,8 +36,9 @@ public class AiExecutionLeaseService {
     @Value("${leo.ai.lease.ttl-ms:30000}")
     private long ttlMillis = 30_000L;
 
-    public AiExecutionLeaseService(AiConversationStoreService store) {
-        this.store = store;
+    public AiExecutionLeaseService(AiExecutionLeaseRepository leases, AiProtocolTurnRepository protocolTurns) {
+        this.leases = leases;
+        this.protocolTurns = protocolTurns;
     }
 
     /**
@@ -49,12 +52,12 @@ public class AiExecutionLeaseService {
         long now = System.currentTimeMillis();
         AiThreadLeaseRecord row = lease(
                 threadId, UUID.randomUUID().toString(), now);
-        if (!store.acquireThreadLease(row)) return null;
+        if (!leases.acquire(row)) return null;
         LocalLease local = new LocalLease(
                 row, onLeaseLost != null ? onLeaseLost : () -> {});
         LocalLease previous = localLeases.putIfAbsent(threadId, local);
         if (previous != null) {
-            store.releaseThreadLease(row);
+            leases.release(row);
             return null;
         }
         return row.getLeaseToken();
@@ -63,7 +66,7 @@ public class AiExecutionLeaseService {
     public void release(String threadId) {
         if (threadId == null) return;
         LocalLease local = localLeases.remove(threadId);
-        if (local != null) store.releaseThreadLease(local.row());
+        if (local != null) leases.release(local.row());
     }
 
     @Scheduled(
@@ -81,33 +84,37 @@ public class AiExecutionLeaseService {
             AiThreadLeaseRecord row = local.row();
             row.setHeartbeatAt(now);
             row.setExpiresAt(now + safeTtlMillis());
-            if (store.renewThreadLease(row)) {
-                if (store.hasInterruptRequestedTurn(row.getThreadId())
+            if (leases.renew(row)) {
+                if (protocolTurns.hasInterruptRequest(row.getThreadId())
                         && local.interruptDelivered().compareAndSet(false, true)) {
-                    local.stopExecution().run();
+                    stopExecution(local);
                 }
                 continue;
             }
             if (localLeases.remove(row.getThreadId(), local)) {
                 logger.warn("AI 执行租约丢失, threadId={}, owner={}",
                         row.getThreadId(), ownerId);
-                try {
-                    local.stopExecution().run();
-                } catch (RuntimeException error) {
-                    logger.warn("停止失去租约的 AI 执行失败, threadId={}: {}",
-                            row.getThreadId(), error.getMessage());
-                }
+                stopExecution(local);
             }
+        }
+    }
+
+    private void stopExecution(LocalLease local) {
+        try {
+            local.stopExecution().run();
+        } catch (RuntimeException error) {
+            logger.warn("停止 AI 执行失败, threadId={}: {}",
+                    local.row().getThreadId(), error.getMessage());
         }
     }
 
     void recoverExpiredLeases() {
         long now = System.currentTimeMillis();
-        for (AiThreadLeaseRecord expired : store.listExpiredThreadLeases(now)) {
+        for (AiThreadLeaseRecord expired : leases.listExpired(now)) {
             AiThreadLeaseRecord recovery = lease(
                     expired.getThreadId(), UUID.randomUUID().toString(), now);
             recoverWithLease(expired.getThreadId(), now, recovery,
-                    () -> store.claimExpiredThreadLease(expired, recovery),
+                    () -> leases.claimExpired(expired, recovery),
                     recovered -> logger.warn(
                             "已收口 {} 个孤儿 AI Run, threadId={}, previousOwner={}",
                             recovered, expired.getThreadId(), expired.getOwnerId()));
@@ -120,12 +127,12 @@ public class AiExecutionLeaseService {
      */
     void recoverLeaselessStuckTurns() {
         long now = System.currentTimeMillis();
-        for (String threadId : store.listThreadsWithStuckRunningTurns(now)) {
+        for (String threadId : leases.listStuckThreads(now)) {
             if (localLeases.containsKey(threadId)) continue;
             AiThreadLeaseRecord recovery = lease(
                     threadId, UUID.randomUUID().toString(), now);
             recoverWithLease(threadId, now, recovery,
-                    () -> store.acquireThreadLease(recovery),
+                    () -> leases.acquire(recovery),
                     recovered -> logger.warn(
                             "已收口 {} 个无租约孤儿 AI Run, threadId={}",
                             recovered, threadId));
@@ -138,10 +145,10 @@ public class AiExecutionLeaseService {
                                   java.util.function.IntConsumer onRecovered) {
         if (!claim.getAsBoolean()) return;
         try {
-            int recovered = store.recoverOrphanedRuns(threadId, now).size();
+            int recovered = leases.recoverOrphanedRuns(threadId, now).size();
             if (recovered > 0) onRecovered.accept(recovered);
         } finally {
-            store.releaseThreadLease(recovery);
+            leases.release(recovery);
         }
     }
 

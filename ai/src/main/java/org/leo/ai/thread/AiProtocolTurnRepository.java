@@ -45,6 +45,10 @@ public class AiProtocolTurnRepository {
         return !blank(turnId) && mapper.markProtocolTurnStarted(turnId, startedAt) == 1;
     }
 
+    public boolean hasInterruptRequest(String threadId) {
+        return !blank(threadId) && mapper.countInterruptRequestedTurns(threadId) > 0;
+    }
+
     public AiTurnRecord complete(String turnId, String protocolStatus,
                                  String errorMessage, long completedAt,
                                  String leaseToken) {
