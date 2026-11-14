@@ -26,8 +26,7 @@ public class SessionReportController {
     /**
      * 生成离线侦察报告（Markdown 格式）。
      *
-     * <p>汇聚 agent 级持久化目录中的 basic-info.json、recon-summary.md、
-     * recon-summary.json，拼装为结构化 Markdown 字符串返回给前端，前端负责触发下载。
+     * <p>获取已授权会话对应用户、Agent、HostId 的报告，由前端触发下载。
      */
     @PostMapping("/report/generate")
     public HashMap<String, Object> generateReport(@RequestBody SessionRequest request) {
