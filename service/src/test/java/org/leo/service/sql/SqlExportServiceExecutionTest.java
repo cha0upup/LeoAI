@@ -11,6 +11,7 @@ import org.leo.core.agent.capability.SqlCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -33,7 +34,7 @@ class SqlExportServiceExecutionTest {
     private final List<Runnable> queued = new ArrayList<>();
     private final SqlExportWorkspace workspace = new SqlExportWorkspace(() -> root);
     private final SqlExportTaskRepository repository = new FileSqlExportTaskRepository(workspace);
-    private final SqlExportArtifacts artifacts = new FileSqlExportArtifacts(workspace);
+    private final SqlExportArtifacts artifacts = spy(new FileSqlExportArtifacts(workspace));
     private final SqlExportService service = new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
     private final SqlObjectRef orders = SqlObjectRef.table("app", "sales", "orders");
     private final SqlObjectRef customers = SqlObjectRef.table("app", "sales", "customers");
@@ -164,12 +165,38 @@ class SqlExportServiceExecutionTest {
         assertEquals(0, service.listBySessionId("owner", "session").get("count"));
     }
 
-    @Test void failsRestoredPathsOutsideTheOwnersOutputDirectoryBeforeQuerying() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"table,restore", "table,csv", "database,restore", "database,workspace", "database,json", "database,zip"})
+    void artifactFailuresUseTheSamePersistedTaskFailureContract(String kind, String stage) throws Exception {
+        var task = kind.equals("table") ? startTable() : startDatabase(true, true);
+        String error = "fixture artifact failure: " + stage;
+        switch (stage) {
+            case "restore" -> doThrow(new IllegalArgumentException(error)).when(artifacts).restoreOutput(anyString(), anyString());
+            case "workspace" -> doThrow(new IllegalArgumentException(error)).when(artifacts).workDirectory(any());
+            case "csv" -> doThrow(new IOException(error)).when(artifacts).openCsv(any());
+            case "json" -> doThrow(new IOException(error)).when(artifacts).writeJson(any(), any());
+            case "zip" -> doThrow(new IOException(error)).when(artifacts).zipDirectory(any(), any());
+            default -> throw new AssertionError(stage);
+        }
+
+        assertDoesNotThrow(() -> queued.get(0).run());
+
+        var result = service.progress("owner", id(task));
+        assertEquals("FAILED", result.get("status"));
+        assertEquals(error, result.get("error"));
+        assertNotNull(result.get("endTime"));
+        assertEquals("FAILED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
+        if (stage.equals("restore") || stage.equals("workspace")) verifyNoInteractions(sql);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"finalPath", "taskType"})
+    void rejectsInvalidRestoredTasksBeforeQuerying(String field) throws Exception {
         var task = startTable();
         service.pause("owner", id(task));
         queued.get(0).run();
         var stored = repository.load(new SqlExportTaskKey("owner", id(task)));
-        stored.put("finalPath", root.resolve("outside.csv").toString());
+        stored.put(field, field.equals("finalPath") ? root.resolve("outside.csv").toString() : "unknown");
         repository.save(new SqlExportTaskKey("owner", id(task)), stored);
         // A fresh service ensures the persisted task is used rather than the existing cache.
         var restarted = new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
@@ -177,6 +204,7 @@ class SqlExportServiceExecutionTest {
             restarted.resume(node, "owner", "session", id(task), Map.of());
             queued.get(1).run();
             assertEquals("FAILED", restarted.progress("owner", id(task)).get("status"));
+            assertEquals("FAILED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
             assertFalse(Files.exists(root.resolve("outside.csv")));
             verifyNoInteractions(sql);
         } finally { restarted.close(); }

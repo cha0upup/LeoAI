@@ -9,11 +9,9 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.SqlCapable;
-import org.leo.core.config.LeoConfig;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
-import org.mockito.MockedStatic;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.stubbing.Answer;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,16 +33,12 @@ class SqlExportServiceLifecycleTest {
     private final ServiceTaskExecutor executor = mock(ServiceTaskExecutor.class);
     private final SqlCapable node = mock(SqlCapable.class);
     private final List<Runnable> queued = new ArrayList<>();
-    private final SqlExportWorkspace workspace = new SqlExportWorkspace();
-    private final SqlExportArtifacts artifacts = new FileSqlExportArtifacts(workspace);
+    private final SqlExportWorkspace workspace = new SqlExportWorkspace(() -> directory);
+    private final SqlExportArtifacts artifacts = spy(new FileSqlExportArtifacts(workspace));
     private final SqlExportTaskRepository repository = spy(new FileSqlExportTaskRepository(workspace));
-    private final SqlExportService service = new SqlExportService(sql, executor,
-            repository, artifacts, new SqlTableCsvExporter(sql));
-    private MockedStatic<LeoConfig> config;
+    private final SqlExportService service = newService();
 
     @BeforeEach void setup() {
-        config = mockStatic(LeoConfig.class);
-        config.when(LeoConfig::getVfsPath).thenReturn(directory.toString());
         when(executor.submitSqlExport(any(Runnable.class))).thenAnswer(invocation -> {
             queued.add(invocation.getArgument(0));
             return CompletableFuture.completedFuture(null);
@@ -52,7 +46,7 @@ class SqlExportServiceLifecycleTest {
     }
 
     @AfterEach void cleanup() {
-        try { service.close(); } finally { config.close(); }
+        service.close();
     }
 
     @ParameterizedTest
@@ -91,29 +85,24 @@ class SqlExportServiceLifecycleTest {
         Map<String, Object> task = JsonUtil.fromJsonString(Files.readString(meta), Map.class);
         task.put(field, "different-identity");
         Files.writeString(meta, JsonUtil.toJsonString(task));
-        clearLiveTasks();
-        assertThrows(IllegalArgumentException.class, () -> service.progress("owner", id));
-        assertThrows(IllegalArgumentException.class, () -> service.stop("owner", id));
-        assertEquals(0, service.listBySessionId("owner", "session").get("count"));
+        SqlExportService restored = newService();
+        try {
+            assertThrows(IllegalArgumentException.class, () -> restored.progress("owner", id));
+            assertThrows(IllegalArgumentException.class, () -> restored.stop("owner", id));
+            assertEquals(0, restored.listBySessionId("owner", "session").get("count"));
+        } finally { restored.close(); }
     }
 
-    @Test void ownedPersistedTasksRemainReadableAndControllableAfterCacheEviction() throws Exception {
+    @Test void freshServicesCanReadAndControlOwnedPersistedTasks() throws Exception {
         String id = id(start("table"));
-        clearLiveTasks();
-        assertEquals("PENDING", service.progress("owner", id).get("status"));
-        assertEquals("CANCELLED", service.stop("owner", id).get("status"));
-        queued.get(0).run();
-        assertEquals("CANCELLED", service.progress("owner", id).get("status"));
-        verifyNoInteractions(sql);
-    }
-
-    @Test void reservesUniqueOutputPathsBeforeWorkersHaveStarted() throws Exception {
-        Path first = artifacts.reserveOutput("owner", "same.csv");
-        Path second = artifacts.reserveOutput("owner", "same.csv");
-        assertNotEquals(first, second);
-        assertTrue(Files.isRegularFile(first));
-        assertTrue(Files.isRegularFile(second));
-        assertEquals("same(1).csv", second.getFileName().toString());
+        SqlExportService restored = newService();
+        try {
+            assertEquals("PENDING", restored.progress("owner", id).get("status"));
+            assertEquals("CANCELLED", restored.stop("owner", id).get("status"));
+            assertEquals("CANCELLED", restored.progress("owner", id).get("status"));
+            assertEquals("CANCELLED", repository.load(new SqlExportTaskKey("owner", id)).get("status"));
+            verifyNoInteractions(sql);
+        } finally { restored.close(); }
     }
 
     @Test void reportsTheReservedFilenameAndNeverOverwritesAnExistingExport() throws Exception {
@@ -130,15 +119,39 @@ class SqlExportServiceLifecycleTest {
 
     @ParameterizedTest
     @CsvSource({"table,pause", "table,stop", "database,pause", "database,stop"})
-    void pausedOrCancelledQueuedExportsNeverAccessTheNode(String kind, String operation) throws Exception {
+    void pausedOrCancelledQueuedExportsSkipArtifactAndNodeAccess(String kind, String operation) throws Exception {
         String id = id(start(kind));
         var registration = inOrder(repository, executor);
         registration.verify(repository).save(eq(new SqlExportTaskKey("owner", id)), anyMap());
         registration.verify(executor).submitSqlExport(any(Runnable.class));
         if (operation.equals("pause")) service.pause("owner", id);
         else service.stop("owner", id);
+        clearInvocations(artifacts);
         queued.get(0).run();
         assertEquals(operation.equals("pause") ? "PAUSED" : "CANCELLED", service.progress("owner", id).get("status"));
+        verifyNoInteractions(artifacts, sql);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"table,restore,pause", "table,restore,stop", "database,restore,pause", "database,restore,stop",
+            "database,workspace,pause", "database,workspace,stop"})
+    void stopRequestsDuringArtifactPreparationPreventQueries(String kind, String stage, String operation) throws Exception {
+        String id = id(start(kind));
+        Answer<Path> stopDuringPreparation = call -> {
+            Path path = (Path) call.callRealMethod();
+            if (operation.equals("pause")) service.pause("owner", id);
+            else service.stop("owner", id);
+            return path;
+        };
+        if (stage.equals("restore"))
+            doAnswer(stopDuringPreparation).when(artifacts).restoreOutput(anyString(), anyString());
+        else doAnswer(stopDuringPreparation).when(artifacts).workDirectory(any());
+
+        queued.get(0).run();
+
+        String expected = operation.equals("pause") ? "PAUSED" : "CANCELLED";
+        assertEquals(expected, service.progress("owner", id).get("status"));
+        assertEquals(expected, repository.load(new SqlExportTaskKey("owner", id)).get("status"));
         verifyNoInteractions(sql);
     }
 
@@ -192,7 +205,7 @@ class SqlExportServiceLifecycleTest {
     private Path metadata(String user, String id) {
         return directory.resolve("users").resolve(user).resolve("downloads/sql-export/.sql-export-tasks").resolve(id).resolve("meta.json");
     }
-    private void clearLiveTasks() {
-        ((Map<?, ?>) ReflectionTestUtils.getField(service, "liveTasks")).clear();
+    private SqlExportService newService() {
+        return new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
     }
 }

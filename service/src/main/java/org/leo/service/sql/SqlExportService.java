@@ -161,45 +161,37 @@ public class SqlExportService {
         return result;
     }
 
-    private void scheduleTask(final SqlExportTask task,
-                              final SqlCapable agentNode,
-                              final Map<String, Object> connection) {
-        final String taskId = task.taskId();
+    private void scheduleTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection) {
+        String taskId = task.taskId();
         task.persist();
         SqlExportTask previous = liveTasks.put(taskId, task);
         if (previous != null && previous != task) previous.signalCancellation();
-        final SqlExportTask.Attempt attempt = task.beginAttempt();
+        SqlExportTask.Attempt attempt = task.beginAttempt();
         try {
-            taskExecutor.submitSqlExport(new Runnable() {
-                @Override
-                public void run() {
-                    if (liveTasks.get(taskId) != task || !task.isCurrent(attempt)) return;
-                    String type = task.type();
-                    try {
-                        Path finalPath = artifacts.restoreOutput(task.userId(), task.finalPath());
-                        if ("TABLE_EXPORT".equals(type)) {
-                            runTableExport(task, agentNode, connection,
-                                    task.objectRef(),
-                                    finalPath,
-                                    attempt);
-                        } else if ("DATABASE_EXPORT".equals(type)) {
-                            runDatabaseExport(task, agentNode, connection,
-                                    task.objectRef(),
-                                    task.selectedTables(),
-                                    task.includeStructure(),
-                                    task.includeData(),
-                                    finalPath,
-                                    attempt);
-                        }
-                    } catch (Exception error) {
-                        task.fail(attempt, error.getMessage());
-                    } finally {
-                        task.finishAttempt(attempt);
-                    }
-                }
-            });
+            taskExecutor.submitSqlExport(() -> runTask(task, agentNode, connection, attempt));
         } catch (RejectedExecutionException error) {
             task.fail(attempt, "SQL 导出任务队列繁忙");
+            task.finishAttempt(attempt);
+        }
+    }
+
+    private void runTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection,
+                         SqlExportTask.Attempt attempt) {
+        if (liveTasks.get(task.taskId()) != task || !task.isCurrent(attempt)) return;
+        try {
+            if (task.checkStopped(attempt)) return;
+            Path finalPath = artifacts.restoreOutput(task.userId(), task.finalPath());
+            if (task.checkStopped(attempt)) return;
+            task.running(attempt, 1);
+            switch (task.type()) {
+                case "TABLE_EXPORT" -> runTableExport(task, agentNode, connection, finalPath, attempt);
+                case "DATABASE_EXPORT" -> runDatabaseExport(task, agentNode, connection, finalPath, attempt);
+                default -> throw new IllegalArgumentException("未知 SQL 导出任务类型: " + task.type());
+            }
+        } catch (Exception error) {
+            task.failUnlessStopped(attempt, error);
+        } finally {
+            task.persist();
             task.finishAttempt(attempt);
         }
     }
@@ -228,99 +220,77 @@ public class SqlExportService {
     private void runTableExport(SqlExportTask task,
                                 SqlCapable agentNode,
                                 Map<String, Object> connection,
-                                SqlObjectRef tableRef,
                                 Path finalPath,
-                                SqlExportTask.Attempt attempt) {
-        try {
-            if (task.checkStopped(attempt)) return;
-            task.running(attempt, 1);
-            Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
-                    agentNode, connection, tableRef);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
+                                SqlExportTask.Attempt attempt) throws Exception {
+        SqlObjectRef tableRef = task.objectRef();
+        Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
+                agentNode, connection, tableRef);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
-            try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
-                long total = csvExporter.write(writer, agentNode, connection, tableRef, columns,
-                        progress(task, 10, 95, attempt));
-                task.rowsWritten(attempt, total);
-            }
-            if (task.tableStopped(attempt)) return;
-            task.complete(attempt, artifacts.size(finalPath));
-        } catch (Exception e) {
-            task.failUnlessStopped(attempt, e);
-        } finally {
-            task.persist();
+        try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
+            long total = csvExporter.write(writer, agentNode, connection, tableRef, columns,
+                    progress(task, 10, 95, attempt));
+            task.rowsWritten(attempt, total);
         }
+        if (task.tableStopped(attempt)) return;
+        task.complete(attempt, artifacts.size(finalPath));
     }
 
     private void runDatabaseExport(SqlExportTask task,
                                    SqlCapable agentNode,
                                    Map<String, Object> connection,
-                                   SqlObjectRef namespaceRef,
-                                   List<SqlObjectRef> selectedTableRefs,
-                                   boolean includeStructure,
-                                   boolean includeData,
                                    Path finalPath,
-                                   SqlExportTask.Attempt attempt) {
+                                   SqlExportTask.Attempt attempt) throws Exception {
+        SqlObjectRef namespaceRef = task.objectRef();
+        boolean includeStructure = task.includeStructure();
+        boolean includeData = task.includeData();
         Path workDir = artifacts.workDirectory(task.key());
-        try {
+        if (task.checkStopped(attempt)) return;
+        List<SqlObjectRef> tables = resolveExportTableRefs(
+                agentNode, connection, namespaceRef, task.selectedTables());
+        task.tablesResolved(attempt, tables.size());
+
+        int startIndex = Math.max(0, task.processedTables());
+        for (int i = startIndex; i < tables.size(); i++) {
             if (task.checkStopped(attempt)) return;
-            task.running(attempt, 1);
-            List<SqlObjectRef> tables = resolveExportTableRefs(
-                    agentNode, connection, namespaceRef, selectedTableRefs);
-            task.tablesResolved(attempt, tables.size());
+            SqlObjectRef tableRef = tables.get(i);
+            String entryName = exportObjectName(tableRef);
+            int progressBase = (int) Math.min(90, 5 + ((double) i / (double) tables.size()) * 85);
+            task.tableStarted(attempt, tableRef, i, progressBase);
 
-            int startIndex = Math.max(0, task.processedTables());
-            for (int i = startIndex; i < tables.size(); i++) {
-                if (task.checkStopped(attempt)) {
-                    return;
-                }
-                SqlObjectRef tableRef = tables.get(i);
-                String entryName = exportObjectName(tableRef);
-                int progressBase = tables.isEmpty() ? 90 : (int) Math.min(90, 5 + ((double) i / (double) tables.size()) * 85);
-                task.tableStarted(attempt, tableRef, i, progressBase);
-
-                Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
-                        agentNode, connection, tableRef);
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> columns =
-                        (List<Map<String, Object>>) columnResult.get("columns");
-                if (includeStructure) {
-                    artifacts.writeJson(workDir.resolve("structure").resolve(
-                            sanitizeFileName(entryName) + ".columns.json"), columnResult);
-                }
-                if (includeData) {
-                    Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
-                    try (BufferedWriter writer = artifacts.openCsv(csvPath)) {
-                        csvExporter.write(writer, agentNode, connection, tableRef, columns,
-                                progress(task, progressBase, 95, attempt));
-                    }
-                }
-                if (task.checkStopped(attempt)) {
-                    return;
-                }
-                task.tableCompleted(attempt, i + 1);
+            Map<String, Object> columnResult = agentNodeSqlService.getTableColumns(
+                    agentNode, connection, tableRef);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> columns =
+                    (List<Map<String, Object>>) columnResult.get("columns");
+            if (includeStructure) {
+                artifacts.writeJson(workDir.resolve("structure").resolve(
+                        sanitizeFileName(entryName) + ".columns.json"), columnResult);
             }
-
-            Map<String, Object> manifest = new LinkedHashMap<String, Object>();
-            manifest.put("objectRef", namespaceRef.toMap());
-            manifest.put("tableCount", Integer.valueOf(tables.size()));
-            manifest.put("includeStructure", Boolean.valueOf(includeStructure));
-            manifest.put("includeData", Boolean.valueOf(includeData));
-            manifest.put("exportTime", Instant.now().toString());
-            manifest.put("tables", tables.stream().map(SqlObjectRef::toMap).toList());
-            artifacts.writeJson(workDir.resolve("manifest.json"), manifest);
-
-            artifacts.zipDirectory(workDir, finalPath);
-            if (task.checkStopped(attempt)) {
-                return;
+            if (includeData) {
+                Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
+                try (BufferedWriter writer = artifacts.openCsv(csvPath)) {
+                    csvExporter.write(writer, agentNode, connection, tableRef, columns,
+                            progress(task, progressBase, 95, attempt));
+                }
             }
-            task.completeDatabase(attempt, tables.size(), artifacts.size(finalPath));
-        } catch (Exception e) {
-            task.failUnlessStopped(attempt, e);
-        } finally {
-            task.persist();
+            if (task.checkStopped(attempt)) return;
+            task.tableCompleted(attempt, i + 1);
         }
+
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("objectRef", namespaceRef.toMap());
+        manifest.put("tableCount", tables.size());
+        manifest.put("includeStructure", includeStructure);
+        manifest.put("includeData", includeData);
+        manifest.put("exportTime", Instant.now().toString());
+        manifest.put("tables", tables.stream().map(SqlObjectRef::toMap).toList());
+        artifacts.writeJson(workDir.resolve("manifest.json"), manifest);
+
+        artifacts.zipDirectory(workDir, finalPath);
+        if (task.checkStopped(attempt)) return;
+        task.completeDatabase(attempt, tables.size(), artifacts.size(finalPath));
     }
 
     private SqlTableCsvExporter.Progress progress(SqlExportTask task, int start, int end, SqlExportTask.Attempt attempt) {
