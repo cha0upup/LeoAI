@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.concurrent.CompletableFuture;
 
-/** 执行 节点 AI 的一个主对话 Turn。 */
+/** 执行节点 AI 的一个主对话 Turn。 */
 @Service
 public class NodeAiTurnService {
 
@@ -29,39 +29,20 @@ public class NodeAiTurnService {
     private final AiTurnPresenter turnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
-    private final AiExecutionClaimService executionClaimService;
     private final AiModelChannelResolver channelResolver;
 
     public NodeAiTurnService(AiConversationStoreService conversationStore,
-                                   NodeAiAgentRegistry agentRegistry,
-                                   AiTurnPresenter turnPresenter,
-                                   AiTurnCoordinator turnCoordinator,
-                                   AiTurnOrchestrator turnOrchestrator,
-                                   AiExecutionClaimService executionClaimService,
-                                   AiModelChannelResolver channelResolver) {
+                             NodeAiAgentRegistry agentRegistry,
+                             AiTurnPresenter turnPresenter,
+                             AiTurnCoordinator turnCoordinator,
+                             AiTurnOrchestrator turnOrchestrator,
+                             AiModelChannelResolver channelResolver) {
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.turnPresenter = turnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
-        this.executionClaimService = executionClaimService;
         this.channelResolver = channelResolver;
-    }
-
-    public boolean tryClaimExecution(AiThread thread) {
-        return executionClaimService.tryClaim(
-                thread, thread.getThreadId(),
-                () -> thread.stop("执行租约已转移"),
-                error -> logger.warn("获取 Node AI 执行租约失败, threadId={}: {}",
-                        thread.getThreadId(), error.getMessage()));
-    }
-
-    public void failDetachedExecution(AiThread thread) {
-        turnCoordinator.failAndRelease(thread);
-    }
-
-    public void releaseExecutionLease(AiThread thread) {
-        executionClaimService.release(thread, thread != null ? thread.getThreadId() : null);
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(

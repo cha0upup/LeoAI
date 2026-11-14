@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
+import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnOutcome;
 import org.leo.ai.service.AiUserInputService;
@@ -27,16 +28,20 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AiTurnApplicationServiceTest {
@@ -56,7 +61,7 @@ class AiTurnApplicationServiceTest {
 
         verify(fixture.protocol).failStart("turn-1", "节点会话已失效，请重新连接节点后重新提交任务", null);
         verify(fixture.protocol, never()).requeue(anyString());
-        verify(fixture.agentTurns, never()).tryClaimExecution(any());
+        verifyNoInteractions(fixture.claims);
         fixture.verifyReleased(false);
     }
 
@@ -70,7 +75,7 @@ class AiTurnApplicationServiceTest {
 
         verify(fixture.protocol).failStart("turn-1", "thread no longer accessible", null);
         verify(fixture.protocol, never()).requeue(anyString());
-        verify(fixture.agentTurns, never()).tryClaimExecution(any());
+        verifyNoInteractions(fixture.claims);
     }
 
     @ParameterizedTest
@@ -203,8 +208,65 @@ class AiTurnApplicationServiceTest {
         assertEquals("user-1", request.userItemId());
         assertEquals("assistant-1", request.assistantItemId());
         assertNotNull(request.audit());
+        assertEquals(agent ? AiChatAuditEntry.SessionType.AGENT : AiChatAuditEntry.SessionType.PLATFORM,
+                request.audit().getSessionType());
+        assertEquals(agent ? "session-1" : null, request.audit().getSessionId());
+        assertEquals("actor-1", request.audit().getUserId());
+        assertEquals("alice", request.audit().getUserName());
+        assertEquals("normal", request.audit().getPrivilege());
+        assertEquals("hello", request.audit().getMessageSummary());
+        verify(fixture.auditLogStore).append(request.audit());
         assertTrue(request.startMs() >= beforeStart && request.startMs() <= System.currentTimeMillis());
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.COMPLETED, null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void leaseDenialRequeuesWithoutStartingExecutionOrWritingAudit(boolean agent) {
+        Fixture fixture = fixture(agent);
+        doReturn(false).when(fixture.claims).tryClaim(eq(fixture.state), eq("thread-1"), any(), any());
+
+        assertFalse(fixture.application.execute(fixture.turn).join());
+
+        verify(fixture.protocol).requeue("turn-1");
+        assertNull(fixture.state.getActiveLeaseToken());
+        verifyNoInteractions(fixture.auditLogStore, fixture.platformTurns, fixture.agentTurns);
+        fixture.verifyFailed(false);
+        fixture.verifyReleased(false);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void lostLeaseStopsTheOwningRuntimeAndPreservesPlatformWarnings(boolean agent) {
+        Fixture fixture = fixture(agent);
+        var terminal = fixture.application.execute(fixture.turn);
+        ArgumentCaptor<Runnable> callback = ArgumentCaptor.forClass(Runnable.class);
+        verify(fixture.claims).tryClaim(eq(fixture.state), eq("thread-1"), callback.capture(), any());
+
+        callback.getValue().run();
+
+        assertTrue(fixture.state.isStopRequested());
+        assertEquals("执行租约已转移", fixture.state.getStopReason());
+        assertEquals(!agent, fixture.state.getAiSseEventQueue().stream()
+                .anyMatch(event -> "warn".equals(event.name()) && "执行租约已转移".equals(event.data())));
+        fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.CANCELLED, "执行租约已转移"));
+        assertTrue(terminal.join());
+        fixture.verifyReleased(true);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void auditFailureClosesTheTurnAndReleasesItsLeaseBeforeExecution(boolean agent) {
+        Fixture fixture = fixture(agent);
+        doThrow(new IllegalStateException("audit unavailable"))
+                .when(fixture.auditLogStore).append(any(AiChatAuditEntry.class));
+
+        assertTrue(fixture.application.execute(fixture.turn).join());
+
+        verify(fixture.protocol).failStart("turn-1", "audit unavailable", "lease-1");
+        verifyNoInteractions(fixture.platformTurns, fixture.agentTurns);
+        fixture.verifyFailed(true);
+        fixture.verifyReleased(true);
     }
 
     private static Fixture fixture(boolean agent) {
@@ -216,11 +278,13 @@ class AiTurnApplicationServiceTest {
         NodeAiTurnService agentTurns = mock(NodeAiTurnService.class);
         AiAuditLogStore auditLogStore = mock(AiAuditLogStore.class);
         AiUserInputService userInputService = mock(AiUserInputService.class);
+        AiExecutionClaimService claims = mock(AiExecutionClaimService.class);
+        AiTurnCoordinator coordinator = mock(AiTurnCoordinator.class);
         when(userInputService.resumePrompt(anyString(), nullable(String.class), anyString()))
                 .thenAnswer(invocation -> "resumed: " + invocation.getArgument(2));
         AiTurnApplicationService application = new AiTurnApplicationService(
                 protocol, store, platformThreads, platformTurns,
-                agentThreads, agentTurns, auditLogStore, userInputService);
+                agentThreads, agentTurns, auditLogStore, userInputService, claims, coordinator);
 
         AiThreadRecord persisted = new AiThreadRecord();
         persisted.setThreadId("thread-1");
@@ -236,31 +300,25 @@ class AiTurnApplicationServiceTest {
             AgentNodeSessionContainer.addSession("session-1", session);
             when(agentThreads.ensureThreadReady(session, "thread-1", null))
                     .thenReturn(new NodeAiThreadService.ThreadResolution(thread, null));
-            when(agentTurns.tryClaimExecution(thread)).thenAnswer(invocation -> {
-                thread.bindActiveLeaseToken("lease-1");
-                return true;
-            });
             when(agentTurns.executeChat(eq(session), eq(thread), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);
         } else {
             PlatformAiState platformState = PlatformAiStateStore.create("thread-1");
             state = platformState;
-            when(platformTurns.tryClaimExecution(platformState)).thenAnswer(invocation -> {
-                platformState.bindActiveLeaseToken("lease-1");
-                return true;
-            });
-            AiChatAuditEntry audit = mock(AiChatAuditEntry.class);
-            when(platformTurns.appendChatAudit(any(AiExecutionPolicy.class), eq("hello"))).thenReturn(audit);
             when(platformTurns.executeChat(eq(platformState), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);
         }
+        when(claims.tryClaim(eq(state), eq("thread-1"), any(), any())).thenAnswer(invocation -> {
+            state.bindActiveLeaseToken("lease-1");
+            return true;
+        });
         String scope = agent ? AiTurnCommandPayload.SCOPE_AGENT : AiTurnCommandPayload.SCOPE_PLATFORM;
 
         AiTurnCommandPayload command = AiTurnCommandPayload.create(
                 scope,
                 "session-1", "hello", "guarded hello", null, "high",
                 List.of(Map.of("name", "context.txt", "content", "context")),
-                AiExecutionPolicy.defaultPolicy()).answerTo("question-1");
+                new AiExecutionPolicy("actor-1", "alice", "normal")).answerTo("question-1");
         AiTurnProtocolService.TurnSnapshot turn = new AiTurnProtocolService.TurnSnapshot(
                 "turn-1", "thread-1", "running", "client-1",
                 "user-1", "assistant-1", 1L, 2L, null,
@@ -273,7 +331,8 @@ class AiTurnApplicationServiceTest {
 
         when(protocol.failStart(eq("turn-1"), anyString(), nullable(String.class)))
                 .thenAnswer(invocation -> completedTurn("failed", invocation.getArgument(1)));
-        return new Fixture(application, protocol, platformTurns, agentTurns, agentThreads, state, runtime, turn);
+        return new Fixture(application, protocol, platformTurns, agentTurns, agentThreads,
+                claims, coordinator, auditLogStore, state, runtime, turn);
     }
 
     private static AiTurnProtocolService.TurnSnapshot completedTurn(
@@ -295,17 +354,18 @@ class AiTurnApplicationServiceTest {
             PlatformAiTurnService platformTurns,
             NodeAiTurnService agentTurns,
             NodeAiThreadService agentThreads,
+            AiExecutionClaimService claims,
+            AiTurnCoordinator coordinator,
+            AiAuditLogStore auditLogStore,
             AiRuntimeState state,
             CompletableFuture<AiTurnOrchestrator.TerminalResult> runtime,
             AiTurnProtocolService.TurnSnapshot turn) {
         private void verifyReleased(boolean released) {
-            if (state instanceof AiThread thread) verify(agentTurns, times(released ? 1 : 0)).releaseExecutionLease(thread);
-            else verify(platformTurns, times(released ? 1 : 0)).releaseExecutionLease((PlatformAiState) state);
+            verify(claims, times(released ? 1 : 0)).release(state, "thread-1");
         }
 
         private void verifyFailed(boolean failed) {
-            if (state instanceof AiThread thread) verify(agentTurns, times(failed ? 1 : 0)).failDetachedExecution(thread);
-            else verify(platformTurns, times(failed ? 1 : 0)).failDetachedExecution((PlatformAiState) state);
+            verify(coordinator, times(failed ? 1 : 0)).failAndRelease(state);
         }
     }
 }

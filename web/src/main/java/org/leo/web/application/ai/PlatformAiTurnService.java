@@ -1,6 +1,5 @@
 package org.leo.web.application.ai;
 
-import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnCoordinator;
@@ -9,8 +8,6 @@ import org.leo.ai.runtime.AiTurnOutcome;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.thread.AiConversationStoreService;
-import org.leo.core.entity.AiChatAuditEntry;
-import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiModelConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,61 +15,30 @@ import org.springframework.stereotype.Service;
 
 import java.util.concurrent.CompletableFuture;
 
+/** 执行平台 AI 的一个对话 Turn。 */
 @Service
 public class PlatformAiTurnService {
 
     private static final Logger logger = LoggerFactory.getLogger(PlatformAiTurnService.class);
-    private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
     private final PlatformAiAgentRegistry agentRegistry;
     private final AiTurnPresenter turnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
-    private final AiExecutionClaimService executionClaimService;
     private final AiModelChannelResolver channelResolver;
 
-    public PlatformAiTurnService(AiAuditLogStore auditLogStore,
-                                 AiConversationStoreService conversationStore,
+    public PlatformAiTurnService(AiConversationStoreService conversationStore,
                                  PlatformAiAgentRegistry agentRegistry,
                                  AiTurnPresenter turnPresenter,
                                  AiTurnCoordinator turnCoordinator,
                                  AiTurnOrchestrator turnOrchestrator,
-                                 AiExecutionClaimService executionClaimService,
                                  AiModelChannelResolver channelResolver) {
-        this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.turnPresenter = turnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
-        this.executionClaimService = executionClaimService;
         this.channelResolver = channelResolver;
-    }
-
-    public AiChatAuditEntry appendChatAudit(AiExecutionPolicy policy, String message) {
-        AiChatAuditEntry audit = AiChatAuditEntry.platform(
-                policy.getUserId(),
-                policy.getUserName(),
-                policy.getPrivilege(),
-                message);
-        auditLogStore.append(audit);
-        return audit;
-    }
-
-    public boolean tryClaimExecution(PlatformAiState state) {
-        return executionClaimService.tryClaim(
-                state, state.getStateId(),
-                () -> state.stopGeneration("执行租约已转移"),
-                error -> logger.warn("获取平台 AI 执行租约失败, threadId={}: {}",
-                        state.getStateId(), error.getMessage()));
-    }
-
-    public void failDetachedExecution(PlatformAiState state) {
-        turnCoordinator.failAndRelease(state);
-    }
-
-    public void releaseExecutionLease(PlatformAiState state) {
-        executionClaimService.release(state, state != null ? state.getStateId() : null);
     }
 
     public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(
