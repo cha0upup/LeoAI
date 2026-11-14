@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.web.infrastructure.concurrent.AiExecutionExecutor;
+import org.mockito.invocation.InvocationOnMock;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -37,10 +40,7 @@ class AiTurnQueueServiceTest {
     @BeforeEach
     void captureScheduledTasksAndClaimTheQueuedTurn() {
         when(executor.tryAcquireTurn()).thenReturn(true);
-        when(executor.submitChat(any())).thenAnswer(invocation -> {
-            submitted.add(invocation.getArgument(0));
-            return CompletableFuture.completedFuture(null);
-        });
+        doAnswer(this::captureTask).when(executor).submitChat(any());
         when(protocol.findNextQueued("thread-1")).thenReturn(turn);
         when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
         when(application.execute(turn)).thenReturn(completion);
@@ -74,37 +74,45 @@ class AiTurnQueueServiceTest {
         verify(executor, never()).releaseTurn();
     }
 
+    @Test
+    void skipsUnclaimedTurnsAndReleasesTheirExecutionSlot() {
+        when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, false));
+        queue.signal("thread-1");
+        submitted.get(0).run();
+
+        verify(executor).releaseTurn();
+        verify(application, never()).execute(any());
+        queue.signal("thread-1");
+        assertEquals(2, submitted.size());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"lookup", "claim", "execute", "missing-future"})
+    void startupFailuresReleaseTheScheduleAndAnyAcquiredSlot(String failure) {
+        IllegalStateException error = new IllegalStateException("startup failed");
+        switch (failure) {
+            case "lookup" -> when(protocol.findNextQueued("thread-1")).thenThrow(error);
+            case "claim" -> when(protocol.tryStart("turn-1")).thenThrow(error);
+            case "execute" -> when(application.execute(turn)).thenThrow(error);
+            case "missing-future" -> when(application.execute(turn)).thenReturn(null);
+            default -> throw new IllegalArgumentException(failure);
+        }
+        queue.signal("thread-1");
+
+        assertThrows(RuntimeException.class, () -> submitted.get(0).run());
+        queue.signal("thread-1");
+
+        assertEquals(2, submitted.size());
+        verify(executor, times("lookup".equals(failure) ? 0 : 1)).releaseTurn();
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void releasesExecutionSlotAfterAnUnclaimedTurnOrStartupFailure(boolean claimed) {
-        when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, claimed));
-        when(application.execute(turn)).thenThrow(new IllegalStateException("startup failed"));
-        queue.signal("thread-1");
-
-        if (claimed) assertThrows(IllegalStateException.class, () -> submitted.get(0).run());
-        else submitted.get(0).run();
-
-        verify(executor).releaseTurn();
-        queue.signal("thread-1");
-        assertEquals(2, submitted.size());
-    }
-
-    @Test
-    void releasesLocalScheduleWhenTurnIsRequeued() {
-        completion.complete(false);
+    void releasesLocalScheduleWhenTurnIsRequeuedOrFails(boolean failed) {
         queue.signal("thread-1");
         submitted.get(0).run();
-        queue.signal("thread-1");
-
-        assertEquals(2, submitted.size());
-        verify(executor).releaseTurn();
-    }
-
-    @Test
-    void releasesLocalScheduleWhenTurnFutureFails() {
-        queue.signal("thread-1");
-        submitted.get(0).run();
-        completion.completeExceptionally(new IllegalStateException("boom"));
+        if (failed) completion.completeExceptionally(new IllegalStateException("boom"));
+        else completion.complete(false);
         queue.signal("thread-1");
 
         assertEquals(2, submitted.size());
@@ -123,14 +131,61 @@ class AiTurnQueueServiceTest {
 
     @Test
     void defersPersistedTurnsOnBackpressureWithoutChangingStrictSignalsOrBlockingRecovery() {
-        when(executor.submitChat(any())).thenThrow(new RejectedExecutionException("fixture busy"))
-                .thenThrow(new RejectedExecutionException("fixture busy"))
-                .thenReturn(CompletableFuture.completedFuture(null));
+        doThrow(new RejectedExecutionException("fixture busy"))
+                .doThrow(new RejectedExecutionException("fixture busy"))
+                .doAnswer(this::captureTask).when(executor).submitChat(any());
         assertThrows(RejectedExecutionException.class, () -> queue.signal("thread-1"));
         assertDoesNotThrow(() -> queue.signalPersistedTurn("thread-1",
                 new AiTurnProtocolService.Reservation(turn, false)));
         when(protocol.listDispatchableThreadIds()).thenReturn(List.of("thread-1"));
         queue.recoverQueuedTurns();
         verify(executor, times(3)).submitChat(any());
+    }
+
+    @Test
+    void recoveryContinuesAfterBackpressureAndRetriesRejectedThreads() {
+        when(protocol.listDispatchableThreadIds()).thenReturn(List.of("thread-1", "thread-2"));
+        doThrow(new RejectedExecutionException("fixture busy"))
+                .doAnswer(this::captureTask).when(executor).submitChat(any());
+
+        assertDoesNotThrow(queue::recoverQueuedTurns);
+        assertEquals(1, submitted.size());
+        queue.recoverQueuedTurns();
+        assertEquals(2, submitted.size());
+        verify(executor, times(3)).submitChat(any());
+    }
+
+    @Test
+    void rejectedContinuationReleasesTheScheduleForRecovery() {
+        queue.signal("thread-1");
+        submitted.get(0).run();
+        doThrow(new RejectedExecutionException("fixture busy")).when(executor).submitChat(any());
+
+        completion.complete(true);
+
+        doAnswer(this::captureTask).when(executor).submitChat(any());
+        queue.signal("thread-1");
+        assertEquals(2, submitted.size());
+        verify(executor).releaseTurn();
+    }
+
+    @Test
+    void idleRecheckFailureKeepsANewerScheduleReserved() {
+        when(protocol.findNextQueued("thread-1")).thenReturn(null).thenAnswer(invocation -> {
+            queue.signal("thread-1");
+            throw new IllegalStateException("recheck failed");
+        });
+        queue.signal("thread-1");
+
+        assertThrows(IllegalStateException.class, () -> submitted.get(0).run());
+        queue.signal("thread-1");
+
+        assertEquals(2, submitted.size());
+        verify(executor, never()).tryAcquireTurn();
+    }
+
+    private CompletableFuture<Void> captureTask(InvocationOnMock invocation) {
+        submitted.add(invocation.getArgument(0));
+        return CompletableFuture.completedFuture(null);
     }
 }

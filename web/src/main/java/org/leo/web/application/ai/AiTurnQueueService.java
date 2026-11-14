@@ -32,6 +32,10 @@ public class AiTurnQueueService {
                 || !scheduledThreads.add(threadId)) {
             return;
         }
+        submitDrain(threadId);
+    }
+
+    private void submitDrain(String threadId) {
         try {
             executor.submitChat(() -> drain(threadId));
         } catch (RejectedExecutionException error) {
@@ -45,24 +49,33 @@ public class AiTurnQueueService {
         if (reservation.reused() && !AiTurnProtocolService.STATUS_QUEUED.equals(reservation.turn().status())) {
             return;
         }
-        try {
-            signal(threadId);
-        } catch (RejectedExecutionException ignored) {
-            // The command is already durable; the periodic scheduler will recover it.
-        }
+        trySignal(threadId);
     }
 
     @Scheduled(fixedDelayString = "${leo.ai.turn-dispatch-ms:2000}",
             initialDelayString = "${leo.ai.turn-dispatch-ms:2000}")
     public void recoverQueuedTurns() {
         for (String threadId : protocol.listDispatchableThreadIds()) {
+            trySignal(threadId);
+        }
+    }
+
+    private void trySignal(String threadId) {
+        try {
             signal(threadId);
+        } catch (RejectedExecutionException ignored) {
+            // The command is already durable; the periodic scheduler will retry it.
         }
     }
 
     private void drain(String threadId) {
-        AiTurnProtocolService.TurnSnapshot next =
-                protocol.findNextQueued(threadId);
+        AiTurnProtocolService.TurnSnapshot next;
+        try {
+            next = protocol.findNextQueued(threadId);
+        } catch (RuntimeException error) {
+            scheduledThreads.remove(threadId);
+            throw error;
+        }
         if (next == null) {
             releaseAndResignal(threadId);
             return;
@@ -88,12 +101,7 @@ public class AiTurnQueueService {
                 scheduledThreads.remove(threadId);
                 return;
             }
-            try {
-                executor.submitChat(() -> drain(threadId));
-            } catch (RejectedExecutionException rejected) {
-                scheduledThreads.remove(threadId);
-                throw rejected;
-            }
+            submitDrain(threadId);
         });
     }
 
