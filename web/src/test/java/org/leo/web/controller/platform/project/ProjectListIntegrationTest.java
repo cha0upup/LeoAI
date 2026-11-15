@@ -13,6 +13,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
@@ -26,6 +29,7 @@ import org.leo.web.application.agent.SessionLifecycleManager;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.interceptor.LoginInterceptor;
+import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,7 +47,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-/** 使用实际 SQLite schema 和 MyBatis 映射验证项目列表、删除契约及查询次数。 */
+/** 使用实际 SQLite schema 和 MyBatis 映射验证项目读写契约及查询次数。 */
 class ProjectListIntegrationTest {
 
     @TempDir Path temp;
@@ -74,6 +78,58 @@ class ProjectListIntegrationTest {
     void tearDown() {
         if (sqlSession != null) sqlSession.close();
         AgentNodeSessionContainer.clearAllSessions();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false, public", "false, ' public '", "true, public", "true, ' public '"})
+    void nonAdministratorsCannotPublishProjectsWithPaddedPermissions(boolean update, String permission) {
+        if (update) project("owned", "user-1", "private", "active", "Original");
+        Project input = new Project();
+        input.setProjectId("owned");
+        input.setProjectName("Changed");
+        input.setPermission(permission);
+        MockHttpServletRequest request = requestAs("normal");
+
+        ApiException error = assertThrows(ApiException.class, () -> {
+            if (update) controller.updateProject(request, input);
+            else controller.createProject(request, input);
+        });
+
+        assertEquals(403, error.getCode());
+        assertEquals(update ? 1 : 0, jdbc.queryForObject("SELECT COUNT(*) FROM projects", Integer.class));
+        if (update) {
+            assertEquals("private", jdbc.queryForObject("SELECT permission FROM projects WHERE project_id='owned'", String.class));
+            assertEquals("Original", jdbc.queryForObject("SELECT project_name FROM projects WHERE project_id='owned'", String.class));
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "false, admin, ' public ', public",
+            "true, admin, ' public ', public",
+            "false, normal, ' team ', team",
+            "true, normal, ' team ', team",
+            "false, normal, null, private",
+            "true, normal, null, private"
+    }, nullValues = "null")
+    void authorizedWritesPersistNormalizedPermission(boolean update, String privilege,
+                                                     String permission, String expectedPermission) {
+        if (update) project("owned", "user-1", "private", "active", "Original");
+        Project input = new Project();
+        input.setProjectId("owned");
+        input.setProjectName(" Changed ");
+        input.setPermission(permission);
+        MockHttpServletRequest request = requestAs(privilege);
+
+        var response = update ? controller.updateProject(request, input) : controller.createProject(request, input);
+
+        assertEquals(200, response.get("code"));
+        Project saved = (Project) response.get("data");
+        assertEquals(expectedPermission, saved.getPermission());
+        assertEquals("Changed", saved.getProjectName());
+        assertEquals(expectedPermission, jdbc.queryForObject(
+                "SELECT permission FROM projects WHERE project_id=?", String.class, saved.getProjectId()));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM projects", Integer.class));
     }
 
     @Test
@@ -134,13 +190,9 @@ class ProjectListIntegrationTest {
         attach("kept", "retained-host");
         session("retained-session", "removed", "user-1");
         session("other-session", "kept", "user-1");
-        User owner = new User();
-        owner.setUserId("user-1");
-        owner.setPrivilege("normal");
-        owner.setStatus(1);
-        when(users.getUserById("user-1")).thenReturn(owner);
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/platform/projects/delete");
-        request.getSession(true).setAttribute("user", owner);
+        MockHttpServletRequest request = requestAs("normal");
+        request.setMethod("POST");
+        request.setRequestURI("/platform/projects/delete");
 
         var response = controller.deleteProject(request, new ProjectIdRequest("removed"));
 
@@ -185,6 +237,16 @@ class ProjectListIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private List<ProjectSummary> listAs(String privilege) throws Exception {
+        MockHttpServletRequest request = requestAs(privilege);
+        HandlerMethod handler = new HandlerMethod(controller,
+                ProjectController.class.getMethod("listProjects", HttpServletRequest.class));
+        assertTrue(new LoginInterceptor(permissions).preHandle(request, new MockHttpServletResponse(), handler));
+        var response = controller.listProjects(request);
+        assertEquals(200, response.get("code"));
+        return (List<ProjectSummary>) response.get("data");
+    }
+
+    private MockHttpServletRequest requestAs(String privilege) {
         User user = new User();
         user.setUserId("user-1");
         user.setStatus(1);
@@ -193,12 +255,7 @@ class ProjectListIntegrationTest {
         when(users.getUserById("user-1")).thenReturn(user);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/platform/projects");
         request.getSession(true).setAttribute("user", user);
-        HandlerMethod handler = new HandlerMethod(controller,
-                ProjectController.class.getMethod("listProjects", HttpServletRequest.class));
-        assertTrue(new LoginInterceptor(permissions).preHandle(request, new MockHttpServletResponse(), handler));
-        var response = controller.listProjects(request);
-        assertEquals(200, response.get("code"));
-        return (List<ProjectSummary>) response.get("data");
+        return request;
     }
 
     private void assertTwoProjectQueries() {

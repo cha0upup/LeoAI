@@ -4,7 +4,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
-import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentDirectoryService;
@@ -69,12 +68,10 @@ public class ProjectController {
     public Map<String, Object> createProject(HttpServletRequest request,
                                               @RequestBody Project input) {
         User user = permissionService.requireLogin(request);
-        if (input != null && "public".equals(input.getPermission())
-                && !AccessPolicy.isAdmin(user)) {
-            throw ApiException.forbidden("只有管理员可以创建公开项目");
-        }
         try {
             return ApiResponse.success(projectService.create(input, user));
+        } catch (SecurityException error) {
+            throw ApiException.forbidden(error.getMessage());
         } catch (IllegalArgumentException error) {
             throw ApiException.badRequest(error.getMessage());
         }
@@ -85,11 +82,10 @@ public class ProjectController {
                                               @RequestBody Project input) {
         User user = permissionService.requireLogin(request);
         Project project = requireManageable(input != null ? input.getProjectId() : null, user);
-        if ("public".equals(input.getPermission()) && !AccessPolicy.isAdmin(user)) {
-            throw ApiException.forbidden("只有管理员可以设置公开项目");
-        }
         try {
-            return ApiResponse.success(projectService.update(project, input));
+            return ApiResponse.success(projectService.update(project, input, user));
+        } catch (SecurityException error) {
+            throw ApiException.forbidden(error.getMessage());
         } catch (IllegalArgumentException error) {
             throw ApiException.badRequest(error.getMessage());
         }

@@ -8,6 +8,7 @@ import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.User;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
@@ -28,6 +29,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +37,49 @@ class ProjectServiceTest {
     private final ProjectMapper mapper = mock(ProjectMapper.class);
     private final AgentService agentService = mock(AgentService.class);
     private final ProjectService service = new ProjectService(mapper, agentService);
+
+    @ParameterizedTest
+    @CsvSource({"false, normal", "true, normal", "false, leader", "true, leader"})
+    void publicScopeRequiresAdminWithoutMutatingRejectedProjects(boolean update, String privilege) {
+        User actor = actor(privilege);
+        Project input = project("submitted-owner", "submitted-team", " public ");
+        input.setProjectId("submitted-id");
+        input.setProjectName(" Changed ");
+        Project existing = projectWithId("existing-id");
+        existing.setProjectName("Original");
+        Project target = update ? existing : input;
+        String before = JsonUtil.toJsonString(target);
+
+        assertThrows(SecurityException.class, () -> {
+            if (update) service.update(existing, input, actor);
+            else service.create(input, actor);
+        });
+
+        assertEquals(before, JsonUtil.toJsonString(target));
+        verifyNoInteractions(mapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void invalidStatusIsRejectedBeforeAnyProjectFieldsChange(boolean update) {
+        Project input = project("submitted-owner", "submitted-team", "team");
+        input.setProjectId("submitted-id");
+        input.setProjectName(" Changed ");
+        input.setStatus("invalid");
+        Project existing = projectWithId("existing-id");
+        existing.setProjectName("Original");
+        Project target = update ? existing : input;
+        String before = JsonUtil.toJsonString(target);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> {
+            if (update) service.update(existing, input, actor("normal"));
+            else service.create(input, actor("normal"));
+        });
+
+        assertEquals("项目状态值无效", error.getMessage());
+        assertEquals(before, JsonUtil.toJsonString(target));
+        verifyNoInteractions(mapper);
+    }
 
     @Test
     void groupsAllHostCountsWithOneMapperCall() {
@@ -215,6 +260,14 @@ class ProjectServiceTest {
         project.setTeamId(teamId);
         project.setPermission(permission);
         return project;
+    }
+
+    private static User actor(String privilege) {
+        User user = new User();
+        user.setUserId("user-1");
+        user.setTeamId("team-1");
+        user.setPrivilege(privilege);
+        return user;
     }
 
     private static Project projectWithId(String projectId) {

@@ -76,13 +76,16 @@ public class ProjectService {
 
     public Project create(Project input, User owner) {
         if (input == null || owner == null) throw new IllegalArgumentException("项目参数不能为空");
+        String permission = normalizePermission(input.getPermission(), owner);
+        String name = requireName(input.getProjectName());
+        String status = normalizeStatus(input.getStatus());
         String now = now();
         input.setProjectId(UUID.randomUUID().toString());
-        input.setProjectName(requireName(input.getProjectName()));
+        input.setProjectName(name);
         input.setProjectCode(trimToNull(input.getProjectCode()));
         input.setDescription(trimToNull(input.getDescription()));
-        input.setStatus(normalizeStatus(input.getStatus()));
-        input.setPermission(normalizePermission(input.getPermission()));
+        input.setStatus(status);
+        input.setPermission(permission);
         input.setOwnerUserId(owner.getUserId());
         input.setTeamId("team".equals(input.getPermission()) ? owner.getTeamId() : trimToNull(input.getTeamId()));
         input.setCreateTime(now);
@@ -91,13 +94,16 @@ public class ProjectService {
         return input;
     }
 
-    public Project update(Project existing, Project changes) {
-        if (existing == null || changes == null) throw new IllegalArgumentException("项目参数不能为空");
-        existing.setProjectName(requireName(changes.getProjectName()));
+    public Project update(Project existing, Project changes, User actor) {
+        if (existing == null || changes == null || actor == null) throw new IllegalArgumentException("项目参数不能为空");
+        String permission = normalizePermission(changes.getPermission(), actor);
+        String name = requireName(changes.getProjectName());
+        String status = normalizeStatus(changes.getStatus());
+        existing.setProjectName(name);
         existing.setProjectCode(trimToNull(changes.getProjectCode()));
         existing.setDescription(trimToNull(changes.getDescription()));
-        existing.setPermission(normalizePermission(changes.getPermission()));
-        existing.setStatus(normalizeStatus(changes.getStatus()));
+        existing.setPermission(permission);
+        existing.setStatus(status);
         String teamId = trimToNull(changes.getTeamId());
         if (teamId != null || !"team".equals(existing.getPermission())) {
             existing.setTeamId(teamId);
@@ -270,10 +276,13 @@ public class ProjectService {
         return name;
     }
 
-    private static String normalizePermission(String value) {
+    private static String normalizePermission(String value, User actor) {
         String permission = trimToNull(value);
         if (permission == null) permission = "private";
         if (!PERMISSIONS.contains(permission)) throw new IllegalArgumentException("项目权限值无效");
+        if ("public".equals(permission) && !AccessPolicy.isAdmin(actor)) {
+            throw new SecurityException("只有管理员可以设置公开项目");
+        }
         return permission;
     }
 
