@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.config.AiAgentProperties;
+import org.leo.core.entity.AiExecutionPolicy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -60,6 +61,50 @@ class AiToolExecutionBoundaryTest {
         assertEquals("ready", envelope.get("data"));
         assertEquals(false, envelope.get("retryable"));
         assertEquals("READ_ONLY", metadata(envelope).get("operation"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void propagatesContextAndClearsReusedWorkerThreadsEvenAfterFailure(boolean failed) throws Exception {
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        executors.add(worker);
+        AiToolExecutionBoundary boundary = new AiToolExecutionBoundary(
+                new AiAgentProperties(), worker, new AiToolResultArchive());
+        AiToolDescriptor descriptor = descriptor("getItem", AiToolOperation.READ_ONLY);
+        AiToolContext.setFromMemoryId("session:thread");
+        AiToolContext.setPlanStepIndex(4);
+        AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user-1", "user", null));
+        AiToolContext.setToolDescriptor(descriptor);
+        ToolExecutor delegate = (request, memoryId) -> {
+            assertEquals("session", AiToolContext.requireSessionId());
+            assertEquals("thread", AiToolContext.getThreadId());
+            assertEquals(4, AiToolContext.getPlanStepIndex());
+            assertEquals("user-1", AiToolContext.requireExecutionPolicy().getUserId());
+            assertEquals(descriptor, AiToolContext.getToolDescriptor());
+            if (failed) throw new IllegalStateException("fixture failure");
+            return "done";
+        };
+
+        if (failed) {
+            IllegalStateException error = assertThrows(IllegalStateException.class, () -> boundary.execute(
+                    AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                    descriptor, delegate, request("context-call", "getItem"), context("session:thread")));
+            assertEquals("fixture failure", error.getMessage());
+        } else {
+            boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                    descriptor, delegate, request("context-call", "getItem"), context("session:thread"));
+        }
+
+        worker.submit(() -> {
+            assertNull(AiToolContext.getSessionId());
+            assertNull(AiToolContext.getThreadId());
+            assertEquals(-1, AiToolContext.getPlanStepIndex());
+            assertNull(AiToolContext.getToolDescriptor());
+            assertThrows(SecurityException.class, AiToolContext::requireExecutionPolicy);
+        }).get(5, TimeUnit.SECONDS);
+        assertEquals("session", AiToolContext.requireSessionId());
+        assertEquals(4, AiToolContext.getPlanStepIndex());
+        assertEquals("user-1", AiToolContext.requireExecutionPolicy().getUserId());
     }
 
     @Test

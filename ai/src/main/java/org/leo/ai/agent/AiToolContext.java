@@ -13,18 +13,14 @@ import org.leo.core.entity.AiExecutionPolicy;
  */
 public final class AiToolContext {
 
-    private record Ctx(String sessionId, String threadId) {}
-
     /** 跨执行器传播工具上下文所需的最小快照。 */
     public record Snapshot(String sessionId, String threadId,
                            int planStepIndex,
                            AiExecutionPolicy executionPolicy,
                            AiToolDescriptor toolDescriptor) {}
 
-    private static final ThreadLocal<Ctx> HOLDER = new ThreadLocal<>();
-    private static final ThreadLocal<Integer> PLAN_STEP_INDEX = new ThreadLocal<>();
-    private static final ThreadLocal<AiExecutionPolicy> EXECUTION_POLICY = new ThreadLocal<>();
-    private static final ThreadLocal<AiToolDescriptor> TOOL_DESCRIPTOR = new ThreadLocal<>();
+    private static final Snapshot EMPTY = new Snapshot(null, null, -1, null, null);
+    private static final ThreadLocal<Snapshot> HOLDER = new ThreadLocal<>();
 
     private AiToolContext() {}
 
@@ -32,57 +28,46 @@ public final class AiToolContext {
 
     /** 从 memoryId 解析 sessionId + threadId。 */
     public static void setFromMemoryId(Object memoryId) {
-        if (memoryId == null) {
-            HOLDER.remove();
-            return;
-        }
-        String value = String.valueOf(memoryId);
+        String value = memoryId != null ? String.valueOf(memoryId) : "";
         int sep = value.indexOf(':');
         String sessionId = sep > 0 ? value.substring(0, sep) : value;
         String threadId  = (sep > 0 && sep < value.length() - 1) ? value.substring(sep + 1) : null;
-        HOLDER.set(new Ctx(
+        Snapshot current = current();
+        HOLDER.set(new Snapshot(
                 sessionId.isBlank() ? null : sessionId,
-                threadId != null && threadId.isBlank() ? null : threadId));
+                threadId != null && threadId.isBlank() ? null : threadId,
+                current.planStepIndex(), current.executionPolicy(), current.toolDescriptor()));
     }
 
     /** 清除当前线程所有上下文。在 afterToolExecution 钩子中调用。 */
     public static void clear() {
         HOLDER.remove();
-        PLAN_STEP_INDEX.remove();
-        EXECUTION_POLICY.remove();
-        TOOL_DESCRIPTOR.remove();
     }
 
     public static Snapshot capture() {
-        Ctx ctx = HOLDER.get();
+        Snapshot current = current();
         return new Snapshot(
-                ctx != null ? ctx.sessionId() : null,
-                ctx != null ? ctx.threadId() : null,
-                getPlanStepIndex(),
+                current.sessionId(), current.threadId(), current.planStepIndex(),
                 getExecutionPolicy(), getToolDescriptor());
     }
 
     public static void restore(Snapshot snapshot) {
-        clear();
-        if (snapshot == null) return;
-        if (snapshot.sessionId() != null || snapshot.threadId() != null) {
-            HOLDER.set(new Ctx(snapshot.sessionId(), snapshot.threadId()));
+        if (snapshot == null) {
+            clear();
+            return;
         }
-        setPlanStepIndex(snapshot.planStepIndex());
-        setExecutionPolicy(snapshot.executionPolicy());
-        setToolDescriptor(snapshot.toolDescriptor());
+        HOLDER.set(new Snapshot(snapshot.sessionId(), snapshot.threadId(),
+                Math.max(-1, snapshot.planStepIndex()), snapshot.executionPolicy(), snapshot.toolDescriptor()));
     }
 
     // ── 基本字段 ─────────────────────────────────────────────────────────────
 
     public static String getSessionId() {
-        Ctx ctx = HOLDER.get();
-        return ctx != null ? ctx.sessionId() : null;
+        return current().sessionId();
     }
 
     public static String getThreadId() {
-        Ctx ctx = HOLDER.get();
-        return ctx != null ? ctx.threadId() : null;
+        return current().threadId();
     }
 
     public static String requireSessionId() {
@@ -95,20 +80,18 @@ public final class AiToolContext {
     }
 
     public static void setExecutionPolicy(AiExecutionPolicy policy) {
-        if (policy == null) {
-            EXECUTION_POLICY.remove();
-        } else {
-            EXECUTION_POLICY.set(policy);
-        }
+        Snapshot current = current();
+        HOLDER.set(new Snapshot(current.sessionId(), current.threadId(), current.planStepIndex(),
+                policy, current.toolDescriptor()));
     }
 
     public static AiExecutionPolicy getExecutionPolicy() {
-        AiExecutionPolicy policy = EXECUTION_POLICY.get();
+        AiExecutionPolicy policy = current().executionPolicy();
         return policy != null ? policy : AiExecutionPolicy.defaultPolicy();
     }
 
     public static AiExecutionPolicy requireExecutionPolicy() {
-        AiExecutionPolicy policy = EXECUTION_POLICY.get();
+        AiExecutionPolicy policy = current().executionPolicy();
         if (policy == null || policy.getUserId() == null || policy.getUserId().isBlank()) {
             throw new SecurityException("AI 工具调用缺少已认证的执行身份");
         }
@@ -116,29 +99,31 @@ public final class AiToolContext {
     }
 
     public static void setToolDescriptor(AiToolDescriptor descriptor) {
-        if (descriptor == null) TOOL_DESCRIPTOR.remove();
-        else TOOL_DESCRIPTOR.set(descriptor);
+        Snapshot current = current();
+        HOLDER.set(new Snapshot(current.sessionId(), current.threadId(), current.planStepIndex(),
+                current.executionPolicy(), descriptor));
     }
 
     public static AiToolDescriptor getToolDescriptor() {
-        return TOOL_DESCRIPTOR.get();
+        return current().toolDescriptor();
     }
 
     // ── Plan 关联 ────────────────────────────────────────────────────────────
 
     /** 设置当前工具调用所属的 plan 步骤索引。 */
     public static void setPlanStepIndex(int stepIndex) {
-        if (stepIndex < 0) {
-            PLAN_STEP_INDEX.remove();
-        } else {
-            PLAN_STEP_INDEX.set(stepIndex);
-        }
+        Snapshot current = current();
+        HOLDER.set(new Snapshot(current.sessionId(), current.threadId(), Math.max(-1, stepIndex),
+                current.executionPolicy(), current.toolDescriptor()));
     }
 
     /** 获取当前工具调用所属的 plan 步骤索引，-1 表示无关联。 */
     public static int getPlanStepIndex() {
-        Integer v = PLAN_STEP_INDEX.get();
-        return v != null ? v : -1;
+        return current().planStepIndex();
     }
 
+    private static Snapshot current() {
+        Snapshot snapshot = HOLDER.get();
+        return snapshot != null ? snapshot : EMPTY;
+    }
 }
