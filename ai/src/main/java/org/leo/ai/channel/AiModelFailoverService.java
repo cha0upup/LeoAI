@@ -52,23 +52,20 @@ public class AiModelFailoverService {
             throw new IllegalArgumentException("AI 模型不能为空");
         }
         if (tryAcquire(requested.getId())) {
-            return new ModelSelection(requested, requested, false, null,
-                    List.of(requested.getId()));
+            return new ModelSelection(requested, null);
         }
 
-        List<Integer> attempted = new ArrayList<>();
         Set<Integer> visited = new HashSet<>();
         AiModelConfig cursor = requested;
         while (cursor != null && cursor.getId() != null && visited.add(cursor.getId())) {
-            attempted.add(cursor.getId());
             Integer fallbackId = cursor.getFallbackModelId();
-            if (fallbackId == null) break;
+            if (fallbackId == null || visited.contains(fallbackId)) break;
             AiModelConfig candidate = configService.resolve(fallbackId);
             if (!isEligible(candidate)) {
                 break;
             }
             if (tryAcquire(candidate.getId())) {
-                return ModelSelection.failover(requested, candidate, attempted,
+                return new ModelSelection(candidate,
                         "主模型暂时熔断，已切换到备用模型「" + candidate.getName() + "」");
             }
             cursor = candidate;
@@ -86,7 +83,6 @@ public class AiModelFailoverService {
             state.probeUntil = 0L;
             state.lastSuccessAt = clock.getAsLong();
             state.lastCategory = null;
-            state.lastMessage = null;
         }
     }
 
@@ -101,7 +97,6 @@ public class AiModelFailoverService {
             long now = clock.getAsLong();
             state.lastFailureAt = now;
             state.lastCategory = classification.category();
-            state.lastMessage = classification.message();
             boolean recovering = state.probeUntil > 0L;
             state.probeUntil = 0L;
             if (!isTransient(classification.category())) {
@@ -133,7 +128,7 @@ public class AiModelFailoverService {
                     : state.consecutiveFailures > 0 || state.lastFailureAt > state.lastSuccessAt
                     ? "degraded" : "healthy";
             return new HealthSnapshot(configId, status, open, state.consecutiveFailures, state.openUntil,
-                    state.lastCategory, state.lastMessage, state.lastSuccessAt, state.lastFailureAt);
+                    state.lastCategory, state.lastSuccessAt, state.lastFailureAt);
         }
     }
 
@@ -195,25 +190,19 @@ public class AiModelFailoverService {
         private long openUntil;
         private long probeUntil;
         private String lastCategory;
-        private String lastMessage;
         private long lastSuccessAt;
         private long lastFailureAt;
     }
 
-    public record ModelSelection(AiModelConfig requestedConfig, AiModelConfig effectiveConfig,
-                                 boolean failover, String message, List<Integer> attemptedConfigIds) {
-        private static ModelSelection failover(AiModelConfig requested, AiModelConfig effective,
-                                               List<Integer> attempted, String message) {
-            return new ModelSelection(requested, effective, true, message, List.copyOf(attempted));
-        }
+    public record ModelSelection(AiModelConfig effectiveConfig, String message) {
     }
 
     public record HealthSnapshot(Integer configId, String status, boolean circuitOpen,
                                  int consecutiveFailures, long openUntil, String lastCategory,
-                                 String lastMessage, long lastSuccessAt, long lastFailureAt) {
+                                 long lastSuccessAt, long lastFailureAt) {
         private static HealthSnapshot unknown(Integer configId) {
             return new HealthSnapshot(configId, "unknown", false, 0, 0L,
-                    null, null, 0L, 0L);
+                    null, 0L, 0L);
         }
 
         public Map<String, Object> toMap() {

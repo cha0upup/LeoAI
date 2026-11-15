@@ -33,7 +33,7 @@ class PlatformAiAgentRegistryTest {
         PlatformAiAgent secondAgent = mock(PlatformAiAgent.class);
         when(failoverService.selectForExecution(config)).thenReturn(
                 new AiModelFailoverService.ModelSelection(
-                        config, config, false, "运行时提示", List.of(7)));
+                        config, "运行时提示"));
         when(modelProvider.plannedRuntimeCacheKey(config, "medium")).thenReturn("runtime-a");
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(config, "medium")).thenReturn(modelRuntime);

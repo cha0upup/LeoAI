@@ -10,8 +10,6 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,7 +34,7 @@ class NodeAiAgentRegistryTest {
         NodeAiAgent secondAgent = mock(NodeAiAgent.class);
         when(failoverService.selectForExecution(config)).thenReturn(
                 new AiModelFailoverService.ModelSelection(
-                        config, config, false, null, List.of(9)));
+                        config, null));
         when(modelProvider.plannedRuntimeCacheKey(config, "low")).thenReturn("runtime-a");
         when(modelProvider.plannedRuntimeCacheKey(config, "high")).thenReturn("runtime-b");
         when(modelProvider.buildRuntime(eq(config), any())).thenReturn(modelRuntime);

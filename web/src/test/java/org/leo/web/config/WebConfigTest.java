@@ -73,7 +73,7 @@ class WebConfigTest {
         AiModelConfig config = new AiModelConfig();
         config.setId(7);
         when(failover.selectForExecution(config)).thenReturn(new AiModelFailoverService.ModelSelection(
-                config, config, false, null, List.of(7)));
+                config, null));
         when(models.buildRuntime(config, null)).thenReturn(new DynamicModelProvider.ModelRuntime(
                 model, null, "responses", "openai", "https://example.test", "test-model", 4096,
                 false, null, supportsTools, false, 32_768));
