@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
@@ -28,8 +29,9 @@ class AiThreadQueryServiceTest {
     private static final String PLATFORM_THREAD_ID = "platform-query-test";
 
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiEventJournalRepository journal = mock(AiEventJournalRepository.class);
     private final AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
-    private final AiThreadQueryService queries = new AiThreadQueryService(store, protocol);
+    private final AiThreadQueryService queries = new AiThreadQueryService(store, journal, protocol);
 
     @BeforeEach
     void useFallbackProtocolStatus() {
@@ -228,15 +230,15 @@ class AiThreadQueryServiceTest {
         AiRuntimeState runtime = new AiRuntimeState();
         runtime.configureEventJournal(memoryStart, null);
         runtime.claimExecution();
-        when(store.findLatestTurnStartSeq("thread")).thenReturn(persistedStart);
-        when(store.findLastEventSeq("thread")).thenReturn(50L);
+        when(journal.latestTurnStartSequence("thread")).thenReturn(persistedStart);
+        when(journal.lastSequence("thread")).thenReturn(50L);
         when(protocol.snapshotThread("thread", "running"))
                 .thenReturn(new AiTurnProtocolService.ThreadSnapshot("running", true, null, List.of(), null));
 
         Map<String, Object> data = queries.events("thread", runtime, "running", cursor, null);
 
-        verify(store).listEventsAfter("thread", expectedCursor, 200);
-        if (cursor != null && cursor > 0) verify(store, never()).findLatestTurnStartSeq("thread");
+        verify(journal).listAfter("thread", expectedCursor, 200);
+        if (cursor != null && cursor > 0) verify(journal, never()).latestTurnStartSequence("thread");
         assertEquals(50L, data.get("lastSeq"));
         assertEquals("running", data.get("runStatus"));
         assertFalse(data.containsKey("status"));
@@ -250,7 +252,7 @@ class AiThreadQueryServiceTest {
         runtime.configureEventJournal(memorySequence, null);
         runtime.claimExecution();
         runtime.stop("user stopped");
-        when(store.findLastEventSeq("thread")).thenReturn(50L);
+        when(journal.lastSequence("thread")).thenReturn(50L);
         AiUserInputRequest question = mock(AiUserInputRequest.class);
         when(question.toMap()).thenReturn(Map.of("id", "question-1"));
         when(protocol.snapshotThread("thread", "cancelled"))
@@ -264,7 +266,7 @@ class AiThreadQueryServiceTest {
         assertEquals(false, data.get("executing"));
         assertEquals("user stopped", data.get("stopReason"));
         assertEquals(Map.of("id", "question-1"), data.get("pendingUserInput"));
-        verify(store).listEventsAfter("thread", 2L, 10);
+        verify(journal).listAfter("thread", 2L, 10);
     }
 
     @Test
@@ -272,9 +274,9 @@ class AiThreadQueryServiceTest {
         AiSseEvent tagged = new AiSseEvent(41L, 100L, "patch", Map.of("kind", "tool"),
                 "subagent-1", "turn-1", "item-1", "run-1");
         AiSseEvent untagged = new AiSseEvent(42L, 101L, "delta", "hello", null, null, null, null);
-        when(store.findLatestTurnStartSeq("thread")).thenReturn(40L);
-        when(store.findLastEventSeq("thread")).thenReturn(42L);
-        when(store.listEventsAfter("thread", 40L, 200)).thenReturn(List.of(tagged, untagged));
+        when(journal.latestTurnStartSequence("thread")).thenReturn(40L);
+        when(journal.lastSequence("thread")).thenReturn(42L);
+        when(journal.listAfter("thread", 40L, 200)).thenReturn(List.of(tagged, untagged));
         when(protocol.snapshotThread("thread", "completed"))
                 .thenReturn(new AiTurnProtocolService.ThreadSnapshot("completed", false, null, List.of(), null));
 

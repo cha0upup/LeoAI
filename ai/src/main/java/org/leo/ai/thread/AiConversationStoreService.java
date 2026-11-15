@@ -207,7 +207,7 @@ public class AiConversationStoreService {
             turn.put("status", "interrupted");
             turn.put("interruptRequested", true);
             eventJournal.append(threadId, new AiSseEvent(
-                    mapper.findLastEventSeq(threadId) + 1L,
+                    eventJournal.lastSequence(threadId) + 1L,
                     System.currentTimeMillis(),
                     "turn/completed",
                     Map.of("turn", turn),
@@ -250,22 +250,6 @@ public class AiConversationStoreService {
      */
     public void attachEventJournal(String threadId, AiEventStreamRuntime runtime) {
         eventJournal.attach(threadId, runtime);
-    }
-
-    public List<AiSseEvent> listEventsAfter(String threadId, long afterSeq, int limit) {
-        return eventJournal.listAfter(threadId, afterSeq, limit);
-    }
-
-    public long findLastEventSeq(String threadId) {
-        return eventJournal.lastSequence(threadId);
-    }
-
-    public long findLatestTurnStartSeq(String threadId) {
-        return eventJournal.latestTurnStartSequence(threadId);
-    }
-
-    public boolean hasLatestTurnCompletedEvent(String threadId) {
-        return eventJournal.hasLatestTurnCompleted(threadId);
     }
 
     /** 原子创建 Turn，并关联预留 Item、运行记录、追踪信息和执行租约。 */

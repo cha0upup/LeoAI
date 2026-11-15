@@ -3,6 +3,7 @@ package org.leo.web.application.ai;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
@@ -24,11 +25,14 @@ import java.util.Map;
 public class AiThreadQueryService {
 
     private final AiConversationStoreService conversationStore;
+    private final AiEventJournalRepository eventJournal;
     private final AiTurnProtocolService turnProtocolService;
 
     public AiThreadQueryService(AiConversationStoreService conversationStore,
+                                AiEventJournalRepository eventJournal,
                                 AiTurnProtocolService turnProtocolService) {
         this.conversationStore = conversationStore;
+        this.eventJournal = eventJournal;
         this.turnProtocolService = turnProtocolService;
     }
 
@@ -95,13 +99,13 @@ public class AiThreadQueryService {
         long cursor = requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
         long afterSeq = cursor > 0L ? cursor : Math.max(
                 runtime != null ? runtime.getCurrentRunStartSeq() : 0L,
-                conversationStore.findLatestTurnStartSeq(threadId));
+                eventJournal.latestTurnStartSequence(threadId));
         int limit = requestedLimit != null ? requestedLimit : 200;
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("events", conversationStore.listEventsAfter(threadId, afterSeq, limit).stream()
+        data.put("events", eventJournal.listAfter(threadId, afterSeq, limit).stream()
                 .map(AiThreadQueryService::eventPayload).toList());
         data.put("lastSeq", Math.max(runtime != null ? runtime.getLastSseEventSeq() : 0L,
-                conversationStore.findLastEventSeq(threadId)));
+                eventJournal.lastSequence(threadId)));
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
         applyProtocolSnapshot(data, threadId, runStatus);
         return data;

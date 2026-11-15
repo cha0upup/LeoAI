@@ -38,6 +38,7 @@ class AiConversationPersistenceIntegrationTest {
     private AnnotationConfigApplicationContext context;
     private JdbcTemplate jdbc;
     private AiConversationStoreService store;
+    private AiEventJournalRepository journal;
     private AiMessageRepository messages;
     private AiExecutionLeaseRepository leases;
     private AiUserInputRepository requests;
@@ -65,6 +66,7 @@ class AiConversationPersistenceIntegrationTest {
                 AiContextCheckpointRepository.class, AiTurnProtocolService.class);
         context.refresh();
         store = context.getBean(AiConversationStoreService.class);
+        journal = context.getBean(AiEventJournalRepository.class);
         messages = context.getBean(AiMessageRepository.class);
         leases = context.getBean(AiExecutionLeaseRepository.class);
         requests = context.getBean(AiUserInputRepository.class);
@@ -76,6 +78,31 @@ class AiConversationPersistenceIntegrationTest {
     @AfterEach
     void tearDown() {
         if (context != null) context.close();
+    }
+
+    @Test
+    void reattachedRuntimesContinueTheJournalAndReplayRoutingMetadata() {
+        var turn = reserve();
+        var running = beginRun(turn);
+        for (int sequence = 1; sequence <= 2; sequence++) {
+            var runtime = new org.leo.core.session.AiThread("thread-1", "fixture");
+            runtime.bindActiveTurnId(turn.id());
+            runtime.bindActiveItemId(turn.assistantItemId());
+            runtime.bindActiveRunId(running.runId());
+            journal.attach("thread-1", runtime);
+
+            assertEquals(sequence, runtime.recordSseEvent("delta", Map.of("sequence", sequence)).seq());
+        }
+
+        List<AiSseEvent> replay = journal.listAfter("thread-1", 1L, 200);
+        assertEquals(1, replay.size());
+        AiSseEvent event = replay.get(0);
+        assertEquals(2L, event.seq());
+        assertEquals(turn.id(), event.turnId());
+        assertEquals(turn.assistantItemId(), event.itemId());
+        assertEquals(running.runId(), event.runId());
+        assertEquals(Map.of("sequence", 2), event.data());
+        assertEquals(2L, journal.lastSequence("thread-1"));
     }
 
     @Test
@@ -166,7 +193,7 @@ class AiConversationPersistenceIntegrationTest {
         assertTrue(cancelled.interruptRequested());
         assertTrue(protocol.listDispatchableThreadIds().isEmpty());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='discarded'", Integer.class));
-        List<AiSseEvent> events = store.listEventsAfter("thread-1", 0, 200);
+        List<AiSseEvent> events = journal.listAfter("thread-1", 0, 200);
         assertEquals(1, events.size());
         assertEquals("turn/completed", events.get(0).name());
         assertEquals(turn.id(), events.get(0).turnId());
@@ -183,7 +210,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("queued", turns.find(turn.id()).getDispatchStatus());
         assertFalse(turns.find(turn.id()).getInterruptRequested());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='pending'", Integer.class));
-        assertTrue(store.listEventsAfter("thread-1", 0, 200).isEmpty());
+        assertTrue(journal.listAfter("thread-1", 0, 200).isEmpty());
     }
 
     @Test
@@ -353,7 +380,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("running", jdbc.queryForObject("SELECT status FROM ai_runs WHERE run_id=?", String.class, running.runId()));
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='pending'", Integer.class));
         assertEquals("inProgress", turns.find(turn.id()).getProtocolStatus());
-        assertTrue(store.listEventsAfter("thread-1", 0, 200).isEmpty());
+        assertTrue(journal.listAfter("thread-1", 0, 200).isEmpty());
     }
 
     @Test
@@ -389,7 +416,7 @@ class AiConversationPersistenceIntegrationTest {
         assertTrue(protocol.listDispatchableThreadIds().isEmpty());
         assertEquals("failed", store.findThread("thread-1").getRunStatus());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status = 'discarded'", Integer.class));
-        List<AiSseEvent> events = store.listEventsAfter("thread-1", 0L, 200);
+        List<AiSseEvent> events = journal.listAfter("thread-1", 0L, 200);
         assertEquals(1, events.size());
         assertEquals("turn/completed", events.get(0).name());
         assertEquals(turn.id(), events.get(0).turnId());
@@ -417,14 +444,14 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("queued", protocol.failStart(turn.id(), "stale startup failure", null).status());
 
         assertEquals("running", jdbc.queryForObject("SELECT status FROM ai_runs", String.class));
-        assertTrue(store.listEventsAfter("thread-1", 0L, 200).isEmpty());
+        assertTrue(journal.listAfter("thread-1", 0L, 200).isEmpty());
     }
 
     @Test
     void historyCursorIsUnaffectedByNewMessagesAndRetainsProtocolMetadata() {
         var turn = reserve();
         for (int sequence = 3; sequence <= 205; sequence++) appendMessage(turn.id(), sequence);
-        AiThreadQueryService query = new AiThreadQueryService(store, protocol);
+        AiThreadQueryService query = new AiThreadQueryService(store, journal, protocol);
         Map<String, Object> first = query.messages("thread-1", 0, 50, null);
         assertEquals(156L, first.get("nextBeforeSequence"));
         appendMessage(turn.id(), 206);

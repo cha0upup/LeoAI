@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AgentNodeSession;
@@ -235,7 +236,7 @@ class NodeAiThreadServiceTest {
             record.setRunStatus(persistedStatus);
             when(fixture.conversationStore.findThread("thread-1")).thenReturn(record);
         }
-        when(fixture.conversationStore.findLastEventSeq("thread-1")).thenReturn(20L);
+        when(fixture.eventJournal.lastSequence("thread-1")).thenReturn(20L);
 
         Map<String, Object> data = fixture.service.threadEvents(session, "thread-1", 1L, null);
 
@@ -244,7 +245,7 @@ class NodeAiThreadServiceTest {
         assertFalse(data.containsKey("status"));
         assertSame(thread, session.getAiThread("thread-1"));
         assertEquals("active", session.getActiveThreadId());
-        verify(fixture.conversationStore).listEventsAfter("thread-1", 1L, 200);
+        verify(fixture.eventJournal).listAfter("thread-1", 1L, 200);
         verify(fixture.conversationStore, never()).attachEventJournal(anyString(), nullable(AiThread.class));
         verify(fixture.conversationStore, never()).findLatestPlanJson(anyString());
     }
@@ -260,7 +261,7 @@ class NodeAiThreadServiceTest {
 
         assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
                 () -> fixture.service.threadEvents(cacheSession(), "foreign", null, null)).getKind());
-        verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
+        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
     }
 
     @Test
@@ -312,7 +313,7 @@ class NodeAiThreadServiceTest {
         assertSame(cached, session.getAiThread("foreign"));
         assertEquals("original", cached.getTitle());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
-        verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
+        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
     }
@@ -336,7 +337,7 @@ class NodeAiThreadServiceTest {
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
-        verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
+        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
         assertEquals(0, session.listAiThreads().size());
     }
 
@@ -386,6 +387,7 @@ class NodeAiThreadServiceTest {
 
     private static Fixture fixture() {
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
+        AiEventJournalRepository eventJournal = mock(AiEventJournalRepository.class);
         SessionWarmupService sessionWarmupService = mock(SessionWarmupService.class);
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
@@ -397,12 +399,13 @@ class NodeAiThreadServiceTest {
                 conversationStore,
                 sessionWarmupService,
                 agentRegistry,
-                new AiThreadQueryService(conversationStore, protocol));
-        return new Fixture(service, conversationStore, sessionWarmupService, agentRegistry, channels);
+                new AiThreadQueryService(conversationStore, eventJournal, protocol));
+        return new Fixture(service, conversationStore, eventJournal, sessionWarmupService, agentRegistry, channels);
     }
 
     private record Fixture(NodeAiThreadService service,
                            AiConversationStoreService conversationStore,
+                           AiEventJournalRepository eventJournal,
                            SessionWarmupService sessionWarmupService,
                            NodeAiAgentRegistry agentRegistry,
                            AiModelChannelResolver channels) {

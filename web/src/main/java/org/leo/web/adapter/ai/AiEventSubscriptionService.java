@@ -1,6 +1,7 @@
 package org.leo.web.adapter.ai;
 
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
@@ -43,7 +44,8 @@ public class AiEventSubscriptionService {
 
     private final AiExecutionExecutor executor;
     private final AiSseEmitterWriter writer;
-    private final AiConversationStoreService eventStore;
+    private final AiConversationStoreService conversations;
+    private final AiEventJournalRepository eventJournal;
     private final AiProtocolTurnRepository turns;
     private final LongSupplier nanoTime;
     private final ConcurrentHashMap<String, SharedJournal> journals = new ConcurrentHashMap<>();
@@ -51,19 +53,22 @@ public class AiEventSubscriptionService {
     @Autowired
     public AiEventSubscriptionService(AiExecutionExecutor executor,
                                       AiSseEmitterWriter writer,
-                                      AiConversationStoreService eventStore,
+                                      AiConversationStoreService conversations,
+                                      AiEventJournalRepository eventJournal,
                                       AiProtocolTurnRepository turns) {
-        this(executor, writer, eventStore, turns, System::nanoTime);
+        this(executor, writer, conversations, eventJournal, turns, System::nanoTime);
     }
 
     AiEventSubscriptionService(AiExecutionExecutor executor,
                               AiSseEmitterWriter writer,
-                              AiConversationStoreService eventStore,
+                              AiConversationStoreService conversations,
+                              AiEventJournalRepository eventJournal,
                               AiProtocolTurnRepository turns,
                               LongSupplier nanoTime) {
         this.executor = executor;
         this.writer = writer;
-        this.eventStore = eventStore;
+        this.conversations = conversations;
+        this.eventJournal = eventJournal;
         this.turns = turns;
         this.nanoTime = nanoTime;
     }
@@ -85,7 +90,7 @@ public class AiEventSubscriptionService {
         long afterSeq = requestedCursor > 0L
                 ? requestedCursor
                 : Math.max(runtime.getCurrentRunStartSeq(),
-                        eventStore.findLatestTurnStartSeq(threadId));
+                        eventJournal.latestTurnStartSequence(threadId));
         try {
             executor.submitSubscription(() ->
                     stream(source, threadId, runtime, emitter, afterSeq, closed));
@@ -194,7 +199,7 @@ public class AiEventSubscriptionService {
             EventPage page = pages.get(cursor);
             if (page == null) {
                 List<AiSseEvent> events = List.copyOf(
-                        eventStore.listEventsAfter(threadId, cursor, PAGE_SIZE));
+                        eventJournal.listAfter(threadId, cursor, PAGE_SIZE));
                 page = new EventPage(nanoTime.getAsLong(), events);
                 pages.put(cursor, page);
                 if (pages.size() > MAX_CACHED_PAGES) {
@@ -216,7 +221,7 @@ public class AiEventSubscriptionService {
                     && now - stateReadAt < CACHE_NANOS) {
                 return state;
             }
-            long lastSeq = eventStore.findLastEventSeq(threadId);
+            long lastSeq = eventJournal.lastSequence(threadId);
             List<AiTurnRecord> inProgress = turns.listInProgress(threadId);
             boolean protocolExecuting = !inProgress.isEmpty();
             String status = null;
@@ -224,11 +229,11 @@ public class AiEventSubscriptionService {
                 status = inProgress.get(0).getDispatchStatus();
                 if (status == null) status = "running";
             } else if (!executing) {
-                AiThreadRecord thread = eventStore.findThread(threadId);
+                AiThreadRecord thread = conversations.findThread(threadId);
                 if (thread != null) status = thread.getRunStatus();
             }
             boolean completed = !executing && !protocolExecuting
-                    && eventStore.hasLatestTurnCompletedEvent(threadId);
+                    && eventJournal.hasLatestTurnCompleted(threadId);
             state = new JournalState(executing, lastSeq, protocolExecuting, status, completed);
             stateReadAt = nanoTime.getAsLong();
             return state;
