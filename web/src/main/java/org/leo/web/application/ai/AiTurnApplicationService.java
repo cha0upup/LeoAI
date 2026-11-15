@@ -93,9 +93,7 @@ public class AiTurnApplicationService {
         if (persisted == null) {
             return failBeforeExecution(turn, "平台 AI 线程不存在");
         }
-        PlatformAiState existingState = PlatformAiStateStore.get(turn.threadId());
-        PlatformAiState state = existingState != null
-                ? existingState : PlatformAiStateStore.create(turn.threadId());
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(turn.threadId(), persisted.getConfigId());
         state.setAiConfigId(persisted.getConfigId());
         store.attachEventJournal(turn.threadId(), state);
         String executionLeaseToken = null;

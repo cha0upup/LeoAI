@@ -206,7 +206,7 @@ class PlatformNodeAiBridgeToolsTest {
         record.setUserId(recordOwner);
         when(conversationStore.findThread(PARENT_THREAD_ID)).thenReturn(record);
 
-        PlatformAiState state = PlatformAiStateStore.create(PARENT_THREAD_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PARENT_THREAD_ID);
         state.setAiConfigId(7);
         state.setExecutionPolicy(new AiExecutionPolicy("user-1", "alice", "normal"));
 

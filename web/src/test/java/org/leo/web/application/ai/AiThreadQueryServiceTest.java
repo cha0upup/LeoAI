@@ -141,7 +141,7 @@ class AiThreadQueryServiceTest {
         record.setConfigModel("model");
         record.setLastActiveAt(lastActiveAt);
         when(store.listPlatformThreads("user-1")).thenReturn(List.of(record));
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_THREAD_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_THREAD_ID);
         state.setAiConfigId(99);
         when(protocol.snapshotThread(PLATFORM_THREAD_ID, state.getRunStatus()))
                 .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));

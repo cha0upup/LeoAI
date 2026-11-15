@@ -50,7 +50,7 @@ class AiToolExposurePolicyTest {
                 .thenReturn(List.of(parent, dependency));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AiRuntimeResolver(), registry);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
 
         List<String> candidates = List.of("parentAction", "dependencyAction");
         assertTrue(policy.visibleToolNames(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,

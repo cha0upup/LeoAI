@@ -303,7 +303,7 @@ class AiTurnApplicationServiceTest {
             when(agentTurns.executeChat(eq(session), eq(thread), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);
         } else {
-            PlatformAiState platformState = PlatformAiStateStore.create("thread-1");
+            PlatformAiState platformState = PlatformAiStateStore.getOrCreate("thread-1");
             state = platformState;
             when(platformTurns.executeChat(eq(platformState), any(AiTurnExecutionRequest.class)))
                     .thenReturn(runtime);

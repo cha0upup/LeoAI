@@ -2,6 +2,7 @@ package org.leo.ai.platform;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -13,19 +14,27 @@ public final class PlatformAiStateStore {
 
     private static final int MAX_STATES = 500;
     private static final long MAX_IDLE_MS = 2 * 60 * 60 * 1000L;
-    private static final Map<String, PlatformAiState> STATE_MAP = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, PlatformAiState> STATE_MAP = new ConcurrentHashMap<>();
     private static final CopyOnWriteArrayList<Consumer<String>> DESTROY_LISTENERS =
             new CopyOnWriteArrayList<>();
 
     private PlatformAiStateStore() {
     }
 
-    public static PlatformAiState create(String stateId) {
-        evictExpired();
-        evictOldestIfFull();
+    public static PlatformAiState getOrCreate(String stateId) {
+        return getOrCreate(stateId, null);
+    }
+
+    /** Reuses the current runtime; the initial configuration is applied only before publishing a new state. */
+    public static PlatformAiState getOrCreate(String stateId, Integer initialConfigId) {
+        PlatformAiState current = get(stateId);
+        if (current != null) return current;
         PlatformAiState state = new PlatformAiState(stateId);
-        PlatformAiState replaced = STATE_MAP.put(stateId, state);
-        if (replaced != null) notifyDestroyed(stateId);
+        state.setAiConfigId(initialConfigId);
+        PlatformAiState existing = STATE_MAP.putIfAbsent(stateId, state);
+        if (existing != null) return existing;
+        evictExpired();
+        evictOldestIfFull(stateId);
         return state;
     }
 
@@ -64,9 +73,10 @@ public final class PlatformAiStateStore {
         }
     }
 
-    private static void evictOldestIfFull() {
-        if (STATE_MAP.size() < MAX_STATES) return;
+    private static void evictOldestIfFull(String createdStateId) {
+        if (STATE_MAP.size() <= MAX_STATES) return;
         STATE_MAP.entrySet().stream()
+                .filter(entry -> !entry.getKey().equals(createdStateId))
                 .filter(entry -> !entry.getValue().isExecuting())
                 .min(java.util.Comparator.comparingLong(
                         entry -> entry.getValue().getLastActiveAt()))

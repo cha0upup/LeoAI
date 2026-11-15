@@ -51,7 +51,7 @@ class PlatformAiThreadServiceTest {
     @ValueSource(booleans = {true, false})
     void invalidChannelLeavesTheExistingConversationUntouched(boolean recreate) {
         Fixture fixture = fixture("user-1");
-        PlatformAiState existing = PlatformAiStateStore.create(THREAD_ID);
+        PlatformAiState existing = PlatformAiStateStore.getOrCreate(THREAD_ID);
         existing.claimExecution();
         when(fixture.channels.optional(99)).thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
 
@@ -107,7 +107,7 @@ class PlatformAiThreadServiceTest {
     @ValueSource(booleans = {false, true})
     void deletionAndRecreationStopTheOldRuntimeAndEvictItsAgent(boolean recreate) {
         Fixture fixture = fixture("user-1");
-        PlatformAiState previous = PlatformAiStateStore.create(THREAD_ID);
+        PlatformAiState previous = PlatformAiStateStore.getOrCreate(THREAD_ID);
         previous.claimExecution();
 
         if (recreate) {
@@ -125,6 +125,26 @@ class PlatformAiThreadServiceTest {
         assertTrue(previous.isStopRequested());
         assertEquals(recreate ? "平台 AI 会话已重建" : "线程已删除", previous.getStopReason());
         verify(fixture.agentRegistry).evict(THREAD_ID);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,true,7", "true,false,7", "false,true,42", "false,false,7"})
+    void ownedRuntimeLoadingPreservesIdentityAndTheExistingConfigurationRules(
+            boolean activate, boolean cached, int expectedConfigId) {
+        Fixture fixture = fixture("user-1");
+        PlatformAiState existing = cached ? PlatformAiStateStore.getOrCreate(THREAD_ID, 42) : null;
+        if (existing != null) existing.claimExecution();
+
+        PlatformAiState loaded = activate
+                ? fixture.service.activateThread(user("user-1"), THREAD_ID)
+                : fixture.service.requireOwnedRuntime(user("user-1"), THREAD_ID);
+
+        if (existing != null) assertSame(existing, loaded);
+        assertSame(loaded, PlatformAiStateStore.get(THREAD_ID));
+        assertEquals(expectedConfigId, loaded.getAiConfigId());
+        assertEquals(cached, loaded.isExecuting());
+        verify(fixture.conversationStore).attachEventJournal(THREAD_ID, loaded);
+        verifyNoInteractions(fixture.agentRegistry);
     }
 
     @Test
@@ -156,7 +176,7 @@ class PlatformAiThreadServiceTest {
         Fixture fixture = fixture("user-1");
         fixture.record.setRunStatus("failed");
         if (!"absent".equals(runtimeState)) {
-            PlatformAiState state = PlatformAiStateStore.create(THREAD_ID);
+            PlatformAiState state = PlatformAiStateStore.getOrCreate(THREAD_ID);
             state.configureEventJournal(3L, null);
             if ("running".equals(runtimeState)) state.claimExecution();
         }

@@ -54,7 +54,7 @@ class AiToolAuthorizationPolicyTest {
     @Test
     void localWorkspaceCommandsAreAdministratorOnly() {
         UserService users = mock(UserService.class);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
         AiWorkspaceCommandTools commands = new AiWorkspaceCommandTools(
                 mock(AiWorkspaceService.class), mock(AiWorkspaceCommandService.class));
@@ -115,7 +115,7 @@ class AiToolAuthorizationPolicyTest {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
 
@@ -132,7 +132,7 @@ class AiToolAuthorizationPolicyTest {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         var boundaryExecutor = Executors.newSingleThreadExecutor();
         BlockingTools source = new BlockingTools();
@@ -189,7 +189,7 @@ class AiToolAuthorizationPolicyTest {
         User admin = user("admin-1", "admin");
         User downgraded = user("admin-1", "normal");
         when(users.getUserById("admin-1")).thenReturn(admin, downgraded);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(admin));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
         Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
@@ -232,7 +232,7 @@ class AiToolAuthorizationPolicyTest {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolCatalog catalog = new AiToolCatalog();
         register(catalog, new DestructiveTools());
@@ -260,7 +260,7 @@ class AiToolAuthorizationPolicyTest {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolCatalog catalog = new AiToolCatalog();
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
@@ -288,7 +288,7 @@ class AiToolAuthorizationPolicyTest {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
-        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
 

@@ -92,8 +92,7 @@ public class PlatformAiThreadService {
             throw new UseCaseException(Kind.INVALID_INPUT, "缺少 threadId");
         }
         AiThreadRecord record = requireOwnedThread(user, threadId);
-        PlatformAiState state = PlatformAiStateStore.get(threadId);
-        if (state == null) state = PlatformAiStateStore.create(threadId);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(threadId, record.getConfigId());
         state.setAiConfigId(record.getConfigId());
         conversationStore.attachEventJournal(threadId, state);
         return state;
@@ -135,18 +134,14 @@ public class PlatformAiThreadService {
 
     public PlatformAiState requireOwnedRuntime(User user, String threadId) {
         AiThreadRecord record = requireOwnedThread(user, threadId);
-        PlatformAiState state = PlatformAiStateStore.get(record.getThreadId());
-        if (state == null) {
-            state = PlatformAiStateStore.create(record.getThreadId());
-            state.setAiConfigId(record.getConfigId());
-        }
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(record.getThreadId(), record.getConfigId());
         conversationStore.attachEventJournal(record.getThreadId(), state);
         return state;
     }
 
     private PlatformAiState createState(String sessionId, User user, String title, AiModelConfig config) {
-        PlatformAiState state = PlatformAiStateStore.create("platform-ai-" + UUID.randomUUID());
-        if (config != null) state.setAiConfigId(config.getId());
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(
+                "platform-ai-" + UUID.randomUUID(), config != null ? config.getId() : null);
         conversationStore.createPlatformThread(
                 user.getUserId(), sessionId, state.getStateId(), title, state.getCreatedAt(), config);
         conversationStore.attachEventJournal(state.getStateId(), state);

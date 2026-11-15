@@ -43,7 +43,7 @@ class AiUserInputServiceTest {
 
     @BeforeEach
     void bindRuntime() {
-        state = PlatformAiStateStore.create(STATE_ID);
+        state = PlatformAiStateStore.getOrCreate(STATE_ID);
         AiToolContext.setFromMemoryId(STATE_ID);
     }
 

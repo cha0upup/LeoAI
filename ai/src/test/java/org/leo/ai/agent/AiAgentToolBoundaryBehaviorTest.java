@@ -156,7 +156,7 @@ class AiAgentToolBoundaryBehaviorTest {
         user.setStatus(1);
         UserService users = mock(UserService.class);
         when(users.getUserById("user-1")).thenReturn(user);
-        PlatformAiState state = PlatformAiStateStore.create(MEMORY_ID);
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(MEMORY_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(user));
 
         AiAgentProperties properties = new AiAgentProperties();
