@@ -6,7 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.memory.ManagedConversationMemory;
 import org.leo.ai.service.AiErrorClassifier;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiTurnTerminalRepository;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.entity.AiChatAuditEntry;
 
 import java.util.ArrayList;
@@ -43,12 +44,12 @@ class AiTurnOrchestratorTest {
         assertEquals(1L,
                 ((java.util.Map<?, ?>) fixture.telemetry.snapshot()
                         .get("outcomes")).get("completed"));
-        verify(fixture.store).updateRunTrace(
+        verify(fixture.terminal).updateTrace(
                 eq(fixture.persistedTurn), any(AiTurnTrace.class));
-        verify(fixture.store, times(1)).completeTurn(
+        verify(fixture.terminal, times(1)).complete(
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
-        verify(fixture.store, never()).discardTurn(
+        verify(fixture.terminal, never()).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -65,7 +66,7 @@ class AiTurnOrchestratorTest {
 
         assertFalse(completion.isDone());
         assertEquals(List.of("started", "event"), fixture.lifecycle.callbacks);
-        verify(fixture.store, never()).completeTurn(
+        verify(fixture.terminal, never()).complete(
                 any(), any(), any(), any(), any(), anyInt());
 
         fixture.engine.completeDeferred();
@@ -74,7 +75,7 @@ class AiTurnOrchestratorTest {
         assertEquals(AiTurnOutcome.COMPLETED, completion.join().outcome());
         assertEquals(List.of("started", "event", "beforeCommit", "committed"),
                 fixture.lifecycle.callbacks);
-        verify(fixture.store, times(1)).completeTurn(
+        verify(fixture.terminal, times(1)).complete(
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
     }
@@ -91,7 +92,7 @@ class AiTurnOrchestratorTest {
         assertNotNull(fixture.lifecycle.failed);
         assertEquals(List.of("started", "beforeDiscard", "discarded"),
                 fixture.lifecycle.callbacks);
-        verify(fixture.store, times(1)).discardTurn(
+        verify(fixture.terminal, times(1)).discard(
                 eq(fixture.persistedTurn), eq("failed"), eq("network"),
                 any(), any(), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -104,7 +105,7 @@ class AiTurnOrchestratorTest {
     void commitFailureIsRecoveredIntoOneDiscardedTerminal() {
         Fixture fixture = fixture(TestExecutionEngine.Mode.COMPLETE);
         doThrow(new IllegalStateException("commit unavailable"))
-                .when(fixture.store).completeTurn(
+                .when(fixture.terminal).complete(
                         any(), any(), any(), any(), any(), anyInt());
 
         fixture.orchestrator.execute(fixture.request(), fixture.lifecycle);
@@ -118,7 +119,7 @@ class AiTurnOrchestratorTest {
         assertEquals(1L,
                 ((java.util.Map<?, ?>) fixture.telemetry.snapshot()
                         .get("errorCategories")).get("persistence"));
-        verify(fixture.store, times(1)).discardTurn(
+        verify(fixture.terminal, times(1)).discard(
                 eq(fixture.persistedTurn), eq("failed"), eq("persistence"),
                 eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -136,10 +137,10 @@ class AiTurnOrchestratorTest {
         assertNotNull(fixture.lifecycle.terminal);
         assertTrue(fixture.lifecycle.terminal.committed());
         assertFalse(fixture.lifecycle.terminal.recovered());
-        verify(fixture.store, times(1)).completeTurn(
+        verify(fixture.terminal, times(1)).complete(
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
-        verify(fixture.store, never()).discardTurn(
+        verify(fixture.terminal, never()).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -150,7 +151,7 @@ class AiTurnOrchestratorTest {
     void tracePersistenceFailureCannotLeaveTerminalFutureIncomplete() {
         Fixture fixture = fixture(TestExecutionEngine.Mode.COMPLETE);
         doThrow(new IllegalStateException("trace unavailable"))
-                .when(fixture.store).updateRunTrace(
+                .when(fixture.terminal).updateTrace(
                         any(), any(AiTurnTrace.class));
 
         CompletableFuture<AiTurnOrchestrator.TerminalResult> completion =
@@ -158,7 +159,7 @@ class AiTurnOrchestratorTest {
 
         assertTrue(completion.isDone());
         assertEquals(AiTurnOutcome.COMPLETED, completion.join().outcome());
-        verify(fixture.store, times(1)).completeTurn(
+        verify(fixture.terminal, times(1)).complete(
                 eq(fixture.persistedTurn), eq("answer"),
                 any(), any(), any(), eq(0));
     }
@@ -178,7 +179,7 @@ class AiTurnOrchestratorTest {
                 ((java.util.Map<?, ?>) fixture.telemetry.snapshot()
                         .get("outcomes")).get("cancelled"));
         verify(fixture.failover, never()).recordFailure(any(), any());
-        verify(fixture.store).discardTurn(
+        verify(fixture.terminal).discard(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -186,7 +187,7 @@ class AiTurnOrchestratorTest {
     }
 
     private Fixture fixture(TestExecutionEngine.Mode mode) {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
+        AiTurnTerminalRepository terminal = mock(AiTurnTerminalRepository.class);
         AiModelFailoverService failover = mock(AiModelFailoverService.class);
         AiErrorClassifier classifier = mock(AiErrorClassifier.class);
         ManagedConversationMemory memory = mock(ManagedConversationMemory.class);
@@ -198,12 +199,12 @@ class AiTurnOrchestratorTest {
                 new AiErrorClassifier.Classification(
                         "persistence", "AI 回复提交失败",
                         "commit unavailable", List.of()));
-        AiConversationStoreService.PersistedTurn persistedTurn =
-                new AiConversationStoreService.PersistedTurn(
+        PersistedTurn persistedTurn =
+                new PersistedTurn(
                         "turn-1", "run-1", "thread-1", "message-1",
                         "assistant-message-1", System.currentTimeMillis(), null);
         AiTurnTransaction transaction = new AiTurnTransaction(
-                store, failover, classifier, new AiTurnArtifacts(), memory);
+                terminal, failover, classifier, new AiTurnArtifacts(), memory);
         TestExecutionEngine engine = new TestExecutionEngine(mode);
         AiTurnTelemetryRegistry telemetry = new AiTurnTelemetryRegistry();
         AiTurnOrchestrator orchestrator =
@@ -227,13 +228,13 @@ class AiTurnOrchestratorTest {
                 () -> null,
                 null);
         return new Fixture(
-                store, failover, memory, agent, persistedTurn,
+                terminal, failover, memory, agent, persistedTurn,
                 engine, orchestrator, request, runtime, telemetry,
                 new RecordingLifecycle());
     }
 
     private AiTurnTrace boundTrace(
-            AiConversationStoreService.PersistedTurn persistedTurn) {
+            PersistedTurn persistedTurn) {
         AiTurnTrace trace = AiTurnTrace.testTrace(
                 "trace-1", "test", persistedTurn.threadId(),
                 persistedTurn.startedAt());
@@ -241,11 +242,11 @@ class AiTurnOrchestratorTest {
         return trace;
     }
 
-    private record Fixture(AiConversationStoreService store,
+    private record Fixture(AiTurnTerminalRepository terminal,
                            AiModelFailoverService failover,
                            ManagedConversationMemory memory,
                            ChatMemoryAccess agent,
-                           AiConversationStoreService.PersistedTurn persistedTurn,
+                           PersistedTurn persistedTurn,
                            TestExecutionEngine engine,
                            AiTurnOrchestrator orchestrator,
                            AiTurnOrchestrator.Request request,

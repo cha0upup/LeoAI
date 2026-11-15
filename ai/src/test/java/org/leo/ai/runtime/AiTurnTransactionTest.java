@@ -5,7 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.memory.ManagedConversationMemory;
 import org.leo.ai.service.AiErrorClassifier;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiTurnTerminalRepository;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
@@ -29,12 +30,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiTurnTransactionTest {
-    private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiTurnTerminalRepository terminal = mock(AiTurnTerminalRepository.class);
     private final AiModelFailoverService failover = mock(AiModelFailoverService.class);
     private final ManagedConversationMemory memory = mock(ManagedConversationMemory.class);
     private final ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
-    private final AiConversationStoreService.PersistedTurn persistedTurn =
-            new AiConversationStoreService.PersistedTurn(
+    private final PersistedTurn persistedTurn =
+            new PersistedTurn(
                     "turn-1", "run-1", "thread-1", "message-1", "assistant-message-1", 1L, null);
     private final AiTurnTransaction.Session session = openSession();
 
@@ -50,10 +51,10 @@ class AiTurnTransactionTest {
         assertSame(first, repeated);
         assertEquals("done", first.output());
         assertTrue(session.isTerminal());
-        verify(store, times(1)).completeTurn(
+        verify(terminal, times(1)).complete(
                 eq(persistedTurn), eq("done"), any(), any(), any(), eq(0));
         verify(failover).recordSuccess(7);
-        verify(store, never()).discardTurn(
+        verify(terminal, never()).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -72,7 +73,7 @@ class AiTurnTransactionTest {
 
         assertSame(first, repeated);
         assertEquals("network", first.classification().category());
-        verify(store, times(1)).discardTurn(
+        verify(terminal, times(1)).discard(
                 eq(persistedTurn), eq("failed"), eq("network"),
                 any(), eq("network down"), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -84,7 +85,7 @@ class AiTurnTransactionTest {
     @Test
     void rebuildsMemoryEvenWhenDiscardPersistenceFails() {
         doThrow(new IllegalStateException("db unavailable"))
-                .when(store).discardTurn(
+                .when(terminal).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -107,7 +108,7 @@ class AiTurnTransactionTest {
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream"));
 
         assertFalse(recovered);
-        verify(store, never()).discardTurn(
+        verify(terminal, never()).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -134,7 +135,7 @@ class AiTurnTransactionTest {
         assertEquals(AiTurnOutcome.CANCELLED, failed.outcome());
         assertEquals("cancelled", failed.status());
         assertEquals("用户停止", failed.message());
-        verify(store).discardTurn(
+        verify(terminal).discard(
                 eq(persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -148,7 +149,7 @@ class AiTurnTransactionTest {
         var plan = Map.of("kind", "plan", "step", "fixture step");
         var events = List.of(new AiSseEvent("node", plan));
         session.discard(new AiTurnFailure(new RuntimeException("network down"), AiTurnOutcome.FAILED, null), events, plan);
-        verify(store).discardTurn(
+        verify(terminal).discard(
                 eq(persistedTurn), eq("failed"), eq("network"),
                 any(), any(), eq(0),
                 eq(""), any(), eq(plan),
@@ -170,7 +171,7 @@ class AiTurnTransactionTest {
                 events,
                 null);
 
-        verify(store).discardTurn(
+        verify(terminal).discard(
                 eq(persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
                 eq("停止前内容"), any(), eq(null),
@@ -181,7 +182,7 @@ class AiTurnTransactionTest {
     @Test
     void recoversCommitPersistenceFailureExactlyOnce() {
         doThrow(new IllegalStateException("commit unavailable"))
-                .when(store).completeTurn(any(), any(), any(), any(), any(), anyInt());
+                .when(terminal).complete(any(), any(), any(), any(), any(), anyInt());
 
         assertThrows(IllegalStateException.class, () -> session.commit(
                 new AiTurnResult("done", null, false, false), List.of(), null, null));
@@ -191,7 +192,7 @@ class AiTurnTransactionTest {
         assertFalse(session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("repeated")));
         assertEquals("persistence", session.failedTurn().classification().category());
-        verify(store, times(1)).discardTurn(
+        verify(terminal, times(1)).discard(
                 eq(persistedTurn), eq("failed"), eq("persistence"),
                 eq("AI 回复提交失败"), eq("commit unavailable"), eq(0),
                 eq(""), eq(List.of()), eq(null),
@@ -212,7 +213,7 @@ class AiTurnTransactionTest {
         assertTrue(session.isTerminal());
         assertFalse(session.recoverTerminalFailure(
                 AiTurnOutcome.COMPLETED, new IllegalStateException("downstream")));
-        verify(store, never()).discardTurn(
+        verify(terminal, never()).discard(
                 any(), any(), any(),
                 any(), any(), anyInt(),
                 any(), any(), any(),
@@ -228,7 +229,7 @@ class AiTurnTransactionTest {
                 new AiErrorClassifier.Classification(
                         "persistence", "AI 回复提交失败", "commit unavailable", List.of()));
         AiTurnTransaction transaction = new AiTurnTransaction(
-                store, failover, classifier, new AiTurnArtifacts(), memory);
+                terminal, failover, classifier, new AiTurnArtifacts(), memory);
         AiTurnTrace trace = AiTurnTrace.testTrace(
                 "trace-1", "test", persistedTurn.threadId(), persistedTurn.startedAt());
         trace.bind(persistedTurn.turnId(), persistedTurn.runId());

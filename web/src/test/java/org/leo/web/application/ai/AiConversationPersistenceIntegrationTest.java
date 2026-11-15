@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.runtime.AiTurnRecoveryContext;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.thread.*;
@@ -38,6 +39,7 @@ class AiConversationPersistenceIntegrationTest {
     private AnnotationConfigApplicationContext context;
     private JdbcTemplate jdbc;
     private AiConversationStoreService store;
+    private AiTurnTerminalRepository terminal;
     private AiEventJournalRepository journal;
     private AiMessageRepository messages;
     private AiExecutionLeaseRepository leases;
@@ -66,6 +68,7 @@ class AiConversationPersistenceIntegrationTest {
                 AiContextCheckpointRepository.class, AiTurnProtocolService.class);
         context.refresh();
         store = context.getBean(AiConversationStoreService.class);
+        terminal = context.getBean(AiTurnTerminalRepository.class);
         journal = context.getBean(AiEventJournalRepository.class);
         messages = context.getBean(AiMessageRepository.class);
         leases = context.getBean(AiExecutionLeaseRepository.class);
@@ -173,7 +176,7 @@ class AiConversationPersistenceIntegrationTest {
         assertNull(turns.find(turn.id()).getStartedAt());
         assertTrue(protocol.tryStart(turn.id()).claimed());
         var running = beginRun(turn);
-        store.completeTurn(running, "fixture complete", List.of(), null, null, 0);
+        terminal.complete(running, "fixture complete", List.of(), null, null, 0);
 
         assertEquals("completed", protocol.completeFromRuntime(turn.id(), "completed", null, null).status());
         assertTrue(turns.listInProgress("thread-1").isEmpty());
@@ -305,7 +308,7 @@ class AiConversationPersistenceIntegrationTest {
         var running = beginRun(turn);
         var plan = Map.of("kind", "plan", "step", "fixture step");
         String recovery = AiTurnRecoveryContext.build(List.of(), plan);
-        store.discardTurn(running, "failed", "network", "fixture connection failed", "fixture connection failed",
+        terminal.discard(running, "failed", "network", "fixture connection failed", "fixture connection failed",
                 0, "", List.of(Map.of("kind", "plan", "seq", 1)), plan, recovery);
         protocol.completeFromRuntime(turn.id(), "failed", "fixture connection failed", null);
 
@@ -400,7 +403,35 @@ class AiConversationPersistenceIntegrationTest {
                 .map(ConversationMessage::sequence).toList());
     }
 
-    private AiConversationStoreService.PersistedTurn beginRun(AiTurnProtocolService.TurnSnapshot turn) {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void terminalRunFailureRollsBackMessagesAndTurnState(boolean discarded) {
+        var turn = reserve();
+        var running = beginRun(turn);
+        var beforeTurn = jdbc.queryForMap("SELECT * FROM ai_turns WHERE turn_id=?", turn.id());
+        var beforeRun = jdbc.queryForMap("SELECT * FROM ai_runs WHERE run_id=?", running.runId());
+        var beforeMessages = jdbc.queryForList("SELECT * FROM ai_messages WHERE turn_id=? ORDER BY message_seq", turn.id());
+        jdbc.execute("CREATE TRIGGER reject_terminal_run BEFORE UPDATE OF status ON ai_runs "
+                + "WHEN NEW.status <> 'running' BEGIN SELECT RAISE(ABORT, 'terminal rejected'); END");
+
+        RuntimeException failure = assertThrows(RuntimeException.class, () -> {
+            if (discarded) {
+                terminal.discard(running, "failed", "network", "fixture error", "raw error", 1,
+                        "partial", List.of(Map.of("kind", "text")), Map.of("step", 1), "private recovery");
+            } else {
+                terminal.complete(running, "answer", List.of(Map.of("kind", "text")),
+                        Map.of("ok", true), Map.of("step", 1), 1);
+            }
+        });
+
+        assertTrue(failure.getMessage().contains("terminal rejected"), failure::getMessage);
+        assertEquals(beforeTurn, jdbc.queryForMap("SELECT * FROM ai_turns WHERE turn_id=?", turn.id()));
+        assertEquals(beforeRun, jdbc.queryForMap("SELECT * FROM ai_runs WHERE run_id=?", running.runId()));
+        assertEquals(beforeMessages,
+                jdbc.queryForList("SELECT * FROM ai_messages WHERE turn_id=? ORDER BY message_seq", turn.id()));
+    }
+
+    private PersistedTurn beginRun(AiTurnProtocolService.TurnSnapshot turn) {
         return store.beginTurn(turn.id(), turn.userItemId(), turn.assistantItemId(), "thread-1", null,
                 "fixture", "fixture", null, 1L, null, AiTurnTrace.start("fixture", "thread-1", 1L), null);
     }

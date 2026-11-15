@@ -33,20 +33,17 @@ public class AiConversationStoreService {
 
     private final AiConversationMapper mapper;
     private final AiEventJournalRepository eventJournal;
-    private final AiTurnTerminalRepository turnTerminal;
     private final AiProtocolTurnRepository protocolTurn;
     private final AiUserInputRepository userInput;
     private final AiMessageRepository messages;
 
     public AiConversationStoreService(AiConversationMapper mapper,
                                       AiEventJournalRepository eventJournal,
-                                      AiTurnTerminalRepository turnTerminal,
                                       AiProtocolTurnRepository protocolTurn,
                                       AiUserInputRepository userInput,
                                       AiMessageRepository messages) {
         this.mapper = mapper;
         this.eventJournal = eventJournal;
-        this.turnTerminal = turnTerminal;
         this.protocolTurn = protocolTurn;
         this.userInput = userInput;
         this.messages = messages;
@@ -332,53 +329,6 @@ public class AiConversationStoreService {
                 startedAt, emptyToNull(leaseToken));
     }
 
-    /** 持久化 Presenter 完成后的最终阶段轨迹；失败不应改变已经确定的 Turn 终态。 */
-    public void updateRunTrace(PersistedTurn turn, AiTurnTrace trace) {
-        if (turn == null || trace == null) return;
-        if (isBlank(turn.leaseToken())) {
-            AiRunRecord row = new AiRunRecord();
-            row.setRunId(turn.runId());
-            row.setTraceJson(trace.toJson());
-            mapper.updateRunTrace(row);
-            return;
-        }
-        requireFencedWrite(mapper.updateRunTraceFenced(
-                        turn.runId(), trace.toJson(), turn.leaseToken(),
-                        System.currentTimeMillis()),
-                "Run Trace", turn.runId());
-    }
-
-    /**
-     * 原子提交成功 Turn：写入 assistant 消息、提交用户消息并结束 Run。
-     */
-    @Transactional
-    public void completeTurn(PersistedTurn turn, String output,
-                             List<Object> nodes, Map<String, Object> review,
-                             Object planSnapshot, int toolCallCount) {
-        turnTerminal.complete(turn, output, nodes, review, planSnapshot, toolCallCount);
-    }
-
-    /**
-     * 中断/失败时保存已经产生的 assistant Item，状态仍为 discarded。
-     * 可见正文与内部 recoveryContext 分别保存；存在实际执行进度时，
-     * 模型上下文会连同原始 user Item 一起载入，供“继续”任务衔接。
-     */
-    @Transactional
-    public void discardTurn(PersistedTurn turn,
-                            String runStatus,
-                            String errorCategory,
-                            String errorMessage,
-                            String rawErrorMessage,
-                            int toolCallCount,
-                            String partialOutput,
-                            List<Object> partialNodes,
-                            Object planSnapshot,
-                            String recoveryContext) {
-        turnTerminal.discard(turn, runStatus, errorCategory, errorMessage,
-                rawErrorMessage, toolCallCount, partialOutput, partialNodes,
-                planSnapshot, recoveryContext);
-    }
-
     private static void requireFencedWrite(int updated, String target, String id) {
         if (updated != 1) {
             throw new IllegalStateException(
@@ -405,11 +355,6 @@ public class AiConversationStoreService {
 
     private static String emptyToNull(String value) {
         return isBlank(value) ? null : value;
-    }
-
-    public record PersistedTurn(String turnId, String runId, String threadId,
-                                String userMessageId, String assistantMessageId,
-                                long startedAt, String leaseToken) {
     }
 
 }

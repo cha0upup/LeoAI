@@ -12,6 +12,7 @@ import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
@@ -211,7 +212,7 @@ class NodeAiDelegationServiceTest {
         when(leases.tryAcquireToken(eq("child-1"), any())).thenReturn("lease-1");
         when(store.beginTurn(isNull(), isNull(), isNull(), eq("child-1"), eq(7),
                 anyString(), anyString(), isNull(), anyLong(), anyString(), any(), eq("lease-1")))
-                .thenReturn(new AiConversationStoreService.PersistedTurn(
+                .thenReturn(new PersistedTurn(
                         "turn-1", "run-1", "child-1", "user-1", "assistant-1", 1L, "lease-1"));
         NodeAiDelegationService service = new NodeAiDelegationService(
                 store, agents, presenter, new AiTurnCoordinator(), orchestrator, leases, channels);

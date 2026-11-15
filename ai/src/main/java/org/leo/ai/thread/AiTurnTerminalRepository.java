@@ -1,10 +1,12 @@
 package org.leo.ai.thread;
 
+import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -19,7 +21,9 @@ public class AiTurnTerminalRepository {
         this.mapper = mapper;
     }
 
-    public void complete(AiConversationStoreService.PersistedTurn turn,
+    /** Atomically commits both messages and finishes their Turn and Run. */
+    @Transactional
+    public void complete(PersistedTurn turn,
                          String output, List<Object> nodes,
                          Map<String, Object> review, Object planSnapshot,
                          int toolCallCount) {
@@ -32,7 +36,9 @@ public class AiTurnTerminalRepository {
                 null, null, null, toolCallCount, turn.leaseToken());
     }
 
-    public void discard(AiConversationStoreService.PersistedTurn turn,
+    /** Keeps visible partial output separate from private recovery context in discarded turns. */
+    @Transactional
+    public void discard(PersistedTurn turn,
                         String runStatus, String errorCategory,
                         String errorMessage, String rawErrorMessage,
                         int toolCallCount, String partialOutput,
@@ -46,7 +52,23 @@ public class AiTurnTerminalRepository {
                 errorMessage, rawErrorMessage, toolCallCount, turn.leaseToken());
     }
 
-    private void updateAssistantMessage(AiConversationStoreService.PersistedTurn turn,
+    /** Persists the final Presenter trace independently of the already established terminal state. */
+    public void updateTrace(PersistedTurn turn, AiTurnTrace trace) {
+        if (turn == null || trace == null) return;
+        if (blank(turn.leaseToken())) {
+            AiRunRecord row = new AiRunRecord();
+            row.setRunId(turn.runId());
+            row.setTraceJson(trace.toJson());
+            mapper.updateRunTrace(row);
+            return;
+        }
+        requireFencedWrite(mapper.updateRunTraceFenced(
+                        turn.runId(), trace.toJson(), turn.leaseToken(),
+                        System.currentTimeMillis()),
+                "Run Trace", turn.runId());
+    }
+
+    private void updateAssistantMessage(PersistedTurn turn,
                                          String status, String content, String recoveryContext,
                                          List<Object> nodes,
                                          Map<String, Object> review,
@@ -71,7 +93,7 @@ public class AiTurnTerminalRepository {
                 "Assistant 消息", assistant.getMessageId());
     }
 
-    private void updateTurnMessageStatus(AiConversationStoreService.PersistedTurn turn,
+    private void updateTurnMessageStatus(PersistedTurn turn,
                                          String status) {
         if (blank(turn.leaseToken())) {
             mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), status);
@@ -83,7 +105,7 @@ public class AiTurnTerminalRepository {
                 "Turn 消息状态", turn.turnId());
     }
 
-    private void finishTurn(AiConversationStoreService.PersistedTurn turn, String status) {
+    private void finishTurn(PersistedTurn turn, String status) {
         int updated = mapper.finishTurn(
                 turn.turnId(), status, System.currentTimeMillis(),
                 emptyToNull(turn.leaseToken()));

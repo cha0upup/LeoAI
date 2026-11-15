@@ -6,6 +6,7 @@ import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiModelConfig;
@@ -97,7 +98,7 @@ public class NodeAiDelegationService {
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(aiRuntime.failoverMessage());
             requireActive(turn);
-            AiConversationStoreService.PersistedTurn persistedTurn =
+            PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
                     null, null, null, threadId,
                     aiRuntime.effectiveConfigId(), messageForAgent,

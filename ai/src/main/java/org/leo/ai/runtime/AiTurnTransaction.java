@@ -5,6 +5,8 @@ import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.memory.ManagedConversationMemory;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiTurnTerminalRepository;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.ai.AiRunStatus;
@@ -27,18 +29,18 @@ import java.util.Objects;
 public class AiTurnTransaction {
 
     private static final Logger logger = LoggerFactory.getLogger(AiTurnTransaction.class);
-    private final AiConversationStoreService conversationStore;
+    private final AiTurnTerminalRepository terminal;
     private final AiModelFailoverService failoverService;
     private final AiErrorClassifier errorClassifier;
     private final AiTurnArtifacts artifacts;
     private final ManagedConversationMemory managedMemory;
 
-    public AiTurnTransaction(AiConversationStoreService conversationStore,
+    public AiTurnTransaction(AiTurnTerminalRepository terminal,
                              AiModelFailoverService failoverService,
                              AiErrorClassifier errorClassifier,
                              AiTurnArtifacts artifacts,
                              ManagedConversationMemory managedMemory) {
-        this.conversationStore = conversationStore;
+        this.terminal = terminal;
         this.failoverService = failoverService;
         this.errorClassifier = errorClassifier;
         this.artifacts = artifacts;
@@ -80,7 +82,7 @@ public class AiTurnTransaction {
             List<Object> assistantNodes = artifacts.assistantNodes(
                     eventLog, !userInputRequested);
 
-            conversationStore.completeTurn(
+            terminal.complete(
                     context.persistedTurn(), output, assistantNodes,
                     review, planSnapshot, toolCallCount);
             state = PersistenceState.COMMITTED;
@@ -143,7 +145,7 @@ public class AiTurnTransaction {
                         ? AiConversationStoreService.ERROR_CANCELLED
                         : classification.category();
                 String rawMessage = cancelled ? message : classification.rawMessage();
-                conversationStore.discardTurn(
+                terminal.discard(
                         context.persistedTurn(), status, category,
                         message, rawMessage, toolCallCount,
                         partialOutput, assistantNodes, planSnapshot, recoveryContext);
@@ -179,7 +181,7 @@ public class AiTurnTransaction {
                             AiConversationStoreService.ERROR_PERSISTENCE,
                             terminalError != null ? terminalError.getMessage() : message);
             try {
-                conversationStore.discardTurn(
+                terminal.discard(
                         context.persistedTurn(), AiRunStatus.FAILED,
                         AiConversationStoreService.ERROR_PERSISTENCE,
                         message,
@@ -218,7 +220,7 @@ public class AiTurnTransaction {
         /** 最终 Presenter 阶段结束后补写完整 trace，不影响已确定的业务终态。 */
         public void persistTrace() {
             try {
-                conversationStore.updateRunTrace(
+                terminal.updateTrace(
                         context.persistedTurn(), context.trace());
             } catch (RuntimeException error) {
                 logger.warn("持久化 AI Turn trace 失败, traceId={}, runId={}: {}",
@@ -265,7 +267,7 @@ public class AiTurnTransaction {
         DISCARDED
     }
 
-    public record Context(AiConversationStoreService.PersistedTurn persistedTurn,
+    public record Context(PersistedTurn persistedTurn,
                           Integer effectiveConfigId,
                           ChatMemoryAccess memoryAgent,
                           Object memoryId,

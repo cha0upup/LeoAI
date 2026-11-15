@@ -8,6 +8,7 @@ import org.leo.ai.runtime.AiTurnOutcome;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.PersistedTurn;
 import org.leo.core.entity.AiModelConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,7 +70,7 @@ public class PlatformAiTurnService {
             PlatformAiAgentRegistry.AiRuntime aiRuntime = threadAgent(state, request.reasoningEffort());
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(aiRuntime.failoverMessage());
-            AiConversationStoreService.PersistedTurn persistedTurn =
+            PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
                     request.turnId(), request.userItemId(), request.assistantItemId(), state.getStateId(),
                     aiRuntime.effectiveConfigId(), messageForAgent,
