@@ -3,6 +3,7 @@ package org.leo.ai.service.skill;
 import org.leo.core.config.LeoConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -16,8 +17,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -43,20 +45,26 @@ public class SkillRegistryService {
             Pattern.compile("[a-z0-9][a-z0-9-]{0,63}");
 
     private final SkillManifestService manifestService;
-    private final ConcurrentHashMap<String, List<SkillMeta>> metaCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, List<SkillInspection>> inspectionCache = new ConcurrentHashMap<>();
-    private final AtomicLong cacheFilledAt = new AtomicLong(0L);
+    private final Supplier<Path> vfsRoot;
+    private final LongSupplier clock;
+    private final AtomicReference<Catalog> cachedCatalog = new AtomicReference<>(Catalog.invalidated());
     private final Object refreshLock = new Object();
 
+    @Autowired
     public SkillRegistryService(SkillManifestService manifestService) {
+        this(manifestService, () -> Path.of(LeoConfig.getVfsPath()), System::currentTimeMillis);
+    }
+
+    SkillRegistryService(SkillManifestService manifestService, Supplier<Path> vfsRoot, LongSupplier clock) {
         this.manifestService = manifestService;
+        this.vfsRoot = vfsRoot;
+        this.clock = clock;
     }
 
     /** 仅列出严格校验通过、已发布且启用的 skill，供 AI 运行时使用。 */
     public List<SkillMeta> listSkills(String scope) {
         if (!isAllowedScope(scope)) return List.of();
-        refreshIfStale();
-        return metaCache.getOrDefault(scope, List.of()).stream()
+        return currentCatalog().metadata().getOrDefault(scope, List.of()).stream()
                 .filter(SkillMeta::isRuntimeEligible)
                 .toList();
     }
@@ -64,15 +72,13 @@ public class SkillRegistryService {
     /** 列出管理目录中的全部 skill，包括禁用、草稿和无效项。 */
     public List<SkillMeta> listAllSkills(String scope) {
         if (!isAllowedScope(scope)) return List.of();
-        refreshIfStale();
-        return metaCache.getOrDefault(scope, List.of());
+        return currentCatalog().metadata().getOrDefault(scope, List.of());
     }
 
     /** 返回 catalog 级健康检查结果，包括悬空依赖、重复 ID 和依赖环。 */
     public List<SkillInspection> health(String scope) {
         if (!isAllowedScope(scope)) return List.of();
-        refreshIfStale();
-        return inspectionCache.getOrDefault(scope, List.of());
+        return currentCatalog().inspections().getOrDefault(scope, List.of());
     }
 
     /** 立即检查单个 skill；不使用 catalog 缓存。 */
@@ -117,14 +123,13 @@ public class SkillRegistryService {
     }
 
     public void invalidate() {
-        metaCache.clear();
-        inspectionCache.clear();
-        cacheFilledAt.set(0L);
+        // A fresh marker also invalidates scans already in progress.
+        cachedCatalog.set(Catalog.invalidated());
     }
 
     public Path getSkillsRoot(String scope) {
         validateScope(scope);
-        return Path.of(LeoConfig.getVfsPath()).resolve(SKILLS_DIR).resolve(scope).normalize();
+        return vfsRoot.get().resolve(SKILLS_DIR).resolve(scope).normalize();
     }
 
     public static void validateScope(String scope) {
@@ -155,20 +160,34 @@ public class SkillRegistryService {
                 java.util.Arrays.copyOfRange(lines, bodyStart, lines.length));
     }
 
-    private void refreshIfStale() {
-        long now = System.currentTimeMillis();
-        if (now - cacheFilledAt.get() <= TTL_MS) return;
+    private Catalog currentCatalog() {
+        Catalog current = cachedCatalog.get();
+        if (current.freshAt(clock.getAsLong())) return current;
         synchronized (refreshLock) {
-            if (System.currentTimeMillis() - cacheFilledAt.get() <= TTL_MS) return;
+            current = cachedCatalog.get();
+            if (current.freshAt(clock.getAsLong())) return current;
             Map<String, List<SkillInspection>> scanned = new LinkedHashMap<>();
             for (String scope : ALLOWED_SCOPES) scanned.put(scope, scanScope(scope));
             Map<String, List<SkillInspection>> validated = validateCatalog(scanned);
+            Map<String, List<SkillMeta>> metadata = new LinkedHashMap<>();
             for (String scope : ALLOWED_SCOPES) {
-                List<SkillInspection> inspections = validated.getOrDefault(scope, List.of());
-                inspectionCache.put(scope, inspections);
-                metaCache.put(scope, toMeta(scope, inspections));
+                metadata.put(scope, toMeta(scope, validated.getOrDefault(scope, List.of())));
             }
-            cacheFilledAt.set(System.currentTimeMillis());
+            Catalog refreshed = new Catalog(Map.copyOf(metadata), Map.copyOf(validated), clock.getAsLong());
+            // An invalidated scan may serve its caller, but must not overwrite the invalidation.
+            cachedCatalog.compareAndSet(current, refreshed);
+            return refreshed;
+        }
+    }
+
+    private record Catalog(Map<String, List<SkillMeta>> metadata,
+                           Map<String, List<SkillInspection>> inspections, Long filledAt) {
+        static Catalog invalidated() {
+            return new Catalog(Map.of(), Map.of(), null);
+        }
+
+        boolean freshAt(long now) {
+            return filledAt != null && now - filledAt <= TTL_MS;
         }
     }
 
@@ -195,8 +214,7 @@ public class SkillRegistryService {
         SkillInspection current = inspectSkill(scope, name);
         if (!current.valid()) return current;
 
-        refreshIfStale();
-        SkillInspection catalog = inspectionCache.getOrDefault(scope, List.of()).stream()
+        SkillInspection catalog = currentCatalog().inspections().getOrDefault(scope, List.of()).stream()
                 .filter(item -> name.equals(item.name()))
                 .findFirst()
                 .orElse(null);

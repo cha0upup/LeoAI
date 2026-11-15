@@ -1,22 +1,29 @@
 package org.leo.ai.service.skill;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.core.config.LeoConfig;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 class SkillRegistryServiceTest {
 
@@ -24,18 +31,12 @@ class SkillRegistryServiceTest {
     Path tempDir;
 
     private SkillRegistryService registry;
-    private String previousVfsPath;
+    private final SkillManifestService manifests = spy(new SkillManifestService());
+    private final AtomicLong clock = new AtomicLong();
 
     @BeforeEach
     void setUp() {
-        previousVfsPath = LeoConfig.getVfsPath();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
-        registry = new SkillRegistryService(new SkillManifestService());
-    }
-
-    @AfterEach
-    void tearDown() {
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
+        registry = new SkillRegistryService(manifests, () -> tempDir, clock::get);
     }
 
     @Test
@@ -81,6 +82,74 @@ class SkillRegistryServiceTest {
         String index = provider.getFormattedSkills(scope);
         assertFalse(index.contains("mutable-skill"));
         assertTrue(index.contains("new-skill"));
+    }
+
+    @Test
+    void invalidatingDuringAScanCannotCacheItsOutdatedResult() throws Exception {
+        writeSkill("platform", "mutable-skill", true, "body");
+        Path skillDir = tempDir.resolve("skills/platform/mutable-skill");
+        AtomicBoolean invalidateOnce = new AtomicBoolean();
+        doAnswer(call -> {
+            SkillInspection inspected = (SkillInspection) call.callRealMethod();
+            if (invalidateOnce.compareAndSet(false, true)) {
+                writeSkill("platform", "mutable-skill", false, "body");
+                registry.invalidate();
+            }
+            return inspected;
+        }).when(manifests).inspect(skillDir, "platform");
+
+        assertTrue(registry.listAllSkills("platform").get(0).isEnabled());
+
+        assertFalse(registry.listAllSkills("platform").get(0).isEnabled());
+        assertFalse(registry.health("platform").get(0).descriptor().enabled());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"29999, false", "30000, false", "30001, true"})
+    void metadataAndHealthShareTheSameExpiry(long elapsedMillis, boolean expired) throws Exception {
+        writeSkill("platform", "mutable-skill", true, "body");
+        assertTrue(registry.listAllSkills("platform").get(0).isEnabled());
+
+        writeSkill("platform", "mutable-skill", false, "body");
+        clock.set(elapsedMillis);
+
+        assertEquals(!expired, registry.listAllSkills("platform").get(0).isEnabled());
+        assertEquals(!expired, registry.health("platform").get(0).descriptor().enabled());
+        verify(manifests, times(expired ? 2 : 1))
+                .inspect(tempDir.resolve("skills/platform/mutable-skill"), "platform");
+    }
+
+    @Test
+    void concurrentMetadataAndHealthQueriesShareOneScan() throws Exception {
+        writeSkill("platform", "shared-skill", true, "body");
+        Path skillDir = tempDir.resolve("skills/platform/shared-skill");
+        CountDownLatch scanning = new CountDownLatch(1);
+        CountDownLatch releaseScan = new CountDownLatch(1);
+        doAnswer(call -> {
+            SkillInspection inspected = (SkillInspection) call.callRealMethod();
+            scanning.countDown();
+            assertTrue(releaseScan.await(5, TimeUnit.SECONDS));
+            return inspected;
+        }).when(manifests).inspect(skillDir, "platform");
+        var workers = Executors.newFixedThreadPool(6);
+        try {
+            List<Future<String>> results = new ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                boolean healthQuery = i % 2 == 0;
+                results.add(workers.submit(() -> healthQuery
+                        ? registry.health("platform").get(0).name()
+                        : registry.listAllSkills("platform").get(0).getName()));
+            }
+            assertTrue(scanning.await(5, TimeUnit.SECONDS));
+            releaseScan.countDown();
+            for (Future<String> result : results) {
+                assertEquals("shared-skill", result.get(5, TimeUnit.SECONDS));
+            }
+            verify(manifests).inspect(skillDir, "platform");
+        } finally {
+            releaseScan.countDown();
+            workers.shutdownNow();
+        }
     }
 
     @Test
