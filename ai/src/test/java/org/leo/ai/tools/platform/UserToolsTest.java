@@ -1,6 +1,9 @@
 package org.leo.ai.tools.platform;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
 import org.leo.dao.mapper.SystemConfigMapper;
@@ -86,22 +89,24 @@ class UserToolsTest {
         verify(service).updateUser(stored);
     }
 
-    @Test
-    void invalidPasswordDoesNotMutateTheUserOrReachPersistence() {
+    @ParameterizedTest
+    @ValueSource(strings = {"short", " ", "\t", "\n"})
+    void invalidPasswordDoesNotMutateTheUserOrReachPersistence(String password) {
         User stored = user();
         when(service.getUserById("user-1")).thenReturn(stored);
         assertThrows(IllegalArgumentException.class, () -> tools.updateUser(
-                "user-1", "renamed", "short", null, null, null, null, null, null));
+                "user-1", "renamed", password, null, null, null, null, null, null));
         assertEquals("alice", stored.getUserName());
         assertEquals("stored-hash", stored.getPassword());
         verify(service, never()).updateUser(any());
     }
 
-    @Test
-    void metadataUpdatesDoNotResetThePasswordChangeFlag() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    void metadataUpdatesDoNotResetThePasswordChangeFlag(String password) {
         User stored = user();
         when(service.getUserById("user-1")).thenReturn(stored);
-        tools.updateUser("user-1", null, null, null, null, null, null, null, "updated");
+        tools.updateUser("user-1", null, password, null, null, null, null, null, "updated");
         assertEquals("stored-hash", stored.getPassword());
         assertEquals(0, stored.getPasswordChangeRequired());
     }

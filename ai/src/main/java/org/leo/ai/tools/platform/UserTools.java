@@ -81,8 +81,7 @@ public class UserTools {
             @P(value = "备注", required = false) String remark,
             @P(value = "用户 ID；省略时自动生成", required = false) String userId) {
         String name = requireNonBlank(userName, "userName不能为空");
-        String pwd  = requireNonBlank(password, "password不能为空");
-        passwordPolicy.validate(pwd);
+        passwordPolicy.validate(password);
 
         if (userService.getUserByName(name) != null) {
             throw new IllegalArgumentException("用户名已存在");
@@ -91,7 +90,7 @@ public class UserTools {
         User user = new User();
         user.setUserId(defaultIfBlank(userId, UUID.randomUUID().toString()));
         user.setUserName(name);
-        user.setPassword(PasswordUtil.hash(pwd));
+        user.setPassword(PasswordUtil.hash(password));
         user.setPrivilege(normalizePrivilege(privilege));
         user.setEmail(trimToNull(email));
         user.setPhone(trimToNull(phone));
@@ -122,7 +121,8 @@ public class UserTools {
         User existing = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (existing == null) throw new IllegalArgumentException("用户不存在");
         boolean builtInAdmin = isBuiltInAdmin(existing);
-        if (!isBlank(password)) passwordPolicy.validate(password);
+        boolean changePassword = password != null && !password.isEmpty();
+        if (changePassword) passwordPolicy.validate(password);
 
         if (!isBlank(userName) && !userName.equals(existing.getUserName())) {
             if (userService.getUserByName(userName) != null) {
@@ -130,7 +130,7 @@ public class UserTools {
             }
             existing.setUserName(userName.trim());
         }
-        if (!isBlank(password)) {
+        if (changePassword) {
             existing.setPassword(PasswordUtil.hash(password));
             existing.setPasswordChangeRequired(1);
         }

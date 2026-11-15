@@ -9,7 +9,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.ai.tools.platform.UserTools;
 import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
 import org.leo.dao.mapper.SystemConfigMapper;
@@ -36,23 +39,26 @@ import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Real password policy, SQLite/MyBatis, interceptors and HTTP binding share one contract. */
+/** AI and HTTP password writes share the real policy, SQLite/MyBatis and login contract. */
 class PasswordRoundTripIntegrationTest {
 
     @TempDir Path temp;
     private final ObjectMapper json = new ObjectMapper();
     private SqlSession sqlSession;
     private UserService users;
+    private UserTools tools;
     private MockMvc mvc;
     private MockHttpSession adminSession;
 
@@ -66,6 +72,7 @@ class PasswordRoundTripIntegrationTest {
         users = new UserService(sqlSession.getMapper(UserMapper.class));
         SystemConfigService config = new SystemConfigService(sqlSession.getMapper(SystemConfigMapper.class));
         PasswordPolicy passwords = new PasswordPolicy(config);
+        tools = new UserTools(users, passwords);
         PermissionService permissions = new PermissionService(mock(AgentService.class), users);
         mvc = MockMvcBuilders.standaloneSetup(
                         new LoginController(users, mock(TeamService.class), permissions,
@@ -93,9 +100,9 @@ class PasswordRoundTripIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {" edge-fixture-pass ", "\tfixture-pass\t", " 密码-fixture-口令 "})
-    void preservesEveryPasswordCharacterAcrossCreationResetUpdateChangeAndLogin(String password) throws Exception {
-        createUser(password);
+    @MethodSource("passwordInputs")
+    void preservesEveryPasswordCharacterAcrossCreationResetUpdateChangeAndLogin(boolean ai, String password) throws Exception {
+        createUser(password, ai);
         assertLogin("member", password);
         String userId = users.getUserByName("member").getUserId();
 
@@ -106,9 +113,10 @@ class PasswordRoundTripIntegrationTest {
         assertLogin("member", reset);
 
         String updated = " " + password + "-updated\t";
-        mvc.perform(body("/platform/admin/users/update",
-                        Map.of("userId", userId, "password", updated)).session(adminSession))
-                .andExpect(status().isOk());
+        if (ai) assertEquals(true, tools.updateUser(userId, null, updated, null, null, null, null, null, null).get("success"));
+        else mvc.perform(body("/platform/admin/users/update",
+                            Map.of("userId", userId, "password", updated)).session(adminSession))
+                    .andExpect(status().isOk());
         MockHttpSession memberSession = assertLogin("member", updated);
 
         String changed = "\t" + password + "-self-change ";
@@ -119,23 +127,31 @@ class PasswordRoundTripIntegrationTest {
         assertLogin("member", changed);
     }
 
-    @Test
-    void appliesPasswordLengthLimitsToTheOriginalValue() throws Exception {
+    private static Stream<Arguments> passwordInputs() {
+        return Stream.of(" edge-fixture-pass ", "\tfixture-pass\t", " 密码-fixture-口令 ")
+                .flatMap(password -> Stream.of(Arguments.of(false, password), Arguments.of(true, password)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void appliesPasswordLengthLimitsToTheOriginalValue(boolean ai) throws Exception {
         String maximum = " " + "x".repeat(254) + " ";
-        createUser(maximum);
+        createUser(maximum, ai);
         assertLogin("member", maximum);
         String oversized = maximum + " ";
         mvc.perform(body("/platform/user/login", Map.of("username", "member", "password", oversized)))
                 .andExpect(status().isBadRequest());
-        mvc.perform(body("/platform/admin/users", Map.of(
-                        "userName", "oversized", "password", oversized, "privilege", "normal"))
-                        .session(adminSession))
-                .andExpect(status().isBadRequest());
+        if (ai) assertThrows(IllegalArgumentException.class,
+                () -> tools.addUser("oversized", oversized, null, null, null, null, null, null, null));
+        else mvc.perform(body("/platform/admin/users", Map.of(
+                            "userName", "oversized", "password", oversized, "privilege", "normal"))
+                            .session(adminSession))
+                    .andExpect(status().isBadRequest());
     }
 
     @Test
     void emptyOptionalPasswordKeepsTheHashWhileBlankPasswordIsRejected() throws Exception {
-        createUser("current-fixture-password");
+        createUser("current-fixture-password", false);
         User member = users.getUserByName("member");
         mvc.perform(body("/platform/admin/users/update",
                         Map.of("userId", member.getUserId(), "password", "")).session(adminSession))
@@ -152,7 +168,11 @@ class PasswordRoundTripIntegrationTest {
         assertEquals(member.getPassword(), users.getUserById(member.getUserId()).getPassword());
     }
 
-    private void createUser(String password) throws Exception {
+    private void createUser(String password, boolean ai) throws Exception {
+        if (ai) {
+            assertEquals(true, tools.addUser("member", password, null, null, null, null, null, null, null).get("success"));
+            return;
+        }
         mvc.perform(body("/platform/admin/users", Map.of(
                         "userName", "member", "password", password, "privilege", "normal"))
                         .session(adminSession))
