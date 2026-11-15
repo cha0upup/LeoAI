@@ -34,7 +34,7 @@ public final class BoundedTtlCache<T> {
         this(maxSize, ttl, unit, order, System::currentTimeMillis);
     }
 
-    BoundedTtlCache(int maxSize, long ttl, TimeUnit unit, EvictionOrder order, LongSupplier clock) {
+    public BoundedTtlCache(int maxSize, long ttl, TimeUnit unit, EvictionOrder order, LongSupplier clock) {
         this.maxSize   = maxSize;
         this.ttlMillis = unit.toMillis(ttl);
         this.clock = Objects.requireNonNull(clock);
@@ -54,8 +54,21 @@ public final class BoundedTtlCache<T> {
     }
 
     public synchronized void put(String key, T value) {
+        put(key, value, ttlMillis, TimeUnit.MILLISECONDS);
+    }
+
+    /** 单条记录可覆盖默认保留时间，读取不会延长其有效期。 */
+    public synchronized void put(String key, T value, long ttl, TimeUnit unit) {
         evictExpiredSample();
-        store.put(key, new CacheEntry<>(value, clock.getAsLong() + ttlMillis));
+        long duration = unit.toMillis(ttl);
+        long now = clock.getAsLong();
+        long expiresAt;
+        try {
+            expiresAt = Math.addExact(now, duration);
+        } catch (ArithmeticException overflow) {
+            expiresAt = duration >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+        }
+        store.put(key, new CacheEntry<>(value, expiresAt));
     }
 
     public synchronized void clear() { store.clear(); }

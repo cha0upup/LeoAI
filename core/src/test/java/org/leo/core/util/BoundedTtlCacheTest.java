@@ -55,6 +55,43 @@ class BoundedTtlCacheTest {
         assertEquals(0, cache.size());
     }
 
+    @ParameterizedTest
+    @EnumSource(BoundedTtlCache.EvictionOrder.class)
+    void perEntryTtlKeepsTheDefaultAndOtherEntriesIndependent(BoundedTtlCache.EvictionOrder order) {
+        AtomicLong now = new AtomicLong(0);
+        BoundedTtlCache<String> cache = new BoundedTtlCache<>(3, 10, TimeUnit.SECONDS, order, now::get);
+        cache.put("default", "default");
+        cache.put("short", "short", 2, TimeUnit.SECONDS);
+        cache.put("long", "long", 20, TimeUnit.SECONDS);
+
+        now.set(2000);
+        assertEquals("short", cache.get("short"));
+        now.incrementAndGet();
+        assertNull(cache.get("short"));
+        assertEquals("default", cache.get("default"));
+        assertEquals("long", cache.get("long"));
+        now.set(10_001);
+        assertNull(cache.get("default"));
+        assertEquals("long", cache.get("long"));
+        now.set(20_001);
+        assertNull(cache.get("long"));
+        assertEquals(0, cache.size());
+    }
+
+    @Test
+    void largeDefaultAndPerEntryTtlsDoNotOverflowIntoImmediateExpiry() {
+        AtomicLong now = new AtomicLong(1000);
+        BoundedTtlCache<String> cache = new BoundedTtlCache<>(2, Long.MAX_VALUE, TimeUnit.DAYS,
+                BoundedTtlCache.EvictionOrder.INSERTION, now::get);
+        cache.put("default", "default");
+        cache.put("custom", "custom", Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+
+        now.set(Long.MAX_VALUE);
+
+        assertEquals("default", cache.get("default"));
+        assertEquals("custom", cache.get("custom"));
+    }
+
     @Test
     void explicitCleanupReleasesAllExpiredEntriesIncludingUnreadOnes() {
         AtomicLong now = new AtomicLong(0);

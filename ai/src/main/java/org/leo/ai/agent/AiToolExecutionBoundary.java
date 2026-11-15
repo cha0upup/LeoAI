@@ -61,8 +61,7 @@ public class AiToolExecutionBoundary {
             ToolExecutionRequest request,
             InvocationContext context) {
         String toolName = descriptor.name();
-        String memoryId = context != null && context.chatMemoryId() != null
-                ? String.valueOf(context.chatMemoryId()) : "<no-memory>";
+        String memoryId = memoryId(context);
         AiToolOperation operation = descriptor.operation();
         long timeoutMs = settings(scope).getToolTimeoutMs();
         String invocationId = context != null && context.invocationId() != null
@@ -174,8 +173,7 @@ public class AiToolExecutionBoundary {
             AiToolContext.restore(snapshot);
             ToolExecutionResult raw = delegate.executeWithContext(request, context);
             return normalize(scope, operation, toolName, request, raw,
-                    context != null && context.chatMemoryId() != null
-                            ? String.valueOf(context.chatMemoryId()) : "<no-memory>",
+                    memoryId(context),
                     elapsedMs(started), timeoutMs);
         } finally {
             AiToolContext.clear();
@@ -393,6 +391,11 @@ public class AiToolExecutionBoundary {
     private static String arguments(ToolExecutionRequest request) {
         return request != null && request.arguments() != null
                 ? request.arguments() : "{}";
+    }
+
+    private static String memoryId(InvocationContext context) {
+        return context != null && context.chatMemoryId() != null
+                ? String.valueOf(context.chatMemoryId()) : null;
     }
 
     private static ExecutorService daemonExecutor() {

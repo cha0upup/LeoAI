@@ -24,9 +24,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -167,6 +169,37 @@ class AiToolExecutionBoundaryTest {
                 context("memory-1", java.util.UUID.randomUUID()));
 
         assertEquals(2, calls.get());
+    }
+
+    @Test
+    void missingMemoryDoesNotShareWriteResultsOrArchivesWithALiteralPlaceholderId() {
+        AiToolResultArchive archive = new AiToolResultArchive();
+        AiToolExecutionBoundary boundary = boundary(5_000, 1_024, archive);
+        AtomicInteger calls = new AtomicInteger();
+        String full = "x".repeat(5_000);
+        ToolExecutor delegate = mock(ToolExecutor.class);
+        when(delegate.executeWithContext(any(), nullable(InvocationContext.class))).thenAnswer(invocation -> {
+            calls.incrementAndGet();
+            return ToolExecutionResult.builder().result(full).resultText(full).build();
+        });
+        InvocationContext literalId = mock(InvocationContext.class);
+        when(literalId.chatMemoryId()).thenReturn("<no-memory>");
+        ToolExecutionRequest request = request("same-call", "createItem");
+
+        ToolExecutionResult absent = boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                "createItem", delegate, request, null);
+        ToolExecutionResult literal = boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                "createItem", delegate, request, literalId);
+        boundary.execute(AiToolAuthorizationPolicy.AiAgentScope.PLATFORM,
+                "createItem", delegate, request, null);
+
+        assertEquals(2, calls.get());
+        String absentArchive = (String) metadata(json(absent.resultText())).get("archiveId");
+        String literalArchive = (String) metadata(json(literal.resultText())).get("archiveId");
+        assertEquals(full, archive.page(null, absentArchive, 0, 8000).content());
+        assertEquals(full, archive.page("<no-memory>", literalArchive, 0, 8000).content());
+        assertNull(archive.page("<no-memory>", absentArchive, 0, 8000));
+        assertNull(archive.page(null, literalArchive, 0, 8000));
     }
 
     @Test
