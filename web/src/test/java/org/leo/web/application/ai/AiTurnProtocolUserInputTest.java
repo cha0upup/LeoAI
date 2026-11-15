@@ -2,6 +2,7 @@ package org.leo.web.application.ai;
 
 import org.junit.jupiter.api.Test;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiUserInputRequest;
 
 import java.util.List;
@@ -16,18 +17,21 @@ import static org.mockito.Mockito.when;
 
 class AiTurnProtocolUserInputTest {
 
+    private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiUserInputRepository requests = mock(AiUserInputRepository.class);
+    private final AiTurnProtocolService service = new AiTurnProtocolService(store, requests);
+
     @Test
     void pendingQuestionMakesIdleThreadWaitWithoutHoldingExecutionClaim() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
         when(store.listInProgressProtocolTurns("thread-1")).thenReturn(List.of());
         AiUserInputRequest question = new AiUserInputRequest();
         question.setRequestId("question-1");
         question.setPrompt("请选择范围");
         question.setStatus(AiUserInputRequest.STATUS_PENDING);
-        when(store.findPendingUserInputRequest("thread-1")).thenReturn(question);
+        when(requests.findPending("thread-1")).thenReturn(question);
 
         AiTurnProtocolService.ThreadSnapshot snapshot =
-                new AiTurnProtocolService(store).snapshotThread("thread-1", "completed");
+                service.snapshotThread("thread-1", "completed");
 
         assertEquals(AiTurnProtocolService.STATUS_WAITING_FOR_USER, snapshot.status());
         assertFalse(snapshot.executing());
@@ -36,11 +40,10 @@ class AiTurnProtocolUserInputTest {
 
     @Test
     void answerTurnIsBoundToQuestionDuringAtomicReservation() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
         when(store.reserveProtocolTurn(any(), eq("当前节点"), any(), eq("question-1")))
                 .thenReturn(true);
 
-        AiTurnProtocolService.Reservation reservation = new AiTurnProtocolService(store).begin(
+        AiTurnProtocolService.Reservation reservation = service.begin(
                 "thread-1", "client-1", "platform", "{}",
                 "当前节点", List.of(), "question-1");
 

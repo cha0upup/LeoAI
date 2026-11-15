@@ -53,6 +53,7 @@ public class AiUserInputRepository {
                 System.currentTimeMillis()) == 1;
     }
 
+    /** A single conditional update prevents concurrent consumers from reusing a confirmation. */
     public boolean consumeConfirmation(String requestId, String threadId,
                                        String toolName, String argumentsHash,
                                        long consumedAt) {

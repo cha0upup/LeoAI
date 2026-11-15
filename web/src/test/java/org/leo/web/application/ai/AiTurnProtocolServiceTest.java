@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiTurnRecord;
 
 import java.util.List;
@@ -21,7 +22,7 @@ import static org.mockito.Mockito.when;
 class AiTurnProtocolServiceTest {
 
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
-    private final AiTurnProtocolService service = new AiTurnProtocolService(store);
+    private final AiTurnProtocolService service = new AiTurnProtocolService(store, mock(AiUserInputRepository.class));
 
     @Test
     void startupFailureWithoutLeaseUsesAtomicTerminalEventPath() {

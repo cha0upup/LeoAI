@@ -4,11 +4,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.runtime.AiTurnRecoveryContext;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.thread.*;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
+import org.leo.core.entity.AiUserInputRequest;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -21,8 +24,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,6 +40,7 @@ class AiConversationPersistenceIntegrationTest {
     private AiConversationStoreService store;
     private AiMessageRepository messages;
     private AiExecutionLeaseRepository leases;
+    private AiUserInputRepository requests;
     private AiTurnProtocolService protocol;
 
     @BeforeEach
@@ -53,18 +61,82 @@ class AiConversationPersistenceIntegrationTest {
         context.register(AiConversationStoreService.class, AiEventJournalRepository.class,
                 AiExecutionLeaseRepository.class, AiTurnTerminalRepository.class, AiProtocolTurnRepository.class,
                 AiUserInputRepository.class, AiSubagentInvocationRepository.class, AiMessageRepository.class,
-                AiContextCheckpointRepository.class);
+                AiContextCheckpointRepository.class, AiTurnProtocolService.class);
         context.refresh();
         store = context.getBean(AiConversationStoreService.class);
         messages = context.getBean(AiMessageRepository.class);
         leases = context.getBean(AiExecutionLeaseRepository.class);
-        protocol = new AiTurnProtocolService(store);
+        requests = context.getBean(AiUserInputRepository.class);
+        protocol = context.getBean(AiTurnProtocolService.class);
         store.createPlatformThread("fixture-user", "fixture-session", "thread-1", "fixture", 1L, null);
     }
 
     @AfterEach
     void tearDown() {
         if (context != null) context.close();
+    }
+
+    @Test
+    void pendingQuestionIsReusedUntilItExpires() {
+        requests.create(confirmation("question-1"));
+        AiUserInputRequest next = confirmation("question-2");
+
+        assertEquals("question-1", requests.create(next).getRequestId());
+        assertNull(requests.find("question-2"));
+        jdbc.update("UPDATE ai_user_input_requests SET expires_at=1 WHERE request_id='question-1'");
+
+        assertNull(requests.findPending("thread-1"));
+        assertEquals(AiUserInputRequest.STATUS_EXPIRED, requests.find("question-1").getStatus());
+        assertEquals("question-2", requests.create(next).getRequestId());
+        assertEquals("question-2", requests.findPending("thread-1").getRequestId());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"other, false", "'', false", "confirm, true"})
+    void invalidAnswersRollBackReservedTurnAndBothMessages(String answer, boolean expired) {
+        AiUserInputRequest question = confirmation("question-1");
+        if (expired) question.setExpiresAt(1L);
+        requests.create(question);
+
+        assertThrows(IllegalStateException.class, () -> protocol.begin(
+                "thread-1", "answer-client", "platform", "{}", answer, null, "question-1"));
+
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ai_turns", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages", Integer.class));
+        assertEquals(AiUserInputRequest.STATUS_PENDING, requests.find("question-1").getStatus());
+        jdbc.update("UPDATE ai_user_input_requests SET expires_at=? WHERE request_id='question-1'", Long.MAX_VALUE);
+
+        var retried = protocol.begin(
+                "thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1");
+
+        assertFalse(retried.reused());
+        assertEquals(AiUserInputRequest.STATUS_ANSWERED, requests.find("question-1").getStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_turns", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages", Integer.class));
+    }
+
+    @Test
+    void matchingConfirmationCanBeConsumedOnlyOnceAcrossConcurrentCallers() throws Exception {
+        requests.create(confirmation("question-1"));
+        protocol.begin("thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1");
+        long consumedAt = System.currentTimeMillis();
+        assertFalse(requests.consumeConfirmation("question-1", "other-thread", "updateProfile", "fixture-hash", consumedAt));
+        assertFalse(requests.consumeConfirmation("question-1", "thread-1", "otherTool", "fixture-hash", consumedAt));
+        assertFalse(requests.consumeConfirmation("question-1", "thread-1", "updateProfile", "other-hash", consumedAt));
+        var workers = Executors.newFixedThreadPool(4);
+        try {
+            var attempts = new ArrayList<Callable<Boolean>>();
+            for (int i = 0; i < 4; i++) attempts.add(() -> requests.consumeConfirmation(
+                    "question-1", "thread-1", "updateProfile", "fixture-hash", consumedAt));
+            int accepted = 0;
+            for (var result : workers.invokeAll(attempts, 5, TimeUnit.SECONDS)) {
+                if (result.get()) accepted++;
+            }
+            assertEquals(1, accepted);
+            assertEquals(consumedAt, requests.find("question-1").getConfirmationConsumedAt());
+        } finally {
+            workers.shutdownNow();
+        }
     }
 
     @Test
@@ -328,6 +400,23 @@ class AiConversationPersistenceIntegrationTest {
 
     private AiTurnProtocolService.TurnSnapshot reserve() {
         return protocol.begin("thread-1", "client-1", "platform", "{}", "fixture", null, null).turn();
+    }
+
+    private AiUserInputRequest confirmation(String requestId) {
+        AiUserInputRequest question = new AiUserInputRequest();
+        question.setRequestId(requestId);
+        question.setThreadId("thread-1");
+        question.setRequestType(AiUserInputRequest.TYPE_CONFIRMATION);
+        question.setPrompt("Confirm fixture update?");
+        question.setOptionsJson("[{\"label\":\"Confirm\",\"value\":\"confirm\",\"intent\":\"CONFIRM\"},"
+                + "{\"label\":\"Cancel\",\"value\":\"cancel\",\"intent\":\"REJECT\"}]");
+        question.setAllowFreeText(false);
+        question.setToolName("updateProfile");
+        question.setArgumentsHash("fixture-hash");
+        question.setStatus(AiUserInputRequest.STATUS_PENDING);
+        question.setCreatedAt(1L);
+        question.setExpiresAt(Long.MAX_VALUE);
+        return question;
     }
 
     private void appendMessage(String turnId, int sequence) {

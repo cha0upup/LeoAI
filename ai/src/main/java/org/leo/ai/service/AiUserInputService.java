@@ -8,7 +8,7 @@ import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiUserInputOption;
 import org.leo.core.session.AiThread;
@@ -33,11 +33,11 @@ public class AiUserInputService {
     private static final long DEFAULT_EXPIRES_MS = 24L * 60L * 60L * 1_000L;
     private static final long MAX_EXPIRES_MS = 7L * DEFAULT_EXPIRES_MS;
 
-    private final AiConversationStoreService store;
+    private final AiUserInputRepository requests;
     private final AiToolCatalog toolCatalog;
 
-    public AiUserInputService(AiConversationStoreService store, AiToolCatalog toolCatalog) {
-        this.store = store;
+    public AiUserInputService(AiUserInputRepository requests, AiToolCatalog toolCatalog) {
+        this.requests = requests;
         this.toolCatalog = toolCatalog;
     }
 
@@ -103,7 +103,7 @@ public class AiUserInputService {
             argumentsHash = confirmationArgumentsHash(argumentsJson);
         }
 
-        AiUserInputRequest existing = store.findPendingUserInputRequest(target.threadId());
+        AiUserInputRequest existing = requests.findPending(target.threadId());
         if (existing != null) {
             target.markWaiting();
             return result(existing, true);
@@ -128,7 +128,7 @@ public class AiUserInputService {
         request.setCreatedAt(now);
         request.setExpiresAt(now + expiresMillis(expiresInSeconds));
 
-        AiUserInputRequest persisted = store.createUserInputRequest(request);
+        AiUserInputRequest persisted = requests.create(request);
         target.markWaiting();
         target.emit(persisted.toMap());
         return result(persisted, persisted != request);
@@ -140,7 +140,7 @@ public class AiUserInputService {
         if (answerToQuestionId == null || answerToQuestionId.isBlank()) {
             return guardedMessage;
         }
-        AiUserInputRequest request = store.findUserInputRequest(answerToQuestionId);
+        AiUserInputRequest request = requests.find(answerToQuestionId);
         if (request == null
                 || !request.getThreadId().equals(threadId)
                 || !AiUserInputRequest.STATUS_ANSWERED.equals(request.getStatus())) {
@@ -163,10 +163,6 @@ public class AiUserInputService {
                 + "若是拒绝，不要执行被拒绝的动作，应选择低风险替代方案或结束任务。\n\n");
         context.append(guardedMessage != null ? guardedMessage : request.getAnswer());
         return context.toString();
-    }
-
-    public AiUserInputRequest findPending(String threadId) {
-        return store.findPendingUserInputRequest(threadId);
     }
 
     private RuntimeTarget requireRuntimeTarget() {

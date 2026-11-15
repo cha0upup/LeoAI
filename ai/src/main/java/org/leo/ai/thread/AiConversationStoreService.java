@@ -217,29 +217,6 @@ public class AiConversationStoreService {
         return true;
     }
 
-    // ── Agent 等待用户输入 ────────────────────────────────────────────────
-
-    public AiUserInputRequest findUserInputRequest(String requestId) {
-        return userInput.find(requestId);
-    }
-
-    public AiUserInputRequest findPendingUserInputRequest(String threadId) {
-        return userInput.findPending(threadId);
-    }
-
-    public AiUserInputRequest createUserInputRequest(AiUserInputRequest request) {
-        return userInput.create(request);
-    }
-
-    /** 原子消费一次高风险操作确认，避免同一确认被并发工具调用复用。 */
-    @Transactional
-    public boolean consumeConfirmation(String requestId, String threadId,
-                                       String toolName, String argumentsHash,
-                                       long consumedAt) {
-        return userInput.consumeConfirmation(
-                requestId, threadId, toolName, argumentsHash, consumedAt);
-    }
-
     public boolean claimProtocolTurnStart(String turnId, long startedAt) {
         return protocolTurn.claimStart(turnId, startedAt);
     }

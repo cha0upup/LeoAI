@@ -1,6 +1,7 @@
 package org.leo.web.application.ai;
 
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.springframework.stereotype.Service;
@@ -24,9 +25,11 @@ public class AiTurnProtocolService {
     private static final String STATUS_FAILED = "failed";
 
     private final AiConversationStoreService store;
+    private final AiUserInputRepository userInput;
 
-    public AiTurnProtocolService(AiConversationStoreService store) {
+    public AiTurnProtocolService(AiConversationStoreService store, AiUserInputRepository userInput) {
         this.store = store;
+        this.userInput = userInput;
     }
 
     private TurnSnapshot findByClientId(
@@ -99,8 +102,7 @@ public class AiTurnProtocolService {
         List<TurnSnapshot> queued = inProgress.stream()
                 .filter(turn -> STATUS_QUEUED.equals(turn.status()))
                 .toList();
-        AiUserInputRequest pendingUserInput =
-                store.findPendingUserInputRequest(threadId);
+        AiUserInputRequest pendingUserInput = userInput.findPending(threadId);
         String normalizedFallback = pendingUserInput == null
                 && STATUS_WAITING_FOR_USER.equals(fallbackStatus)
                 ? STATUS_COMPLETED : fallbackStatus;

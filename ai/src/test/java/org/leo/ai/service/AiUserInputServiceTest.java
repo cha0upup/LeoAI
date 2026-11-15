@@ -1,9 +1,13 @@
 package org.leo.ai.service;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolCatalog;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
@@ -12,7 +16,7 @@ import dev.langchain4j.service.tool.ToolService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.core.ai.AiRunStatus;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiUserInputOption;
 
@@ -20,17 +24,28 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AiUserInputServiceTest {
 
     private static final String STATE_ID = "platform-question-test";
+    private final AiUserInputRepository requests = mock(AiUserInputRepository.class);
+    private final AiToolCatalog catalog = new AiToolCatalog();
+    private final AiUserInputService service = new AiUserInputService(requests, catalog);
+    private PlatformAiState state;
+
+    @BeforeEach
+    void bindRuntime() {
+        state = PlatformAiStateStore.create(STATE_ID);
+        AiToolContext.setFromMemoryId(STATE_ID);
+    }
 
     @AfterEach
     void cleanup() {
@@ -40,14 +55,10 @@ class AiUserInputServiceTest {
 
     @Test
     void persistsQuestionMarksRuntimeWaitingAndEmitsNode() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        PlatformAiState state = PlatformAiStateStore.create(STATE_ID);
+        when(requests.create(any())).thenAnswer(invocation -> invocation.getArgument(0));
         state.bindActiveTurnId("turn-1");
         state.bindActiveItemId("item-1");
-        AiToolContext.setFromMemoryId(STATE_ID);
 
-        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
         Map<String, Object> result = service.request(
                 "CLARIFICATION", "请选择目标范围", options("当前节点", "current_node", "SCOPE_CURRENT", "全部节点", "all_nodes", "SCOPE_ALL"),
                 false, null, null, null, "LOW", 60L);
@@ -62,38 +73,29 @@ class AiUserInputServiceTest {
                 "label", "当前节点", "value", "current_node", "intent", "SCOPE_CURRENT"), Map.of(
                 "label", "全部节点", "value", "all_nodes", "intent", "SCOPE_ALL")), request.get("options"));
         assertEquals(true, request.get("allowFreeText"));
-        verify(store).createUserInputRequest(any(AiUserInputRequest.class));
+        verify(requests).create(any(AiUserInputRequest.class));
     }
 
     @Test
-    void confirmationBindsExactToolArgumentsHash() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        PlatformAiStateStore.create(STATE_ID);
-        AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
+    void reusesPendingQuestionWithoutPersistingOrEmittingAnotherCard() {
+        AiUserInputRequest pending = new AiUserInputRequest();
+        pending.setRequestId("question-1");
+        when(requests.findPending(STATE_ID)).thenReturn(pending);
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> request = (Map<String, Object>) service.request(
-                "CONFIRMATION", "确认删除用户吗？", options("确认删除", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
-                false, "删除 user-1", "deleteUser", "{\"userId\":\"user-1\"}",
-                "HIGH", 60L).get("request");
+        Map<String, Object> result = service.request(
+                "CLARIFICATION", "请选择目标范围", List.of(),
+                true, null, null, null, "LOW", 60L);
 
-        assertEquals("deleteUser", request.get("toolName"));
-        assertNotNull(request.get("argumentsHash"));
-        assertEquals(64, String.valueOf(request.get("argumentsHash")).length());
+        assertEquals(true, result.get("reused"));
+        assertEquals(pending.toMap(), result.get("request"));
+        assertEquals(AiRunStatus.WAITING_FOR_USER, state.getRunStatus());
+        assertTrue(state.getAiSseEventQueue().isEmpty());
+        verify(requests, never()).create(any());
     }
 
     @Test
-    void confirmationCardIncludesAssessmentRiskAndImpact() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        PlatformAiState state = PlatformAiStateStore.create(STATE_ID);
-        state.bindActiveTurnId("turn-1");
-        state.bindActiveItemId("item-1");
-        AiToolContext.setFromMemoryId(STATE_ID);
-
-        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
+    void confirmationCardBindsToolArgumentsAndPreservesRiskDetails() {
+        when(requests.create(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> request = (Map<String, Object>) service.request(
@@ -103,6 +105,10 @@ class AiUserInputServiceTest {
                 "deleteUser", "{\"userId\":\"user-1\"}",
                 "CRITICAL", 60L).get("request");
 
+        assertEquals("deleteUser", request.get("toolName"));
+        assertEquals(AiUserInputService.confirmationArgumentsHash("{\"userId\":\"user-1\"}"),
+                request.get("argumentsHash"));
+        assertEquals("CRITICAL", request.get("risk"));
         String summary = String.valueOf(request.get("actionSummary"));
         assertTrue(summary.contains("风险：CRITICAL"));
         assertTrue(summary.contains("可能后果：用户将无法登录"));
@@ -111,14 +117,12 @@ class AiUserInputServiceTest {
 
     @Test
     void confirmationRejectsUnboundAction() {
-        PlatformAiStateStore.create(STATE_ID);
-        AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(
-                mock(AiConversationStoreService.class), new AiToolCatalog());
-
-        assertThrows(RuntimeException.class, () -> service.request(
+        AiToolException error = assertThrows(AiToolException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
                 false, "危险动作", null, null, "HIGH", 60L));
+
+        assertEquals("CONFIRMATION_ACTION_REQUIRED", error.code());
+        verifyNoInteractions(requests);
     }
 
     @Test
@@ -130,46 +134,40 @@ class AiUserInputServiceTest {
                         "{ \"options\": { \"depth\": 2, \"force\": true }, \"userId\": \"user-1\" }"));
     }
 
-    @Test
-    void confirmationRequiresExplicitAcceptAndRejectOptions() {
-        PlatformAiStateStore.create(STATE_ID);
-        AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(
-                mock(AiConversationStoreService.class), new AiToolCatalog());
-
-        assertThrows(RuntimeException.class, () -> service.request(
-                "CONFIRMATION", "确认执行吗？", options("稍后再说", "later", "DEFER"),
-                true, "危险动作", "deleteUser", "{\"userId\":\"user-1\"}",
+    @ParameterizedTest
+    @ValueSource(strings = {"CONFIRM", "REJECT", "DEFER"})
+    void confirmationRequiresExplicitAcceptAndRejectOptions(String intent) {
+        AiToolException error = assertThrows(AiToolException.class, () -> service.request(
+                "CONFIRMATION", "确认执行吗？", options("选项", "choice", intent),
+                false, "危险动作", "deleteUser", "{\"userId\":\"user-1\"}",
                 "HIGH", 60L));
+
+        assertEquals("CONFIRMATION_OPTIONS_REQUIRED", error.code());
+        verifyNoInteractions(requests);
     }
 
     @Test
     void confirmationRejectsFreeText() {
-        PlatformAiStateStore.create(STATE_ID);
-        AiToolContext.setFromMemoryId(STATE_ID);
-        AiUserInputService service = new AiUserInputService(mock(AiConversationStoreService.class), new AiToolCatalog());
-
-        assertThrows(RuntimeException.class, () -> service.request(
+        AiToolException error = assertThrows(AiToolException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
                 true, "危险动作", "deleteUser", "{\"userId\":\"user-1\"}", "HIGH", 60L));
+
+        assertEquals("CONFIRMATION_FREE_TEXT_FORBIDDEN", error.code());
+        verifyNoInteractions(requests);
     }
 
-    @Test
-    void confirmationRejectsReadOnlyOrInternalTools() {
-        PlatformAiStateStore.create(STATE_ID);
-        AiToolContext.setFromMemoryId(STATE_ID);
-        AiToolCatalog catalog = new AiToolCatalog();
+    @ParameterizedTest
+    @ValueSource(strings = {"readOnly", "internal"})
+    void confirmationRejectsReadOnlyOrInternalTools(String toolName) {
         ToolService.findTools(new ReadOnlyTools()).forEach(tool -> catalog.register(new ReadOnlyTools(), tool));
         ToolService.findTools(new InternalTools()).forEach(tool -> catalog.register(new InternalTools(), tool));
-        AiUserInputService service = new AiUserInputService(
-                mock(AiConversationStoreService.class), catalog);
 
-        assertThrows(RuntimeException.class, () -> service.request(
-                "CONFIRMATION", "确认读取吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
-                false, "读取", "readOnly", "{}", "HIGH", 60L));
-        assertThrows(RuntimeException.class, () -> service.request(
-                "CONFIRMATION", "确认控制吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
-                false, "内部控制", "internal", "{}", "HIGH", 60L));
+        AiToolException error = assertThrows(AiToolException.class, () -> service.request(
+                "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "动作说明", toolName, "{}", "HIGH", 60L));
+
+        assertEquals("CONFIRMATION_ACTION_NOT_BUSINESS_MUTATION", error.code());
+        verifyNoInteractions(requests);
     }
 
     private static class ReadOnlyTools {
@@ -186,7 +184,6 @@ class AiUserInputServiceTest {
 
     @Test
     void answeredQuestionIsInjectedIntoResumePrompt() {
-        AiConversationStoreService store = mock(AiConversationStoreService.class);
         AiUserInputRequest request = new AiUserInputRequest();
         request.setRequestId("question-1");
         request.setThreadId("thread-1");
@@ -194,9 +191,9 @@ class AiUserInputServiceTest {
         request.setPrompt("使用哪个范围？");
         request.setStatus(AiUserInputRequest.STATUS_ANSWERED);
         request.setAnswer("只处理当前节点");
-        when(store.findUserInputRequest("question-1")).thenReturn(request);
+        when(requests.find("question-1")).thenReturn(request);
 
-        String prompt = new AiUserInputService(store, new AiToolCatalog()).resumePrompt(
+        String prompt = service.resumePrompt(
                 "thread-1", "question-1", "原始安全策略消息");
 
         assertTrue(prompt.contains("使用哪个范围？"));

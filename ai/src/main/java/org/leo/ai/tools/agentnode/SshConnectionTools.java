@@ -8,7 +8,7 @@ import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.service.AiUserInputService;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.ssh.SshConnectionException;
@@ -26,11 +26,11 @@ import java.util.function.Supplier;
 @AiToolPolicy(kind = AiToolKind.COMMAND, operation = AiToolOperation.WRITE)
 public final class SshConnectionTools {
     private final SshConnectionOperations connections;
-    private final AiConversationStoreService conversations;
+    private final AiUserInputRepository requests;
 
-    public SshConnectionTools(SshConnectionOperations connections, AiConversationStoreService conversations) {
+    public SshConnectionTools(SshConnectionOperations connections, AiUserInputRepository requests) {
         this.connections = connections;
-        this.conversations = conversations;
+        this.requests = requests;
     }
 
     @Tool("列出当前 Agent 已保存的 SSH 连接配置。返回 profileId、version、主机、认证类型及凭据存在标记，不返回密码、私钥或口令。")
@@ -111,7 +111,7 @@ public final class SshConnectionTools {
                     "先调用 listSshConnections 获取 profileId 和 version。");
         }
         String threadId = AiToolContext.getThreadId();
-        AiUserInputRequest request = requestId == null ? null : conversations.findUserInputRequest(requestId);
+        AiUserInputRequest request = requests.find(requestId);
         String argumentsHash = AiUserInputService.confirmationArgumentsHash(JsonUtil.toJsonString(
                 Map.of("profileId", profileId, "version", version, "fingerprint", fingerprint)));
         long now = System.currentTimeMillis();
@@ -124,7 +124,7 @@ public final class SshConnectionTools {
                 || request.getExpiresAt() != null && request.getExpiresAt() <= now
                 || request.options().stream().noneMatch(option -> Objects.equals(option.getValue(), request.getAnswer())
                     && ("CONFIRM".equals(option.getIntent()) || "APPROVE".equals(option.getIntent())))
-                || !conversations.consumeConfirmation(requestId, threadId, "testSshConnection", argumentsHash, now)) {
+                || !requests.consumeConfirmation(requestId, threadId, "testSshConnection", argumentsHash, now)) {
             throw AiToolException.userActionRequired("SSH_HOST_KEY_CONFIRMATION_REQUIRED",
                     "SSH 主机指纹需要用户核验确认。",
                     "通过 request_user_input 确认该配置版本和指纹后，传入对应 confirmationRequestId。");

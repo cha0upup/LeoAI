@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.AiUserInputService;
-import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.User;
@@ -24,8 +24,8 @@ import static org.mockito.Mockito.*;
 
 class SshConnectionToolsTest {
     final SshConnectionOperations connections = mock(SshConnectionOperations.class);
-    final AiConversationStoreService store = mock(AiConversationStoreService.class);
-    final SshConnectionTools tools = new SshConnectionTools(connections, store);
+    final AiUserInputRepository requests = mock(AiUserInputRepository.class);
+    final SshConnectionTools tools = new SshConnectionTools(connections, requests);
     final String pin = "SHA256:" + "A".repeat(43);
     final String id = "cfe5054d-84ea-4a81-b9c5-f2f8795f99dc";
 
@@ -55,13 +55,13 @@ class SshConnectionToolsTest {
         verify(connections).create("actor", "ssh-session", config);
         verify(connections).update("actor", "ssh-session", id, 1L, patch);
         verify(connections).delete("actor", "ssh-session", id, 1L);
-        verifyNoInteractions(store);
+        verifyNoInteractions(requests);
     }
 
     @Test void testsWithTheSavedPinWithoutRequestingUserConfirmationAgain() {
         when(connections.test("actor", "ssh-session", id, 1L, null)).thenReturn(Map.of("connected", true));
         assertEquals(true, tools.testSshConnection(id, 1L, null, null).get("connected"));
-        verifyNoInteractions(store);
+        verifyNoInteractions(requests);
     }
 
     @Test void returnsTheExactArgumentsToConfirmWhenAHostKeyIsUnknownOrChanged() {
@@ -69,18 +69,18 @@ class SshConnectionToolsTest {
                 "profileId", id, "version", 1L, "fingerprint", pin, "confirmationRequired", true));
         assertEquals(Map.of("profileId", id, "version", 1L, "fingerprint", pin),
                 tools.testSshConnection(id, 1L, null, null).get("confirmationArguments"));
-        verifyNoInteractions(store);
+        verifyNoInteractions(requests);
     }
 
     @Test void sendsAnExplicitPinOnlyAfterAtomicallyConsumingTheMatchingUserConfirmation() {
         confirmedRequest();
-        when(store.consumeConfirmation(eq("question-1"), eq("ssh-thread"), eq("testSshConnection"), anyString(), anyLong()))
+        when(requests.consumeConfirmation(eq("question-1"), eq("ssh-thread"), eq("testSshConnection"), anyString(), anyLong()))
                 .thenReturn(true);
         when(connections.test("actor", "ssh-session", id, 1L, pin)).thenReturn(Map.of("connected", true));
 
         assertEquals(true, tools.testSshConnection(id, 1L, pin, "question-1").get("connected"));
-        var order = inOrder(store, connections);
-        order.verify(store).consumeConfirmation(eq("question-1"), eq("ssh-thread"),
+        var order = inOrder(requests, connections);
+        order.verify(requests).consumeConfirmation(eq("question-1"), eq("ssh-thread"),
                 eq("testSshConnection"), anyString(), anyLong());
         order.verify(connections).test("actor", "ssh-session", id, 1L, pin);
     }
@@ -94,7 +94,7 @@ class SshConnectionToolsTest {
         request.setConfirmationConsumedAt(null); request.setThreadId("other-thread"); assertConfirmationRequired("question-1");
         request.setThreadId("ssh-thread"); request.setToolName("otherTool"); assertConfirmationRequired("question-1");
         verifyNoInteractions(connections);
-        verify(store, never()).consumeConfirmation(any(), any(), any(), any(), anyLong());
+        verify(requests, never()).consumeConfirmation(any(), any(), any(), any(), anyLong());
     }
 
     @Test void rejectsChangedArgumentsAndConfirmationReplayBeforeConnecting() {
@@ -103,7 +103,7 @@ class SshConnectionToolsTest {
         assertThrows(AiToolException.class, () -> tools.testSshConnection(id, 1L,
                 "SHA256:" + "B".repeat(43), "question-1"));
         // A racing call has already consumed this confirmation.
-        when(store.consumeConfirmation(any(), any(), any(), any(), anyLong())).thenReturn(false);
+        when(requests.consumeConfirmation(any(), any(), any(), any(), anyLong())).thenReturn(false);
         assertConfirmationRequired("question-1");
         verifyNoInteractions(connections);
     }
@@ -140,7 +140,7 @@ class SshConnectionToolsTest {
         request.setOptionsJson("[{\"label\":\"确认\",\"value\":\"confirm\",\"intent\":\"CONFIRM\"},"
                 + "{\"label\":\"取消\",\"value\":\"cancel\",\"intent\":\"REJECT\"}]");
         request.setAnswer("confirm"); request.setExpiresAt(Long.MAX_VALUE);
-        when(store.findUserInputRequest("question-1")).thenReturn(request);
+        when(requests.find("question-1")).thenReturn(request);
         return request;
     }
 
