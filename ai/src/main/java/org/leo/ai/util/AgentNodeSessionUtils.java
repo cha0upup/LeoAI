@@ -53,13 +53,17 @@ public final class AgentNodeSessionUtils {
     }
 
     public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {
+        return requireCapability(getSession(sessionId), capabilityType);
+    }
+
+    public static <T> T requireCapability(AgentNodeSession session, Class<T> capabilityType) {
         if (capabilityType == null) {
             throw AiToolException.fatal(
                     "CAPABILITY_TYPE_MISSING",
                     "工具没有声明所需的 Agent 能力类型。",
                     null);
         }
-        AbstractAgentNode node = getAgentNode(sessionId);
+        AbstractAgentNode node = session != null ? session.getAgentNode() : null;
         if (node == null) {
             throw AiToolException.userActionRequired(
                     "AGENT_UNAVAILABLE",
