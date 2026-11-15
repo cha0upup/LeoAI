@@ -7,6 +7,7 @@ import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiSubagentInvocationRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.AiChatAuditEntry;
@@ -49,6 +50,7 @@ public class PlatformNodeAiBridgeTools {
     private final PermissionService permissionService;
     private final UserService userService;
     private final AiConversationStoreService conversationStore;
+    private final AiSubagentInvocationRepository invocations;
     private final AiAuditLogStore auditLogStore;
 
     public PlatformNodeAiBridgeTools(NodeAiThreadService threadService,
@@ -57,6 +59,7 @@ public class PlatformNodeAiBridgeTools {
                                        PermissionService permissionService,
                                        UserService userService,
                                        AiConversationStoreService conversationStore,
+                                       AiSubagentInvocationRepository invocations,
                                        AiAuditLogStore auditLogStore) {
         this.threadService = threadService;
         this.delegationService = delegationService;
@@ -64,6 +67,7 @@ public class PlatformNodeAiBridgeTools {
         this.permissionService = permissionService;
         this.userService = userService;
         this.conversationStore = conversationStore;
+        this.invocations = invocations;
         this.auditLogStore = auditLogStore;
     }
 
@@ -113,9 +117,7 @@ public class PlatformNodeAiBridgeTools {
         invocation.setInvocationId(invocationId);
         invocation.setParentThreadId(parentThreadId);
         invocation.setTask(normalizedTask);
-        invocation.setStatus(AiSubagentInvocation.STATUS_PENDING);
-        invocation.setCreatedAt(System.currentTimeMillis());
-        conversationStore.insertSubagentInvocation(invocation);
+        invocations.insert(invocation);
         emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
 
         AiThread childThread = null;
@@ -131,7 +133,7 @@ public class PlatformNodeAiBridgeTools {
 
             invocation.setChildThreadId(childThreadId);
             invocation.setStatus(AiSubagentInvocation.STATUS_RUNNING);
-            conversationStore.updateSubagentInvocation(invocation);
+            invocations.update(invocation);
             emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
 
             AiExecutionPolicy policy = AiExecutionPolicy.from(caller.user());
@@ -153,17 +155,14 @@ public class PlatformNodeAiBridgeTools {
             String summary = truncate(java.util.Objects.toString(delegated.get("summary"), ""), MAX_SUMMARY_CHARS);
             invocation.setSummary(summary);
             invocation.setStatus(status);
-            invocation.setCompletedAt(AiSubagentInvocation.isTerminal(status)
-                    ? System.currentTimeMillis() : null);
-            conversationStore.updateSubagentInvocation(invocation);
+            invocations.update(invocation);
             emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
             return result(invocation, session, summary, null);
         } catch (RuntimeException error) {
             invocation.setStatus(isCancelled(childThread, error)
                     ? AiSubagentInvocation.STATUS_CANCELLED : AiSubagentInvocation.STATUS_FAILED);
             invocation.setSummary(truncate(error.getMessage(), MAX_SUMMARY_CHARS));
-            invocation.setCompletedAt(System.currentTimeMillis());
-            conversationStore.updateSubagentInvocation(invocation);
+            invocations.update(invocation);
             emitSubagentEvent(caller.state(), invocation, session.getSessionId(), session.resolveAgentId());
             return result(invocation, session, null, error.getMessage());
         }

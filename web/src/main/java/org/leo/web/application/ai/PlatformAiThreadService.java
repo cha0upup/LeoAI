@@ -3,7 +3,9 @@ package org.leo.web.application.ai;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiSubagentInvocationRepository;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
 import org.leo.web.application.UseCaseException;
@@ -25,15 +27,18 @@ public class PlatformAiThreadService {
 
     private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
+    private final AiSubagentInvocationRepository invocations;
     private final PlatformAiAgentRegistry agentRegistry;
     private final AiThreadQueryService threadQueries;
 
     public PlatformAiThreadService(AiModelChannelResolver channelResolver,
                                    AiConversationStoreService conversationStore,
+                                   AiSubagentInvocationRepository invocations,
                                    PlatformAiAgentRegistry agentRegistry,
                                    AiThreadQueryService threadQueries) {
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
+        this.invocations = invocations;
         this.agentRegistry = agentRegistry;
         this.threadQueries = threadQueries;
     }
@@ -109,9 +114,9 @@ public class PlatformAiThreadService {
         return threadQueries.messages(thread.getThreadId(), requestedOffset, requestedLimit, beforeSequence);
     }
 
-    public List<org.leo.core.entity.AiSubagentInvocation> subagentInvocations(
+    public List<AiSubagentInvocation> subagentInvocations(
             User user, String threadId) {
-        return conversationStore.listSubagentInvocations(
+        return invocations.listByParentThread(
                 requireOwnedThread(user, threadId).getThreadId());
     }
 

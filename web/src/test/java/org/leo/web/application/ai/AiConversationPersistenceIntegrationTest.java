@@ -158,6 +158,7 @@ class AiConversationPersistenceIntegrationTest {
 
     @Test
     void currentThreadAndSubagentMetadataRoundTripsAndPreservesForeignKeys() {
+        var invocations = context.getBean(AiSubagentInvocationRepository.class);
         store.createPlatformThread("fixture-user", "new-session", "new-platform-thread", "platform", 2L, null);
         var child = new org.leo.core.session.AiThread("child-thread", "child");
         child.setParentThreadId("thread-1");
@@ -171,8 +172,8 @@ class AiConversationPersistenceIntegrationTest {
         invocation.setParentThreadId("thread-1");
         invocation.setChildThreadId("child-thread");
         invocation.setTask("fixture task");
-        store.insertSubagentInvocation(invocation);
-        var persisted = store.listSubagentInvocations("thread-1").get(0);
+        invocations.insert(invocation);
+        var persisted = invocations.listByParentThread("thread-1").get(0);
         assertEquals("pending", persisted.getStatus());
         assertEquals("fixture task", persisted.getTask());
         assertEquals("child-thread", persisted.getChildThreadId());
@@ -181,8 +182,8 @@ class AiConversationPersistenceIntegrationTest {
 
         persisted.setStatus("completed");
         persisted.setSummary("fixture summary");
-        store.updateSubagentInvocation(persisted);
-        var completed = store.listSubagentInvocations("thread-1").get(0);
+        invocations.update(persisted);
+        var completed = invocations.listByParentThread("thread-1").get(0);
         assertEquals("completed", completed.getStatus());
         assertEquals("fixture summary", completed.getSummary());
         assertNotNull(completed.getCompletedAt());
@@ -193,9 +194,9 @@ class AiConversationPersistenceIntegrationTest {
                 store.findThread("thread-1"))).containsKey("rootPlanId"));
 
         store.deleteThread("child-thread");
-        assertNull(store.listSubagentInvocations("thread-1").get(0).getChildThreadId());
+        assertNull(invocations.listByParentThread("thread-1").get(0).getChildThreadId());
         store.deleteThread("thread-1");
-        assertTrue(store.listSubagentInvocations("thread-1").isEmpty());
+        assertTrue(invocations.listByParentThread("thread-1").isEmpty());
         assertNotNull(store.findThread("new-platform-thread"));
     }
 

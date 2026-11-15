@@ -36,7 +36,6 @@ public class AiConversationStoreService {
     private final AiTurnTerminalRepository turnTerminal;
     private final AiProtocolTurnRepository protocolTurn;
     private final AiUserInputRepository userInput;
-    private final AiSubagentInvocationRepository subagentInvocations;
     private final AiMessageRepository messages;
 
     public AiConversationStoreService(AiConversationMapper mapper,
@@ -44,14 +43,12 @@ public class AiConversationStoreService {
                                       AiTurnTerminalRepository turnTerminal,
                                       AiProtocolTurnRepository protocolTurn,
                                       AiUserInputRepository userInput,
-                                      AiSubagentInvocationRepository subagentInvocations,
                                       AiMessageRepository messages) {
         this.mapper = mapper;
         this.eventJournal = eventJournal;
         this.turnTerminal = turnTerminal;
         this.protocolTurn = protocolTurn;
         this.userInput = userInput;
-        this.subagentInvocations = subagentInvocations;
         this.messages = messages;
     }
 
@@ -308,23 +305,6 @@ public class AiConversationStoreService {
     public boolean hasLatestTurnCompletedEvent(String threadId) {
         return eventJournal.hasLatestTurnCompleted(threadId);
     }
-
-    // ── 子 Agent 派发记录 ───────────────────────────────────────────────────
-
-    /** 写入一条 pending 派发记录，调用方需要先填好 invocationId / parentThreadId / task。 */
-    public void insertSubagentInvocation(org.leo.core.entity.AiSubagentInvocation row) {
-        subagentInvocations.insert(row);
-    }
-
-    /** 更新派发状态：running / completed / failed / cancelled，以及 summary、childThreadId。 */
-    public void updateSubagentInvocation(org.leo.core.entity.AiSubagentInvocation row) {
-        subagentInvocations.update(row);
-    }
-
-    public List<org.leo.core.entity.AiSubagentInvocation> listSubagentInvocations(String parentThreadId) {
-        return subagentInvocations.listByParentThread(parentThreadId);
-    }
-
 
     /** 原子创建 Turn，并关联预留 Item、运行记录、追踪信息和执行租约。 */
     @Transactional

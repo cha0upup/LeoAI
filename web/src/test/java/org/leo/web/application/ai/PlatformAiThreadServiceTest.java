@@ -8,7 +8,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiSubagentInvocationRepository;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
 import org.leo.web.application.UseCaseException;
@@ -174,13 +176,30 @@ class PlatformAiThreadServiceTest {
                 () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, null)).getKind());
         assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
                 () -> fixture.service.events(user("user-1"), THREAD_ID, null, null)).getKind());
+        assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
+                () -> fixture.service.subagentInvocations(user("user-1"), THREAD_ID)).getKind());
         verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
         verify(fixture.conversationStore, never()).listEventsAfter(anyString(), anyLong(), anyInt());
+        verifyNoInteractions(fixture.invocations);
+    }
+
+    @Test
+    void readsSubagentHistoryForTheOwnedPlatformThread() {
+        Fixture fixture = fixture("user-1");
+        AiSubagentInvocation invocation = new AiSubagentInvocation();
+        invocation.setInvocationId("invocation-1");
+        invocation.setParentThreadId(THREAD_ID);
+        when(fixture.invocations.listByParentThread(THREAD_ID)).thenReturn(List.of(invocation));
+
+        assertEquals(List.of(invocation), fixture.service.subagentInvocations(user("user-1"), THREAD_ID));
+
+        verify(fixture.invocations).listByParentThread(THREAD_ID);
     }
 
     private Fixture fixture(String ownerId) {
         AiConversationStoreService conversationStore =
                 mock(AiConversationStoreService.class);
+        AiSubagentInvocationRepository invocations = mock(AiSubagentInvocationRepository.class);
         PlatformAiAgentRegistry agentRegistry = mock(PlatformAiAgentRegistry.class);
         AiThreadRecord record = new AiThreadRecord();
         record.setThreadId(THREAD_ID);
@@ -193,9 +212,9 @@ class PlatformAiThreadServiceTest {
                 new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
         AiModelChannelResolver channels = mock(AiModelChannelResolver.class);
         PlatformAiThreadService service = new PlatformAiThreadService(
-                channels, conversationStore,
+                channels, conversationStore, invocations,
                 agentRegistry, new AiThreadQueryService(conversationStore, protocol));
-        return new Fixture(service, conversationStore, agentRegistry, record, channels);
+        return new Fixture(service, conversationStore, invocations, agentRegistry, record, channels);
     }
 
     private User user(String id) {
@@ -206,6 +225,7 @@ class PlatformAiThreadServiceTest {
 
     private record Fixture(PlatformAiThreadService service,
                            AiConversationStoreService conversationStore,
+                           AiSubagentInvocationRepository invocations,
                            PlatformAiAgentRegistry agentRegistry,
                            AiThreadRecord record,
                            AiModelChannelResolver channels) {

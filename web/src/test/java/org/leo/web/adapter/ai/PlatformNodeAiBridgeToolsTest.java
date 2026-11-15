@@ -7,6 +7,7 @@ import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiSubagentInvocationRepository;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiSubagentInvocation;
@@ -14,12 +15,14 @@ import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.dao.mapper.AiConversationMapper;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentNodeLifecycleService;
 import org.leo.web.application.ai.NodeAiDelegationService;
 import org.leo.web.application.ai.NodeAiThreadService;
 import org.leo.web.security.PermissionService;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -57,20 +60,7 @@ class PlatformNodeAiBridgeToolsTest {
     @Test
     void dispatchesIntoIsolatedChildThreadAndReturnsSummary() {
         Fixture fixture = fixture("user-1");
-        AgentNodeSession session = new AgentNodeSession();
-        session.setSessionId("session-1");
-        session.setCreateByUser("user-1");
-        session.setAgentId("agent-1");
-        AgentNodeSessionContainer.addSession(session.getSessionId(), session);
-
-        when(fixture.nodeAiService.createChildThread(
-                eq(session), any(), eq(7), eq(PARENT_THREAD_ID)))
-                .thenAnswer(invocation -> {
-                    var thread = session.createAiThread("child-1", "child");
-                    thread.setParentThreadId(PARENT_THREAD_ID);
-                    thread.setAiConfigId(7);
-                    return Map.of("threadId", "child-1");
-                });
+        AgentNodeSession session = prepareChild(fixture);
         when(fixture.delegationService.execute(
                 eq(session), any(), eq("检查当前身份"), any(), any(), any(), any(), eq(fixture.state)))
                 .thenAnswer(invocation -> {
@@ -90,9 +80,10 @@ class PlatformNodeAiBridgeToolsTest {
         assertEquals("child-1", result.get("childThreadId"));
         assertEquals("当前用户为 root", result.get("summary"));
         assertNotNull(result.get("invocationId"));
-        verify(fixture.conversationStore).insertSubagentInvocation(any());
-        verify(fixture.conversationStore, times(2)).updateSubagentInvocation(any());
+        verify(fixture.mapper).insertSubagentInvocation(any());
+        verify(fixture.mapper, times(2)).updateSubagentInvocation(any());
         verify(fixture.permissionService).requireSessionAccess(session, fixture.user, "session-1");
+        assertInvocationEvents(fixture.state, "completed", true);
     }
 
     @Test
@@ -107,10 +98,7 @@ class PlatformNodeAiBridgeToolsTest {
                 PARENT_THREAD_ID, "检查", "session-1", null, null);
 
         assertEquals("waiting_for_user", result.get("status"));
-        var invocation = org.mockito.ArgumentCaptor.forClass(AiSubagentInvocation.class);
-        verify(fixture.conversationStore, times(2)).updateSubagentInvocation(invocation.capture());
-        assertEquals("waiting_for_user", invocation.getValue().getStatus());
-        assertNull(invocation.getValue().getCompletedAt());
+        assertInvocationEvents(fixture.state, "waiting_for_user", false);
     }
 
     @Test
@@ -128,6 +116,7 @@ class PlatformNodeAiBridgeToolsTest {
                 PARENT_THREAD_ID, "检查", "session-1", null, null);
 
         assertEquals("cancelled", result.get("status"));
+        assertInvocationEvents(fixture.state, "cancelled", true);
     }
 
     @Test
@@ -142,6 +131,24 @@ class PlatformNodeAiBridgeToolsTest {
                 PARENT_THREAD_ID, "检查", "session-1", null, null);
 
         assertEquals("failed", result.get("status"));
+        assertInvocationEvents(fixture.state, "failed", true);
+    }
+
+    private void assertInvocationEvents(PlatformAiState state, String finalStatus, boolean terminal) {
+        var events = state.getAiSseEventQueue().stream()
+                .filter(event -> event.data() instanceof Map<?, ?> payload && "subtask".equals(payload.get("kind")))
+                .toList();
+        assertEquals(List.of("node", "patch", "patch"), events.stream().map(AiSseEvent::name).toList());
+        var payloads = events.stream().map(event -> (Map<?, ?>) event.data()).toList();
+        assertEquals(List.of("pending", "running", finalStatus),
+                payloads.stream().map(payload -> payload.get("status")).toList());
+        for (int i = 0; i < payloads.size(); i++) {
+            Map<?, ?> payload = payloads.get(i);
+            assertNotNull(payload.get("createdAt"));
+            assertEquals(payloads.get(0).get("createdAt"), payload.get("createdAt"));
+            if (i < 2 || !terminal) assertNull(payload.get("completedAt"));
+            else assertNotNull(payload.get("completedAt"));
+        }
     }
 
     private AgentNodeSession prepareChild(Fixture fixture) {
@@ -153,7 +160,9 @@ class PlatformNodeAiBridgeToolsTest {
         when(fixture.nodeAiService.createChildThread(
                 eq(session), any(), eq(7), eq(PARENT_THREAD_ID)))
                 .thenAnswer(call -> {
-                    session.createAiThread("child-1", "child");
+                    var thread = session.createAiThread("child-1", "child");
+                    thread.setParentThreadId(PARENT_THREAD_ID);
+                    thread.setAiConfigId(7);
                     return Map.of("threadId", "child-1");
                 });
         return session;
@@ -180,6 +189,8 @@ class PlatformNodeAiBridgeToolsTest {
         PermissionService permissionService = mock(PermissionService.class);
         UserService userService = mock(UserService.class);
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        AiSubagentInvocationRepository invocations = new AiSubagentInvocationRepository(mapper);
         AiAuditLogStore auditLogStore = new AiAuditLogStore();
 
         User user = new User();
@@ -202,16 +213,16 @@ class PlatformNodeAiBridgeToolsTest {
         PlatformNodeAiBridgeTools tools = new PlatformNodeAiBridgeTools(
                 nodeAiService, delegationService, lifecycleService,
                 permissionService, userService,
-                conversationStore, auditLogStore);
+                conversationStore, invocations, auditLogStore);
         return new Fixture(tools, nodeAiService, delegationService,
-                permissionService, conversationStore, user, state);
+                permissionService, mapper, user, state);
     }
 
     private record Fixture(PlatformNodeAiBridgeTools tools,
                            NodeAiThreadService nodeAiService,
                            NodeAiDelegationService delegationService,
                            PermissionService permissionService,
-                           AiConversationStoreService conversationStore,
+                           AiConversationMapper mapper,
                            User user,
                            PlatformAiState state) {}
 }

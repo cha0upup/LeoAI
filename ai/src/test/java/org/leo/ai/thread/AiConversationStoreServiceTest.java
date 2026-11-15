@@ -39,7 +39,7 @@ class AiConversationStoreServiceTest {
     private final AiConversationStoreService service = new AiConversationStoreService(
             mapper, eventJournal,
             new AiTurnTerminalRepository(mapper), new AiProtocolTurnRepository(mapper),
-            new AiUserInputRepository(mapper), new AiSubagentInvocationRepository(mapper),
+            new AiUserInputRepository(mapper),
             new AiMessageRepository(mapper));
 
     @Test
