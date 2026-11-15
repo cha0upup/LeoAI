@@ -2,6 +2,7 @@ package org.leo.ai.service.workspace;
 
 import jakarta.annotation.PreDestroy;
 import org.leo.ai.agent.AiToolContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -38,15 +39,21 @@ public class AiWorkspaceCommandService {
             "PATH", "Path", "PATHEXT", "SystemRoot", "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "TERM");
 
     private final AiWorkspaceService workspaceService;
-    private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
-        Thread thread = new Thread(runnable, "ai-workspace-command");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ExecutorService executor;
     private final ConcurrentHashMap<String, RunState> runs = new ConcurrentHashMap<>();
 
+    @Autowired
     public AiWorkspaceCommandService(AiWorkspaceService workspaceService) {
+        this(workspaceService, Executors.newFixedThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable, "ai-workspace-command");
+            thread.setDaemon(true);
+            return thread;
+        }));
+    }
+
+    AiWorkspaceCommandService(AiWorkspaceService workspaceService, ExecutorService executor) {
         this.workspaceService = workspaceService;
+        this.executor = executor;
     }
 
     public Map<String, Object> start(AiWorkspaceService.Workspace workspace,
@@ -72,55 +79,45 @@ public class AiWorkspaceCommandService {
     public Map<String, Object> status(AiWorkspaceService.Workspace workspace,
                                       String runId) {
         RunState state = requireOwned(workspace, runId);
-        Map<String, Object> result = state.toMap();
         synchronized (state) {
+            Map<String, Object> result = state.toMap();
             result.put("logTail", tail(state.log, 20_000));
             result.put("changedFiles", state.changedFiles);
             result.put("logPath", state.logPath);
+            return result;
         }
-        return result;
     }
 
     public Map<String, Object> cancel(AiWorkspaceService.Workspace workspace,
                                       String runId) {
         RunState state = requireOwned(workspace, runId);
-        state.cancelled = true;
-        destroyProcessTree(state.process);
-        state.status = "CANCELLED";
-        state.finishedAt = Instant.now();
+        destroyProcessTree(state.cancel());
         return state.toMap();
     }
 
     private void execute(RunState state) {
-        if (state.cancelled) {
-            state.status = "CANCELLED";
-            state.finishedAt = Instant.now();
-            return;
-        }
-        state.status = "RUNNING";
-        state.startedAt = Instant.now();
         var workspaceLock = state.workspace.lock().writeLock();
         workspaceLock.lock();
         try {
+            if (!state.begin()) return;
             Map<String, FileFingerprint> before = snapshot(state.workspace.filesRoot());
             ProcessBuilder builder = new ProcessBuilder(shellCommand(state.command));
             builder.directory(state.workspace.filesRoot().toFile());
             builder.redirectErrorStream(true);
             configureEnvironment(builder, state.workspace);
-            state.process = builder.start();
-            Thread reader = new Thread(() -> readLog(state, state.process.getInputStream()),
+            Process process = state.launch(builder);
+            if (process == null) return;
+            Thread reader = new Thread(() -> readLog(state, process.getInputStream()),
                     "ai-workspace-command-log");
             reader.setDaemon(true);
             reader.start();
-            boolean finished = state.process.waitFor(state.timeoutSeconds, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(state.timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                state.status = "TIMED_OUT";
-                destroyProcessTree(state.process);
-            } else if (state.cancelled) {
-                state.status = "CANCELLED";
+                state.complete("TIMED_OUT", null);
+                destroyProcessTree(process);
             } else {
-                state.exitCode = state.process.exitValue();
-                state.status = state.exitCode == 0 ? "COMPLETED" : "FAILED";
+                int exitCode = process.exitValue();
+                state.complete(exitCode == 0 ? "COMPLETED" : "FAILED", exitCode);
             }
             reader.join(2_000L);
             synchronized (state) {
@@ -128,27 +125,32 @@ public class AiWorkspaceCommandService {
             }
         } catch (IOException e) {
             appendLog(state, "Command start failed: " + e.getMessage() + "\n");
-            state.status = "FAILED";
+            state.complete("FAILED", null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            state.status = "CANCELLED";
+            state.complete("CANCELLED", null);
             destroyProcessTree(state.process);
         } catch (RuntimeException e) {
             appendLog(state, "Command result error: " + e.getMessage() + "\n");
-            state.status = "FAILED";
+            state.complete("FAILED", null);
         } finally {
-            state.process = null;
-            state.finishedAt = Instant.now();
-            synchronized (state) {
-                state.logPath = "logs/command-" + state.runId + ".log";
-                try {
-                    workspaceService.writeGeneratedBytes(
-                            state.workspace, state.logPath, state.log.toByteArray());
-                } catch (RuntimeException error) {
-                    state.logPath = null;
+            try {
+                destroyProcessTree(state.process);
+                synchronized (state) {
+                    if (state.startedAt != null) {
+                        state.logPath = "logs/command-" + state.runId + ".log";
+                        try {
+                            workspaceService.writeGeneratedBytes(
+                                    state.workspace, state.logPath, state.log.toByteArray());
+                        } catch (RuntimeException error) {
+                            state.logPath = null;
+                        }
+                    }
+                    state.finish();
                 }
+            } finally {
+                workspaceLock.unlock();
             }
-            workspaceLock.unlock();
         }
     }
 
@@ -250,11 +252,15 @@ public class AiWorkspaceCommandService {
 
     private void destroyProcessTree(Process process) {
         if (process == null) return;
-        process.descendants().forEach(handle -> {
-            try { handle.destroyForcibly(); }
-            catch (RuntimeException ignored) { }
-        });
-        if (process.isAlive()) process.destroyForcibly();
+        try (var descendants = process.descendants()) {
+            descendants.forEach(handle -> {
+                try { handle.destroyForcibly(); }
+                catch (RuntimeException ignored) { }
+            });
+        } catch (RuntimeException ignored) { }
+        try {
+            if (process.isAlive()) process.destroyForcibly();
+        } catch (RuntimeException ignored) { }
     }
 
     private void cleanupExpired() {
@@ -270,7 +276,10 @@ public class AiWorkspaceCommandService {
 
     @PreDestroy
     public void shutdown() {
-        for (RunState state : runs.values()) destroyProcessTree(state.process);
+        for (RunState state : runs.values()) {
+            state.cancel();
+            destroyProcessTree(state.process);
+        }
         executor.shutdownNow();
     }
 
@@ -282,14 +291,13 @@ public class AiWorkspaceCommandService {
         private final String command;
         private final int timeoutSeconds;
         private final ByteArrayOutputStream log = new ByteArrayOutputStream();
-        private volatile String status = "QUEUED";
-        private volatile Integer exitCode;
-        private volatile Instant startedAt;
+        private String status = "QUEUED";
+        private Integer exitCode;
+        private Instant startedAt;
         private volatile Instant finishedAt;
         private volatile Process process;
-        private volatile boolean cancelled;
-        private volatile List<Map<String, Object>> changedFiles = List.of();
-        private volatile String logPath;
+        private List<Map<String, Object>> changedFiles = List.of();
+        private String logPath;
 
         private RunState(String runId, AiWorkspaceService.Workspace workspace,
                          String command, int timeoutSeconds) {
@@ -299,7 +307,38 @@ public class AiWorkspaceCommandService {
             this.timeoutSeconds = timeoutSeconds;
         }
 
-        private Map<String, Object> toMap() {
+        private synchronized boolean begin() {
+            if (!"QUEUED".equals(status)) return false;
+            status = "RUNNING";
+            startedAt = Instant.now();
+            return true;
+        }
+
+        private synchronized Process launch(ProcessBuilder builder) throws IOException {
+            if (!"RUNNING".equals(status)) return null;
+            process = builder.start();
+            return process;
+        }
+
+        private synchronized Process cancel() {
+            if (!"QUEUED".equals(status) && !"RUNNING".equals(status)) return null;
+            status = "CANCELLED";
+            if (startedAt == null) finishedAt = Instant.now();
+            return process;
+        }
+
+        private synchronized void complete(String outcome, Integer code) {
+            if ("CANCELLED".equals(status)) return;
+            status = outcome;
+            if (code != null) exitCode = code;
+        }
+
+        private synchronized void finish() {
+            process = null;
+            if (finishedAt == null) finishedAt = Instant.now();
+        }
+
+        private synchronized Map<String, Object> toMap() {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("success", true);
             result.put("runId", runId);

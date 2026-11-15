@@ -4,11 +4,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.config.AiWorkspaceProperties;
 import org.leo.ai.agent.AiToolContext;
-import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,8 +16,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,26 +32,25 @@ class AiWorkspaceCommandServiceTest {
     @TempDir
     Path tempDir;
 
-    private String previousVfsPath;
     private AiWorkspaceService workspaceService;
     private AiWorkspaceCommandService commandService;
     private AiWorkspaceService.Workspace workspace;
+    private ExecutorService worker;
 
     @BeforeEach
-    void setUp() {
-        previousVfsPath = LeoConfig.getVfsPath();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
+    void setUp() throws Exception {
         workspaceService = new AiWorkspaceService(new AiWorkspaceProperties());
-        commandService = new AiWorkspaceCommandService(workspaceService);
-        workspace = workspaceService.open("user1", "0123456789abcdef0123456789abcdef");
+        worker = Executors.newSingleThreadExecutor();
+        commandService = new AiWorkspaceCommandService(workspaceService, worker);
+        workspace = workspace("0123456789abcdef0123456789abcdef");
         AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user1", "admin", "admin"));
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
         commandService.shutdown();
         AiToolContext.clear();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
+        assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
     }
 
     @Test
@@ -74,6 +79,44 @@ class AiWorkspaceCommandServiceTest {
                 .resolve(String.valueOf(completed.get("logPath")))));
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void cancellingWhileWaitingForTheWorkspaceLockPreventsProcessStart(boolean shutdown) throws Exception {
+        var lock = workspace.lock().writeLock();
+        String runId;
+        lock.lock();
+        try {
+            runId = String.valueOf(commandService.start(workspace, "echo unexpected > cancelled.txt", 10).get("runId"));
+            Instant deadline = Instant.now().plusSeconds(5);
+            while (!workspace.lock().hasQueuedThreads() && Instant.now().isBefore(deadline)) Thread.sleep(10L);
+            assertTrue(workspace.lock().hasQueuedThreads(), "command must be waiting for the workspace lock");
+
+            if (shutdown) commandService.shutdown();
+            else commandService.cancel(workspace, runId);
+            assertEquals("CANCELLED", commandService.status(workspace, runId).get("status"));
+        } finally {
+            lock.unlock();
+        }
+        worker.shutdown();
+        assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+
+        assertFalse(Files.exists(workspace.filesRoot().resolve("cancelled.txt")));
+        assertNull(commandService.status(workspace, runId).get("startedAt"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 7})
+    void cancellingAFinishedCommandPreservesItsResult(int exitCode) throws Exception {
+        String runId = String.valueOf(commandService.start(workspace, "exit " + exitCode, 10).get("runId"));
+        Map<String, Object> finished = awaitFinished(runId);
+
+        Map<String, Object> cancelled = commandService.cancel(workspace, runId);
+
+        assertEquals(finished.get("status"), cancelled.get("status"));
+        assertEquals(exitCode, cancelled.get("exitCode"));
+        assertEquals(finished.get("finishedAt"), cancelled.get("finishedAt"));
+    }
+
     @Test
     void rejectsOrdinaryUsersBeforeStartingLocalProcesses() {
         AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user1", "user1", "normal"));
@@ -97,13 +140,21 @@ class AiWorkspaceCommandServiceTest {
     }
 
     @Test
-    void statusIsBoundToOwningWorkspace() {
+    void statusIsBoundToOwningWorkspace() throws Exception {
         Map<String, Object> started = commandService.start(workspace, "echo owned", 10);
-        AiWorkspaceService.Workspace other = workspaceService.open(
-                "user1", "fedcba9876543210fedcba9876543210");
+        AiWorkspaceService.Workspace other = workspace("fedcba9876543210fedcba9876543210");
 
         assertThrows(IllegalArgumentException.class,
                 () -> commandService.status(other, String.valueOf(started.get("runId"))));
+    }
+
+    private AiWorkspaceService.Workspace workspace(String id) throws Exception {
+        Path base = tempDir.resolve(id);
+        Path files = Files.createDirectories(base.resolve("files"));
+        Path internal = Files.createDirectories(base.resolve(".internal"));
+        for (String directory : List.of("versions", "trash", "tmp")) Files.createDirectories(internal.resolve(directory));
+        return new AiWorkspaceService.Workspace("user1", id, tempDir, base, files, internal,
+                new ReentrantReadWriteLock());
     }
 
     private Map<String, Object> awaitFinished(String runId) throws Exception {
