@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -38,11 +37,11 @@ class AiWorkspaceCommandServiceTest {
     private ExecutorService worker;
 
     @BeforeEach
-    void setUp() throws Exception {
-        workspaceService = new AiWorkspaceService(new AiWorkspaceProperties());
+    void setUp() {
+        workspaceService = new AiWorkspaceService(new AiWorkspaceProperties(), tempDir::resolve);
         worker = Executors.newSingleThreadExecutor();
         commandService = new AiWorkspaceCommandService(workspaceService, worker);
-        workspace = workspace("0123456789abcdef0123456789abcdef");
+        workspace = workspaceService.open("user1", "0123456789abcdef0123456789abcdef");
         AiToolContext.setExecutionPolicy(new AiExecutionPolicy("user1", "admin", "admin"));
     }
 
@@ -140,21 +139,12 @@ class AiWorkspaceCommandServiceTest {
     }
 
     @Test
-    void statusIsBoundToOwningWorkspace() throws Exception {
+    void statusIsBoundToOwningWorkspace() {
         Map<String, Object> started = commandService.start(workspace, "echo owned", 10);
-        AiWorkspaceService.Workspace other = workspace("fedcba9876543210fedcba9876543210");
+        AiWorkspaceService.Workspace other = workspaceService.open("user1", "fedcba9876543210fedcba9876543210");
 
         assertThrows(IllegalArgumentException.class,
                 () -> commandService.status(other, String.valueOf(started.get("runId"))));
-    }
-
-    private AiWorkspaceService.Workspace workspace(String id) throws Exception {
-        Path base = tempDir.resolve(id);
-        Path files = Files.createDirectories(base.resolve("files"));
-        Path internal = Files.createDirectories(base.resolve(".internal"));
-        for (String directory : List.of("versions", "trash", "tmp")) Files.createDirectories(internal.resolve(directory));
-        return new AiWorkspaceService.Workspace("user1", id, tempDir, base, files, internal,
-                new ReentrantReadWriteLock());
     }
 
     private Map<String, Object> awaitFinished(String runId) throws Exception {

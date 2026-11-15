@@ -4,6 +4,7 @@ import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.config.AiWorkspaceProperties;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /** 用户与 AI 任务双重隔离的持久化工作空间。 */
@@ -31,11 +33,18 @@ public class AiWorkspaceService {
     private static final String TASKS_DIR = "ai-tasks";
     private static final int LOCK_STRIPES = 256;
     private final AiWorkspaceProperties properties;
+    private final Function<String, Path> userWorkspaceRoot;
     // Fixed stripes stay valid for every Workspace handle, including queued commands.
     private final ReentrantReadWriteLock[] locks = new ReentrantReadWriteLock[LOCK_STRIPES];
 
+    @Autowired
     public AiWorkspaceService(AiWorkspaceProperties properties) {
+        this(properties, userId -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath());
+    }
+
+    AiWorkspaceService(AiWorkspaceProperties properties, Function<String, Path> userWorkspaceRoot) {
         this.properties = properties;
+        this.userWorkspaceRoot = userWorkspaceRoot;
         for (int index = 0; index < locks.length; index++) locks[index] = new ReentrantReadWriteLock();
     }
 
@@ -55,8 +64,7 @@ public class AiWorkspaceService {
         if (workspaceId == null || !workspaceId.matches("[0-9a-f]{32}")) {
             throw new IllegalArgumentException("非法 workspaceId");
         }
-        Path userRoot = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath()
-                .toAbsolutePath().normalize();
+        Path userRoot = userWorkspaceRoot.apply(userId).toAbsolutePath().normalize();
         Path base = userRoot.resolve(TASKS_DIR).resolve(workspaceId).normalize();
         if (!base.startsWith(userRoot)) throw new SecurityException("工作空间越界");
         Path files = base.resolve("files");

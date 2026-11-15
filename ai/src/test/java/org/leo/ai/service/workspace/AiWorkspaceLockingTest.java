@@ -1,12 +1,12 @@
 package org.leo.ai.service.workspace;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.config.AiWorkspaceProperties;
-import org.leo.core.config.LeoConfig;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -25,19 +25,37 @@ import static org.junit.jupiter.api.Assertions.*;
 class AiWorkspaceLockingTest {
 
     @TempDir Path temp;
-    private String previousVfs;
     private AiWorkspaceService service;
 
     @BeforeEach
     void setUp() {
-        previousVfs = LeoConfig.getVfsPath();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", temp.toString());
-        service = new AiWorkspaceService(new AiWorkspaceProperties());
+        service = new AiWorkspaceService(new AiWorkspaceProperties(), temp::resolve);
     }
 
-    @AfterEach
-    void tearDown() {
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfs);
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"../other-user", "nested/user", "user name"})
+    void invalidUsersAreRejectedBeforeResolvingDirectories(String userId) {
+        AiWorkspaceService guarded = new AiWorkspaceService(new AiWorkspaceProperties(), ignored -> {
+            throw new AssertionError("invalid identities must not reach directory resolution");
+        });
+
+        assertThrows(SecurityException.class,
+                () -> guarded.open(userId, "0123456789abcdef0123456789abcdef"));
+    }
+
+    @Test
+    void identicalWorkspaceIdsRemainIsolatedByUserRoot() throws Exception {
+        String workspaceId = "0123456789abcdef0123456789abcdef";
+        var first = service.open("first-user", workspaceId);
+        var second = service.open("second-user", workspaceId);
+
+        service.writeText(first, "result.txt", "first user's file", null);
+
+        assertEquals(temp.resolve("first-user"), first.userRoot());
+        assertEquals(temp.resolve("second-user"), second.userRoot());
+        assertFalse(Files.exists(second.filesRoot().resolve("result.txt")));
+        assertEquals("first user's file", Files.readString(first.filesRoot().resolve("result.txt")));
     }
 
     @Test

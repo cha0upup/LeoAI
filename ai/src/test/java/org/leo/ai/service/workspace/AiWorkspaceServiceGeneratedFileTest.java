@@ -1,12 +1,9 @@
 package org.leo.ai.service.workspace;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.leo.ai.config.AiWorkspaceProperties;
-import org.leo.core.config.LeoConfig;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,22 +20,14 @@ class AiWorkspaceServiceGeneratedFileTest {
     @TempDir
     Path tempDir;
 
-    private String previousVfsPath;
     private AiWorkspaceService service;
     private AiWorkspaceService.Workspace workspace;
 
     @BeforeEach
     void setUp() {
-        previousVfsPath = LeoConfig.getVfsPath();
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", tempDir.toString());
         AiWorkspaceProperties properties = new AiWorkspaceProperties();
-        service = new AiWorkspaceService(properties);
+        service = new AiWorkspaceService(properties, tempDir::resolve);
         workspace = service.open("user1", "0123456789abcdef0123456789abcdef");
-    }
-
-    @AfterEach
-    void tearDown() {
-        ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
     }
 
     @Test
