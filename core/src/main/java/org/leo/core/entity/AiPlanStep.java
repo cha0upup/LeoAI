@@ -25,7 +25,7 @@ public class AiPlanStep {
     /** 该步骤依赖的其他步骤的索引列表（可为 null） */
     private final List<Integer> dependsOn;
 
-    private volatile AiStepStatus status = AiStepStatus.PENDING;
+    private volatile AiStepStatus status;
     /** 步骤完成后的关键发现摘要（简短） */
     private volatile String result;
     /** 失败或跳过时的原因 */
@@ -35,11 +35,16 @@ public class AiPlanStep {
     private volatile long startedAt;
     private volatile long completedAt;
 
+    public AiPlanStep(int index, String description, String toolHint,
+                      boolean parallel, String successCriteria,
+                      int maxRetries, List<Integer> dependsOn) {
+        this(index, description, toolHint, parallel, successCriteria, maxRetries, dependsOn,
+                AiStepStatus.PENDING, null, null, 0, 0L, 0L);
+    }
+
     /**
-     * 计划步骤构造函数。
-     * 同时被 FastJSON 用于反序列化（{@link JSONCreator} + {@link JSONField}），
-     * 让 plan 快照可以从持久化 JSON 还原。volatile 状态字段（status/result 等）
-     * 由 FastJSON 通过反射直接写入。
+     * FastJSON 快照构造器：创建参数与运行状态一同恢复，
+     * 保留步骤结果、重试次数和时间，避免重启后重复执行已完成步骤。
      */
     @JSONCreator
     public AiPlanStep(@JSONField(name = "index") int index,
@@ -48,7 +53,13 @@ public class AiPlanStep {
                       @JSONField(name = "parallel") boolean parallel,
                       @JSONField(name = "successCriteria") String successCriteria,
                       @JSONField(name = "maxRetries") int maxRetries,
-                      @JSONField(name = "dependsOn") List<Integer> dependsOn) {
+                      @JSONField(name = "dependsOn") List<Integer> dependsOn,
+                      @JSONField(name = "status") AiStepStatus status,
+                      @JSONField(name = "result") String result,
+                      @JSONField(name = "reason") String reason,
+                      @JSONField(name = "attemptCount") int attemptCount,
+                      @JSONField(name = "startedAt") long startedAt,
+                      @JSONField(name = "completedAt") long completedAt) {
         this.index             = index;
         this.description       = description;
         this.toolHint          = toolHint;
@@ -56,6 +67,12 @@ public class AiPlanStep {
         this.successCriteria   = successCriteria;
         this.maxRetries        = maxRetries > 0 ? maxRetries : 1;
         this.dependsOn         = dependsOn;
+        this.status            = status != null ? status : AiStepStatus.PENDING;
+        this.result            = result;
+        this.reason            = reason;
+        this.attemptCount      = attemptCount;
+        this.startedAt         = startedAt;
+        this.completedAt       = completedAt;
     }
 
     // ── 状态变更 ──────────────────────────────────────────────────────────────

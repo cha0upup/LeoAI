@@ -25,7 +25,7 @@ public class AiPlan {
     /** 有序步骤列表 */
     private final List<AiPlanStep> steps;
 
-    private volatile AiPlanStatus status = AiPlanStatus.PLANNING;
+    private volatile AiPlanStatus status;
     /** completePlan 时写入的最终结论摘要 */
     private volatile String finalSummary;
     /** 单步骤超时时间（毫秒），0 表示不启用。超过此时间仍在执行的步骤将被自动标记为失败 */
@@ -35,30 +35,32 @@ public class AiPlan {
     private volatile long updatedAt;
 
     public AiPlan(String title, String goal, List<AiPlanStep> steps) {
-        this.planId    = UUID.randomUUID().toString();
-        this.title     = title != null ? title.trim() : "未命名计划";
-        this.goal      = goal  != null ? goal.trim()  : "";
-        this.steps     = steps != null ? new ArrayList<>(steps) : new ArrayList<>();
-        this.createdAt = System.currentTimeMillis();
-        this.updatedAt = this.createdAt;
+        this(null, title != null ? title.trim() : null,
+                goal != null ? goal.trim() : null, steps, 0L,
+                AiPlanStatus.PLANNING, null, 0L);
     }
 
     /**
-     * FastJSON 反序列化专用构造器：保留原 planId / createdAt，
-     * 让重启后恢复的计划与持久化前的实例 id 一致。
+     * FastJSON 快照构造器：同时保留计划标识、运行状态和时间，
+     * 防止线程重新载入时把已结束计划恢复为待执行状态。
      */
     @JSONCreator
     public AiPlan(@JSONField(name = "planId")    String planId,
                   @JSONField(name = "title")     String title,
                   @JSONField(name = "goal")      String goal,
                   @JSONField(name = "steps")     List<AiPlanStep> steps,
-                  @JSONField(name = "createdAt") long createdAt) {
+                  @JSONField(name = "createdAt") long createdAt,
+                  @JSONField(name = "status") AiPlanStatus status,
+                  @JSONField(name = "finalSummary") String finalSummary,
+                  @JSONField(name = "updatedAt") long updatedAt) {
         this.planId    = planId != null && !planId.isBlank() ? planId : UUID.randomUUID().toString();
         this.title     = title != null ? title : "未命名计划";
         this.goal      = goal  != null ? goal  : "";
         this.steps     = steps != null ? new ArrayList<>(steps) : new ArrayList<>();
+        this.status    = status != null ? status : AiPlanStatus.PLANNING;
+        this.finalSummary = finalSummary;
         this.createdAt = createdAt > 0 ? createdAt : System.currentTimeMillis();
-        this.updatedAt = this.createdAt;
+        this.updatedAt = updatedAt > 0 ? updatedAt : this.createdAt;
     }
 
     // ── 状态变更 ──────────────────────────────────────────────────────────────

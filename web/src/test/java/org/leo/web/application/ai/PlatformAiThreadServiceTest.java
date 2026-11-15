@@ -9,6 +9,7 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.thread.AiSubagentInvocationRepository;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiSubagentInvocation;
@@ -176,12 +177,12 @@ class PlatformAiThreadServiceTest {
         assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
                 () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, null)).getKind());
         assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
+                () -> fixture.service.messages(user("user-1"), THREAD_ID, null, null, 20L)).getKind());
+        assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
                 () -> fixture.service.events(user("user-1"), THREAD_ID, null, null)).getKind());
         assertEquals(UseCaseException.Kind.NOT_FOUND, assertThrows(UseCaseException.class,
                 () -> fixture.service.subagentInvocations(user("user-1"), THREAD_ID)).getKind());
-        verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
-        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
-        verifyNoInteractions(fixture.invocations);
+        verifyNoInteractions(fixture.messageRepository, fixture.eventJournal, fixture.invocations);
     }
 
     @Test
@@ -201,6 +202,7 @@ class PlatformAiThreadServiceTest {
         AiConversationStoreService conversationStore =
                 mock(AiConversationStoreService.class);
         AiEventJournalRepository eventJournal = mock(AiEventJournalRepository.class);
+        AiMessageRepository messageRepository = mock(AiMessageRepository.class);
         AiSubagentInvocationRepository invocations = mock(AiSubagentInvocationRepository.class);
         PlatformAiAgentRegistry agentRegistry = mock(PlatformAiAgentRegistry.class);
         AiThreadRecord record = new AiThreadRecord();
@@ -215,8 +217,8 @@ class PlatformAiThreadServiceTest {
         AiModelChannelResolver channels = mock(AiModelChannelResolver.class);
         PlatformAiThreadService service = new PlatformAiThreadService(
                 channels, conversationStore, invocations,
-                agentRegistry, new AiThreadQueryService(conversationStore, eventJournal, protocol));
-        return new Fixture(service, conversationStore, eventJournal, invocations, agentRegistry, record, channels);
+                agentRegistry, new AiThreadQueryService(conversationStore, messageRepository, eventJournal, protocol));
+        return new Fixture(service, conversationStore, messageRepository, eventJournal, invocations, agentRegistry, record, channels);
     }
 
     private User user(String id) {
@@ -227,6 +229,7 @@ class PlatformAiThreadServiceTest {
 
     private record Fixture(PlatformAiThreadService service,
                            AiConversationStoreService conversationStore,
+                           AiMessageRepository messageRepository,
                            AiEventJournalRepository eventJournal,
                            AiSubagentInvocationRepository invocations,
                            PlatformAiAgentRegistry agentRegistry,

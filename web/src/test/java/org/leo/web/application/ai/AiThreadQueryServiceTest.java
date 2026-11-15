@@ -11,6 +11,7 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
@@ -29,9 +30,10 @@ class AiThreadQueryServiceTest {
     private static final String PLATFORM_THREAD_ID = "platform-query-test";
 
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiMessageRepository messageRepository = mock(AiMessageRepository.class);
     private final AiEventJournalRepository journal = mock(AiEventJournalRepository.class);
     private final AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
-    private final AiThreadQueryService queries = new AiThreadQueryService(store, journal, protocol);
+    private final AiThreadQueryService queries = new AiThreadQueryService(store, messageRepository, journal, protocol);
 
     @BeforeEach
     void useFallbackProtocolStatus() {
@@ -50,8 +52,8 @@ class AiThreadQueryServiceTest {
         session.restoreAiThread("older", "older", 1L, 10L);
         session.restoreAiThread("newer", "newer", 2L, 20L);
         String activeThreadId = session.getActiveThreadId();
-        when(store.countMessages("older")).thenReturn(4);
-        when(store.countMessages("newer")).thenReturn(7);
+        when(messageRepository.count("older")).thenReturn(4);
+        when(messageRepository.count("newer")).thenReturn(7);
 
         Map<String, Object> data = queries.listNodeThreads(session);
         List<?> threads = (List<?>) data.get("threads");
@@ -123,7 +125,7 @@ class AiThreadQueryServiceTest {
         assertEquals("channel", sharedItem.get("configName"));
         assertEquals("openai", sharedItem.get("configProtocol"));
         assertEquals("model", sharedItem.get("configModel"));
-        verify(store, never()).countMessages("shared");
+        verify(messageRepository, never()).count("shared");
         verify(store, never()).attachEventJournal(anyString(), any());
     }
 
@@ -186,41 +188,49 @@ class AiThreadQueryServiceTest {
         List<Map<String, Object>> messages = List.of(
                 Map.of("messageId", "m-10", "sequence", 10L),
                 Map.of("messageId", "m-11", "sequence", 11L));
-        when(store.listMessagesBefore("thread", 20L, 200)).thenReturn(messages);
-        when(store.hasMessagesBefore("thread", 10L)).thenReturn(true);
+        when(messageRepository.listBefore("thread", 20L, 200)).thenReturn(messages);
+        when(messageRepository.hasBefore("thread", 10L)).thenReturn(true);
 
         Map<String, Object> page = queries.messages("thread", 0, 500, 20L);
 
         assertEquals(messages, page.get("messages"));
         assertEquals(10L, page.get("nextBeforeSequence"));
         assertEquals(true, page.get("hasMore"));
-        verify(store).listMessagesBefore("thread", 20L, 200);
-        verify(store, never()).countMessages(anyString());
+        verify(messageRepository).listBefore("thread", 20L, 200);
+        verify(messageRepository, never()).count(anyString());
         assertEquals(java.util.Set.of("messages", "nextBeforeSequence", "hasMore"), page.keySet());
-        verify(store, never()).listMessages(anyString(), anyInt(), anyInt());
+        verify(messageRepository, never()).list(anyString(), anyInt(), anyInt());
     }
 
     @Test
     void initialAndEmptyHistoryPagesKeepCursorContract() {
-        when(store.listMessages("thread", 0, 50)).thenReturn(List.of());
-        Map<String, Object> page = queries.messages("thread", 0, 50, null);
+        Map<String, Object> page = queries.messages("thread", null, null, null);
+        assertEquals(List.of(), page.get("messages"));
         assertNull(page.get("nextBeforeSequence"));
         assertEquals(false, page.get("hasMore"));
+        verify(messageRepository).list("thread", 0, 50);
+        verify(messageRepository, never()).hasBefore(anyString(), anyLong());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L, Long.MIN_VALUE})
+    void rejectsInvalidHistoryCursorBeforeReadingStorage(long cursor) {
         assertThrows(org.leo.web.application.UseCaseException.class,
-                () -> queries.messages("thread", 0, 50, 0L));
+                () -> queries.messages("thread", 0, 50, cursor));
+        verifyNoInteractions(store, messageRepository, journal, protocol);
     }
 
     @ParameterizedTest
     @CsvSource(value = {"null,null,0,50", "-8,15,0,15", "7,20,7,20", "0,0,0,1", "0,-1,0,200", "0,500,0,200"}, nullValues = "null")
     void preservesMessagePagination(Integer offset, Integer limit, int expectedOffset, int expectedLimit) {
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L, "content", "hello"));
-        when(store.listMessages("thread", expectedOffset, expectedLimit)).thenReturn(messages);
+        when(messageRepository.list("thread", expectedOffset, expectedLimit)).thenReturn(messages);
 
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),
                 queries.messages("thread", offset, limit, null));
-        verify(store).listMessages("thread", expectedOffset, expectedLimit);
-        verify(store, never()).countMessages(anyString());
+        verify(messageRepository).list("thread", expectedOffset, expectedLimit);
+        verify(messageRepository, never()).count(anyString());
     }
 
     @ParameterizedTest

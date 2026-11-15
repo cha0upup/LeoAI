@@ -3,11 +3,14 @@ package org.leo.web.application.ai;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
@@ -81,6 +84,46 @@ class NodeAiThreadServiceTest {
             verify(fixture.channels).optional(config.getId());
             verify(fixture.agentRegistry).evict(session, "thread");
         }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"PLANNING,true", "IN_PROGRESS,true", "COMPLETED,false", "FAILED,false"})
+    void restoresOnlyActivePlansAndReusesTheLoadedThread(AiPlanStatus status, boolean active) {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        when(fixture.conversationStore.findThread("thread")).thenReturn(ownedRecord("thread"));
+        when(fixture.messageRepository.findLatestPlanJson("thread"))
+                .thenReturn("{\"planId\":\"plan-1\",\"title\":\"stored plan\",\"status\":\"" + status + "\"}");
+
+        AiThread restored = fixture.service.requireThread(session, "thread");
+
+        if (active) {
+            assertNotNull(restored.getCurrentPlan());
+            assertEquals("plan-1", restored.getCurrentPlan().getPlanId());
+            assertEquals("stored plan", restored.getCurrentPlan().getTitle());
+            assertEquals(status, restored.getCurrentPlan().getStatus());
+        } else {
+            assertNull(restored.getCurrentPlan());
+        }
+        assertSame(restored, fixture.service.requireThread(session, "thread"));
+        verify(fixture.messageRepository).findLatestPlanJson("thread");
+        verify(fixture.conversationStore).attachEventJournal("thread", restored);
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"null", "not-json"})
+    void missingOrInvalidPlanDoesNotPreventThreadRestoration(String planJson) {
+        Fixture fixture = fixture();
+        AgentNodeSession session = cacheSession();
+        when(fixture.conversationStore.findThread("thread")).thenReturn(ownedRecord("thread"));
+        when(fixture.messageRepository.findLatestPlanJson("thread")).thenReturn(planJson);
+
+        AiThread restored = fixture.service.requireThread(session, "thread");
+
+        assertSame(restored, session.getAiThread("thread"));
+        assertNull(restored.getCurrentPlan());
+        verify(fixture.conversationStore).attachEventJournal("thread", restored);
     }
 
     @Test
@@ -247,7 +290,7 @@ class NodeAiThreadServiceTest {
         assertEquals("active", session.getActiveThreadId());
         verify(fixture.eventJournal).listAfter("thread-1", 1L, 200);
         verify(fixture.conversationStore, never()).attachEventJournal(anyString(), nullable(AiThread.class));
-        verify(fixture.conversationStore, never()).findLatestPlanJson(anyString());
+        verify(fixture.messageRepository, never()).findLatestPlanJson(anyString());
     }
 
     @Test
@@ -269,7 +312,7 @@ class NodeAiThreadServiceTest {
         Fixture fixture = fixture();
         when(fixture.conversationStore.findThread("thread-1")).thenReturn(ownedRecord("thread-1"));
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L));
-        when(fixture.conversationStore.listMessages("thread-1", 0, 50))
+        when(fixture.messageRepository.list("thread-1", 0, 50))
                 .thenReturn(messages);
 
         assertEquals(Map.of("messages", messages,
@@ -312,8 +355,7 @@ class NodeAiThreadServiceTest {
         }
         assertSame(cached, session.getAiThread("foreign"));
         assertEquals("original", cached.getTitle());
-        verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
-        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
+        verifyNoInteractions(fixture.messageRepository, fixture.eventJournal);
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
     }
@@ -336,8 +378,7 @@ class NodeAiThreadServiceTest {
         verifyNoInteractions(fixture.channels, fixture.agentRegistry);
         verify(fixture.conversationStore, never()).deleteThread(anyString());
         verify(fixture.conversationStore, never()).renameThread(anyString(), anyString());
-        verify(fixture.conversationStore, never()).listMessages(anyString(), anyInt(), anyInt());
-        verify(fixture.eventJournal, never()).listAfter(anyString(), anyLong(), anyInt());
+        verifyNoInteractions(fixture.messageRepository, fixture.eventJournal);
         assertEquals(0, session.listAiThreads().size());
     }
 
@@ -387,6 +428,7 @@ class NodeAiThreadServiceTest {
 
     private static Fixture fixture() {
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
+        AiMessageRepository messageRepository = mock(AiMessageRepository.class);
         AiEventJournalRepository eventJournal = mock(AiEventJournalRepository.class);
         SessionWarmupService sessionWarmupService = mock(SessionWarmupService.class);
         AiTurnProtocolService protocol = mock(AiTurnProtocolService.class);
@@ -397,14 +439,16 @@ class NodeAiThreadServiceTest {
         NodeAiThreadService service = new NodeAiThreadService(
                 channels,
                 conversationStore,
+                messageRepository,
                 sessionWarmupService,
                 agentRegistry,
-                new AiThreadQueryService(conversationStore, eventJournal, protocol));
-        return new Fixture(service, conversationStore, eventJournal, sessionWarmupService, agentRegistry, channels);
+                new AiThreadQueryService(conversationStore, messageRepository, eventJournal, protocol));
+        return new Fixture(service, conversationStore, messageRepository, eventJournal, sessionWarmupService, agentRegistry, channels);
     }
 
     private record Fixture(NodeAiThreadService service,
                            AiConversationStoreService conversationStore,
+                           AiMessageRepository messageRepository,
                            AiEventJournalRepository eventJournal,
                            SessionWarmupService sessionWarmupService,
                            NodeAiAgentRegistry agentRegistry,

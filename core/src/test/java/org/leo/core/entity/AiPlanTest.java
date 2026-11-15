@@ -1,6 +1,9 @@
 package org.leo.core.entity;
 
+import com.alibaba.fastjson.JSON;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.List;
 
@@ -10,6 +13,43 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiPlanTest {
+
+    @ParameterizedTest
+    @CsvSource({"PLANNING,PENDING", "IN_PROGRESS,IN_PROGRESS", "COMPLETED,COMPLETED",
+            "FAILED,FAILED", "COMPLETED,SKIPPED"})
+    void snapshotsPreserveLifecycleAndRetryState(AiPlanStatus planStatus, AiStepStatus stepStatus) {
+        AiPlan plan = new AiPlan("snapshot", "restore progress", List.of(
+                step(0, "record findings", 1, List.of())));
+        plan.setStepTimeoutMs(1234L);
+        switch (stepStatus) {
+            case PENDING -> { }
+            case IN_PROGRESS -> assertTrue(plan.startStep(0));
+            case COMPLETED -> {
+                assertTrue(plan.startStep(0));
+                assertTrue(plan.completeStep(0, "findings"));
+                plan.complete("finished");
+            }
+            case FAILED -> {
+                assertTrue(plan.startStep(0));
+                assertTrue(plan.failStep(0, "first failure"));
+                assertTrue(plan.startStep(0));
+                assertTrue(plan.failStep(0, "retry exhausted"));
+                plan.complete("failed");
+            }
+            case SKIPPED -> {
+                assertTrue(plan.skipStep(0, "not needed"));
+                plan.complete("skipped");
+            }
+        }
+        String snapshot = JSON.toJSONString(plan);
+
+        AiPlan restored = JSON.parseObject(snapshot, AiPlan.class);
+
+        assertEquals(planStatus, restored.getStatus());
+        assertEquals(stepStatus, restored.getStep(0).getStatus());
+        assertEquals(snapshot, JSON.toJSONString(restored));
+        assertEquals(plan.getStep(0).canStart(), restored.getStep(0).canStart());
+    }
 
     @Test
     void dependencyMustBeCompletedRatherThanMerelyTerminated() {

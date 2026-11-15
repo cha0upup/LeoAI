@@ -3,6 +3,7 @@ package org.leo.web.application.ai;
 import com.alibaba.fastjson.JSON;
 import org.leo.ai.service.SessionWarmupService;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiModelConfig;
@@ -35,17 +36,20 @@ public class NodeAiThreadService {
             LoggerFactory.getLogger(NodeAiThreadService.class);
     private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
+    private final AiMessageRepository messages;
     private final SessionWarmupService sessionWarmupService;
     private final NodeAiAgentRegistry agentRegistry;
     private final AiThreadQueryService threadQueries;
 
     public NodeAiThreadService(AiModelChannelResolver channelResolver,
                                AiConversationStoreService conversationStore,
+                               AiMessageRepository messages,
                                SessionWarmupService sessionWarmupService,
                                NodeAiAgentRegistry agentRegistry,
                                AiThreadQueryService threadQueries) {
         this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
+        this.messages = messages;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
         this.threadQueries = threadQueries;
@@ -238,7 +242,7 @@ public class NodeAiThreadService {
     private void restoreLatestPlan(AiThread thread, String threadId) {
         if (thread.getCurrentPlan() != null) return;
         try {
-            String planJson = conversationStore.findLatestPlanJson(threadId);
+            String planJson = messages.findLatestPlanJson(threadId);
             if (planJson == null) return;
             AiPlan plan = JSON.parseObject(planJson, AiPlan.class);
             if (plan == null) return;

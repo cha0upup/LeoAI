@@ -4,6 +4,7 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
@@ -25,13 +26,16 @@ import java.util.Map;
 public class AiThreadQueryService {
 
     private final AiConversationStoreService conversationStore;
+    private final AiMessageRepository messages;
     private final AiEventJournalRepository eventJournal;
     private final AiTurnProtocolService turnProtocolService;
 
     public AiThreadQueryService(AiConversationStoreService conversationStore,
+                                AiMessageRepository messages,
                                 AiEventJournalRepository eventJournal,
                                 AiTurnProtocolService turnProtocolService) {
         this.conversationStore = conversationStore;
+        this.messages = messages;
         this.eventJournal = eventJournal;
         this.turnProtocolService = turnProtocolService;
     }
@@ -83,14 +87,14 @@ public class AiThreadQueryService {
         int limit = requestedLimit != null ? requestedLimit : 50;
         limit = limit < 0 ? 200 : Math.max(1, Math.min(limit, 200));
         List<Map<String, Object>> page = beforeSequence == null
-                ? conversationStore.listMessages(threadId, offset, limit)
-                : conversationStore.listMessagesBefore(threadId, beforeSequence, limit);
+                ? messages.list(threadId, offset, limit)
+                : messages.listBefore(threadId, beforeSequence, limit);
         Long cursor = !page.isEmpty() && page.get(0).get("sequence") instanceof Number sequence
                 ? sequence.longValue() : null;
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("messages", page);
         data.put("nextBeforeSequence", cursor);
-        data.put("hasMore", cursor != null && conversationStore.hasMessagesBefore(threadId, cursor));
+        data.put("hasMore", cursor != null && messages.hasBefore(threadId, cursor));
         return data;
     }
 
@@ -125,7 +129,7 @@ public class AiThreadQueryService {
             item.put("lastActiveAt", thread.getLastActiveAt());
             item.put("configId", thread.getAiConfigId());
         }
-        if (record == null) item.put("messageCount", conversationStore.countMessages(threadId));
+        if (record == null) item.put("messageCount", messages.count(threadId));
         String status = thread != null ? thread.getRunStatus()
                 : record.getRunStatus() != null ? record.getRunStatus() : AiRunStatus.IDLE;
         applyProtocolSnapshot(item, threadId, status);

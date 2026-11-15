@@ -379,32 +379,6 @@ public class AiConversationStoreService {
                 planSnapshot, recoveryContext);
     }
 
-    public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
-        return messages.list(threadId, offset, limit);
-    }
-
-    public List<Map<String, Object>> listMessagesBefore(String threadId, long beforeSequence, int limit) {
-        return messages.listBefore(threadId, beforeSequence, limit);
-    }
-
-    public boolean hasMessagesBefore(String threadId, long beforeSequence) {
-        return messages.hasBefore(threadId, beforeSequence);
-    }
-
-    public int countMessages(String threadId) {
-        return messages.count(threadId);
-    }
-
-    /**
-     * 查找指定线程最近一条带有 plan 快照的消息中的 plan_json，
-     * 用于线程重启后恢复计划状态。
-     *
-     * @return plan JSON 字符串，找不到则返回 null
-     */
-    public String findLatestPlanJson(String threadId) {
-        return messages.findLatestPlanJson(threadId);
-    }
-
     private static void requireFencedWrite(int updated, String target, String id) {
         if (updated != 1) {
             throw new IllegalStateException(
