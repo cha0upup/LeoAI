@@ -2,6 +2,7 @@ package org.leo.web.application.ai;
 
 import org.junit.jupiter.api.Test;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiUserInputRequest;
 
@@ -18,12 +19,13 @@ import static org.mockito.Mockito.when;
 class AiTurnProtocolUserInputTest {
 
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
+    private final AiProtocolTurnRepository turns = mock(AiProtocolTurnRepository.class);
     private final AiUserInputRepository requests = mock(AiUserInputRepository.class);
-    private final AiTurnProtocolService service = new AiTurnProtocolService(store, requests);
+    private final AiTurnProtocolService service = new AiTurnProtocolService(store, turns, requests);
 
     @Test
     void pendingQuestionMakesIdleThreadWaitWithoutHoldingExecutionClaim() {
-        when(store.listInProgressProtocolTurns("thread-1")).thenReturn(List.of());
+        when(turns.listInProgress("thread-1")).thenReturn(List.of());
         AiUserInputRequest question = new AiUserInputRequest();
         question.setRequestId("question-1");
         question.setPrompt("请选择范围");

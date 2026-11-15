@@ -153,29 +153,6 @@ public class AiConversationStoreService {
 
     // ── 持久化 Turn 控制协议 ────────────────────────────────────────────────
 
-    public AiTurnRecord findProtocolTurnByClientId(
-            String threadId, String clientUserMessageId) {
-        if (isBlank(threadId) || isBlank(clientUserMessageId)) return null;
-        return protocolTurn.findByClientId(threadId, clientUserMessageId);
-    }
-
-    public AiTurnRecord findProtocolTurn(String turnId) {
-        return protocolTurn.find(turnId);
-    }
-
-    public AiTurnRecord findNextQueuedProtocolTurn(String threadId) {
-        if (isBlank(threadId)) return null;
-        return protocolTurn.findNextQueued(threadId);
-    }
-
-    public List<AiTurnRecord> listInProgressProtocolTurns(String threadId) {
-        return protocolTurn.listInProgress(threadId);
-    }
-
-    public List<String> listDispatchableProtocolThreadIds() {
-        return protocolTurn.listDispatchableThreadIds();
-    }
-
     /**
      * 原子接收用户命令。Turn 和两条可展示消息先于任何运行时对象持久化，
      * 因此刷新页面后 queued/running/cancelling 都可仅从数据库恢复。
@@ -214,17 +191,13 @@ public class AiConversationStoreService {
         return true;
     }
 
-    public boolean claimProtocolTurnStart(String turnId, long startedAt) {
-        return protocolTurn.claimStart(turnId, startedAt);
-    }
-
     @Transactional
     public AiTurnRecord requestProtocolTurnInterrupt(
             String threadId, String turnId) {
         mapper.requestProtocolTurnInterrupt(threadId, turnId);
-        AiTurnRecord current = findProtocolTurn(turnId);
+        AiTurnRecord current = protocolTurn.find(turnId);
         if (current != null && "queued".equals(current.getDispatchStatus())) {
-            AiTurnRecord completed = completeProtocolTurn(
+            AiTurnRecord completed = protocolTurn.complete(
                     turnId, "interrupted", null, System.currentTimeMillis(), null);
             mapper.updateTurnMessageStatus(
                     threadId, turnId, MESSAGE_DISCARDED);
@@ -247,21 +220,10 @@ public class AiConversationStoreService {
         return current;
     }
 
-    public AiTurnRecord completeProtocolTurn(
-            String turnId, String protocolStatus, String errorMessage,
-            long completedAt, String leaseToken) {
-        return protocolTurn.complete(
-                turnId, protocolStatus, errorMessage, completedAt, leaseToken);
-    }
-
-    public AiTurnRecord requeueProtocolTurn(String turnId) {
-        return protocolTurn.requeue(turnId);
-    }
-
     /** 启动前失败也产生可重放终态，避免没有 Run 的订阅永久等待。 */
     @Transactional
     public AiTurnRecord failProtocolTurnBeforeRun(String turnId, String message, long completedAt) {
-        AiTurnRecord current = findProtocolTurn(turnId);
+        AiTurnRecord current = protocolTurn.find(turnId);
         if (current == null) return null;
         if (mapper.failProtocolTurnBeforeRun(turnId, message, completedAt) == 1) {
             String threadId = current.getThreadId();
@@ -277,7 +239,7 @@ public class AiConversationStoreService {
                     "turn/completed", Map.of("turn", turn), null,
                     turnId, current.getAssistantItemId(), null), null);
         }
-        return findProtocolTurn(turnId);
+        return protocolTurn.find(turnId);
     }
 
     // ── 可重放事件日志 ───────────────────────────────────────────────────────

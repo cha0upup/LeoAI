@@ -1,6 +1,7 @@
 package org.leo.web.adapter.ai;
 
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
@@ -43,23 +44,27 @@ public class AiEventSubscriptionService {
     private final AiExecutionExecutor executor;
     private final AiSseEmitterWriter writer;
     private final AiConversationStoreService eventStore;
+    private final AiProtocolTurnRepository turns;
     private final LongSupplier nanoTime;
     private final ConcurrentHashMap<String, SharedJournal> journals = new ConcurrentHashMap<>();
 
     @Autowired
     public AiEventSubscriptionService(AiExecutionExecutor executor,
                                       AiSseEmitterWriter writer,
-                                      AiConversationStoreService eventStore) {
-        this(executor, writer, eventStore, System::nanoTime);
+                                      AiConversationStoreService eventStore,
+                                      AiProtocolTurnRepository turns) {
+        this(executor, writer, eventStore, turns, System::nanoTime);
     }
 
     AiEventSubscriptionService(AiExecutionExecutor executor,
                               AiSseEmitterWriter writer,
                               AiConversationStoreService eventStore,
+                              AiProtocolTurnRepository turns,
                               LongSupplier nanoTime) {
         this.executor = executor;
         this.writer = writer;
         this.eventStore = eventStore;
+        this.turns = turns;
         this.nanoTime = nanoTime;
     }
 
@@ -212,7 +217,7 @@ public class AiEventSubscriptionService {
                 return state;
             }
             long lastSeq = eventStore.findLastEventSeq(threadId);
-            List<AiTurnRecord> inProgress = eventStore.listInProgressProtocolTurns(threadId);
+            List<AiTurnRecord> inProgress = turns.listInProgress(threadId);
             boolean protocolExecuting = !inProgress.isEmpty();
             String status = null;
             if (protocolExecuting) {

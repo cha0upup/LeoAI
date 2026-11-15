@@ -1,6 +1,7 @@
 package org.leo.web.application.ai;
 
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
@@ -25,16 +26,19 @@ public class AiTurnProtocolService {
     private static final String STATUS_FAILED = "failed";
 
     private final AiConversationStoreService store;
+    private final AiProtocolTurnRepository turns;
     private final AiUserInputRepository userInput;
 
-    public AiTurnProtocolService(AiConversationStoreService store, AiUserInputRepository userInput) {
+    public AiTurnProtocolService(AiConversationStoreService store, AiProtocolTurnRepository turns,
+                                 AiUserInputRepository userInput) {
         this.store = store;
+        this.turns = turns;
         this.userInput = userInput;
     }
 
     private TurnSnapshot findByClientId(
             String threadId, String clientUserMessageId) {
-        return snapshot(store.findProtocolTurnByClientId(
+        return snapshot(turns.findByClientId(
                 threadId, clientUserMessageId));
     }
 
@@ -81,16 +85,15 @@ public class AiTurnProtocolService {
     }
 
     public TurnSnapshot findNextQueued(String threadId) {
-        return snapshot(store.findNextQueuedProtocolTurn(threadId));
+        return snapshot(turns.findNextQueued(threadId));
     }
 
     public List<String> listDispatchableThreadIds() {
-        return store.listDispatchableProtocolThreadIds();
+        return turns.listDispatchableThreadIds();
     }
 
     public ThreadSnapshot snapshotThread(String threadId, String fallbackStatus) {
-        List<TurnSnapshot> inProgress = store
-                .listInProgressProtocolTurns(threadId)
+        List<TurnSnapshot> inProgress = turns.listInProgress(threadId)
                 .stream()
                 .map(this::snapshot)
                 .toList();
@@ -120,8 +123,8 @@ public class AiTurnProtocolService {
 
     public StartClaim tryStart(String turnId) {
         long startedAt = System.currentTimeMillis();
-        boolean claimed = store.claimProtocolTurnStart(turnId, startedAt);
-        return new StartClaim(snapshot(store.findProtocolTurn(turnId)), claimed);
+        boolean claimed = turns.claimStart(turnId, startedAt);
+        return new StartClaim(snapshot(turns.find(turnId)), claimed);
     }
 
     public TurnSnapshot requestInterrupt(String threadId, String turnId) {
@@ -159,7 +162,7 @@ public class AiTurnProtocolService {
         if (!STATUS_IN_PROGRESS.equals(current.getProtocolStatus())) {
             return snapshot(current);
         }
-        return snapshot(store.completeProtocolTurn(
+        return snapshot(turns.complete(
                 turnId, status, errorMessage, System.currentTimeMillis(),
                 leaseToken));
     }
@@ -169,17 +172,17 @@ public class AiTurnProtocolService {
             return snapshot(store.failProtocolTurnBeforeRun(
                     turnId, message, System.currentTimeMillis()));
         }
-        return snapshot(store.completeProtocolTurn(
+        return snapshot(turns.complete(
                 turnId, STATUS_FAILED, message, System.currentTimeMillis(),
                 leaseToken));
     }
 
     public TurnSnapshot requeue(String turnId) {
-        return snapshot(store.requeueProtocolTurn(turnId));
+        return snapshot(turns.requeue(turnId));
     }
 
     private AiTurnRecord require(String turnId) {
-        AiTurnRecord turn = store.findProtocolTurn(turnId);
+        AiTurnRecord turn = turns.find(turnId);
         if (turn == null) throw new IllegalStateException("Turn 不存在");
         return turn;
     }

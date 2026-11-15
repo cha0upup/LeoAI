@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -41,6 +41,7 @@ class AiConversationPersistenceIntegrationTest {
     private AiMessageRepository messages;
     private AiExecutionLeaseRepository leases;
     private AiUserInputRepository requests;
+    private AiProtocolTurnRepository turns;
     private AiTurnProtocolService protocol;
 
     @BeforeEach
@@ -67,6 +68,7 @@ class AiConversationPersistenceIntegrationTest {
         messages = context.getBean(AiMessageRepository.class);
         leases = context.getBean(AiExecutionLeaseRepository.class);
         requests = context.getBean(AiUserInputRepository.class);
+        turns = context.getBean(AiProtocolTurnRepository.class);
         protocol = context.getBean(AiTurnProtocolService.class);
         store.createPlatformThread("fixture-user", "fixture-session", "thread-1", "fixture", 1L, null);
     }
@@ -123,20 +125,65 @@ class AiConversationPersistenceIntegrationTest {
         assertFalse(requests.consumeConfirmation("question-1", "other-thread", "updateProfile", "fixture-hash", consumedAt));
         assertFalse(requests.consumeConfirmation("question-1", "thread-1", "otherTool", "fixture-hash", consumedAt));
         assertFalse(requests.consumeConfirmation("question-1", "thread-1", "updateProfile", "other-hash", consumedAt));
-        var workers = Executors.newFixedThreadPool(4);
-        try {
-            var attempts = new ArrayList<Callable<Boolean>>();
-            for (int i = 0; i < 4; i++) attempts.add(() -> requests.consumeConfirmation(
-                    "question-1", "thread-1", "updateProfile", "fixture-hash", consumedAt));
-            int accepted = 0;
-            for (var result : workers.invokeAll(attempts, 5, TimeUnit.SECONDS)) {
-                if (result.get()) accepted++;
-            }
-            assertEquals(1, accepted);
-            assertEquals(consumedAt, requests.find("question-1").getConfirmationConsumedAt());
-        } finally {
-            workers.shutdownNow();
-        }
+        assertEquals(1, concurrentSuccesses(() -> requests.consumeConfirmation(
+                "question-1", "thread-1", "updateProfile", "fixture-hash", consumedAt)));
+        assertEquals(consumedAt, requests.find("question-1").getConfirmationConsumedAt());
+    }
+
+    @Test
+    void queuedTurnsHaveExclusiveClaimsAndCanBeRequeuedBeforeRunning() throws Exception {
+        var turn = reserve();
+        assertEquals(turn.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
+
+        assertEquals(1, concurrentSuccesses(() -> protocol.tryStart(turn.id()).claimed()));
+
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
+        assertThrows(IllegalStateException.class, () -> protocol.completeFromRuntime(
+                turn.id(), "completed", null, "stale-lease"));
+        assertEquals("running", turns.find(turn.id()).getDispatchStatus());
+        assertEquals("queued", protocol.requeue(turn.id()).status());
+        assertNull(turns.find(turn.id()).getStartedAt());
+        assertTrue(protocol.tryStart(turn.id()).claimed());
+        var running = beginRun(turn);
+        store.completeTurn(running, "fixture complete", List.of(), null, null, 0);
+
+        assertEquals("completed", protocol.completeFromRuntime(turn.id(), "completed", null, null).status());
+        assertTrue(turns.listInProgress("thread-1").isEmpty());
+        assertNull(protocol.findNextQueued("thread-1"));
+        assertTrue(store.listMessages("thread-1", 0, 20).stream()
+                .allMatch(message -> "committed".equals(message.get("status"))));
+    }
+
+    @Test
+    void queuedCancellationDiscardsMessagesAndAppendsOneReplayableCompletion() {
+        var turn = reserve();
+
+        var cancelled = protocol.requestInterrupt("thread-1", turn.id());
+        protocol.requestInterrupt("thread-1", turn.id());
+
+        assertEquals("interrupted", cancelled.status());
+        assertTrue(cancelled.interruptRequested());
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='discarded'", Integer.class));
+        List<AiSseEvent> events = store.listEventsAfter("thread-1", 0, 200);
+        assertEquals(1, events.size());
+        assertEquals("turn/completed", events.get(0).name());
+        assertEquals(turn.id(), events.get(0).turnId());
+        assertEquals(turn.assistantItemId(), events.get(0).itemId());
+    }
+
+    @Test
+    void queuedCancellationRollsBackWhenCompletionEventCannotBeWritten() {
+        var turn = reserve();
+        jdbc.execute("CREATE TRIGGER reject_event BEFORE INSERT ON ai_events BEGIN SELECT RAISE(ABORT, 'event rejected'); END");
+
+        assertThrows(RuntimeException.class, () -> protocol.requestInterrupt("thread-1", turn.id()));
+
+        assertEquals("queued", turns.find(turn.id()).getDispatchStatus());
+        assertFalse(turns.find(turn.id()).getInterruptRequested());
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='pending'", Integer.class));
+        assertTrue(store.listEventsAfter("thread-1", 0, 200).isEmpty());
     }
 
     @Test
@@ -305,7 +352,7 @@ class AiConversationPersistenceIntegrationTest {
 
         assertEquals("running", jdbc.queryForObject("SELECT status FROM ai_runs WHERE run_id=?", String.class, running.runId()));
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status='pending'", Integer.class));
-        assertEquals("inProgress", store.findProtocolTurn(turn.id()).getProtocolStatus());
+        assertEquals("inProgress", turns.find(turn.id()).getProtocolStatus());
         assertTrue(store.listEventsAfter("thread-1", 0, 200).isEmpty());
     }
 
@@ -339,7 +386,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("failed", protocol.failStart(turn.id(), "session expired", null).status());
         protocol.failStart(turn.id(), "session expired", null);
 
-        assertTrue(store.listDispatchableProtocolThreadIds().isEmpty());
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
         assertEquals("failed", store.findThread("thread-1").getRunStatus());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status = 'discarded'", Integer.class));
         List<AiSseEvent> events = store.listEventsAfter("thread-1", 0L, 200);
@@ -356,7 +403,7 @@ class AiConversationPersistenceIntegrationTest {
 
         assertThrows(RuntimeException.class, () -> protocol.failStart(turn.id(), "expired", null));
 
-        assertEquals("inProgress", store.findProtocolTurn(turn.id()).getProtocolStatus());
+        assertEquals("inProgress", turns.find(turn.id()).getProtocolStatus());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE status = 'pending'", Integer.class));
         assertEquals("idle", store.findThread("thread-1").getRunStatus());
     }
@@ -401,6 +448,19 @@ class AiConversationPersistenceIntegrationTest {
 
     private AiTurnProtocolService.TurnSnapshot reserve() {
         return protocol.begin("thread-1", "client-1", "platform", "{}", "fixture", null, null).turn();
+    }
+
+    private int concurrentSuccesses(Callable<Boolean> attempt) throws Exception {
+        var workers = Executors.newFixedThreadPool(4);
+        try {
+            int accepted = 0;
+            for (var result : workers.invokeAll(Collections.nCopies(4, attempt), 5, TimeUnit.SECONDS)) {
+                if (result.get()) accepted++;
+            }
+            return accepted;
+        } finally {
+            workers.shutdownNow();
+        }
     }
 
     private AiUserInputRequest confirmation(String requestId) {

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiTurnRecord;
 
@@ -17,12 +18,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AiTurnProtocolServiceTest {
 
     private final AiConversationStoreService store = mock(AiConversationStoreService.class);
-    private final AiTurnProtocolService service = new AiTurnProtocolService(store, mock(AiUserInputRepository.class));
+    private final AiProtocolTurnRepository turns = mock(AiProtocolTurnRepository.class);
+    private final AiTurnProtocolService service = new AiTurnProtocolService(store, turns, mock(AiUserInputRepository.class));
 
     @Test
     void startupFailureWithoutLeaseUsesAtomicTerminalEventPath() {
@@ -33,7 +36,7 @@ class AiTurnProtocolServiceTest {
                 .thenReturn(failed);
 
         assertEquals("failed", service.failStart("turn-1", "expired", null).status());
-        verify(store, never()).completeProtocolTurn(any(), any(), any(), org.mockito.ArgumentMatchers.anyLong(), any());
+        verifyNoInteractions(turns);
     }
 
     @ParameterizedTest
@@ -50,7 +53,7 @@ class AiTurnProtocolServiceTest {
         AiTurnRecord existing = existingTurn();
         existing.setProtocolStatus(protocolStatus);
         existing.setDispatchStatus(dispatchStatus);
-        when(store.findProtocolTurnByClientId("thread-1", "client-1"))
+        when(turns.findByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
 
         AiTurnProtocolService.Reservation reservation = service.begin(
@@ -68,7 +71,7 @@ class AiTurnProtocolServiceTest {
     @Test
     void rejectsIdempotencyKeyReusedForDifferentCommand() {
         AiTurnRecord existing = existingTurn();
-        when(store.findProtocolTurnByClientId("thread-1", "client-1"))
+        when(turns.findByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
 
         assertThrows(IllegalStateException.class, () -> service.begin(
@@ -81,12 +84,12 @@ class AiTurnProtocolServiceTest {
     void resolvesTheAuthoritativeActiveTurnWhenClientHasNoTurnId() {
         AiTurnRecord active = existingTurn();
         active.setDispatchStatus("running");
-        when(store.listInProgressProtocolTurns("thread-1"))
+        when(turns.listInProgress("thread-1"))
                 .thenReturn(List.of(active));
         AiTurnRecord cancelling = existingTurn();
         cancelling.setDispatchStatus("cancelling");
         cancelling.setInterruptRequested(true);
-        when(store.findProtocolTurn("turn-1")).thenReturn(active);
+        when(turns.find("turn-1")).thenReturn(active);
         when(store.requestProtocolTurnInterrupt("thread-1", "turn-1"))
                 .thenReturn(cancelling);
 

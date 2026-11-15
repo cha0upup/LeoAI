@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
@@ -49,7 +50,8 @@ class AiEventSubscriptionServiceTest {
     private final AiExecutionExecutor executor = mock(AiExecutionExecutor.class);
     private final AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
     private final AiConversationStoreService eventStore = mock(AiConversationStoreService.class);
-    private final AiEventSubscriptionService service = new AiEventSubscriptionService(executor, writer, eventStore);
+    private final AiProtocolTurnRepository turns = mock(AiProtocolTurnRepository.class);
+    private final AiEventSubscriptionService service = new AiEventSubscriptionService(executor, writer, eventStore, turns);
 
     @ParameterizedTest
     @CsvSource({"1,false", "200,false", "201,false", "401,false", "2,true"})
@@ -87,7 +89,7 @@ class AiEventSubscriptionServiceTest {
         assertEquals(events, sent.getAllValues());
         verify(eventStore).findLastEventSeq("thread-1");
         verify(eventStore).findThread("thread-1");
-        verify(eventStore).listInProgressProtocolTurns("thread-1");
+        verify(turns).listInProgress("thread-1");
         verify(eventStore).hasLatestTurnCompletedEvent("thread-1");
         verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
         verify(emitter).complete();
@@ -181,7 +183,7 @@ class AiEventSubscriptionServiceTest {
                 .thenReturn(List.of(), List.of(completed));
         when(eventStore.findLastEventSeq("thread-queued"))
                 .thenReturn(0L, 1L);
-        when(eventStore.listInProgressProtocolTurns("thread-queued"))
+        when(turns.listInProgress("thread-queued"))
                 .thenReturn(List.of(queued), List.of());
         when(eventStore.findThread("thread-queued"))
                 .thenReturn(threadRecord(AiRunStatus.IDLE));
@@ -205,7 +207,7 @@ class AiEventSubscriptionServiceTest {
     void sharesJournalReadsAcrossConcurrentSubscribersAndReleasesTheCache(int subscriberCount)
             throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, eventStore, () -> 0L);
+                executor, writer, eventStore, turns, () -> 0L);
         AiThread thread = new AiThread("shared", "test");
         assertTrue(thread.claimExecution());
 
@@ -214,7 +216,7 @@ class AiEventSubscriptionServiceTest {
 
         verify(eventStore).listEventsAfter("shared", 0L, 200);
         verify(eventStore).findLastEventSeq("shared");
-        verify(eventStore).listInProgressProtocolTurns("shared");
+        verify(turns).listInProgress("shared");
         assertTrue(thread.isExecuting());
 
         // The last disconnect must discard cached empty pages, even if the clock
@@ -239,7 +241,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void overlappingSubscribersKeepIndependentReplayCursors() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, eventStore, () -> 0L);
+                executor, writer, eventStore, turns, () -> 0L);
         AiThread thread = new AiThread("independent", "test");
         assertTrue(thread.claimExecution());
         List<AiSseEvent> events = IntStream.range(0, 3)
@@ -257,14 +259,14 @@ class AiEventSubscriptionServiceTest {
         verify(writer).sendEvent(emitters.get(1), events.get(2));
         verify(eventStore).listEventsAfter("independent", 0L, 200);
         verify(eventStore).listEventsAfter("independent", 1L, 200);
-        verify(eventStore, never()).listInProgressProtocolTurns("independent");
+        verify(turns, never()).listInProgress("independent");
     }
 
     @Test
     void refreshesCachedEmptyPagesToObserveEventsFromAnotherRuntime() throws Exception {
         AtomicLong clock = new AtomicLong();
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, eventStore, clock::get);
+                executor, writer, eventStore, turns, clock::get);
         AiThread thread = new AiThread("refresh", "test");
         assertTrue(thread.claimExecution());
         SseEmitter first = mock(SseEmitter.class);
@@ -304,7 +306,7 @@ class AiEventSubscriptionServiceTest {
 
         assertEquals(0L, thread.getLastSseEventSeq());
         verify(eventStore, times(2)).listEventsAfter("refresh", 0L, 200);
-        verify(eventStore).listInProgressProtocolTurns("refresh");
+        verify(turns).listInProgress("refresh");
         verify(writer).sendEvent(second, remoteEvent);
         assertTrue(thread.isExecuting());
     }
@@ -312,7 +314,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void journalReadFailureDoesNotPoisonTheNextSubscription() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, eventStore, () -> 0L);
+                executor, writer, eventStore, turns, () -> 0L);
         AiThread thread = new AiThread("read-failure", "test");
         thread.markCompleted();
         AiSseEvent event = thread.recordSseEvent("delta", "persisted");
@@ -337,7 +339,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void newerEventsInvalidateACachedTerminalStateBeforeItsExpiry() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, eventStore, () -> 0L);
+                executor, writer, eventStore, turns, () -> 0L);
         AiThread thread = new AiThread("new-turn", "test");
         thread.markCompleted();
         AiSseEvent oldEvent = new AiSseEvent(1L, 1L, "turn/completed", "old", null, null, null, null);
@@ -347,7 +349,7 @@ class AiEventSubscriptionServiceTest {
         when(eventStore.listEventsAfter("new-turn", 0L, 200)).thenReturn(List.of(oldEvent));
         when(eventStore.listEventsAfter("new-turn", 1L, 200)).thenReturn(List.of(queuedEvent));
         when(eventStore.findLastEventSeq("new-turn")).thenReturn(1L, 2L);
-        when(eventStore.listInProgressProtocolTurns("new-turn"))
+        when(turns.listInProgress("new-turn"))
                 .thenReturn(List.of(), List.of(queued));
         when(eventStore.findThread("new-turn")).thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("new-turn")).thenReturn(true);
@@ -380,7 +382,7 @@ class AiEventSubscriptionServiceTest {
             workers.shutdownNow();
         }
 
-        verify(eventStore, times(2)).listInProgressProtocolTurns("new-turn");
+        verify(turns, times(2)).listInProgress("new-turn");
         verify(writer).sendEvent(second, queuedEvent);
         verify(writer, never()).sendStatus(eq(second), any());
         verify(second).complete();
