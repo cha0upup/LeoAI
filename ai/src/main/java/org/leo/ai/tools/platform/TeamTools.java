@@ -1,17 +1,16 @@
 package org.leo.ai.tools.platform;
 
 import org.leo.core.entity.Team;
-import org.leo.core.entity.User;
 import org.leo.service.team.TeamService;
-import org.leo.service.user.UserService;
+import org.leo.service.team.TeamOperationException;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import static org.leo.ai.tools.platform.PlatformToolArguments.*;
 
@@ -28,11 +27,9 @@ import static org.leo.ai.tools.platform.PlatformToolArguments.*;
 public class TeamTools {
 
     private final TeamService teamService;
-    private final UserService userService;
 
-    public TeamTools(TeamService teamService, UserService userService) {
+    public TeamTools(TeamService teamService) {
         this.teamService = teamService;
-        this.userService = userService;
     }
 
     @Tool("列出平台团队。leaderId 可选；为空时返回全部团队。")
@@ -73,34 +70,14 @@ public class TeamTools {
             @P(value = "团队描述", required = false) String description,
             @P(value = "状态：1启用、0停用；默认1", required = false, defaultValue = "1") Integer status,
             @P(value = "备注", required = false) String remark) {
-        String nTeamName = requireNonBlank(teamName, "teamName不能为空");
-        String nLeaderId = requireNonBlank(leaderId, "leaderId不能为空");
-        String nTeamId   = defaultIfBlank(teamId, java.util.UUID.randomUUID().toString());
-
-        if (teamService.getTeamById(nTeamId) != null) throw new IllegalArgumentException("teamId已存在");
-        if (teamService.getTeamByName(nTeamName) != null) throw new IllegalArgumentException("teamName已存在");
-
-        User leader = userService.getUserById(nLeaderId);
-        if (leader == null) throw new IllegalArgumentException("用户不存在");
-        if (!isBlank(leader.getTeamId())) throw new IllegalArgumentException("该用户已属于某个团队");
-
         Team team = new Team();
-        team.setTeamId(nTeamId);
-        team.setTeamName(nTeamName);
-        team.setLeaderId(nLeaderId);
+        team.setTeamId(trimToNull(teamId));
+        team.setTeamName(teamName);
+        team.setLeaderId(leaderId);
         team.setDescription(trimToNull(description));
         team.setStatus(status == null ? 1 : status);
         team.setRemark(trimToNull(remark));
-
-        // 将 leader 加入团队并设置角色
-        leader.setTeamId(nTeamId);
-        if (!UserService.PRIVILEGE_ADMIN.equals(leader.getPrivilege())) {
-            leader.setPrivilege(UserService.PRIVILEGE_LEADER);
-        }
-        userService.updateUser(leader);
-
-        boolean created = teamService.addTeam(team);
-        return buildResult("created", created, nTeamId, nTeamName);
+        return execute("created", () -> teamService.createWithLeader(team));
     }
 
     @Tool("更新平台团队。teamId 必填；若更换 leader，会校验新 leader 是否存在且未加入其他团队。")
@@ -111,76 +88,33 @@ public class TeamTools {
             @P(value = "新团队描述；空字符串表示清空", required = false) String description,
             @P(value = "新状态：1启用、0停用", required = false) Integer status,
             @P(value = "新备注；空字符串表示清空", required = false) String remark) {
-        Team existing = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
-        if (existing == null) throw new IllegalArgumentException("团队不存在");
-
-        if (!isBlank(teamName) && !teamName.equals(existing.getTeamName())) {
-            if (teamService.getTeamByName(teamName) != null) throw new IllegalArgumentException("teamName已存在");
-            existing.setTeamName(teamName.trim());
-        }
-
-        if (!isBlank(leaderId) && !leaderId.equals(existing.getLeaderId())) {
-            User newLeader = userService.getUserById(leaderId.trim());
-            if (newLeader == null) throw new IllegalArgumentException("新 leader 用户不存在");
-            if (!isBlank(newLeader.getTeamId()) && !existing.getTeamId().equals(newLeader.getTeamId())) {
-                throw new IllegalArgumentException("新 leader 已属于其他团队");
-            }
-            // 降级旧 leader
-            User oldLeader = userService.getUserById(existing.getLeaderId());
-            if (oldLeader != null && UserService.PRIVILEGE_LEADER.equals(oldLeader.getPrivilege())) {
-                oldLeader.setPrivilege(UserService.PRIVILEGE_NORMAL);
-                userService.updateUser(oldLeader);
-            }
-            // 升级新 leader
-            newLeader.setTeamId(existing.getTeamId());
-            if (!UserService.PRIVILEGE_ADMIN.equals(newLeader.getPrivilege())) {
-                newLeader.setPrivilege(UserService.PRIVILEGE_LEADER);
-            }
-            userService.updateUser(newLeader);
-            existing.setLeaderId(newLeader.getUserId());
-        }
-
-        if (description != null) existing.setDescription(trimToNull(description));
-        if (status != null)      existing.setStatus(status);
-        if (remark != null)      existing.setRemark(trimToNull(remark));
-
-        boolean updated = teamService.updateTeam(existing);
-        return buildResult("updated", updated, existing.getTeamId(), existing.getTeamName());
+        Team patch = new Team();
+        patch.setTeamId(requireNonBlank(teamId, "teamId不能为空"));
+        patch.setTeamName(teamName);
+        patch.setLeaderId(leaderId);
+        patch.setDescription(description);
+        patch.setStatus(status);
+        patch.setRemark(remark);
+        return execute("updated", () -> teamService.updateTeam(patch));
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
             operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定团队（仅 admin 可用）。删除前会清空团队成员的 teamId。内置 system-admin 不可删除。")
     public Map<String, Object> deleteTeam(@P("待删除团队 ID") String teamId) {
-        Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
-        if (team == null) throw new IllegalArgumentException("团队不存在");
-
-        // 清空团队成员
-        for (User member : userService.getUsersByTeamId(teamId)) {
-            if (member == null) continue;
-            member.setTeamId(null);
-            if (UserService.PRIVILEGE_LEADER.equals(member.getPrivilege())) {
-                member.setPrivilege(UserService.PRIVILEGE_NORMAL);
-            }
-            userService.updateUser(member);
-        }
-
-        try {
-            boolean deleted = teamService.delTeam(teamId);
-            return buildResult("deleted", deleted, team.getTeamId(), team.getTeamName());
-        } catch (IllegalStateException e) {
-            throw new IllegalArgumentException(e.getMessage());
-        }
+        String id = requireNonBlank(teamId, "teamId不能为空");
+        return execute("deleted", () -> teamService.deleteWithMembers(id));
     }
 
-    // ── 私有工具 ─────────────────────────────────────────────────────────────────
-
-    private Map<String, Object> buildResult(String status, boolean success, String teamId, String teamName) {
-        HashMap<String, Object> result = new HashMap<>();
-        result.put("status",   status);
-        result.put("success",  success);
-        result.put("teamId",   teamId);
-        result.put("teamName", teamName);
-        return result;
+    private Map<String, Object> execute(String status, Supplier<Team> operation) {
+        try {
+            Team team = operation.get();
+            return Map.of("status", status, "success", true, "teamId", team.getTeamId(), "teamName", team.getTeamName());
+        } catch (TeamOperationException error) {
+            if (error.getKind() == TeamOperationException.Kind.PERSISTENCE) {
+                throw new IllegalStateException(error.getMessage(), error);
+            }
+            throw new IllegalArgumentException(error.getMessage(), error);
+        }
     }
 }

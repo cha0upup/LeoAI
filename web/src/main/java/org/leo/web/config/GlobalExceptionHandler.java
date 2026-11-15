@@ -5,6 +5,7 @@ import org.leo.core.infrastructure.persistence.session.FileStoreException;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.sql.DatabaseConnectionProfileException;
 import org.leo.service.sql.SqlExecutionException;
+import org.leo.service.team.TeamOperationException;
 import org.leo.service.ssh.SshConnectionException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.exception.ApiException;
@@ -90,6 +91,17 @@ public class GlobalExceptionHandler {
             default -> HttpStatus.UNPROCESSABLE_ENTITY;
         };
         return businessError(error, status, error.details());
+    }
+
+    @ExceptionHandler(TeamOperationException.class)
+    public ResponseEntity<HashMap<String, Object>> handleTeamOperationException(TeamOperationException error) {
+        HttpStatus status = switch (error.getKind()) {
+            case VALIDATION -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
+        return businessError(error, status, Map.of());
     }
 
     private ResponseEntity<HashMap<String, Object>> businessError(

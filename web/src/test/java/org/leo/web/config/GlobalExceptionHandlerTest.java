@@ -18,6 +18,7 @@ import org.leo.service.sql.DatabaseConnectionProfileException;
 import org.leo.service.sql.SqlExecutionException;
 import org.leo.service.sql.SqlExportService;
 import org.leo.service.ssh.SshConnectionException;
+import org.leo.service.team.TeamOperationException;
 import org.leo.web.application.UseCaseException;
 import org.leo.web.controller.agentnode.sql.AgentNodeSqlController;
 import org.leo.web.exception.ApiException;
@@ -80,6 +81,10 @@ class GlobalExceptionHandlerTest {
                 DatabaseConnectionProfileException.Kind.NOT_FOUND, 404,
                 DatabaseConnectionProfileException.Kind.FORBIDDEN, 403,
                 DatabaseConnectionProfileException.Kind.PERSISTENCE, 500);
+        var teams = Map.of(TeamOperationException.Kind.VALIDATION, 400,
+                TeamOperationException.Kind.NOT_FOUND, 404,
+                TeamOperationException.Kind.FORBIDDEN, 403,
+                TeamOperationException.Kind.PERSISTENCE, 500);
         return Stream.of(
                 Stream.of(Arguments.of(ApiException.badRequest("HTTP 错误"), 400),
                         Arguments.of(ApiException.unauthorized("HTTP 错误"), 401),
@@ -94,7 +99,9 @@ class GlobalExceptionHandlerTest {
                 ssh.entrySet().stream().map(entry -> Arguments.of(
                         new SshConnectionException(entry.getKey(), "SSH 业务失败"), entry.getValue())),
                 profiles.entrySet().stream().map(entry -> Arguments.of(
-                        new DatabaseConnectionProfileException(entry.getKey(), "配置操作失败"), entry.getValue())))
+                        new DatabaseConnectionProfileException(entry.getKey(), "配置操作失败"), entry.getValue())),
+                teams.entrySet().stream().map(entry -> Arguments.of(
+                        new TeamOperationException(entry.getKey(), "团队操作失败"), entry.getValue())))
                 .flatMap(stream -> stream);
     }
 
