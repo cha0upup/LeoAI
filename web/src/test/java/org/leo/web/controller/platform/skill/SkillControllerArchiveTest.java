@@ -223,18 +223,22 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         }
     }
 
-    @Test
-    void overlappingExportsWithOppositeRequestOrdersCompleteWithoutDeadlock() throws Exception {
-        writeSkill("alpha", "first");
-        writeSkill("beta", "second");
+    @ParameterizedTest
+    @CsvSource({"beta,alpha,alpha,beta", "an,c1,ao,c0"})
+    void overlappingExportsKeepACommonLockOrderEvenWithNameCollisions(
+            String firstName, String secondName, String thirdName, String fourthName) throws Exception {
+        // an/c0 and ao/c1 share String hashes, so disjoint name batches can share locks in opposite orders.
+        for (String name : List.of(firstName, secondName, thirdName, fourthName).stream().distinct().toList()) {
+            writeSkill(name, "content");
+        }
         CountDownLatch firstLocks = new CountDownLatch(2);
         Map<Thread, List<String>> acquired = new ConcurrentHashMap<>();
         configure(new SkillOperationLock() {
-            private final Map<String, ReentrantLock> boundedLocks = new ConcurrentHashMap<>();
+            private final Map<ReentrantLock, ReentrantLock> observedLocks = new ConcurrentHashMap<>();
 
             @Override
             public ReentrantLock lockFor(String scope, String name) {
-                return boundedLocks.computeIfAbsent(name, ignored -> new ReentrantLock() {
+                return observedLocks.computeIfAbsent(super.lockFor(scope, name), ignored -> new ReentrantLock() {
                     @Override
                     public void lock() {
                         try {
@@ -257,12 +261,14 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         });
         var executor = Executors.newFixedThreadPool(2);
         try {
-            var first = executor.submit(() -> controller.exportSkillsBatch(batch("beta", "alpha")));
-            var second = executor.submit(() -> controller.exportSkillsBatch(batch("alpha", "beta")));
+            var first = executor.submit(() -> controller.exportSkillsBatch(batch(firstName, secondName)));
+            var second = executor.submit(() -> controller.exportSkillsBatch(batch(thirdName, fourthName)));
             assertEquals(4, unzip(first.get(8, TimeUnit.SECONDS).getBody()).size());
             assertEquals(4, unzip(second.get(8, TimeUnit.SECONDS).getBody()).size());
             assertEquals(2, acquired.size());
-            acquired.values().forEach(order -> assertEquals(List.of("alpha", "beta"), order));
+            List<String> firstOrder = acquired.values().iterator().next();
+            assertEquals(2, firstOrder.size());
+            acquired.values().forEach(order -> assertEquals(firstOrder, order));
         } finally {
             executor.shutdownNow();
             assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));

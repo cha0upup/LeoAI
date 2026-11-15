@@ -297,9 +297,7 @@ public class SkillManagementService {
         }
         List<ReentrantLock> heldLocks = new ArrayList<>();
         try {
-            // Use one order regardless of request order, including overlapping batch exports.
-            for (String name : names.stream().sorted().toList()) {
-                ReentrantLock lock = operationLock.lockFor(normalizedScope, name);
+            for (ReentrantLock lock : operationLock.locksFor(normalizedScope, names)) {
                 lock.lock();
                 heldLocks.add(lock);
             }
