@@ -60,9 +60,6 @@ public class AuditLogController {
     private static final String PARAM_TEAM_ID = "teamId";
     
     // 默认值常量
-    private static final int DEFAULT_LIMIT = 50;
-    private static final int MAX_LIMIT = 1000;
-    private static final int DEFAULT_OFFSET = 0;
     private static final int DEFAULT_DAYS = 30;
     
     private final AuditLogService auditLogService;
@@ -408,7 +405,9 @@ public class AuditLogController {
     }
 
     private AuditLogQuery buildQuery(Map<?, ?> params, boolean includePaging) {
-        AuditLogQuery query = new AuditLogQuery();
+        AuditLogQuery query = includePaging
+                ? AuditLogQuery.page(integerParam(params, PARAM_LIMIT), integerParam(params, PARAM_OFFSET))
+                : AuditLogQuery.page(AuditLogQuery.MAX_LIMIT, 0);
         query.setUserId(textParam(params, PARAM_USER_ID));
         query.setUserName(textParam(params, PARAM_USER_NAME));
         query.setAgentId(textParam(params, PARAM_AGENT_ID));
@@ -421,9 +420,7 @@ public class AuditLogController {
         query.setRemark(textParam(params, PARAM_REMARK));
         query.setStartTime(textParam(params, PARAM_START_TIME));
         query.setEndTime(textParam(params, PARAM_END_TIME));
-        query.setLimit(includePaging ? normalizeLimit(integerParam(params, PARAM_LIMIT)) : MAX_LIMIT);
-        query.setOffset(includePaging ? normalizeOffset(integerParam(params, PARAM_OFFSET)) : 0);
-        return query;
+        return query.normalized();
     }
 
     private HashMap<String, Object> queryToMap(AuditLogQuery query) {
@@ -450,15 +447,8 @@ public class AuditLogController {
     }
 
     private String textParam(Map<?, ?> params, String key) {
-        if (params == null || !params.containsKey(key)) {
-            return null;
-        }
-        Object value = params.get(key);
-        if (value == null) {
-            return null;
-        }
-        String text = value.toString().trim();
-        return text.isBlank() ? null : text;
+        Object value = params != null ? params.get(key) : null;
+        return value != null ? value.toString() : null;
     }
 
     private Integer integerParam(Map<?, ?> params, String key) {
@@ -467,21 +457,10 @@ public class AuditLogController {
             return null;
         }
         try {
-            return Integer.valueOf(Integer.parseInt(text));
+            return Integer.valueOf(text.trim());
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    private int normalizeLimit(Integer limit) {
-        if (limit == null || limit <= 0) {
-            return DEFAULT_LIMIT;
-        }
-        return Math.min(limit, MAX_LIMIT);
-    }
-
-    private int normalizeOffset(Integer offset) {
-        return offset == null || offset < 0 ? DEFAULT_OFFSET : offset;
     }
 
     private List<String> parseLogIds(HashMap<String, Object> params) {

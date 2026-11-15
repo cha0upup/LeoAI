@@ -29,8 +29,6 @@ public class AuditLogService {
     private static final DateTimeFormatter DAY_KEY_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DAY_LABEL_FORMAT = DateTimeFormatter.ofPattern("MM-dd");
     private static final int RECENT_DAYS = 7;
-    private static final int DEFAULT_LIMIT = 50;
-    private static final int MAX_LIMIT = 1000;
 
     public AuditLogService(AuditLogMapper auditLogMapper) {
         this.auditLogMapper = auditLogMapper;
@@ -96,14 +94,8 @@ public class AuditLogService {
      * 查询所有审计日志
      */
     public List<AuditLog> findAllAuditLogs(Integer limit, Integer offset) {
-        if (limit == null || limit <= 0) {
-            limit = DEFAULT_LIMIT;
-        }
-        limit = Math.min(limit, MAX_LIMIT);
-        if (offset == null || offset < 0) {
-            offset = 0;
-        }
-        List<AuditLog> logs = auditLogMapper.findAllAuditLogs(limit, offset);
+        AuditLogQuery page = AuditLogQuery.page(limit, offset);
+        List<AuditLog> logs = auditLogMapper.findAllAuditLogs(page.getLimit(), page.getOffset());
         return logs != null ? logs : new ArrayList<>();
     }
 
@@ -281,31 +273,7 @@ public class AuditLogService {
     }
 
     private AuditLogQuery normalizeQuery(AuditLogQuery query) {
-        AuditLogQuery normalizedQuery = query != null ? query : new AuditLogQuery();
-        normalizedQuery.setUserId(trimToNull(normalizedQuery.getUserId()));
-        normalizedQuery.setUserName(trimToNull(normalizedQuery.getUserName()));
-        normalizedQuery.setAgentId(trimToNull(normalizedQuery.getAgentId()));
-        normalizedQuery.setAgentName(trimToNull(normalizedQuery.getAgentName()));
-        normalizedQuery.setSessionId(trimToNull(normalizedQuery.getSessionId()));
-        normalizedQuery.setOperationType(trimToNull(normalizedQuery.getOperationType()));
-        normalizedQuery.setStatus(trimToNull(normalizedQuery.getStatus()));
-        normalizedQuery.setClientIp(trimToNull(normalizedQuery.getClientIp()));
-        normalizedQuery.setKeyword(trimToNull(normalizedQuery.getKeyword()));
-        normalizedQuery.setRemark(trimToNull(normalizedQuery.getRemark()));
-        normalizedQuery.setStartTime(trimToNull(normalizedQuery.getStartTime()));
-        normalizedQuery.setEndTime(trimToNull(normalizedQuery.getEndTime()));
-        Integer limit = normalizedQuery.getLimit();
-        if (limit == null || limit <= 0) {
-            limit = DEFAULT_LIMIT;
-        }
-        normalizedQuery.setLimit(Math.min(limit, MAX_LIMIT));
-        Integer offset = normalizedQuery.getOffset();
-        normalizedQuery.setOffset(offset == null || offset < 0 ? 0 : offset);
-        return normalizedQuery;
-    }
-
-    private String trimToNull(String value) {
-        return hasText(value) ? value.trim() : null;
+        return query == null ? AuditLogQuery.page(null, null) : query.normalized();
     }
 
     private boolean hasText(String value) {
