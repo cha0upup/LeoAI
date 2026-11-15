@@ -5,6 +5,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -138,6 +140,35 @@ class AiModelConfigurationIntegrationTest {
         assertEquals("test-key", configs.findProviderById(provider.getId()).getApiKey());
         assertEquals("test-key", configs.findById(model.getId()).getApiKey());
         assertSame(delegate, chat.getDelegate());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false, api_key", "true, api_key", "false, headers_json", "true, headers_json"})
+    void providerUpdateDoesNotDependOnStoredModelSecrets(boolean sameProvider, String secretColumn) {
+        AiProvider primary = provider("primary");
+        AiModelConfig active = model(primary, "active");
+        AiModelConfig damaged = sameProvider ? active : model(provider("unrelated"), "unrelated");
+        String invalidSecret = "invalid-fixture-ciphertext";
+        jdbc.update("UPDATE ai_model_configs SET " + secretColumn + "=? WHERE id=?", invalidSecret, damaged.getId());
+        AiProvider patch = new AiProvider();
+        patch.setName("updated-provider");
+        patch.setApiKey("replacement-key");
+        patch.setHeadersJson("{\"X-Fixture\":\"replacement\"}");
+
+        AiProvider updated = assertDoesNotThrow(() -> configs.updateProvider(primary.getId(), patch));
+
+        AiModelConfig refreshed = configs.findById(active.getId());
+        assertEquals("updated-provider", refreshed.getProviderName());
+        assertEquals(updated.getApiKey(), refreshed.getApiKey());
+        assertEquals(updated.getHeadersJson(), refreshed.getHeadersJson());
+        AiSecretCryptoService crypto = context.getBean(AiSecretCryptoService.class);
+        assertTrue(crypto.isEncrypted(jdbc.queryForObject(
+                "SELECT api_key FROM ai_model_configs WHERE id=?", String.class, active.getId())));
+        assertTrue(crypto.isEncrypted(jdbc.queryForObject(
+                "SELECT headers_json FROM ai_model_configs WHERE id=?", String.class, active.getId())));
+        if (!sameProvider) assertEquals(invalidSecret, jdbc.queryForObject(
+                "SELECT " + secretColumn + " FROM ai_model_configs WHERE id=?", String.class, damaged.getId()));
+        assertNotNull(chat.getDelegate());
     }
 
     @Test

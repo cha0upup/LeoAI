@@ -18,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
 import java.util.Map;
 
 @ExtendWith(MockitoExtension.class)
@@ -87,6 +89,42 @@ class AiModelConfigServiceTest {
         assertNotSame(stored, second);
         assertTrue(crypto.isEncrypted(stored.getApiKey()));
         assertTrue(crypto.isEncrypted(stored.getHeadersJson()));
+    }
+
+    @Test
+    void providerValidationLeavesTheMyBatisCachedModelSnapshotUntouched() {
+        AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
+        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto, events);
+        AiProvider provider = new AiProvider();
+        provider.setId(1);
+        provider.setName("saved-provider");
+        provider.setProviderKey("custom");
+        provider.setEnabled(1);
+        provider.setProtocol("chat_completions");
+        provider.setBaseUrl("https://example.test/v1");
+        provider.setApiKey(crypto.encrypt("saved-key"));
+        when(providerMapper.findById(1)).thenReturn(provider);
+        AiModelConfig stored = new AiModelConfig();
+        stored.setProviderId(1);
+        stored.setModel("test-model");
+        stored.setProviderName("saved-provider");
+        stored.setBaseUrl("https://example.test/v1");
+        stored.setApiKey("obsolete-model-ciphertext");
+        stored.setHeadersJson("obsolete-headers-ciphertext");
+        when(mapper.listByProviderId(1)).thenReturn(List.of(stored));
+        AiProvider patch = new AiProvider();
+        patch.setName("updated-provider");
+        patch.setBaseUrl("https://example.test/v2");
+        patch.setApiKey("replacement-key");
+
+        service.updateProvider(1, patch);
+
+        assertEquals("saved-provider", stored.getProviderName());
+        assertEquals("https://example.test/v1", stored.getBaseUrl());
+        assertEquals("obsolete-model-ciphertext", stored.getApiKey());
+        assertEquals("obsolete-headers-ciphertext", stored.getHeadersJson());
+        verify(mapper).listByProviderId(1);
+        verify(mapper, never()).listAll();
     }
 
     @Test

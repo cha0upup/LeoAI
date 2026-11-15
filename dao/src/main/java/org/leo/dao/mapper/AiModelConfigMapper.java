@@ -20,6 +20,9 @@ public interface AiModelConfigMapper {
     @Select("SELECT * FROM ai_model_configs WHERE enabled = 1 ORDER BY provider_key, id")
     List<AiModelConfig> listEnabled();
 
+    @Select("SELECT * FROM ai_model_configs WHERE provider_id = #{providerId} ORDER BY id")
+    List<AiModelConfig> listByProviderId(@Param("providerId") Integer providerId);
+
     @Select("SELECT * FROM ai_model_configs WHERE id = #{id}")
     AiModelConfig findById(@Param("id") Integer id);
 

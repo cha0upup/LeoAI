@@ -180,8 +180,8 @@ public class AiModelConfigService {
         validateProvider(patch, false);
         normalizeProvider(patch, existing);
         if (Integer.valueOf(1).equals(existing.getEnabled())) {
-            for (AiModelConfig model : listAll()) {
-                if (!id.equals(model.getProviderId())) continue;
+            for (AiModelConfig stored : mapper.listByProviderId(id)) {
+                AiModelConfig model = copyModel(stored);
                 applyProviderSnapshot(model, existing);
                 validateModelParameters(model);
             }
@@ -601,14 +601,8 @@ public class AiModelConfigService {
     private void syncProviderSnapshot(AiProvider provider) {
         AiModelConfig snapshot = new AiModelConfig();
         snapshot.setProviderId(provider.getId());
-        snapshot.setProviderKey(provider.getProviderKey());
-        snapshot.setProviderName(provider.getName());
-        snapshot.setApiKey(provider.getApiKey());
-        snapshot.setBaseUrl(provider.getBaseUrl());
-        snapshot.setProtocol(provider.getProtocol());
-        snapshot.setCompletionsPath(provider.getCompletionsPath());
-        snapshot.setHeadersJson(provider.getHeadersJson());
-        snapshot.setUpdateTime(nowSqlite());
+        applyProviderSnapshot(snapshot, provider);
+        snapshot.setUpdateTime(provider.getUpdateTime());
         withEncryptedModelSecrets(snapshot, () -> mapper.updateProviderSnapshot(snapshot));
     }
 
