@@ -1,5 +1,6 @@
 package org.leo.ai.service;
 
+import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -24,16 +25,21 @@ public class AiErrorClassifier {
     public static final String CATEGORY_UNKNOWN = "unknown";
 
     public Classification classify(Throwable error) {
-        for (Throwable cursor = error; cursor != null; cursor = cursor.getCause()) {
-            if (cursor instanceof dev.langchain4j.exception.HttpException http
-                    && http.statusCode() >= 500 && http.statusCode() <= 599) {
-                return classifyCategory(CATEGORY_SERVER_ERROR, rootMessage(error));
+        boolean serverError = false;
+        String message = null;
+        for (Throwable cause : ThrowableUtils.causes(error)) {
+            if ((cause instanceof dev.langchain4j.exception.HttpException http
+                    && http.statusCode() >= 500 && http.statusCode() <= 599)
+                    || cause instanceof dev.langchain4j.exception.InternalServerException) {
+                serverError = true;
             }
-            if (cursor instanceof dev.langchain4j.exception.InternalServerException) {
-                return classifyCategory(CATEGORY_SERVER_ERROR, rootMessage(error));
+            String causeMessage = cause.getMessage();
+            if (causeMessage != null && !causeMessage.isBlank()) {
+                message = causeMessage;
             }
         }
-        return classify(rootMessage(error));
+        String rawMessage = message != null ? message : error != null ? error.getClass().getSimpleName() : "";
+        return serverError ? classifyCategory(CATEGORY_SERVER_ERROR, rawMessage) : classify(rawMessage);
     }
 
     public Classification classify(String message) {
@@ -106,21 +112,6 @@ public class AiErrorClassifier {
             return true;
         }
         return lower.contains("passed back") && lower.contains("thinking");
-    }
-
-    private static String rootMessage(Throwable t) {
-        if (t == null) {
-            return "";
-        }
-        Throwable current = t;
-        String message = null;
-        while (current != null) {
-            if (current.getMessage() != null && !current.getMessage().isBlank()) {
-                message = current.getMessage();
-            }
-            current = current.getCause();
-        }
-        return message != null ? message : t.getClass().getSimpleName();
     }
 
     private static String readableMessage(String category, String rawMessage) {

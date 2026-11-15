@@ -5,6 +5,7 @@ import dev.langchain4j.service.TokenStream;
 import org.leo.ai.agent.AiToolErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.NoSuchElementException;
@@ -187,8 +188,7 @@ public class AiTurnExecutionEngine {
     }
 
     private static boolean isRecoverableStreamError(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
+        for (Throwable current : ThrowableUtils.causes(error)) {
             if (current instanceof NoSuchElementException) return true;
             String message = current.getMessage();
             if (message != null) {
@@ -199,19 +199,16 @@ public class AiTurnExecutionEngine {
                     return true;
                 }
             }
-            current = current.getCause();
         }
         return false;
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable current = error;
         String message = null;
-        while (current != null) {
+        for (Throwable current : ThrowableUtils.causes(error)) {
             if (current.getMessage() != null && !current.getMessage().isBlank()) {
                 message = current.getMessage();
             }
-            current = current.getCause();
         }
         return message != null ? message : error != null
                 ? error.getClass().getSimpleName() : "unknown";

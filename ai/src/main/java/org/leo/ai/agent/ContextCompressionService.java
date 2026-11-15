@@ -11,6 +11,7 @@ import org.leo.ai.thread.AiContextCheckpointRepository;
 import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.thread.ConversationCheckpoint;
 import org.leo.ai.thread.ConversationMessage;
+import org.leo.core.util.ThrowableUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -434,11 +435,7 @@ public class ContextCompressionService {
     }
 
     private static String rootCauseType(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current.getClass().getSimpleName();
+        return ThrowableUtils.rootCause(throwable).getClass().getSimpleName();
     }
 
     public record CompressionResult(

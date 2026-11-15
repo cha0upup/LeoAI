@@ -13,6 +13,7 @@ import org.leo.ai.agent.AiToolCatalog;
 import org.leo.ai.agent.AiToolErrorHandler;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -27,6 +28,8 @@ import java.util.function.Consumer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -210,6 +213,25 @@ class AiTurnExecutionEngineTest {
             releaseEvent.countDown();
             workers.shutdownNow();
         }
+    }
+
+    @Test
+    void cyclicFailureStillFinishesAndReleasesTheTurn() {
+        Throwable first = new RuntimeException("outer failure");
+        Throwable second = new IllegalStateException("inner failure");
+        first.initCause(second);
+        second.initCause(first);
+        RecordingTurnRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        RecordingListener listener = new RecordingListener();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> tokenStream.error.accept(first));
+
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> engine.execute(command(turn, stream), listener));
+
+        assertEquals(1, listener.failed.get());
+        assertSame(first, listener.lastFailure.cause());
+        assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
+        assertFalse(runtime.claimed);
     }
 
     @Test

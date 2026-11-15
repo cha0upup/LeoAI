@@ -15,6 +15,7 @@ import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.session.AiThread;
+import org.leo.core.util.ThrowableUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -239,8 +240,7 @@ public class AiTurnApplicationService {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null) current = current.getCause();
+        Throwable current = ThrowableUtils.rootCause(error);
         String message = current.getMessage();
         return message != null && !message.isBlank()
                 ? message : current.getClass().getSimpleName();

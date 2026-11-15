@@ -10,13 +10,16 @@ import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolService;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiToolErrorHandlerTest {
@@ -32,6 +35,19 @@ class AiToolErrorHandlerTest {
                     .collect(Collectors.toMap(
                             AiServiceTool::name,
                             Function.identity()));
+
+    @Test
+    void cyclicUnknownFailureStillPropagatesToTheTurnBoundary() {
+        Throwable first = new RuntimeException("outer failure");
+        Throwable second = new IllegalStateException("inner failure");
+        first.initCause(second);
+        second.initCause(first);
+
+        ToolExecutionException propagated = assertTimeoutPreemptively(Duration.ofSeconds(2),
+                () -> assertThrows(ToolExecutionException.class, () -> handler.handleExecution(first, null)));
+
+        assertSame(first, propagated.getCause());
+    }
 
     @Test
     void returnsArgumentBindingErrorToModelAndAllowsCorrectedRetry() {

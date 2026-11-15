@@ -15,6 +15,7 @@ import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AiThread;
+import org.leo.core.util.ThrowableUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -157,7 +158,7 @@ public class NodeAiDelegationPresenter {
         public IllegalStateException executionFailure(
                 AiTurnCoordinator.Execution execution, Throwable error) {
             if (execution.isFinished()) {
-                Throwable cause = unwrapCompletionError(error);
+                Throwable cause = ThrowableUtils.unwrapCompletion(error);
                 return new IllegalStateException(
                         normalizedMessage(cause), cause);
             }
@@ -258,16 +259,6 @@ public class NodeAiDelegationPresenter {
             return message != null && !message.isBlank()
                     ? message : "Node AI 执行失败";
         }
-    }
-
-    private static Throwable unwrapCompletionError(Throwable error) {
-        Throwable current = error;
-        while ((current instanceof java.util.concurrent.ExecutionException
-                || current instanceof java.util.concurrent.CompletionException)
-                && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     public record Context(AgentNodeSession session,

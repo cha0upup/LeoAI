@@ -1,6 +1,7 @@
 package org.leo.ai.runtime;
 
 import org.leo.core.ai.AiTurnRuntime;
+import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -159,12 +160,10 @@ public class AiTurnCoordinator {
         }
 
         private static boolean hasInterruptedCause(Throwable error) {
-            Throwable current = error;
-            while (current != null) {
+            for (Throwable current : ThrowableUtils.causes(error)) {
                 if (current instanceof InterruptedException) {
                     return true;
                 }
-                current = current.getCause();
             }
             return false;
         }

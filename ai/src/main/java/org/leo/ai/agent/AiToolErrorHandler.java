@@ -7,6 +7,7 @@ import dev.langchain4j.internal.Json;
 import dev.langchain4j.service.tool.ToolErrorContext;
 import dev.langchain4j.service.tool.ToolErrorHandlerResult;
 import dev.langchain4j.service.tool.ToolExecution;
+import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -253,12 +254,10 @@ public class AiToolErrorHandler {
     }
 
     private AiToolException findDomainError(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
+        for (Throwable current : ThrowableUtils.causes(error)) {
             if (current instanceof AiToolException domain) {
                 return domain;
             }
-            current = current.getCause();
         }
         return null;
     }
