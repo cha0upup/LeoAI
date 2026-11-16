@@ -6,10 +6,11 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ClassNameGenerator {
 
-    private static final Set<String> generatedClassNames = new HashSet<String>();
+    private static final Set<String> generatedClassNames = ConcurrentHashMap.newKeySet();
 
     /**
      * Component 使用独立的应用类名画像，避免把保留命名空间、Servlet 名称和
@@ -53,10 +54,7 @@ public class ClassNameGenerator {
                     + COMPONENT_CLASS_SUBJECTS[random.nextInt(COMPONENT_CLASS_SUBJECTS.length)]
                     + COMPONENT_CLASS_QUALIFIERS[random.nextInt(COMPONENT_CLASS_QUALIFIERS.length)]
                     + COMPONENT_CLASS_ROLES[random.nextInt(COMPONENT_CLASS_ROLES.length)];
-        } while (!GenerationRandom.isSeeded() && generatedClassNames.contains(className));
-        if (!GenerationRandom.isSeeded()) {
-            generatedClassNames.add(className);
-        }
+        } while (!GenerationRandom.isSeeded() && !generatedClassNames.add(className));
         return className;
     }
 

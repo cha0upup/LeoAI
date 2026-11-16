@@ -2,12 +2,30 @@ package org.leo.core.util.request;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
+import java.util.stream.IntStream;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ComponentClassNameStrategyTest {
+
+    @Test
+    void randomNamesStayUniqueAcrossConcurrentCallsAndRepeatWithTheSameSeed() {
+        var names = IntStream.range(0, 2048).parallel()
+                .mapToObj(ignored -> ClassNameGenerator.generateServletStyleClassName()).toList();
+        assertEquals(names.size(), Set.copyOf(names).size());
+
+        String seeded;
+        try (var scope = GenerationRandom.withSeed(42L)) {
+            seeded = ClassNameGenerator.generateServletStyleClassName();
+        }
+        try (var scope = GenerationRandom.withSeed(42L)) {
+            assertEquals(seeded, ClassNameGenerator.generateServletStyleClassName());
+        }
+    }
 
     @Test
     void generatesStableProfileNamesPerComponent() {
