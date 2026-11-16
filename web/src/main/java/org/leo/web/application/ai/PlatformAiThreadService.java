@@ -55,9 +55,9 @@ public class PlatformAiThreadService {
             throw new UseCaseException(Kind.INVALID_INPUT, "平台 AI 正在执行中，请等待完成或先停止后再切换通道");
         }
         AiModelConfig config = channelResolver.optional(configId);
+        conversationStore.updateConfig(state.getStateId(), config);
         state.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(state.getStateId());
-        conversationStore.updateConfig(state.getStateId(), config);
     }
 
     public Map<String, Object> createThread(String sessionId, User user,

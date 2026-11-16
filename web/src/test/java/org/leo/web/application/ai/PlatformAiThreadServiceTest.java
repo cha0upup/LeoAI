@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -147,16 +149,31 @@ class PlatformAiThreadServiceTest {
         verifyNoInteractions(fixture.agentRegistry);
     }
 
-    @Test
-    void activatesOnlyThreadsOwnedByTheCurrentUser() {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(ints = {7})
+    void failedChannelUpdatesPreserveRuntimeAndCanBeRetried(Integer configId) {
         Fixture fixture = fixture("user-1");
+        PlatformAiState state = PlatformAiStateStore.getOrCreate(THREAD_ID, 42);
+        AiModelConfig config = null;
+        if (configId != null) {
+            config = new AiModelConfig();
+            config.setId(configId);
+        }
+        when(fixture.channels.optional(configId)).thenReturn(config);
+        RuntimeException failure = new IllegalStateException("数据库写入失败");
+        doThrow(failure).doNothing().when(fixture.conversationStore).updateConfig(THREAD_ID, config);
 
-        PlatformAiState state =
-                fixture.service.activateThread(user("user-1"), THREAD_ID);
+        assertSame(failure, assertThrows(IllegalStateException.class,
+                () -> fixture.service.switchChannel(state, configId)));
+        assertEquals(42, state.getAiConfigId());
+        verifyNoInteractions(fixture.agentRegistry);
 
-        assertEquals(7, state.getAiConfigId());
+        fixture.service.switchChannel(state, configId);
+
+        assertEquals(configId, state.getAiConfigId());
         assertSame(state, PlatformAiStateStore.get(THREAD_ID));
-        verify(fixture.conversationStore).attachEventJournal(THREAD_ID, state);
+        verify(fixture.agentRegistry).evict(THREAD_ID);
     }
 
     @Test
