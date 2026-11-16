@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -72,7 +73,6 @@ public class AiToolExecutionBoundary {
 
         if (key != null) cleanupExpired();
         Invocation created = new Invocation(toolName, arguments(request));
-        created.contextSnapshot = AiToolContext.capture();
         if (key != null) {
             Invocation existing = inFlight.putIfAbsent(key, created);
             if (existing != null) {
@@ -86,8 +86,24 @@ public class AiToolExecutionBoundary {
                 return await(existing, operation, toolName, timeoutMs, true);
             }
         }
-        return awaitOwner(created, scope, operation, toolName, delegate,
-                request, context, timeoutMs);
+        AiToolContext.Snapshot snapshot = AiToolContext.capture();
+        try {
+            created.task = executor.submit(() -> {
+                try {
+                    created.result.complete(runDelegate(
+                            scope, operation, toolName, delegate, request, context,
+                            timeoutMs, snapshot));
+                } catch (Throwable error) {
+                    created.result.completeExceptionally(error);
+                }
+            });
+        } catch (RejectedExecutionException error) {
+            // 只在提交被拒时释放占位，工具自身抛出的同类异常仍保留幂等结果。
+            created.result.completeExceptionally(error);
+            if (key != null) inFlight.remove(key, created);
+            throw error;
+        }
+        return await(created, operation, toolName, timeoutMs, false);
     }
 
     ToolExecutionResult execute(
@@ -99,29 +115,6 @@ public class AiToolExecutionBoundary {
         AiToolDescriptor descriptor = AiToolDescriptor.conservative(toolName);
         AiToolContext.setToolDescriptor(descriptor);
         return execute(scope, descriptor, delegate, request, context);
-    }
-
-    private ToolExecutionResult awaitOwner(
-            Invocation invocation,
-            AiToolAuthorizationPolicy.AiAgentScope scope,
-            AiToolOperation operation,
-            String toolName,
-            ToolExecutor delegate,
-            ToolExecutionRequest request,
-            InvocationContext context,
-            long timeoutMs) {
-        Future<?> task = executor.submit(() -> {
-            AiToolContext.Snapshot snapshot = invocation.contextSnapshot;
-            try {
-                invocation.result.complete(runDelegate(
-                        scope, operation, toolName, delegate, request, context,
-                        timeoutMs, snapshot));
-            } catch (Throwable error) {
-                invocation.result.completeExceptionally(error);
-            }
-        });
-        invocation.task = task;
-        return await(invocation, operation, toolName, timeoutMs, false);
     }
 
     private ToolExecutionResult await(
@@ -413,7 +406,6 @@ public class AiToolExecutionBoundary {
         private final String toolName;
         private final String arguments;
         private volatile Future<?> task;
-        private volatile AiToolContext.Snapshot contextSnapshot;
 
         private Invocation(String toolName, String arguments) {
             this.toolName = toolName;

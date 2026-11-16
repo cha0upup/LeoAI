@@ -7,6 +7,7 @@ import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.config.AiAgentProperties;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -127,6 +130,37 @@ class AiToolExecutionBoundaryTest {
         assertEquals(false, first.attributes().get("deduplicated"));
         assertEquals(true, metadata(json(second.resultText())).get("deduplicated"));
         assertEquals(true, second.attributes().get("deduplicated"));
+    }
+
+    @Test
+    void rejectedSubmissionsReleaseTheCallIdButStartedWritesKeepTheirFailure() {
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        executors.add(worker);
+        ExecutorService submissions = mock(ExecutorService.class);
+        RejectedExecutionException rejected = new RejectedExecutionException("fixture submission rejection");
+        when(submissions.submit(any(Runnable.class))).thenThrow(rejected)
+                .thenAnswer(invocation -> worker.submit(invocation.getArgument(0, Runnable.class)));
+        AiAgentProperties properties = new AiAgentProperties();
+        properties.getPlatform().getMain().setToolTimeoutMs(5_000);
+        AiToolExecutionBoundary boundary = new AiToolExecutionBoundary(
+                properties, submissions, new AiToolResultArchive());
+        AtomicInteger calls = new AtomicInteger();
+        RejectedExecutionException startedFailure = new RejectedExecutionException("fixture delegate failure");
+        ToolExecutor delegate = (request, memoryId) -> {
+            calls.incrementAndGet();
+            throw startedFailure;
+        };
+        ToolExecutionRequest request = request("rejected-call", "createItem");
+        InvocationContext context = context("memory-1");
+        Executable execute = () -> boundary.execute(
+                AiToolAuthorizationPolicy.AiAgentScope.PLATFORM, "createItem", delegate, request, context);
+
+        assertSame(rejected, assertThrows(RejectedExecutionException.class, execute));
+        assertEquals(0, calls.get());
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertSame(startedFailure, assertThrows(RejectedExecutionException.class, execute));
+        }
+        assertEquals(1, calls.get());
     }
 
     @ParameterizedTest
