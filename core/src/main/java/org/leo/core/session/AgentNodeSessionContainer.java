@@ -75,9 +75,9 @@ public final class AgentNodeSessionContainer {
         int evicted = 0;
         for (Map.Entry<String, AgentNodeSession> entry : sorted) {
             if (evicted >= evictCount) break;
-            AgentNodeSession removed = sessionMap.remove(entry.getKey());
-            if (removed != null) {
-                closeSession(entry.getKey(), removed);
+            // 快照中的会话可能已被同 ID 的新实例替换。
+            if (sessionMap.remove(entry.getKey(), entry.getValue())) {
+                closeSession(entry.getKey(), entry.getValue());
                 evicted++;
             }
         }

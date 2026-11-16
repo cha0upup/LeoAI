@@ -9,8 +9,11 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 class AgentNodeSessionContainerTest {
 
@@ -48,6 +51,40 @@ class AgentNodeSessionContainerTest {
             assertTrue(second.closed);
             assertEquals(Set.of("first", "second"), Set.copyOf(destroyed));
             assertEquals(2, destroyed.size());
+        } finally {
+            AgentNodeSessionContainer.unregisterDestroyListener(listener);
+        }
+    }
+
+    @Test
+    void capacityEvictionKeepsSessionsReplacedAfterItsSnapshot() {
+        TrackingSession oldest = spy(new TrackingSession());
+        TrackingSession original = spy(new TrackingSession());
+        TrackingSession replacement = new TrackingSession();
+        TrackingSession incoming = new TrackingSession();
+        when(oldest.getLastActiveTime()).thenReturn(0L);
+        when(original.getLastActiveTime()).thenReturn(1L);
+        AgentNodeSessionContainer.addSession("oldest", oldest);
+        AgentNodeSessionContainer.addSession("replaced", original);
+        for (int i = 2; i < 500; i++) {
+            AgentNodeSessionContainer.addSession("session-" + i, new AgentNodeSession());
+        }
+
+        Consumer<String> listener = sessionId -> {
+            if ("oldest".equals(sessionId)) {
+                AgentNodeSessionContainer.removeSession("replaced");
+                AgentNodeSessionContainer.addSession("replaced", replacement);
+            }
+        };
+        AgentNodeSessionContainer.registerDestroyListener(listener);
+        try {
+            AgentNodeSessionContainer.addSession("incoming", incoming);
+            assertTrue(oldest.closed);
+            assertTrue(original.closed);
+            assertSame(replacement, AgentNodeSessionContainer.getSession("replaced"));
+            assertFalse(replacement.closed);
+            assertSame(incoming, AgentNodeSessionContainer.getSession("incoming"));
+            assertEquals(451, AgentNodeSessionContainer.getAllSessions().size());
         } finally {
             AgentNodeSessionContainer.unregisterDestroyListener(listener);
         }
