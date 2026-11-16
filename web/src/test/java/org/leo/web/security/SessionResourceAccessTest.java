@@ -3,6 +3,8 @@ package org.leo.web.security;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
@@ -17,6 +19,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.method.HandlerMethod;
+
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -104,6 +108,26 @@ class SessionResourceAccessTest {
         assertEquals(401, assertThrows(ApiException.class,
                 () -> ControllerUtil.getAgentNodeSession("connection")).getCode());
         verifyNoInteractions(agents);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void currentUserReadsDoNotCreateOrRecreateAnonymousSessions(boolean fromContext) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+        Supplier<User> currentUser = fromContext ? ControllerUtil::getCurrentUser
+                : () -> ControllerUtil.getCurrentUser(request);
+
+        assertNull(currentUser.get());
+        assertFalse(ControllerUtil.isAdmin(request));
+        assertNull(request.getSession(false));
+        request.getSession().setAttribute("user", reader);
+        assertSame(reader, currentUser.get());
+        request.getSession(false).invalidate();
+        assertNull(currentUser.get());
+        assertFalse(ControllerUtil.isAdmin(request));
+        assertNull(request.getSession(false));
+        verifyNoInteractions(agents, users);
     }
 
     @Test

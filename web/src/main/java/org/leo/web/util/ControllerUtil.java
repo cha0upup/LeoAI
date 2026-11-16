@@ -1,6 +1,7 @@
 package org.leo.web.util;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
 import org.leo.core.agent.AbstractAgentNode;
@@ -160,10 +161,10 @@ public final class ControllerUtil {
         if (session == null) {
             throw ApiException.notFound("会话不存在或已过期: " + sessionId);
         }
-        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)) {
+        HttpServletRequest request = currentRequest();
+        if (request == null) {
             throw ApiException.unauthorized("用户未登录");
         }
-        HttpServletRequest request = attributes.getRequest();
         PermissionService permissions = PermissionService.forVerifiedRequest(request);
         if (permissions == null) throw ApiException.unauthorized("用户未登录");
         permissions.requireSessionAccess(session, permissions.requireLogin(request), sessionId);
@@ -175,23 +176,17 @@ public final class ControllerUtil {
      */
     public static User getCurrentUser() {
         try {
-            ServletRequestAttributes attributes =
-                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attributes == null) {
-                return null;
-            }
-            return getCurrentUser(attributes.getRequest());
+            return getCurrentUser(currentRequest());
         } catch (Exception e) {
             return null;
         }
     }
 
+    /** 只读取已有 Session 中的用户快照；身份校验由 PermissionService 完成。 */
     public static User getCurrentUser(HttpServletRequest request) {
-        if (request == null) {
-            return null;
-        }
-        Object user = request.getSession().getAttribute(SESSION_ATTR_USER);
-        return user instanceof User ? (User) user : null;
+        HttpSession session = request != null ? request.getSession(false) : null;
+        Object user = session != null ? session.getAttribute(SESSION_ATTR_USER) : null;
+        return user instanceof User current ? current : null;
     }
 
     /** 判断当前请求是否来自 admin 角色用户。 */
@@ -369,14 +364,15 @@ public final class ControllerUtil {
         return name.isBlank() || "操作".equals(name) ? operationType : name;
     }
 
+    private static HttpServletRequest currentRequest() {
+        return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes
+                ? attributes.getRequest() : null;
+    }
+
     private static String currentRequestPath() {
         try {
-            ServletRequestAttributes attributes =
-                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attributes == null) {
-                return null;
-            }
-            return attributes.getRequest().getRequestURI();
+            HttpServletRequest request = currentRequest();
+            return request != null ? request.getRequestURI() : null;
         } catch (Exception e) {
             return null;
         }
