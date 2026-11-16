@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
@@ -13,6 +14,7 @@ import org.mockito.MockedStatic;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
@@ -255,11 +257,34 @@ class AgentRepositoryTest {
 
         assertTrue(AgentNodeSessionWorkDirUtil.deleteSessionWorkDir(" scoped-session "));
         assertFalse(Files.exists(base.resolve("sessions/scoped-session")));
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteSessionWorkDir("scoped-session"));
         assertTrue(Files.exists(agentData));
         assertTrue(AgentNodeSessionWorkDirUtil.deleteAgentWorkDir(userId, " agent-a "));
         assertFalse(Files.exists(agentDir));
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteAgentWorkDir(userId, "agent-a"));
         assertEquals("other user", Files.readString(otherData));
         if (workspaceData != null) assertEquals("personal data", Files.readString(workspaceData));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void workDirectoryDeletionRemovesLinksWithoutFollowingTheirTargets(boolean dangling) throws Exception {
+        Path external = Files.createDirectory(vfsRoot.resolve("external"));
+        Path retained = Files.writeString(external.resolve("keep.txt"), "external data");
+        Path target = dangling ? vfsRoot.resolve("missing") : external;
+        AgentNodeSession session = session("linked-session", "linked-agent", "host-a");
+        Path fileDir = AgentNodeSessionWorkDirUtil.getSessionFileDir(session.getSessionId()).toPath();
+        Files.createSymbolicLink(fileDir.resolve("linked"), target);
+
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteSessionWorkDir(session.getSessionId()));
+        assertFalse(Files.exists(fileDir.getParent(), LinkOption.NOFOLLOW_LINKS));
+        Path agentDir = AgentNodeSessionWorkDirUtil.getAgentWorkDir("user-a", "linked-agent").toPath();
+        Files.delete(agentDir);
+        Files.createSymbolicLink(agentDir, target);
+
+        assertTrue(AgentNodeSessionWorkDirUtil.deleteAgentWorkDir("user-a", "linked-agent"));
+        assertFalse(Files.exists(agentDir, LinkOption.NOFOLLOW_LINKS));
+        assertEquals("external data", Files.readString(retained));
     }
 
     private AgentNodeSession session(String sessionId, String agentId, String hostId) {

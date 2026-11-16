@@ -3,15 +3,13 @@ package org.leo.core.infrastructure.persistence.session;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.springframework.util.FileSystemUtils;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Comparator;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 /**
  * 会话 / Agent 工作目录工具类。
@@ -62,11 +60,7 @@ public final class AgentNodeSessionWorkDirUtil {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId 不能为空");
         }
-        File workspaceDir = new File(getUserRootDir(userId), WORKSPACE_SUBDIR);
-        if (!workspaceDir.exists()) {
-            workspaceDir.mkdirs();
-        }
-        return workspaceDir;
+        return ensureDirectory(new File(getUserRootDir(userId), WORKSPACE_SUBDIR));
     }
 
     // ── session 级目录 ────────────────────────────────────────────────────────
@@ -76,33 +70,17 @@ public final class AgentNodeSessionWorkDirUtil {
     }
 
     /**
-     * 获取会话工作目录：root/users/{userId}/sessions/{sessionId}。
+     * 获取会话文件存储目录：root/users/{userId}/sessions/{sessionId}/file。
      * 若不存在则创建。
      */
-    private static File getSessionWorkDir(String sessionId) {
+    public static File getSessionFileDir(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
         String userId = resolveSessionOwnerUserId(sessionId);
         File sessionsRoot = getSessionRootDirByUser(userId);
         File sessionDir = new File(sessionsRoot, sessionId.trim());
-        if (!sessionDir.exists()) {
-            sessionDir.mkdirs();
-        }
-        return sessionDir;
-    }
-
-    /**
-     * 获取会话文件存储目录：root/users/{userId}/sessions/{sessionId}/file。
-     * 若不存在则创建。
-     */
-    public static File getSessionFileDir(String sessionId) {
-        File sessionDir = getSessionWorkDir(sessionId);
-        File fileDir = new File(sessionDir, FILE_SUBDIR);
-        if (!fileDir.exists()) {
-            fileDir.mkdirs();
-        }
-        return fileDir;
+        return ensureDirectory(new File(sessionDir, FILE_SUBDIR));
     }
 
     // ── agent 级目录 ─────────────────────────────────────────────────────────
@@ -116,11 +94,7 @@ public final class AgentNodeSessionWorkDirUtil {
             throw new IllegalArgumentException("agentId 不能为空");
         }
         File agentsRoot = new File(getUserRootDir(userId), AGENTS_SUBDIR);
-        File agentDir = new File(agentsRoot, agentId.trim());
-        if (!agentDir.exists()) {
-            agentDir.mkdirs();
-        }
-        return agentDir;
+        return ensureDirectory(new File(agentsRoot, agentId.trim()));
     }
 
     // ── 删除方法 ──────────────────────────────────────────────────────────────
@@ -186,6 +160,11 @@ public final class AgentNodeSessionWorkDirUtil {
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────
 
+    private static File ensureDirectory(File directory) {
+        if (!directory.exists()) directory.mkdirs();
+        return directory;
+    }
+
     private static File getUserRootDir(String userId) {
         File root = getRootDir();
         return userId == null || userId.isBlank()
@@ -200,12 +179,9 @@ public final class AgentNodeSessionWorkDirUtil {
     private static boolean deleteDir(Path path) {
         try {
             Path normalized = path.toAbsolutePath().normalize();
-            if (!Files.exists(normalized)) return true;
-            try (Stream<Path> walk = Files.walk(normalized)) {
-                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
-                    try { Files.deleteIfExists(p); } catch (IOException e) { throw new RuntimeException(e); }
-                });
-            }
+            // 根路径可能是悬空链接；目录内的链接由遍历器按文件删除，不跟随目标。
+            if (Files.isSymbolicLink(normalized)) Files.deleteIfExists(normalized);
+            else FileSystemUtils.deleteRecursively(normalized);
             return true;
         } catch (Exception e) {
             return false;
