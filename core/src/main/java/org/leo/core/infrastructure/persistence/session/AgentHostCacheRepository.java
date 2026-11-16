@@ -7,7 +7,6 @@ import org.springframework.stereotype.Repository;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -93,33 +92,40 @@ public class AgentHostCacheRepository {
 
     public record CacheSnapshot(List<String> hostIds, String saveTime) {}
 
+    public record DiscoverySnapshot(List<String> hostIds, String discoveredAt) {}
+
     public void saveHostDiscovery(String userId, String agentId, String fingerprint, List<String> hostIds) {
         if (agentId == null || agentId.isBlank()) return;
-        List<String> normalized = new ArrayList<>();
-        if (hostIds != null) for (String id : hostIds) if (text(id) != null) normalized.add(text(id));
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        if (hostIds != null) for (String id : hostIds) {
+            String hostId = text(id);
+            if (hostId != null) normalized.add(hostId);
+        }
         if (normalized.isEmpty()) return;
         try {
             File file = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), HOST_DISCOVERY_JSON);
             Map<String, Object> data = new LinkedHashMap<>();
-            data.put("hostIds", List.copyOf(new LinkedHashSet<>(normalized)));
+            data.put("hostIds", List.copyOf(normalized));
             data.put("discoveredAt", Instant.now().toString());
             data.put("fingerprint", fingerprint == null ? "" : fingerprint);
             fileStore.writeJson(file, data);
         } catch (Exception ignored) { }
     }
 
-    public Map<String, Object> loadHostDiscovery(String userId, String agentId, String fingerprint) {
+    public DiscoverySnapshot loadHostDiscovery(String userId, String agentId, String fingerprint) {
         try {
             File file = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), HOST_DISCOVERY_JSON);
             Map<String, Object> data = fileStore.readJsonMap(file);
             String expected = fingerprint == null ? "" : fingerprint;
             if (data == null || !expected.equals(String.valueOf(data.getOrDefault("fingerprint", "")))) return null;
-            Object raw = data.get("hostIds");
-            if (!(raw instanceof Collection<?>)) return null;
+            if (!(data.get("hostIds") instanceof Collection<?> raw)) return null;
             LinkedHashSet<String> hosts = new LinkedHashSet<>();
-            for (Object value : (Collection<?>) raw) if (text(value) != null) hosts.add(text(value));
-            data.put("hostIds", List.copyOf(hosts));
-            return data;
+            for (Object value : raw) {
+                String hostId = text(value);
+                if (hostId != null) hosts.add(hostId);
+            }
+            Object discoveredAt = data.get("discoveredAt");
+            return new DiscoverySnapshot(List.copyOf(hosts), discoveredAt == null ? null : String.valueOf(discoveredAt));
         } catch (Exception e) {
             return null;
         }

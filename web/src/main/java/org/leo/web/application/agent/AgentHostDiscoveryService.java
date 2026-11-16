@@ -4,6 +4,7 @@ import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
+import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository.DiscoverySnapshot;
 import org.leo.core.rpc.AgentRpcEnvelopeMapper;
 import org.leo.service.agentnode.AgentNodeFactory;
 import org.slf4j.Logger;
@@ -12,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,10 +46,11 @@ public class AgentHostDiscoveryService {
     /** 按连接配置复用已登记 HostId；forceRefresh 仅由用户主动刷新时使用。 */
     public DiscoveryResult discover(Agent agent, User user, boolean forceRefresh) throws Exception {
         String fingerprint = connectionFingerprint(agent);
-        Map<String, Object> saved = load(agent, user, fingerprint);
         if (!forceRefresh) {
-            List<String> known = hostIdsFrom(saved);
-            if (!known.isEmpty()) return result(known, saved, true);
+            DiscoverySnapshot saved = load(agent, user, fingerprint);
+            if (saved != null && !saved.hostIds().isEmpty()) {
+                return new DiscoveryResult(saved.hostIds(), saved.discoveredAt(), true);
+            }
         }
         LinkedHashSet<String> discovered = new LinkedHashSet<>();
         // 超时任务可能仍在底层网络库中收尾，使用有界线程数避免阻塞后续探测。
@@ -100,7 +101,8 @@ public class AgentHostDiscoveryService {
         List<String> result = List.copyOf(discovered);
         repository.saveHostDiscovery(
                 user != null ? user.getUserId() : null, agent.getAgentId(), fingerprint, result);
-        return result(result, load(agent, user, fingerprint), false);
+        DiscoverySnapshot saved = load(agent, user, fingerprint);
+        return new DiscoveryResult(result, saved == null ? null : saved.discoveredAt(), false);
     }
 
     private Map<String, Object> probeOnce(Agent agent, User user) throws Exception {
@@ -144,21 +146,9 @@ public class AgentHostDiscoveryService {
 
     private record ProbeOutcome(int probe, Map<String, Object> result, Throwable error) { }
 
-    private Map<String, Object> load(Agent agent, User user, String fingerprint) {
+    private DiscoverySnapshot load(Agent agent, User user, String fingerprint) {
         return repository.loadHostDiscovery(
                 user != null ? user.getUserId() : null, agent.getAgentId(), fingerprint);
-    }
-
-    private DiscoveryResult result(List<String> hostIds, Map<String, Object> details, boolean reused) {
-        Object discoveredAt = details == null ? null : details.get("discoveredAt");
-        return new DiscoveryResult(hostIds, discoveredAt == null ? null : String.valueOf(discoveredAt), reused);
-    }
-
-    private List<String> hostIdsFrom(Map<String, Object> data) {
-        if (data == null || !(data.get("hostIds") instanceof Collection<?> raw)) return List.of();
-        LinkedHashSet<String> ids = new LinkedHashSet<>();
-        raw.forEach(value -> { String id = normalized(value); if (id != null) ids.add(id); });
-        return List.copyOf(ids);
     }
 
     private String connectionFingerprint(Agent agent) {
@@ -171,12 +161,6 @@ public class AgentHostDiscoveryService {
             for (byte value : digest) hex.append(String.format("%02x", value));
             return hex.toString();
         } catch (Exception e) { return source; }
-    }
-
-    private String normalized(Object value) {
-        if (value == null) return null;
-        String text = String.valueOf(value).trim();
-        return text.isBlank() ? null : text;
     }
 
 }

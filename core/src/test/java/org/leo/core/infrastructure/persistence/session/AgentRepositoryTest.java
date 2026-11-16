@@ -79,9 +79,10 @@ class AgentRepositoryTest {
         verify(files, times(2)).readJsonMap(any());
 
         repository.saveHostDiscovery("user-a", "agent-a", "fingerprint-1",
-                List.of("host-a", "host-a", "host-b"));
-        assertEquals(List.of("host-a", "host-b"), repository.loadHostDiscovery(
-                "user-a", "agent-a", "fingerprint-1").get("hostIds"));
+                java.util.Arrays.asList(" host-a ", "host-a", null, " ", "host-b"));
+        var discovery = repository.loadHostDiscovery("user-a", "agent-a", "fingerprint-1");
+        assertEquals(List.of("host-a", "host-b"), discovery.hostIds());
+        assertNotNull(discovery.discoveredAt());
         assertNull(repository.loadHostDiscovery("user-a", "agent-a", "fingerprint-2"));
     }
 

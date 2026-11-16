@@ -4,15 +4,18 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.agent.AbstractAgentNode;
 import org.leo.core.entity.Agent;
 import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository;
+import org.leo.core.infrastructure.persistence.session.AgentHostCacheRepository.DiscoverySnapshot;
 import org.leo.service.agentnode.AgentNodeFactory;
 
-import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -20,11 +23,31 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AgentHostDiscoveryServiceTest {
+
+    private final AgentNodeFactory factory = mock(AgentNodeFactory.class);
+    private final AgentHostCacheRepository repository = mock(AgentHostCacheRepository.class);
+    private final AgentHostDiscoveryService service = new AgentHostDiscoveryService(factory, repository);
+
+    @Test
+    void reusesPersistedHostsWithoutProbingOrRewritingCache() throws Exception {
+        Agent agent = new Agent();
+        agent.setAgentId("agent-cached");
+        DiscoverySnapshot cached = new DiscoverySnapshot(List.of("host-a", "host-b"), "2026-11-16T00:00:00Z");
+        when(repository.loadHostDiscovery(any(), eq("agent-cached"), any())).thenReturn(cached);
+
+        assertEquals(new AgentHostDiscoveryService.DiscoveryResult(cached.hostIds(), cached.discoveredAt(), true),
+                service.discover(agent, null, false));
+
+        verifyNoInteractions(factory);
+        verify(repository, never()).saveHostDiscovery(any(), any(), any(), any());
+    }
 
     @Test
     void failedProbeDoesNotDiscardHostIdsFromOtherBackends() throws Exception {
@@ -32,9 +55,8 @@ class AgentHostDiscoveryServiceTest {
         agent.setAgentId("agent-1");
         agent.setConnLink("http://127.0.0.1/entry");
 
-        AgentNodeFactory factory = mock(AgentNodeFactory.class);
-        AgentHostCacheRepository repository = mock(AgentHostCacheRepository.class);
-        when(repository.loadHostDiscovery(any(), eq("agent-1"), any())).thenReturn(null);
+        when(repository.loadHostDiscovery(any(), eq("agent-1"), any()))
+                .thenReturn(new DiscoverySnapshot(List.of("old-host"), "saved-at"));
 
         AbstractAgentNode first = probe(Map.of("code", 200, "hostId", "host-a", "components", List.of()));
         AbstractAgentNode failed = mock(AbstractAgentNode.class);
@@ -42,14 +64,16 @@ class AgentHostDiscoveryServiceTest {
         doNothing().when(failed).close();
         AbstractAgentNode third = probe(Map.of("code", 200, "hostId", "host-b", "components", List.of()));
         AbstractAgentNode unavailable = probe(Map.of("code", 401));
-        ArrayDeque<AbstractAgentNode> nodes = new ArrayDeque<>(
+        Queue<AbstractAgentNode> nodes = new ConcurrentLinkedQueue<>(
                 List.of(first, failed, third, unavailable, unavailable, unavailable, unavailable, unavailable));
-        when(factory.createLiveNode(eq(agent), isNull())).thenAnswer(ignored -> nodes.removeFirst());
+        when(factory.createLiveNode(eq(agent), isNull())).thenAnswer(ignored -> nodes.remove());
 
-        AgentHostDiscoveryService service = new AgentHostDiscoveryService(factory, repository);
         AgentHostDiscoveryService.DiscoveryResult result = service.discover(agent, null, true);
 
         assertEquals(Set.of("host-a", "host-b"), Set.copyOf(result.hostIds()));
+        assertEquals("saved-at", result.discoveredAt());
+        assertFalse(result.reused());
+        verify(repository).loadHostDiscovery(any(), eq("agent-1"), any());
         verify(factory, times(AgentHostDiscoveryService.DEFAULT_PROBE_COUNT))
                 .createLiveNode(eq(agent), isNull());
         verify(repository).saveHostDiscovery(any(), eq("agent-1"), any(),
@@ -62,10 +86,6 @@ class AgentHostDiscoveryServiceTest {
         agent.setAgentId("agent-timeout");
         agent.setConnLink("http://127.0.0.1/entry");
 
-        AgentNodeFactory factory = mock(AgentNodeFactory.class);
-        AgentHostCacheRepository repository = mock(AgentHostCacheRepository.class);
-        when(repository.loadHostDiscovery(any(), eq("agent-timeout"), any())).thenReturn(null);
-
         AbstractAgentNode slow = mock(AbstractAgentNode.class);
         when(slow.testConnection()).thenAnswer(ignored -> {
             Thread.sleep(AgentHostDiscoveryService.DEFAULT_PROBE_TIMEOUT_MILLIS * 3);
@@ -74,11 +94,10 @@ class AgentHostDiscoveryServiceTest {
         doNothing().when(slow).close();
         AbstractAgentNode available = probe(Map.of("code", 200, "hostId", "host-fast", "components", List.of()));
         AbstractAgentNode unavailable = probe(Map.of("code", 401));
-        ArrayDeque<AbstractAgentNode> nodes = new ArrayDeque<>(List.of(
+        Queue<AbstractAgentNode> nodes = new ConcurrentLinkedQueue<>(List.of(
                 slow, available, unavailable, unavailable, unavailable, unavailable, unavailable, unavailable));
-        when(factory.createLiveNode(eq(agent), isNull())).thenAnswer(ignored -> nodes.removeFirst());
+        when(factory.createLiveNode(eq(agent), isNull())).thenAnswer(ignored -> nodes.remove());
 
-        AgentHostDiscoveryService service = new AgentHostDiscoveryService(factory, repository);
         long started = System.nanoTime();
         AgentHostDiscoveryService.DiscoveryResult result = service.discover(agent, null, true);
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
