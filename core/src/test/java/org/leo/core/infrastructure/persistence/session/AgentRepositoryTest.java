@@ -55,8 +55,9 @@ class AgentRepositoryTest {
         }
     }
 
-    @Test
-    void hostCacheIsIsolatedByHostIdAndDiscoveryUsesFingerprint() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"none", "malformed", "directory", "missing-host"})
+    void hostCacheKeepsValidHostsIsolatedAndDiscoveryUsesFingerprint(String damage) throws Exception {
         AgentNodeSession session = session("session-a", "agent-a", "host-a");
         AtomicFileStore files = spy(new AtomicFileStore());
         AgentHostCacheRepository repository = new AgentHostCacheRepository(files);
@@ -71,12 +72,22 @@ class AgentRepositoryTest {
         assertEquals("alpha", repository.loadBasicInfo("user-a", "agent-a", "host-a").get("hostname"));
         Map<String, Object> latest = repository.loadBasicInfo("user-a", "agent-a", "host-b");
         assertEquals("beta", latest.get("hostname"));
+        Path invalid = second.toPath().resolveSibling("invalid.json");
+        switch (damage) {
+            case "none" -> { }
+            case "malformed" -> Files.writeString(invalid, "{");
+            case "directory" -> Files.createDirectory(invalid);
+            case "missing-host" -> files.writeJson(invalid.toFile(), Map.of("saveTime", "invalid-time"));
+            default -> throw new IllegalArgumentException(damage);
+        }
+        if (Files.exists(invalid)) Files.setLastModifiedTime(invalid, FileTime.fromMillis(3000));
         clearInvocations(files);
         var cache = repository.readCache("user-a", "agent-a");
         assertEquals(2, cache.hostIds().size());
         assertEquals(Set.of("host-a", "host-b"), Set.copyOf(cache.hostIds()));
         assertEquals(latest.get("saveTime"), cache.saveTime());
-        verify(files, times(2)).readJsonMap(any());
+        verify(files, times("none".equals(damage) ? 2 : 3)).readJsonMap(any());
+        if (!"none".equals(damage)) assertTrue(Files.exists(invalid));
 
         repository.saveHostDiscovery("user-a", "agent-a", "fingerprint-1",
                 java.util.Arrays.asList(" host-a ", "host-a", null, " ", "host-b"));

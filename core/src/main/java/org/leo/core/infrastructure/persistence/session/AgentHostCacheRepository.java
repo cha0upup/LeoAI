@@ -75,13 +75,20 @@ public class AgentHostCacheRepository {
             long newestModified = Long.MIN_VALUE;
             String saveTime = null;
             for (File file : files) {
-                Map<String, Object> data = fileStore.readJsonMap(file);
-                String id = text(data == null ? null : data.get("hostId"));
-                if (id != null) ids.add(id);
+                Map<String, Object> data;
+                try {
+                    data = fileStore.readJsonMap(file);
+                } catch (FileStoreException ignored) {
+                    continue;
+                }
+                if (data == null) continue;
+                String id = text(data.get("hostId"));
+                if (id == null) continue;
+                ids.add(id);
                 long modified = file.lastModified();
                 if (file.length() > 0 && modified > newestModified) {
                     newestModified = modified;
-                    saveTime = text(data == null ? null : data.get(SAVE_TIME_KEY));
+                    saveTime = text(data.get(SAVE_TIME_KEY));
                 }
             }
             return new CacheSnapshot(List.copyOf(ids), saveTime);
