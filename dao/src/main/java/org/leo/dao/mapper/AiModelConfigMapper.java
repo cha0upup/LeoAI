@@ -64,19 +64,9 @@ public interface AiModelConfigMapper {
     @Update("UPDATE ai_model_configs SET is_active = 0")
     int clearActive();
 
-    @Update("UPDATE ai_model_configs SET fallback_model_id = NULL WHERE fallback_model_id = #{id}")
-    int clearFallbackByModelId(@Param("id") Integer id);
-
-    @Update("UPDATE ai_model_configs SET fallback_model_id = NULL "
-            + "WHERE fallback_model_id IN (SELECT id FROM ai_model_configs WHERE provider_id = #{providerId})")
-    int clearFallbackByProviderId(@Param("providerId") Integer providerId);
-
     @Update("UPDATE ai_model_configs SET is_active = 1, enabled = 1, update_time = #{updateTime} WHERE id = #{id}")
     int setActiveById(@Param("id") Integer id, @Param("updateTime") String updateTime);
 
     @Delete("DELETE FROM ai_model_configs WHERE id = #{id}")
     int deleteById(@Param("id") Integer id);
-
-    @Delete("DELETE FROM ai_model_configs WHERE provider_id = #{providerId}")
-    int deleteByProviderId(@Param("providerId") Integer providerId);
 }

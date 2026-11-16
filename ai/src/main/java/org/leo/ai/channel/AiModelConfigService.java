@@ -196,13 +196,10 @@ public class AiModelConfigService {
         return findProviderById(id);
     }
 
+    /** 模型、能力观测及备用引用由现有外键统一清理，无需读取供应商凭据。 */
     @Transactional
     public boolean deleteProvider(Integer id) {
-        AiProvider existing = findProviderById(id);
-        if (existing == null) return false;
-        mapper.clearFallbackByProviderId(id);
-        mapper.deleteByProviderId(id);
-        providerMapper.deleteById(id);
+        if (id == null || providerMapper.deleteById(id) <= 0) return false;
         notifyModelRefresh();
         return true;
     }
@@ -421,7 +418,6 @@ public class AiModelConfigService {
     @Transactional
     public boolean deleteById(Integer id) {
         if (id == null || mapper.deleteById(id) <= 0) return false;
-        mapper.clearFallbackByModelId(id);
         notifyModelRefresh();
         return true;
     }

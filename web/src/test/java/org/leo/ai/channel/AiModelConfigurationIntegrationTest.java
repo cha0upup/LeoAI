@@ -137,6 +137,44 @@ class AiModelConfigurationIntegrationTest {
         assertNull(chat.getDelegate());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"", "api_key", "headers_json"})
+    void providerDeletionUsesItsWriteResultAndCascadesWithoutDecryptingCredentials(String damagedColumn) {
+        AiProvider removed = provider("removed");
+        AiModelConfig active = model(removed, "active");
+        AiModelConfig sibling = model(removed, "sibling");
+        AiProvider kept = provider("kept");
+        AiModelConfig retained = model(kept, "retained");
+        jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", active.getId(), retained.getId());
+        configs.applyProbeResult(active, Map.of("streaming", true));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_capability_observations WHERE provider_id=?",
+                Integer.class, removed.getId()));
+
+        if (damagedColumn.isEmpty()) {
+            Object delegate = chat.getDelegate();
+            jdbc.execute("CREATE TRIGGER preserve_provider BEFORE DELETE ON ai_providers BEGIN SELECT RAISE(IGNORE); END");
+            assertFalse(configs.deleteProvider(removed.getId()));
+            assertNotNull(configs.findById(active.getId()));
+            assertEquals(active.getId(), configs.findById(retained.getId()).getFallbackModelId());
+            assertSame(delegate, chat.getDelegate());
+            jdbc.execute("DROP TRIGGER preserve_provider");
+        } else {
+            jdbc.update("UPDATE ai_providers SET " + damagedColumn + "=? WHERE id=?",
+                    "invalid-fixture-ciphertext", removed.getId());
+        }
+
+        assertTrue(configs.deleteProvider(removed.getId()));
+        assertFalse(configs.deleteProvider(removed.getId()));
+        assertNull(configs.findProviderById(removed.getId()));
+        assertNull(configs.findById(active.getId()));
+        assertNull(configs.findById(sibling.getId()));
+        assertNull(configs.findById(retained.getId()).getFallbackModelId());
+        assertNotNull(configs.findProviderById(kept.getId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_capability_observations WHERE provider_id=?",
+                Integer.class, removed.getId()));
+        assertNull(chat.getDelegate());
+    }
+
     @Test
     void providerAndModelCredentialsRollBackTogetherWhenSnapshotWriteFails() {
         AiProvider provider = provider("primary");

@@ -51,6 +51,7 @@
 - `core` 的通信、文件仓储和字节码实现归入 `infrastructure`，`runtime`、`generator`、`component.runtime`、`rpc`、`net` 等共享契约不反向引用基础设施；Java 运行时使用 `org.leo.javacore.*`。
 - `service`、`ai` 不直接引用 Servlet、Spring Web/HTTP 类型；文件导入使用通用输入源，HTTP 上传对象留在 Web 适配层。
 - `service`、`ai` 不依赖 `jmg`；生成器 AI 工具及具体制品缓存位于 `web.adapter.ai`，由组合根与节点 AI 桥接工具一起装配。
+- 连接池初始化已启用数据库外键；供应商、模型删除复用 `schema.sql` 的级联与置空规则，不在服务或 Mapper 中重复维护同一关系。
 - 测试按行为和职责组织在已有测试类中，重复输入使用参数化测试；保留业务边界、权限、持久化与生命周期验证，不重复测试底层配置解析或用反射锁定内部类名和字段。
 - `tools/check_architecture.py` 只检查模块依赖、循环依赖和包级适配边界；具体类的实现细节交给行为测试与代码审查。
 - 架构检查按生产源码中类型的实际模块归属校验显式、静态、通配导入及全限定引用，包名不作为模块归属的唯一依据；共享包中的契约类型使用显式导入，通配导入会保守检查整个包的模块边界。可独立运行 `python3 tools/check_architecture.py`，该检查不替代 Java 编译器的类型解析。
