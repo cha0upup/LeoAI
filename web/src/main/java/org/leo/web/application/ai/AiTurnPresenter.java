@@ -10,6 +10,7 @@ import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.ai.AiEventStreamRuntime;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiSseEvent;
 import org.slf4j.Logger;
@@ -31,10 +32,6 @@ import java.util.Objects;
 public class AiTurnPresenter {
 
     private static final Logger logger = LoggerFactory.getLogger(AiTurnPresenter.class);
-    private static final String STATUS_RUNNING = "running";
-    private static final String STATUS_COMPLETED = "completed";
-    private static final String STATUS_FAILED = "failed";
-
     private final AiErrorClassifier errorClassifier;
     private final AiTurnTelemetryRegistry telemetryRegistry;
 
@@ -82,7 +79,7 @@ public class AiTurnPresenter {
         @Override
         public void onStarted() throws Exception {
             context.refreshRuntime().run();
-            emit("status", STATUS_RUNNING);
+            emit("status", AiRunStatus.RUNNING);
             context.afterStarted().run();
             drainQueuedEvents();
         }
@@ -131,15 +128,15 @@ public class AiTurnPresenter {
             refreshRuntimeSafely(context, "终态补偿");
             drainQueuedEvents();
             if (terminal.recoveryFailed()) {
-                emitSafely("status", STATUS_FAILED);
+                emitSafely("status", AiRunStatus.FAILED);
             } else if (terminal.committed()) {
-                emitSafely("status", STATUS_COMPLETED);
+                emitSafely("status", AiRunStatus.COMPLETED);
                 emitSafely(
                         "turn", turnEvent(terminal.completed()));
             } else if (terminal.discarded()) {
                 emitSafely("status", terminal.failed().status());
             } else {
-                emitSafely("status", STATUS_FAILED);
+                emitSafely("status", AiRunStatus.FAILED);
             }
         }
 
@@ -157,29 +154,16 @@ public class AiTurnPresenter {
                 context.execution().finish(outcome, () -> {
                     drainQueuedEvents();
                     refreshRuntimeSafely(context, "准备失败");
-                    if (cancelled) {
-                        String reason = context.execution().cancellationReason();
-                        finishUnpersistedTrace(
-                                context.trace(), AiTurnOutcome.CANCELLED,
-                                "cancelled", reason);
-                        if (context.audit() != null) {
-                            context.audit().fail(reason, context.elapsedMillis());
-                        }
-                        emitSafely("status", "cancelled");
-                    } else {
-                        AiErrorClassifier.Classification classification =
-                                errorClassifier.classify(error);
-                        finishUnpersistedTrace(
-                                context.trace(), AiTurnOutcome.FAILED,
-                                classification.category(),
-                                classification.message());
-                        if (context.audit() != null) {
-                            context.audit().fail(
-                                    classification.message(),
-                                    context.elapsedMillis());
-                        }
-                        emitSafely("status", STATUS_FAILED);
+                    AiErrorClassifier.Classification classification = cancelled
+                            ? null : errorClassifier.classify(error);
+                    String message = cancelled
+                            ? context.execution().cancellationReason() : classification.message();
+                    finishUnpersistedTrace(context.trace(), outcome,
+                            cancelled ? "cancelled" : classification.category(), message);
+                    if (context.audit() != null) {
+                        context.audit().fail(message, context.elapsedMillis());
                     }
+                    emitSafely("status", cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED);
                 });
             } catch (Exception finishError) {
                 logger.warn("{} 准备失败收口异常: {}",

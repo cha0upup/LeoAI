@@ -146,11 +146,20 @@ class AiTurnPresenterTest {
         fixture.presentation.finishPreparationFailure(error);
         fixture.presentation.finishPreparationFailure(error);
 
+        String status = cancelled ? "cancelled" : "failed";
+        String message = cancelled ? "已停止" : "setup failed";
         assertFalse(fixture.thread.isExecuting());
-        assertEquals(cancelled ? "cancelled" : "failed", fixture.thread.getRunStatus());
+        assertEquals(status, fixture.thread.getRunStatus());
         assertEquals(1, fixture.runtimeRefreshes.get());
         assertTrue(fixture.thread.getAiSseEventQueue().isEmpty());
-        assertEquals(1, fixture.persistedEvents.stream().filter(event -> "status".equals(event.name())).count());
+        assertEquals(List.of(status), fixture.persistedEvents.stream()
+                .filter(event -> "status".equals(event.name())).map(AiSseEvent::data).toList());
+        assertEquals("error", fixture.context.audit().getStatus());
+        assertEquals(message, fixture.context.audit().getReplySummary());
+        assertEquals(status, fixture.context.trace().outcome());
+        assertEquals(cancelled ? "cancelled" : "unknown", fixture.context.trace().errorCategory());
+        assertEquals(message, fixture.context.trace().snapshot().get("errorMessage"));
+        assertEquals(Map.of(status, 1L), fixture.telemetry.snapshot().get("outcomes"));
     }
 
     private Fixture fixture() {
@@ -160,16 +169,17 @@ class AiTurnPresenterTest {
         assertTrue(thread.claimExecution());
         AtomicInteger refreshes = new AtomicInteger();
         AtomicInteger beforeCompleted = new AtomicInteger();
-        AiTurnPresenter presenter = new AiTurnPresenter(new AiErrorClassifier(), new AiTurnTelemetryRegistry());
-        AiTurnPresenter.Session presentation = presenter.open(new AiTurnPresenter.Context(
+        AiTurnTelemetryRegistry telemetry = new AiTurnTelemetryRegistry();
+        AiTurnPresenter presenter = new AiTurnPresenter(new AiErrorClassifier(), telemetry);
+        AiTurnPresenter.Context context = new AiTurnPresenter.Context(
                 "test", thread, new AiTurnCoordinator().attach(thread),
                 AiChatAuditEntry.platform("user-1", "alice", "normal", "hello"), System.currentTimeMillis(),
                 AiTurnTrace.start("test", thread.getThreadId(), System.currentTimeMillis()),
                 refreshes::incrementAndGet, null, () -> {
                     beforeCompleted.incrementAndGet();
                     thread.offerSseEvent("patch", Map.of("kind", "plan", "status", "COMPLETED"));
-                }, null));
-        return new Fixture(thread, refreshes, beforeCompleted, persistedEvents, presentation);
+                }, null);
+        return new Fixture(thread, refreshes, beforeCompleted, persistedEvents, presenter.open(context), context, telemetry);
     }
 
     private AiTurnTransaction.CompletedTurn completed(String output) {
@@ -180,6 +190,8 @@ class AiTurnPresenterTest {
                            AtomicInteger runtimeRefreshes,
                            AtomicInteger beforeCompleted,
                            List<AiSseEvent> persistedEvents,
-                           AiTurnPresenter.Session presentation) {
+                           AiTurnPresenter.Session presentation,
+                           AiTurnPresenter.Context context,
+                           AiTurnTelemetryRegistry telemetry) {
     }
 }
