@@ -20,6 +20,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.ZipEntry;
@@ -352,7 +353,7 @@ public class SkillExportService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("originalName", originalName);
             m.put("finalName", finalName);
-            m.put("status", status.name().toLowerCase());
+            m.put("status", status.name().toLowerCase(Locale.ROOT));
             if (message != null) m.put("message", message);
             return m;
         }

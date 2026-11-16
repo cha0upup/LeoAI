@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** 构建每轮执行的 usage、review 和可持久化 timeline 节点。 */
@@ -30,7 +31,7 @@ public class AiTurnArtifacts {
     static void putModelUsage(Map<String, Object> usage, ChatResponse response) {
         if (response.modelName() != null) usage.put("model", response.modelName());
         if (response.finishReason() != null) {
-            usage.put("finishReason", response.finishReason().name().toLowerCase());
+            usage.put("finishReason", response.finishReason().name().toLowerCase(Locale.ROOT));
         }
         TokenUsage tokenUsage = response.tokenUsage();
         if (tokenUsage != null) {

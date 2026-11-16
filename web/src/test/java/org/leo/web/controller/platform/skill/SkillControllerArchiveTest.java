@@ -1,8 +1,10 @@
 package org.leo.web.controller.platform.skill;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.service.importing.ImportOverwritePolicy;
 import org.leo.ai.service.skill.SkillExportService.ImportResult;
 import org.leo.ai.service.skill.SkillOperationLock;
@@ -19,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,8 +39,10 @@ import static org.mockito.Mockito.*;
 
 class SkillControllerArchiveTest extends SkillControllerTestSupport {
 
-    @Test
-    void singleExportRoundTripsMetadataAndBinaryResources() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"en-US", "tr-TR"})
+    @ResourceLock("java.util.Locale.default")
+    void singleExportRoundTripsMetadataAndBinaryResources(String languageTag) throws Exception {
         writeSkill("alpha", "original");
         Files.createDirectories(skillDir("alpha").resolve("assets"));
         Files.write(skillDir("alpha").resolve("assets/data.bin"), new byte[]{0, 1, -1});
@@ -53,9 +58,15 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         assertTrue(management.delete("agent-node", "alpha").succeeded());
         assertTrue(registry.listAllSkills("agent-node").isEmpty());
         clearInvocations(registry);
-        var imported = controller.importSkills(upload(exported.getBody()), "agent-node", "alpha", null);
-        assertEquals(200, imported.get("code"));
-        assertEquals("imported", result(imported, "alpha").get("status"));
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            var imported = controller.importSkills(upload(exported.getBody()), "agent-node", "alpha", null);
+            assertEquals(200, imported.get("code"));
+            assertEquals("imported", result(imported, "alpha").get("status"));
+        } finally {
+            Locale.setDefault(previous);
+        }
         assertArrayEquals(new byte[]{0, 1, -1}, Files.readAllBytes(skillDir("alpha").resolve("assets/data.bin")));
         var descriptor = manifestService.inspect(skillDir("alpha"), "agent-node").descriptor();
         assertEquals("draft", descriptor.status());

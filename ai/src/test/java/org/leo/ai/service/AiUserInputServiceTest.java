@@ -3,6 +3,7 @@ package org.leo.ai.service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.agent.AiToolContext;
@@ -21,6 +22,7 @@ import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiUserInputOption;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,15 +55,24 @@ class AiUserInputServiceTest {
         PlatformAiStateStore.remove(STATE_ID);
     }
 
-    @Test
-    void persistsQuestionMarksRuntimeWaitingAndEmitsNode() {
+    @ParameterizedTest
+    @ValueSource(strings = {"en-US", "tr-TR"})
+    @ResourceLock("java.util.Locale.default")
+    void persistsQuestionMarksRuntimeWaitingAndEmitsNode(String languageTag) {
         when(requests.create(any())).thenAnswer(invocation -> invocation.getArgument(0));
         state.bindActiveTurnId("turn-1");
         state.bindActiveItemId("item-1");
 
-        Map<String, Object> result = service.request(
-                "CLARIFICATION", "请选择目标范围", options("当前节点", "current_node", "SCOPE_CURRENT", "全部节点", "all_nodes", "SCOPE_ALL"),
-                false, null, null, null, "LOW", 60L);
+        Map<String, Object> result;
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            result = service.request(
+                    "CLARIFICATION", "请选择目标范围", options("当前节点", "current_node", "SCOPE_CURRENT", "全部节点", "all_nodes", "SCOPE_ALL"),
+                    false, null, null, null, "LOW", 60L);
+        } finally {
+            Locale.setDefault(previous);
+        }
 
         assertEquals(AiRunStatus.WAITING_FOR_USER, state.getRunStatus());
         assertTrue(state.isWaitingForUserInput());
@@ -69,6 +80,7 @@ class AiUserInputServiceTest {
         assertEquals("node", state.getAiSseEventQueue().peek().name());
         @SuppressWarnings("unchecked")
         Map<String, Object> request = (Map<String, Object>) result.get("request");
+        assertEquals("pending", request.get("status"));
         assertEquals(List.of(Map.of(
                 "label", "当前节点", "value", "current_node", "intent", "SCOPE_CURRENT"), Map.of(
                 "label", "全部节点", "value", "all_nodes", "intent", "SCOPE_ALL")), request.get("options"));

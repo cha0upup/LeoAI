@@ -3,14 +3,18 @@ package org.leo.ai.runtime;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiTokenUsage;
+import dev.langchain4j.model.output.FinishReason;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -87,12 +91,16 @@ class AiTurnArtifactsTest {
         assertEquals(review.get("toolCount"), artifacts.toolCallCount(events));
     }
 
-    @Test
-    void accumulatesUsageIntoConversationRuntimeStats() {
+    @ParameterizedTest
+    @CsvSource(value = {"en-US,null,null", "tr-TR,TOOL_EXECUTION,tool_execution",
+            "tr-TR,CONTENT_FILTER,content_filter"}, nullValues = "null")
+    @ResourceLock("java.util.Locale.default")
+    void accumulatesUsageIntoConversationRuntimeStats(String languageTag, FinishReason reason, String finishReason) {
         AiRuntimeStats stats = new AiRuntimeStats();
-        Map<String, Object> usage = artifacts.usage(ChatResponse.builder()
+        ChatResponse response = ChatResponse.builder()
                 .id("response-1")
                 .aiMessage(AiMessage.from("done"))
+                .finishReason(reason)
                 .tokenUsage(OpenAiTokenUsage.builder()
                         .inputTokenCount(10).outputTokenCount(5).totalTokenCount(15)
                         .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder()
@@ -100,11 +108,21 @@ class AiTurnArtifactsTest {
                         .outputTokensDetails(OpenAiTokenUsage.OutputTokensDetails.builder()
                                 .reasoningTokens(2).build())
                         .build())
-                .build());
+                .build();
+        Map<String, Object> usage;
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            usage = artifacts.usage(response);
+        } finally {
+            Locale.setDefault(previous);
+        }
 
         artifacts.accumulateUsage(stats, usage);
 
         assertEquals("response-1", usage.get("id"));
+        if (reason == null) assertFalse(usage.containsKey("finishReason"));
+        else assertEquals(finishReason, usage.get("finishReason"));
         assertFalse(usage.containsKey("responseId"));
         assertEquals(10, stats.getCumulativeInputTokens());
         assertEquals(5, stats.getCumulativeOutputTokens());

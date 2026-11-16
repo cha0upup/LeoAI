@@ -5,6 +5,7 @@ import com.alibaba.fastjson.JSON;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Agent 在继续执行前向用户发出的结构化输入请求。 */
@@ -69,7 +70,7 @@ public class AiUserInputRequest {
         value.put("toolName", toolName);
         value.put("argumentsHash", argumentsHash);
         value.put("risk", risk);
-        value.put("status", status != null ? status.toLowerCase() : null);
+        value.put("status", status != null ? status.toLowerCase(Locale.ROOT) : null);
         value.put("answer", answer);
         value.put("createdAt", createdAt);
         value.put("answeredAt", answeredAt);
