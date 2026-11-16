@@ -108,6 +108,8 @@ The exact PHP feature set depends on the target environment: database operations
 | **Context Accumulation** | Reconnaissance summaries accumulate and compress automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
 
+AI workspace local commands are limited to administrators working in their own task directories. They share 2 workers and a queue of up to 32 commands globally. Submissions fail immediately without a run ID when the queue is full or the service is shut down; pending and running tasks are cancelled during shutdown.
+
 <img src="docs/images/screenshot-ai-assistant.png" alt="AI Assistant Demo" width="800" />
 
 *AI assistant automatically invoking recon tools, analyzing results, and generating a reconnaissance summary*

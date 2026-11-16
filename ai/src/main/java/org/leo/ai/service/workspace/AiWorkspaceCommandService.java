@@ -2,6 +2,7 @@ package org.leo.ai.service.workspace;
 
 import jakarta.annotation.PreDestroy;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.core.concurrent.TaskExecutors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -24,10 +25,10 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
-/** 在当前 AI 工作空间目录中执行本地命令，并提供异步状态与文件变更摘要。 */
+/** 工作空间本地命令共用两个 worker、最多排队 32 项，并提供异步状态与文件变更摘要。 */
 @Service
 public class AiWorkspaceCommandService {
 
@@ -44,11 +45,7 @@ public class AiWorkspaceCommandService {
 
     @Autowired
     public AiWorkspaceCommandService(AiWorkspaceService workspaceService) {
-        this(workspaceService, Executors.newFixedThreadPool(2, runnable -> {
-            Thread thread = new Thread(runnable, "ai-workspace-command");
-            thread.setDaemon(true);
-            return thread;
-        }));
+        this(workspaceService, TaskExecutors.bounded(2, 32, "ai-workspace-command-"));
     }
 
     AiWorkspaceCommandService(AiWorkspaceService workspaceService, ExecutorService executor) {
@@ -70,7 +67,12 @@ public class AiWorkspaceCommandService {
         String runId = UUID.randomUUID().toString();
         RunState state = new RunState(runId, workspace, safeCommand, safeTimeout);
         runs.put(runId, state);
-        executor.execute(() -> execute(state));
+        try {
+            executor.execute(() -> execute(state));
+        } catch (RejectedExecutionException error) {
+            runs.remove(runId, state);
+            throw error;
+        }
         Map<String, Object> result = state.toMap();
         result.put("hint", "调用 workspaceExecStatus 查询输出和文件变更；命令工作目录为当前任务 files 目录。");
         return result;
@@ -276,11 +278,11 @@ public class AiWorkspaceCommandService {
 
     @PreDestroy
     public void shutdown() {
+        TaskExecutors.shutdownNow(executor);
         for (RunState state : runs.values()) {
             state.cancel();
             destroyProcessTree(state.process);
         }
-        executor.shutdownNow();
     }
 
     private record FileFingerprint(long size, String sha256) { }

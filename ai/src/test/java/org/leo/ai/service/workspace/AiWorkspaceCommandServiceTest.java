@@ -14,14 +14,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -101,6 +104,31 @@ class AiWorkspaceCommandServiceTest {
 
         assertFalse(Files.exists(workspace.filesRoot().resolve("cancelled.txt")));
         assertNull(commandService.status(workspace, runId).get("startedAt"));
+    }
+
+    @Test
+    void boundsPendingCommandsAndCancelsAcceptedWorkOnShutdown() {
+        AiWorkspaceCommandService bounded = new AiWorkspaceCommandService(workspaceService);
+        List<String> accepted = new ArrayList<>();
+        var lock = workspace.lock().writeLock();
+        lock.lock();
+        try {
+            for (int i = 0; i < 34; i++) {
+                accepted.add(String.valueOf(bounded.start(workspace, "exit 0", 10).get("runId")));
+            }
+            assertThrows(RejectedExecutionException.class, () -> bounded.start(workspace, "exit 0", 10));
+        } finally {
+            bounded.shutdown();
+            lock.unlock();
+        }
+
+        assertThrows(RejectedExecutionException.class, () -> bounded.start(workspace, "exit 0", 10));
+        for (String runId : accepted) {
+            Map<String, Object> status = bounded.status(workspace, runId);
+            assertEquals("CANCELLED", status.get("status"));
+            assertNull(status.get("startedAt"));
+            assertNotNull(status.get("finishedAt"));
+        }
     }
 
     @ParameterizedTest
