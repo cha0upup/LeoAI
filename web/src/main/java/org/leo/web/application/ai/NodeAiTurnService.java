@@ -108,11 +108,8 @@ public class NodeAiTurnService {
 
     private NodeAiAgentRegistry.AiRuntime resolveAgent(
             AgentNodeSession session, AiThread thread, String reasoningEffort) {
-        AiModelConfig requested = channelResolver.require(
-                thread != null ? thread.getAiConfigId() : null);
-        if (thread != null && thread.getAiConfigId() == null) {
-            thread.setAiConfigId(requested.getId());
-        }
+        AiModelConfig requested = channelResolver.require(thread.getAiConfigId());
+        if (thread.getAiConfigId() == null) thread.setAiConfigId(requested.getId());
         return agentRegistry.resolve(session, thread, requested, reasoningEffort);
     }
 

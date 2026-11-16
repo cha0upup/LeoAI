@@ -67,7 +67,7 @@ public class PlatformAiTurnService {
             }
             state.touchLastActiveAt();
             String messageForAgent = request.messageForAgent();
-            PlatformAiAgentRegistry.AiRuntime aiRuntime = threadAgent(state, request.reasoningEffort());
+            PlatformAiAgentRegistry.AiRuntime aiRuntime = resolveAgent(state, request.reasoningEffort());
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(aiRuntime.failoverMessage());
             PersistedTurn persistedTurn =
@@ -106,13 +106,10 @@ public class PlatformAiTurnService {
         }
     }
 
-    private PlatformAiAgentRegistry.AiRuntime threadAgent(
+    private PlatformAiAgentRegistry.AiRuntime resolveAgent(
             PlatformAiState state, String reasoningEffort) {
-        AiModelConfig requested = channelResolver.require(
-                state != null ? state.getAiConfigId() : null);
-        if (state != null && state.getAiConfigId() == null) {
-            state.setAiConfigId(requested.getId());
-        }
+        AiModelConfig requested = channelResolver.require(state.getAiConfigId());
+        if (state.getAiConfigId() == null) state.setAiConfigId(requested.getId());
         return agentRegistry.resolve(state, requested, reasoningEffort);
     }
 
