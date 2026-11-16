@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -102,7 +103,7 @@ public class AiTurnArtifacts {
         int contextCount = 0;
         int successCount = 0;
         int failureCount = 0;
-        List<String> tools = new ArrayList<>();
+        LinkedHashSet<String> tools = new LinkedHashSet<>();
         if (eventLog != null) {
             for (AiSseEvent event : eventLog) {
                 Map<?, ?> data = completedToolData(event);
@@ -119,8 +120,7 @@ public class AiTurnArtifacts {
                     successCount++;
                 }
                 Object toolName = data.get("toolName");
-                if (toolName instanceof String name
-                        && !name.isBlank() && !tools.contains(name)) {
+                if (toolName instanceof String name && !name.isBlank()) {
                     tools.add(name);
                 }
             }
@@ -131,7 +131,7 @@ public class AiTurnArtifacts {
         review.put("contextCount", contextCount);
         review.put("successCount", successCount);
         review.put("failureCount", failureCount);
-        review.put("tools", tools);
+        review.put("tools", new ArrayList<>(tools));
         review.put("conclusionPreview", truncate(output != null ? output.trim() : "", 500));
         review.put("createdAt", System.currentTimeMillis());
         return review;

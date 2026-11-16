@@ -69,6 +69,7 @@ class AiTurnArtifactsTest {
         List<AiSseEvent> events = List.of(
                 new AiSseEvent("node", tool("lookup", null)),
                 new AiSseEvent("patch", tool("lookup", true)),
+                new AiSseEvent("patch", tool("alpha", true)),
                 new AiSseEvent("patch", tool("lookup", false)),
                 new AiSseEvent("patch", Map.of("kind", "tool", "toolKind", "CONTROL", "businessTool", false)),
                 new AiSseEvent("patch", Map.of("kind", "tool", "toolKind", "CONTEXT", "businessTool", false)),
@@ -77,12 +78,12 @@ class AiTurnArtifactsTest {
 
         Map<String, Object> review = artifacts.review("完成", events, 25);
 
-        assertEquals(2, review.get("toolCount"));
+        assertEquals(3, review.get("toolCount"));
         assertEquals(1, review.get("controlCount"));
         assertEquals(1, review.get("contextCount"));
-        assertEquals(1, review.get("successCount"));
+        assertEquals(2, review.get("successCount"));
         assertEquals(1, review.get("failureCount"));
-        assertEquals(List.of("lookup"), review.get("tools"));
+        assertEquals(List.of("lookup", "alpha"), review.get("tools"));
         assertEquals(review.get("toolCount"), artifacts.toolCallCount(events));
     }
 

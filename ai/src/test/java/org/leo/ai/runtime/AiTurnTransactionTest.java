@@ -34,6 +34,7 @@ class AiTurnTransactionTest {
     private final AiModelFailoverService failover = mock(AiModelFailoverService.class);
     private final ManagedConversationMemory memory = mock(ManagedConversationMemory.class);
     private final ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
+    private final AiChatAuditEntry audit = AiChatAuditEntry.platform("user-1", "alice", "normal", "hello");
     private final PersistedTurn persistedTurn =
             new PersistedTurn(
                     "turn-1", "run-1", "thread-1", "message-1", "assistant-message-1", 1L, null);
@@ -42,17 +43,23 @@ class AiTurnTransactionTest {
     @Test
     void commitsExactlyOnceAndReturnsTheSameResult() {
         AiTurnResult result = new AiTurnResult("done", null, false, false);
+        List<AiSseEvent> events = List.of(
+                new AiSseEvent("patch", Map.of("kind", "tool", "toolName", "lookup", "success", true)),
+                new AiSseEvent("patch", Map.of("kind", "tool", "toolName", "lookup", "success", false)),
+                new AiSseEvent("patch", Map.of("kind", "tool", "toolKind", "CONTROL", "businessTool", false)));
 
         AiTurnTransaction.CompletedTurn first =
-                session.commit(result, List.of(), null, new AiRuntimeStats());
+                session.commit(result, events, null, new AiRuntimeStats());
         AiTurnTransaction.CompletedTurn repeated =
                 session.commit(result, List.of(), null, new AiRuntimeStats());
 
         assertSame(first, repeated);
         assertEquals("done", first.output());
+        assertEquals(2, first.review().get("toolCount"));
+        assertEquals(first.review().get("toolCount"), audit.getToolCallCount());
         assertTrue(session.isTerminal());
         verify(terminal, times(1)).complete(
-                eq(persistedTurn), eq("done"), any(), any(), any(), eq(0));
+                eq(persistedTurn), eq("done"), any(), eq(first.review()), any(), eq(2));
         verify(failover).recordSuccess(7);
         verify(terminal, never()).discard(
                 any(), any(), any(),
@@ -235,7 +242,7 @@ class AiTurnTransactionTest {
         trace.bind(persistedTurn.turnId(), persistedTurn.runId());
         return transaction.open(new AiTurnTransaction.Context(
                 persistedTurn, 7, agent, "session:thread-1",
-                AiChatAuditEntry.platform("user-1", "alice", "normal", "hello"),
+                audit,
                 System.currentTimeMillis(), trace));
     }
 }

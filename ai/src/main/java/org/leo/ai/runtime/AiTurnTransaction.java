@@ -71,9 +71,9 @@ public class AiTurnTransaction {
 
             boolean userInputRequested = result != null && result.userInputRequested();
             String output = userInputRequested ? "" : result != null ? result.output() : "";
-            int toolCallCount = artifacts.toolCallCount(eventLog);
             Map<String, Object> review = artifacts.review(
                     output, eventLog, elapsedMillis());
+            int toolCallCount = ((Number) review.get("toolCount")).intValue();
             if (result != null && result.streamRecovered()) {
                 review.put("streamRecovered", true);
             }
