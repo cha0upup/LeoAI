@@ -1,6 +1,8 @@
 package org.leo.web.application.ai;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.core.ai.AiRuntimeState;
 
@@ -16,8 +18,9 @@ import static org.mockito.Mockito.*;
 
 class AiExecutionClaimServiceTest {
 
-    @Test
-    void bindsLeaseAndRejectsConcurrentExecution() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void bindsLeaseRejectsConcurrentExecutionAndClearsReleasedToken(boolean releaseFails) {
         Fixture fixture = new Fixture(new AiTurnCoordinator());
         when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn("lease");
 
@@ -27,31 +30,28 @@ class AiExecutionClaimServiceTest {
         assertFalse(fixture.claim());
         verify(fixture.leases, times(1)).tryAcquireToken(eq("thread"), any());
 
-        fixture.release();
+        RuntimeException failure = new IllegalStateException("database release failed");
+        if (releaseFails) doThrow(failure).when(fixture.leases).release("thread");
+        if (releaseFails) assertSame(failure, assertThrows(IllegalStateException.class, fixture::release));
+        else fixture.release();
         verify(fixture.leases).release("thread");
         assertNull(fixture.runtime.getActiveLeaseToken());
     }
 
-    @Test
-    void leaseDenialReleasesLocalClaimForRetry() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void unsuccessfulLeaseAcquisitionReleasesLocalClaimForRetry(boolean leaseFails) {
         Fixture fixture = new Fixture(new AiTurnCoordinator());
-        when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn(null, "retry-lease");
+        if (leaseFails) {
+            when(fixture.leases.tryAcquireToken(eq("thread"), any()))
+                    .thenThrow(new IllegalStateException("database unavailable")).thenReturn("retry-lease");
+        } else {
+            when(fixture.leases.tryAcquireToken(eq("thread"), any())).thenReturn(null, "retry-lease");
+        }
 
         assertFalse(fixture.claim());
         assertFalse(fixture.runtime.isExecuting());
         assertNull(fixture.runtime.getActiveLeaseToken());
-        assertTrue(fixture.claim());
-        assertEquals("retry-lease", fixture.runtime.getActiveLeaseToken());
-    }
-
-    @Test
-    void leaseFailureReleasesLocalClaimForRetry() {
-        Fixture fixture = new Fixture(new AiTurnCoordinator());
-        when(fixture.leases.tryAcquireToken(eq("thread"), any()))
-                .thenThrow(new IllegalStateException("database unavailable")).thenReturn("retry-lease");
-
-        assertFalse(fixture.claim());
-        assertFalse(fixture.runtime.isExecuting());
         assertTrue(fixture.claim());
         assertEquals("retry-lease", fixture.runtime.getActiveLeaseToken());
     }

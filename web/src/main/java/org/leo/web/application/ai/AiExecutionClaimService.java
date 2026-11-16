@@ -51,8 +51,11 @@ public class AiExecutionClaimService {
 
     public void release(AiRuntimeState runtime, String threadId) {
         if (runtime == null) return;
-        executionLeaseService.release(threadId);
-        runtime.bindActiveLeaseToken(null);
+        try {
+            executionLeaseService.release(threadId);
+        } finally {
+            runtime.bindActiveLeaseToken(null);
+        }
     }
 
 }
