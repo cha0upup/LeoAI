@@ -1,6 +1,8 @@
 package org.leo.core.util.request;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.Set;
 import java.util.stream.IntStream;
@@ -27,35 +29,29 @@ class ComponentClassNameStrategyTest {
         }
     }
 
-    @Test
-    void generatesStableProfileNamesPerComponent() {
+    @ParameterizedTest
+    @CsvSource(value = {
+            "INNER_CLASS,true,.+\\$[A-Za-z]+",
+            "LAMBDA_SHAPED,true,.+\\$\\$Lambda\\$[0-9]+",
+            "PROXY_SHAPED,true,.+\\.proxy\\.\\$Proxy[0-9]+",
+            "APPLICATION,true,baseline",
+            "null,true,baseline",
+            "INNER_CLASS,false,baseline"
+    }, nullValues = "null")
+    void generatesStableProfileNamesPerComponent(
+            ComponentClassNameStrategy.Mode mode, boolean enabled, String pattern) {
         ComponentClassNameStrategy strategy = new ComponentClassNameStrategy();
-        strategy.setMode(ComponentClassNameStrategy.Mode.INNER_CLASS);
+        strategy.setMode(mode);
+        strategy.setEnabled(enabled);
 
         String first = strategy.resolve("host-a|endpoint", "BasicInfoComponent");
         assertEquals(first, strategy.resolve("host-a|endpoint", "BasicInfoComponent"));
         assertNotEquals(first, strategy.resolve("host-a|endpoint", "FileComponent"));
-        assertTrue(first.contains("$"));
-    }
-
-    @Test
-    void generatesLambdaShapedNames() {
-        ComponentClassNameStrategy strategy = new ComponentClassNameStrategy();
-        strategy.setMode(ComponentClassNameStrategy.Mode.LAMBDA_SHAPED);
-
-        String basic = strategy.resolve("session", "BasicInfoComponent");
-        String file = strategy.resolve("session", "FileComponent");
-        assertTrue(basic.contains("$$Lambda$"));
-        assertNotEquals(basic, file);
-    }
-
-    @Test
-    void generatesProxyShapedNames() {
-        ComponentClassNameStrategy strategy = new ComponentClassNameStrategy();
-        strategy.setMode(ComponentClassNameStrategy.Mode.PROXY_SHAPED);
-
-        assertTrue(strategy.resolve("session", "BasicInfoComponent")
-                .matches(".+\\.proxy\\.\\$Proxy[0-9]+"));
+        if ("baseline".equals(pattern)) {
+            assertEquals(ClassNameGenerator.generateComponentClassName("host-a|endpoint", "BasicInfoComponent"), first);
+        } else {
+            assertTrue(first.matches(pattern));
+        }
     }
 
     @Test

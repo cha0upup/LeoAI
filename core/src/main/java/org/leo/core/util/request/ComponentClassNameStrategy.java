@@ -33,28 +33,14 @@ public class ComponentClassNameStrategy {
             return baseline;
         }
 
-        String packageName = baseline.substring(0, baseline.lastIndexOf('.'));
-        String simpleName = baseline.substring(baseline.lastIndexOf('.') + 1);
-        int index = positiveIndex(sessionKey + "|" + componentName);
-
         Mode selected = mode != null ? mode : Mode.APPLICATION;
-        String resolved;
-        switch (selected) {
-            case INNER_CLASS:
-                resolved = packageName + "." + simpleName + "$" + innerRole(index);
-                break;
-            case LAMBDA_SHAPED:
-                resolved = packageName + "." + simpleName + "$$Lambda$" + index;
-                break;
-            case PROXY_SHAPED:
-                resolved = packageName + ".proxy.$Proxy" + index;
-                break;
-            case APPLICATION:
-            default:
-                resolved = baseline;
-                break;
-        }
-        return validate(resolved);
+        int index = selected == Mode.APPLICATION ? 0 : positiveIndex(sessionKey + "|" + componentName);
+        return validate(switch (selected) {
+            case APPLICATION -> baseline;
+            case INNER_CLASS -> baseline + "$" + innerRole(index);
+            case LAMBDA_SHAPED -> baseline + "$$Lambda$" + index;
+            case PROXY_SHAPED -> baseline.substring(0, baseline.lastIndexOf('.')) + ".proxy.$Proxy" + index;
+        });
     }
 
     /** 在保存配置时执行一次完整校验。 */
