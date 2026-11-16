@@ -361,11 +361,7 @@ public class AiTurnOrchestrator {
     public record TerminalResult(AiTurnOutcome outcome, String errorMessage) {
 
         public String runtimeStatus() {
-            return switch (outcome) {
-                case COMPLETED -> "completed";
-                case CANCELLED -> "cancelled";
-                case FAILED -> "failed";
-            };
+            return outcome.runtimeStatus();
         }
     }
 

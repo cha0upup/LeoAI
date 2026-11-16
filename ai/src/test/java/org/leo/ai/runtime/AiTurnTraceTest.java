@@ -5,7 +5,11 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,27 +43,34 @@ class AiTurnTraceTest {
         assertFalse(trace.toJson().isBlank());
     }
 
-    @Test
-    void telemetryRecordsATraceExactlyOnce() {
-        AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "agent", "thread-1",
-                System.currentTimeMillis());
-        trace.finish(
-                AiTurnOutcome.FAILED,
-                "tool_calling",
-                "tool calls unsupported");
-        AiTurnTelemetryRegistry registry = new AiTurnTelemetryRegistry();
+    @ParameterizedTest
+    @CsvSource(value = {"en-US,FAILED,failed", "tr-TR,COMPLETED,completed", "tr-TR,FAILED,failed",
+            "tr-TR,CANCELLED,cancelled", "tr-TR,null,failed"}, nullValues = "null")
+    @ResourceLock("java.util.Locale.default")
+    void telemetryRecordsStableOutcomesExactlyOnce(String languageTag, AiTurnOutcome outcome, String status) {
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            AiTurnTrace trace = AiTurnTrace.testTrace(
+                    "trace-1", "agent", "thread-1", System.currentTimeMillis());
+            trace.finish(outcome, "tool_calling", "tool calls unsupported");
+            AiTurnTelemetryRegistry registry = new AiTurnTelemetryRegistry();
 
-        registry.record(trace);
-        registry.record(trace);
+            registry.record(trace);
+            registry.record(trace);
 
-        Map<String, Object> snapshot = registry.snapshot();
-        assertEquals(1L, snapshot.get("completedTurns"));
-        assertEquals(1L,
-                ((Map<?, ?>) snapshot.get("outcomes")).get("failed"));
-        assertEquals(1L,
-                ((Map<?, ?>) snapshot.get("errorCategories"))
-                        .get("tool_calling"));
+            assertEquals(status, trace.outcome());
+            assertEquals(status, trace.snapshot().get("outcome"));
+            if (outcome != null) {
+                assertEquals(status, new AiTurnOrchestrator.TerminalResult(outcome, null).runtimeStatus());
+            }
+            Map<String, Object> snapshot = registry.snapshot();
+            assertEquals(1L, snapshot.get("completedTurns"));
+            assertEquals(Map.of(status, 1L), snapshot.get("outcomes"));
+            assertEquals(Map.of("tool_calling", 1L), snapshot.get("errorCategories"));
+        } finally {
+            Locale.setDefault(previous);
+        }
     }
 
     @Test

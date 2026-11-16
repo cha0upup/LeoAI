@@ -1,6 +1,7 @@
 package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.util.json.JsonUtil;
 
 import java.util.ArrayList;
@@ -72,7 +73,7 @@ public final class AiTurnTrace {
         if (finishedAt != null) return;
         checkpoint(Checkpoint.TERMINAL);
         this.finishedAt = System.currentTimeMillis();
-        this.outcome = outcome != null ? outcome.name().toLowerCase() : "failed";
+        this.outcome = outcome != null ? outcome.runtimeStatus() : AiRunStatus.FAILED;
         this.errorCategory = blankToNull(errorCategory);
         this.errorMessage = blankToNull(errorMessage);
     }
