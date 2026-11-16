@@ -40,6 +40,7 @@ public final class SafeZipReader {
     /**
      * 逐条遍历：不一次性加载所有条目，调用方按需处理每条。
      * 适合条目可能较大、不需要全部驻留内存的场景。
+     * 过滤只控制回调，未匹配文件和目录条目的内容仍计入解压预算。
      */
     public static void forEach(InputStream in,
                                java.util.function.Predicate<String> nameFilter,
@@ -48,6 +49,7 @@ public final class SafeZipReader {
         if (limits == null) limits = Limits.DEFAULT;
         long totalBytes = 0;
         int totalEntries = 0;
+        byte[] buffer = new byte[8192];
 
         try (ZipInputStream zis = new ZipInputStream(in)) {
             ZipEntry entry;
@@ -58,17 +60,24 @@ public final class SafeZipReader {
                             "zip 条目数超过上限 " + limits.maxEntries());
                 }
                 String name = entry.getName();
-                if (entry.isDirectory() || (nameFilter != null && !nameFilter.test(name))) {
-                    zis.closeEntry();
-                    continue;
+                boolean selected = !entry.isDirectory() && (nameFilter == null || nameFilter.test(name));
+                ByteArrayOutputStream data = selected ? new ByteArrayOutputStream() : null;
+                long entryBytes = 0;
+                int count;
+                while ((count = zis.read(buffer)) != -1) {
+                    if (count > limits.maxEntryBytes() - entryBytes) {
+                        throw new ZipLimitExceededException(
+                                "zip 单个条目解压后大小超过上限 " + limits.maxEntryBytes() + " 字节");
+                    }
+                    if (count > limits.maxTotalBytes() - totalBytes) {
+                        throw new ZipLimitExceededException(
+                                "zip 解压后总大小超过上限 " + limits.maxTotalBytes() + " 字节");
+                    }
+                    entryBytes += count;
+                    totalBytes += count;
+                    if (data != null) data.write(buffer, 0, count);
                 }
-                byte[] data = readEntryWithLimit(zis, limits.maxEntryBytes());
-                totalBytes += data.length;
-                if (totalBytes > limits.maxTotalBytes()) {
-                    throw new ZipLimitExceededException(
-                            "zip 解压后总大小超过上限 " + limits.maxTotalBytes() + " 字节");
-                }
-                handler.handle(name, data);
+                if (data != null) handler.handle(name, data.toByteArray());
                 zis.closeEntry();
             }
         }
@@ -77,21 +86,5 @@ public final class SafeZipReader {
     @FunctionalInterface
     public interface EntryHandler {
         void handle(String name, byte[] bytes) throws IOException;
-    }
-
-    private static byte[] readEntryWithLimit(InputStream in, long max) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        long read = 0;
-        int n;
-        while ((n = in.read(buf)) != -1) {
-            read += n;
-            if (read > max) {
-                throw new ZipLimitExceededException(
-                        "zip 单个条目解压后大小超过上限 " + max + " 字节");
-            }
-            out.write(buf, 0, n);
-        }
-        return out.toByteArray();
     }
 }

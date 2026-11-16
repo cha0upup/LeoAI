@@ -36,14 +36,18 @@ class SafeZipReaderTest {
         assertTrue(input.closed);
     }
 
-    @Test
-    void filteredEntriesStillCountTowardTheEntryLimit() throws Exception {
-        var input = archive("ignore.txt", "first.json");
-        List<String> visited = new ArrayList<>();
-        assertThrows(SafeZipReader.ZipLimitExceededException.class, () ->
-                SafeZipReader.forEach(input, name -> name.endsWith(".json"),
-                        new SafeZipReader.Limits(1, 10, 20), (name, bytes) -> visited.add(name)));
-        assertTrue(visited.isEmpty());
+    @ParameterizedTest
+    @MethodSource("limits")
+    void filteredFilesAndDirectoriesStillConsumeAllLimits(SafeZipReader.Limits limits) throws Exception {
+        for (String ignored : List.of("ignore.txt", "folder/")) {
+            var input = archive(ignored, "extra-" + ignored);
+            List<String> visited = new ArrayList<>();
+            assertThrows(SafeZipReader.ZipLimitExceededException.class, () ->
+                    SafeZipReader.forEach(input, name -> name.endsWith(".json"),
+                            limits, (name, bytes) -> visited.add(name)));
+            assertTrue(visited.isEmpty());
+            assertTrue(input.closed);
+        }
     }
 
     @Test
@@ -66,7 +70,8 @@ class SafeZipReaderTest {
         try (var zip = new ZipOutputStream(bytes)) {
             for (String name : names) {
                 zip.putNextEntry(new ZipEntry(name));
-                if (!name.endsWith("/")) zip.write("data".getBytes(StandardCharsets.UTF_8));
+                // Directory entries may carry bytes too, even though they never reach the handler.
+                zip.write("data".getBytes(StandardCharsets.UTF_8));
                 zip.closeEntry();
             }
         }

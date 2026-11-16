@@ -214,6 +214,8 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 - **AI-ready built-in skills**: script execution, command execution, WebLogic password retrieval, heap-dump analysis, and more out of the box
 - **Import/Export**: single-file `.plugin` or batch `.zip`; conflict policies (skip / overwrite) on import
 
+ZIP imports for fingerprints, plugins, and disguises share decompression limits: at most 1000 entries, 5 MiB per entry, and 50 MiB in total. Filtered-out files and directory entries count toward the same budget.
+
 ### Management Features
 
 | Feature | Description |
