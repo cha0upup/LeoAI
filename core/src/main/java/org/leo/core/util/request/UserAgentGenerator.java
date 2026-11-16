@@ -70,35 +70,16 @@ public class UserAgentGenerator {
         String browserVersion = generateRandomVersion();
 
         // 根据浏览器类型和版本生成 User-Agent
-        String userAgent;
-        switch (browser) {
-            case BROWSER_CHROME:
-                userAgent = String.format(TEMPLATE_CHROME, os, device, engine, browserVersion);
-                break;
-            case BROWSER_FIREFOX:
-                userAgent = String.format(TEMPLATE_FIREFOX, os, device, browserVersion, engine, browserVersion);
-                break;
-            case BROWSER_EDGE:
-                userAgent = String.format(TEMPLATE_EDGE, os, device, engine, browserVersion);
-                break;
-            case BROWSER_SAFARI:
-                userAgent = String.format(TEMPLATE_SAFARI, os, device, engine, browserVersion);
-                break;
-            case BROWSER_OPERA:
-                userAgent = String.format(TEMPLATE_OPERA, os, device, engine, browserVersion);
-                break;
-            case BROWSER_TRIDENT:
-                userAgent = String.format(TEMPLATE_TRIDENT, os, device, browserVersion, engine);
-                break;
-            case BROWSER_PRESTO:
-                userAgent = String.format(TEMPLATE_PRESTO, os, device, browserVersion, engine);
-                break;
-            default:
-                userAgent = String.format(TEMPLATE_DEFAULT, os, device, engine, browserVersion);
-                break;
-        }
-
-        return userAgent;
+        return switch (browser) {
+            case BROWSER_CHROME -> String.format(TEMPLATE_CHROME, os, device, engine, browserVersion);
+            case BROWSER_FIREFOX -> String.format(TEMPLATE_FIREFOX, os, device, browserVersion, engine, browserVersion);
+            case BROWSER_EDGE -> String.format(TEMPLATE_EDGE, os, device, engine, browserVersion);
+            case BROWSER_SAFARI -> String.format(TEMPLATE_SAFARI, os, device, engine, browserVersion);
+            case BROWSER_OPERA -> String.format(TEMPLATE_OPERA, os, device, engine, browserVersion);
+            case BROWSER_TRIDENT -> String.format(TEMPLATE_TRIDENT, os, device, browserVersion, engine);
+            case BROWSER_PRESTO -> String.format(TEMPLATE_PRESTO, os, device, browserVersion, engine);
+            default -> String.format(TEMPLATE_DEFAULT, os, device, engine, browserVersion);
+        };
     }
 
     /**
