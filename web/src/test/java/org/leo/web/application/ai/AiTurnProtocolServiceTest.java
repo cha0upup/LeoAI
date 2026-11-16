@@ -3,6 +3,7 @@ package org.leo.web.application.ai;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.ai.thread.AiUserInputRepository;
@@ -29,7 +30,7 @@ class AiTurnProtocolServiceTest {
 
     @Test
     void startupFailureWithoutLeaseUsesAtomicTerminalEventPath() {
-        AiTurnRecord failed = existingTurn();
+        AiTurnRecord failed = existingTurn("turn-1", "queued");
         failed.setProtocolStatus("failed");
         when(store.failProtocolTurnBeforeRun(org.mockito.ArgumentMatchers.eq("turn-1"),
                 org.mockito.ArgumentMatchers.eq("expired"), org.mockito.ArgumentMatchers.anyLong()))
@@ -50,9 +51,8 @@ class AiTurnProtocolServiceTest {
     })
     void reusesSameCommandWithCurrentTurnAndMessageStatuses(
             String protocolStatus, String dispatchStatus, String turnStatus, String itemStatus) {
-        AiTurnRecord existing = existingTurn();
+        AiTurnRecord existing = existingTurn("turn-1", dispatchStatus);
         existing.setProtocolStatus(protocolStatus);
-        existing.setDispatchStatus(dispatchStatus);
         when(turns.findByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
 
@@ -70,7 +70,7 @@ class AiTurnProtocolServiceTest {
 
     @Test
     void rejectsIdempotencyKeyReusedForDifferentCommand() {
-        AiTurnRecord existing = existingTurn();
+        AiTurnRecord existing = existingTurn("turn-1", "queued");
         when(turns.findByClientId("thread-1", "client-1"))
                 .thenReturn(existing);
 
@@ -80,18 +80,26 @@ class AiTurnProtocolServiceTest {
         verify(store, never()).reserveProtocolTurn(any(), any(), any(), any());
     }
 
-    @Test
-    void resolvesTheAuthoritativeActiveTurnWhenClientHasNoTurnId() {
-        AiTurnRecord active = existingTurn();
-        active.setDispatchStatus("running");
+    @ParameterizedTest
+    @ValueSource(strings = {"running", "cancelling"})
+    void resolvesTheAuthoritativeActiveTurnWhenClientHasNoTurnId(String activeStatus) {
+        AiTurnRecord active = existingTurn("turn-1", activeStatus);
         when(turns.listInProgress("thread-1"))
-                .thenReturn(List.of(active));
-        AiTurnRecord cancelling = existingTurn();
-        cancelling.setDispatchStatus("cancelling");
+                .thenReturn(List.of(existingTurn("queued-1", "queued"), active,
+                        existingTurn("queued-2", "queued"), existingTurn("later-active", "running")));
+        AiTurnRecord cancelling = existingTurn("turn-1", "cancelling");
         cancelling.setInterruptRequested(true);
         when(turns.find("turn-1")).thenReturn(active);
         when(store.requestProtocolTurnInterrupt("thread-1", "turn-1"))
                 .thenReturn(cancelling);
+
+        AiTurnProtocolService.ThreadSnapshot snapshot = service.snapshotThread("thread-1", "failed");
+        assertEquals(activeStatus, snapshot.status());
+        assertTrue(snapshot.executing());
+        assertEquals("turn-1", snapshot.activeTurn().id());
+        assertEquals(List.of("queued-1", "queued-2"), snapshot.queuedTurns().stream()
+                .map(AiTurnProtocolService.TurnSnapshot::id).toList());
+        assertEquals(3, snapshot.toMap().get("pendingTurnCount"));
 
         AiTurnProtocolService.TurnSnapshot result =
                 service.requestInterrupt("thread-1", null);
@@ -102,12 +110,12 @@ class AiTurnProtocolServiceTest {
                 "thread-1", "turn-1");
     }
 
-    private AiTurnRecord existingTurn() {
+    private AiTurnRecord existingTurn(String turnId, String dispatchStatus) {
         AiTurnRecord row = new AiTurnRecord();
-        row.setTurnId("turn-1");
+        row.setTurnId(turnId);
         row.setThreadId("thread-1");
         row.setProtocolStatus("inProgress");
-        row.setDispatchStatus("queued");
+        row.setDispatchStatus(dispatchStatus);
         row.setCommandScope("platform");
         row.setCommandJson("{\"message\":\"hello\"}");
         row.setClientUserMessageId("client-1");

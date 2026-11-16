@@ -7,6 +7,7 @@ import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,18 +94,15 @@ public class AiTurnProtocolService {
     }
 
     public ThreadSnapshot snapshotThread(String threadId, String fallbackStatus) {
-        List<TurnSnapshot> inProgress = turns.listInProgress(threadId)
-                .stream()
-                .map(this::snapshot)
-                .toList();
-        TurnSnapshot active = inProgress.stream()
-                .filter(turn -> STATUS_RUNNING.equals(turn.status())
-                        || STATUS_CANCELLING.equals(turn.status()))
-                .findFirst()
-                .orElse(null);
-        List<TurnSnapshot> queued = inProgress.stream()
-                .filter(turn -> STATUS_QUEUED.equals(turn.status()))
-                .toList();
+        List<AiTurnRecord> inProgress = turns.listInProgress(threadId);
+        TurnSnapshot active = null;
+        List<TurnSnapshot> queued = new ArrayList<>();
+        for (AiTurnRecord row : inProgress) {
+            TurnSnapshot turn = snapshot(row);
+            if (STATUS_QUEUED.equals(turn.status())) queued.add(turn);
+            else if (active == null && (STATUS_RUNNING.equals(turn.status())
+                    || STATUS_CANCELLING.equals(turn.status()))) active = turn;
+        }
         AiUserInputRequest pendingUserInput = userInput.findPending(threadId);
         String normalizedFallback = pendingUserInput == null
                 && STATUS_WAITING_FOR_USER.equals(fallbackStatus)
@@ -117,7 +115,7 @@ public class AiTurnProtocolService {
                                 ? STATUS_WAITING_FOR_USER
                                 : normalizedFallback;
         return new ThreadSnapshot(
-                status, !inProgress.isEmpty(), active, queued,
+                status, !inProgress.isEmpty(), active, List.copyOf(queued),
                 pendingUserInput);
     }
 
