@@ -13,6 +13,8 @@ import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.ProviderCapabilities;
+import org.leo.web.config.ApiResponseStatusAdvice;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -23,26 +25,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AiModelConfigControllerTest {
+    private final AiModelConfigService configs = mock(AiModelConfigService.class);
+    private final DynamicModelProvider runtime = mock(DynamicModelProvider.class);
+    private final AiModelConfigController controller = new AiModelConfigController(configs, runtime,
+            mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
+            mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
+
     @Test
     void draftPreviewReturnsTypedFieldErrorsWithoutBuildingOrCallingARuntime() throws Exception {
-        AiModelConfigService configs = mock(AiModelConfigService.class);
-        DynamicModelProvider runtime = mock(DynamicModelProvider.class);
         AiModelConfig draft = new AiModelConfig();
         draft.setModel("mimo-v2.6-pro");
         draft.setThinkingEnabled(2);
         ProviderCapabilities caps = new ProviderCapabilities(true, "recognized", "system", 1_000_000, 128_000,
                 true, true, true, true, true, true, true);
         when(configs.previewRequest(any())).thenReturn(ModelRequestPlan.preview(draft, caps));
-        AiModelConfigController controller = new AiModelConfigController(configs, runtime,
-                mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
-                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
         MockMvcBuilders.standaloneSetup(controller).build()
                 .perform(post("/platform/admin/ai-models/request-preview").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"providerId\":1,\"model\":\"mimo-v2.6-pro\",\"thinkingEnabled\":2}"))
@@ -56,11 +63,7 @@ class AiModelConfigControllerTest {
 
     @Test
     void capabilityEndpointSerializesTheRequestContractUsedByTheUi() throws Exception {
-        AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.listModelCapabilities()).thenReturn(List.of(capability("kimi-k2.7-code"), capability("gpt-6.1-sol")));
-        AiModelConfigController controller = new AiModelConfigController(configs,
-                mock(DynamicModelProvider.class), mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
-                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
         MockMvcBuilders.standaloneSetup(controller).build()
                 .perform(get("/platform/admin/ai-models/capabilities"))
                 .andExpect(status().isOk())
@@ -85,13 +88,9 @@ class AiModelConfigControllerTest {
             "custom,'',chat_completions,"
     })
     void allPresetsUseOneApiRootAndProviderScopedRecommendations(String key, String base, String protocol, String model) {
-        AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.listModelCapabilities()).thenReturn(List.of("gpt-6-astra", "deepseek-flash", "kimi-k3.1-pro",
                 "qwen3.8-flash", "glm-5.3-flashx-legal", "gemini-4-argon", "mimo-v2.6-pro")
                 .stream().map(AiModelConfigControllerTest::capability).toList());
-        AiModelConfigController controller = new AiModelConfigController(configs,
-                mock(DynamicModelProvider.class), mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
-                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
         List<?> presets = (List<?>) controller.providers().get("data");
         Map<?, ?> preset = (Map<?, ?>) presets.stream()
                 .filter(row -> key.equals(((Map<?, ?>) row).get("key"))).findFirst().orElseThrow();
@@ -103,12 +102,8 @@ class AiModelConfigControllerTest {
 
     @Test
     void kimiPresetUsesTheOfficialEndpointAndOnlyItsCatalogModels() {
-        AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.listModelCapabilities()).thenReturn(List.of(
                 capability("kimi-k3.1-pro"), capability("deepseek-flash"), capability("kimi-k2.6")));
-        AiModelConfigController controller = new AiModelConfigController(configs,
-                mock(DynamicModelProvider.class), mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
-                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
 
         Map<String, Object> response = controller.providers();
         assertEquals(200, response.get("code"));
@@ -118,6 +113,46 @@ class AiModelConfigControllerTest {
                 "label", "Kimi (Moonshot)", "key", "kimi", "baseUrl", "https://api.moonshot.cn/v1",
                 "protocol", "chat_completions", "completionsPath", "/chat/completions",
                 "popularModels", List.of("kimi-k3.1-pro", "kimi-k2.6"))), kimi);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"PUT,true", "PUT,false", "DELETE,true", "DELETE,false"})
+    void writesUseTheServiceOutcomeAndPreserveHttpStatusAndSecretRedaction(String method, boolean found) throws Exception {
+        AiModelConfig saved = new AiModelConfig();
+        saved.setId(7);
+        saved.setModel("test-model");
+        saved.setProviderKey("custom");
+        saved.setProtocol("chat_completions");
+        saved.setApiKey("fixture-secret");
+        saved.setHeadersJson("{\"X-Test\":\"fixture-secret\"}");
+        if ("PUT".equals(method)) {
+            when(configs.update(eq(7), any())).thenReturn(found ? saved : null);
+            when(configs.capabilitiesForModel(any(AiModelConfig.class)))
+                    .thenReturn(ProviderCapabilities.conservativeDefault());
+        } else {
+            when(configs.deleteById(7)).thenReturn(found);
+        }
+
+        int expected = found ? 200 : 404;
+        var response = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiResponseStatusAdvice()).build()
+                .perform(request(HttpMethod.valueOf(method), "/platform/admin/ai-models/7")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is(expected))
+                .andExpect(jsonPath("$.code").value(expected))
+                .andExpect(jsonPath("$.msg").value(found ? "success" : "模型配置不存在，id: 7"));
+        if ("PUT".equals(method)) {
+            verify(configs).update(eq(7), any());
+            if (found) response.andExpect(jsonPath("$.data.id").value(7))
+                    .andExpect(jsonPath("$.data.apiKeyConfigured").value(true))
+                    .andExpect(jsonPath("$.data.headersConfigured").value(true))
+                    .andExpect(jsonPath("$.data.apiKey").doesNotExist())
+                    .andExpect(jsonPath("$.data.headersJson").doesNotExist());
+        } else {
+            verify(configs).deleteById(7);
+        }
+        verify(configs, never()).findById(7);
+        verifyNoInteractions(runtime);
     }
 
     private static AiModelCapability capability(String name) {

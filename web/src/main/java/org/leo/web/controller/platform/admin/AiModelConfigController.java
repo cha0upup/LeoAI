@@ -98,12 +98,11 @@ public class AiModelConfigController {
     @RequestMapping(value = "/{id}", method = RequestMethod.PUT)
     public HashMap<String, Object> update(@PathVariable("id") Integer id,
                                           @RequestBody AiModelConfig patch) {
-        AiModelConfig existing = configService.findById(id);
-        if (existing == null) {
-            return ApiResponse.notFound("模型配置不存在，id: " + id);
-        }
         try {
             AiModelConfig saved = configService.update(id, patch);
+            if (saved == null) {
+                return ApiResponse.notFound("模型配置不存在，id: " + id);
+            }
             return ApiResponse.success(toView(saved));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -112,11 +111,9 @@ public class AiModelConfigController {
 
     @RequestMapping(value = "/{id}", method = RequestMethod.DELETE)
     public HashMap<String, Object> delete(@PathVariable("id") Integer id) {
-        AiModelConfig existing = configService.findById(id);
-        if (existing == null) {
+        if (!configService.deleteById(id)) {
             return ApiResponse.notFound("模型配置不存在，id: " + id);
         }
-        configService.deleteById(id);
         return ApiResponse.success();
     }
 

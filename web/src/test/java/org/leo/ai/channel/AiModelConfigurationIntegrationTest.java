@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -103,11 +104,13 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_configs", Integer.class));
     }
 
-    @Test
-    void runtimeChangesOnlyAfterCommitAndDeletingTheDefaultClearsDelegates() {
+    @ParameterizedTest
+    @ValueSource(strings = {"", "api_key", "headers_json"})
+    void runtimeChangesOnlyAfterCommitAndDeletingTheDefaultClearsDelegates(String damagedColumn) {
         AiProvider provider = provider("primary");
         AiModelConfig first = model(provider, "first");
         AiModelConfig second = model(provider, "second");
+        jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", second.getId(), first.getId());
         Object delegate = chat.getDelegate();
         TransactionTemplate transaction = new TransactionTemplate(transactions);
         transaction.executeWithoutResult(status -> {
@@ -123,7 +126,13 @@ class AiModelConfigurationIntegrationTest {
         });
         assertNotSame(delegate, chat.getDelegate());
         assertEquals(second.getId(), configs.getActive().getId());
-        configs.deleteById(second.getId());
+        if (!damagedColumn.isEmpty()) {
+            jdbc.update("UPDATE ai_model_configs SET " + damagedColumn + "=? WHERE id=?",
+                    "invalid-fixture-ciphertext", second.getId());
+        }
+        assertTrue(configs.deleteById(second.getId()));
+        assertFalse(configs.deleteById(second.getId()));
+        assertNull(configs.findById(first.getId()).getFallbackModelId());
         assertNull(configs.getActive());
         assertNull(chat.getDelegate());
     }

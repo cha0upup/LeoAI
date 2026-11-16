@@ -417,12 +417,11 @@ public class AiModelConfigService {
         return findById(id);
     }
 
+    /** 删除按受影响行数判断，不要求解密待删除的凭据。 */
     @Transactional
     public boolean deleteById(Integer id) {
-        AiModelConfig row = findById(id);
-        if (row == null) return false;
+        if (id == null || mapper.deleteById(id) <= 0) return false;
         mapper.clearFallbackByModelId(id);
-        mapper.deleteById(id);
         notifyModelRefresh();
         return true;
     }
