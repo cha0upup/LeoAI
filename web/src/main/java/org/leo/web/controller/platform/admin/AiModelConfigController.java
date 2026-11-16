@@ -60,8 +60,11 @@ public class AiModelConfigController {
 
     @RequestMapping(method = RequestMethod.GET)
     public HashMap<String, Object> list() {
-        List<HashMap<String, Object>> view = configService.listAll().stream()
-                .map(this::toView)
+        List<AiModelConfig> models = configService.listAll();
+        Map<Integer, String> modelNames = new HashMap<>();
+        models.forEach(model -> modelNames.put(model.getId(), model.getName()));
+        List<HashMap<String, Object>> view = models.stream()
+                .map(model -> toView(model, modelNames.get(model.getFallbackModelId())))
                 .toList();
         return ApiResponse.success(view);
     }
@@ -336,6 +339,12 @@ public class AiModelConfigController {
     }
 
     private HashMap<String, Object> toView(AiModelConfig c) {
+        AiModelConfig fallback = c.getFallbackModelId() != null
+                ? configService.findById(c.getFallbackModelId()) : null;
+        return toView(c, fallback != null ? fallback.getName() : null);
+    }
+
+    private HashMap<String, Object> toView(AiModelConfig c, String fallbackModelName) {
         HashMap<String, Object> m = new LinkedHashMap<>();
         ProviderCapabilities capabilities = configService.capabilitiesForModel(c);
         m.put("id", c.getId());
@@ -350,9 +359,7 @@ public class AiModelConfigController {
         m.put("isActive", c.getIsActive());
         m.put("enabled", c.getEnabled());
         m.put("fallbackModelId", c.getFallbackModelId());
-        AiModelConfig fallback = c.getFallbackModelId() != null
-                ? configService.findById(c.getFallbackModelId()) : null;
-        m.put("fallbackModelName", fallback != null ? fallback.getName() : null);
+        m.put("fallbackModelName", fallbackModelName);
         m.put("maxOutputTokens", c.getMaxOutputTokens());
         m.put("thinkingEnabled", c.getThinkingEnabled());
         m.put("reasoningEffort", c.getReasoningEffort());

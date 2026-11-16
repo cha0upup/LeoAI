@@ -116,15 +116,34 @@ class AiModelConfigControllerTest {
     }
 
     @ParameterizedTest
+    @CsvSource(value = {"null,null", "8,Fallback", "99,null"}, nullValues = "null")
+    void listUsesItsSnapshotForFallbackNamesAndMatchesTheSingleModelView(Integer fallbackId, String fallbackName) {
+        AiModelConfig primary = model(7, "Primary");
+        AiModelConfig fallback = model(8, "Fallback");
+        primary.setFallbackModelId(fallbackId);
+        when(configs.listAll()).thenReturn(List.of(primary, fallback));
+        when(configs.capabilitiesForModel(any(AiModelConfig.class)))
+                .thenReturn(ProviderCapabilities.conservativeDefault());
+
+        var response = controller.list();
+        assertEquals(200, response.get("code"));
+        List<?> views = (List<?>) response.get("data");
+        assertEquals(List.of(7, 8), views.stream().map(view -> ((Map<?, ?>) view).get("id")).toList());
+        Map<?, ?> primaryView = (Map<?, ?>) views.get(0);
+        assertEquals(fallbackId, primaryView.get("fallbackModelId"));
+        assertEquals(fallbackName, primaryView.get("fallbackModelName"));
+        verify(configs, never()).findById(any());
+
+        when(configs.findById(7)).thenReturn(primary);
+        if (fallbackId != null) when(configs.findById(fallbackId)).thenReturn(fallbackId == 8 ? fallback : null);
+        assertEquals(primaryView, controller.get(7).get("data"));
+        verifyNoInteractions(runtime);
+    }
+
+    @ParameterizedTest
     @CsvSource({"PUT,true", "PUT,false", "DELETE,true", "DELETE,false"})
     void writesUseTheServiceOutcomeAndPreserveHttpStatusAndSecretRedaction(String method, boolean found) throws Exception {
-        AiModelConfig saved = new AiModelConfig();
-        saved.setId(7);
-        saved.setModel("test-model");
-        saved.setProviderKey("custom");
-        saved.setProtocol("chat_completions");
-        saved.setApiKey("fixture-secret");
-        saved.setHeadersJson("{\"X-Test\":\"fixture-secret\"}");
+        AiModelConfig saved = model(7, "Saved");
         if ("PUT".equals(method)) {
             when(configs.update(eq(7), any())).thenReturn(found ? saved : null);
             when(configs.capabilitiesForModel(any(AiModelConfig.class)))
@@ -153,6 +172,18 @@ class AiModelConfigControllerTest {
         }
         verify(configs, never()).findById(7);
         verifyNoInteractions(runtime);
+    }
+
+    private static AiModelConfig model(int id, String name) {
+        AiModelConfig row = new AiModelConfig();
+        row.setId(id);
+        row.setName(name);
+        row.setModel("test-model");
+        row.setProviderKey("custom");
+        row.setProtocol("chat_completions");
+        row.setApiKey("fixture-secret");
+        row.setHeadersJson("{\"X-Test\":\"fixture-secret\"}");
+        return row;
     }
 
     private static AiModelCapability capability(String name) {
