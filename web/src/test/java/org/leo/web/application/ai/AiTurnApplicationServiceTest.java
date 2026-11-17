@@ -3,6 +3,7 @@ package org.leo.web.application.ai;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
@@ -50,6 +51,22 @@ class AiTurnApplicationServiceTest {
     void cleanState() {
         PlatformAiStateStore.remove("thread-1");
         AgentNodeSessionContainer.clearAllSessions();
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "null", " null "})
+    void closesMissingCommandBeforeClaimingOrStartingExecution(String commandJson) {
+        Fixture fixture = fixture(false);
+        var turn = mock(AiTurnProtocolService.TurnSnapshot.class);
+        when(turn.id()).thenReturn("turn-1");
+        when(turn.commandJson()).thenReturn(commandJson);
+
+        assertTrue(fixture.application.execute(turn).join());
+
+        verify(fixture.protocol).failStart("turn-1", "Turn 命令载荷缺失", null);
+        verify(fixture.protocol, never()).requeue(anyString());
+        verifyNoInteractions(fixture.claims, fixture.auditLogStore, fixture.platformTurns, fixture.agentTurns);
     }
 
     @Test

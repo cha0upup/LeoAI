@@ -52,10 +52,12 @@ public class AiTurnCommandPayload {
     }
 
     public static AiTurnCommandPayload fromJson(String json) {
-        if (json == null || json.isBlank()) {
+        AiTurnCommandPayload command = json == null || json.isBlank()
+                ? null : JSON.parseObject(json, AiTurnCommandPayload.class);
+        if (command == null) {
             throw new IllegalStateException("Turn 命令载荷缺失");
         }
-        return JSON.parseObject(json, AiTurnCommandPayload.class);
+        return command;
     }
 
     public AiExecutionPolicy executionPolicy() {
