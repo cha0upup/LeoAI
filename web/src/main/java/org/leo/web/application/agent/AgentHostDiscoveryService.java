@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -157,9 +158,7 @@ public class AgentHostDiscoveryService {
                 + "|" + String.valueOf(agent.getProxyHost()) + "|" + String.valueOf(agent.getProxyPort());
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (byte value : digest) hex.append(String.format("%02x", value));
-            return hex.toString();
+            return HexFormat.of().formatHex(digest);
         } catch (Exception e) { return source; }
     }
 

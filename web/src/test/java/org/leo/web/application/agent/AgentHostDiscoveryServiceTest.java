@@ -39,6 +39,7 @@ class AgentHostDiscoveryServiceTest {
     void reusesPersistedHostsWithoutProbingOrRewritingCache() throws Exception {
         Agent agent = new Agent();
         agent.setAgentId("agent-cached");
+        agent.setConnLink("http://127.0.0.1/entry");
         DiscoverySnapshot cached = new DiscoverySnapshot(List.of("host-a", "host-b"), "2026-11-16T00:00:00Z");
         when(repository.loadHostDiscovery(any(), eq("agent-cached"), any())).thenReturn(cached);
 
@@ -46,6 +47,8 @@ class AgentHostDiscoveryServiceTest {
                 service.discover(agent, null, false));
 
         verifyNoInteractions(factory);
+        verify(repository).loadHostDiscovery(isNull(), eq("agent-cached"),
+                eq("c839ebc228c24bc980bf9ceeaea588287f205dccf8df2170f67786b655ebaf3b"));
         verify(repository, never()).saveHostDiscovery(any(), any(), any(), any());
     }
 

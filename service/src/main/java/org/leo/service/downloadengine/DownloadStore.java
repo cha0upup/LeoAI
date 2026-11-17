@@ -18,6 +18,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -135,24 +136,14 @@ public class DownloadStore {
 
     public String contentMd5() throws Exception {
         MessageDigest digest = MessageDigest.getInstance("MD5");
-        FileInputStream input = new FileInputStream(tempFile);
-        try {
+        try (FileInputStream input = new FileInputStream(tempFile)) {
             byte[] buffer = new byte[64 * 1024];
             int read;
-            while ((read = input.read(buffer)) >= 0) {
-                if (read > 0) {
-                    digest.update(buffer, 0, read);
-                }
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
             }
-        } finally {
-            input.close();
         }
-        byte[] value = digest.digest();
-        StringBuilder hex = new StringBuilder(value.length * 2);
-        for (byte b : value) {
-            hex.append(String.format("%02x", b & 0xff));
-        }
-        return hex.toString();
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     public void commitContent(File finalFile) throws Exception {
