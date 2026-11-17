@@ -131,10 +131,14 @@ class AiTurnTraceTest {
     @Test
     void telemetryIncludesCompressionRuntimeEvents() {
         AiTurnTelemetryRegistry registry = new AiTurnTelemetryRegistry();
+        registry.recordRuntimeEvent("model.retry");
         registry.recordRuntimeEvent("compression.checkpoint_restored");
         registry.recordRuntimeEvent("compression.checkpoint_restored");
+        registry.recordRuntimeEvent("compression.completed");
 
         Map<?, ?> events = (Map<?, ?>) registry.snapshot().get("runtimeEvents");
-        assertEquals(2L, events.get("compression.checkpoint_restored"));
+        assertEquals(Map.of("compression.checkpoint_restored", 2L, "compression.completed", 1L, "model.retry", 1L), events);
+        assertEquals(List.of("compression.checkpoint_restored", "compression.completed", "model.retry"),
+                List.copyOf(events.keySet()));
     }
 }

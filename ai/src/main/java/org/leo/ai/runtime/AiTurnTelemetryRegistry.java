@@ -6,6 +6,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.concurrent.atomic.LongAdder;
@@ -74,10 +75,8 @@ public class AiTurnTelemetryRegistry {
 
     private Map<String, Long> counterSnapshot(
             ConcurrentHashMap<String, LongAdder> counters) {
-        Map<String, Long> result = new LinkedHashMap<>();
-        counters.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> result.put(entry.getKey(), entry.getValue().sum()));
+        Map<String, Long> result = new TreeMap<>();
+        counters.forEach((key, counter) -> result.put(key, counter.sum()));
         return result;
     }
 }
