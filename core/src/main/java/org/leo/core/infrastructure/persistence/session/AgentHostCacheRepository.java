@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /** Persistent agent-level cache owned by HostId and discovery concerns. */
 @Repository
@@ -103,16 +104,12 @@ public class AgentHostCacheRepository {
 
     public void saveHostDiscovery(String userId, String agentId, String fingerprint, List<String> hostIds) {
         if (agentId == null || agentId.isBlank()) return;
-        LinkedHashSet<String> normalized = new LinkedHashSet<>();
-        if (hostIds != null) for (String id : hostIds) {
-            String hostId = text(id);
-            if (hostId != null) normalized.add(hostId);
-        }
+        List<String> normalized = normalizeHostIds(hostIds);
         if (normalized.isEmpty()) return;
         try {
             File file = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir(userId, agentId), HOST_DISCOVERY_JSON);
             Map<String, Object> data = new LinkedHashMap<>();
-            data.put("hostIds", List.copyOf(normalized));
+            data.put("hostIds", normalized);
             data.put("discoveredAt", Instant.now().toString());
             data.put("fingerprint", fingerprint == null ? "" : fingerprint);
             fileStore.writeJson(file, data);
@@ -126,16 +123,16 @@ public class AgentHostCacheRepository {
             String expected = fingerprint == null ? "" : fingerprint;
             if (data == null || !expected.equals(String.valueOf(data.getOrDefault("fingerprint", "")))) return null;
             if (!(data.get("hostIds") instanceof Collection<?> raw)) return null;
-            LinkedHashSet<String> hosts = new LinkedHashSet<>();
-            for (Object value : raw) {
-                String hostId = text(value);
-                if (hostId != null) hosts.add(hostId);
-            }
             Object discoveredAt = data.get("discoveredAt");
-            return new DiscoverySnapshot(List.copyOf(hosts), discoveredAt == null ? null : String.valueOf(discoveredAt));
+            return new DiscoverySnapshot(normalizeHostIds(raw), discoveredAt == null ? null : String.valueOf(discoveredAt));
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private List<String> normalizeHostIds(Collection<?> values) {
+        return values == null ? List.of() : values.stream()
+                .map(this::text).filter(Objects::nonNull).distinct().toList();
     }
 
     private AgentNodeSession requireSession(String sessionId) {

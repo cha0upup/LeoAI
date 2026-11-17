@@ -95,6 +95,13 @@ class AgentRepositoryTest {
         assertEquals(List.of("host-a", "host-b"), discovery.hostIds());
         assertNotNull(discovery.discoveredAt());
         assertNull(repository.loadHostDiscovery("user-a", "agent-a", "fingerprint-2"));
+        File discoveryFile = new File(AgentNodeSessionWorkDirUtil.getAgentWorkDir("user-a", "agent-a"),
+                "host-discovery.json");
+        assertEquals(discovery.hostIds(), files.readJsonMap(discoveryFile).get("hostIds"));
+        files.writeJson(discoveryFile, Map.of("fingerprint", "fingerprint-1", "hostIds",
+                java.util.Arrays.asList(" host-b ", "host-b", null, " ", 7, "7", "host-a")));
+        assertEquals(new AgentHostCacheRepository.DiscoverySnapshot(List.of("host-b", "7", "host-a"), null),
+                repository.loadHostDiscovery("user-a", "agent-a", "fingerprint-1"));
     }
 
     @Test
