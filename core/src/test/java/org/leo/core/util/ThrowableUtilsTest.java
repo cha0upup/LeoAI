@@ -8,6 +8,9 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 class ThrowableUtilsTest {
 
@@ -57,13 +60,14 @@ class ThrowableUtilsTest {
     @Test
     void unwrapsOnlyAsynchronousWrappersAndKeepsDomainCausesIntact() {
         Throwable nested = new IllegalArgumentException("nested");
-        Throwable domain = new IllegalStateException("domain", nested);
+        Throwable domain = spy(new IllegalStateException("domain", nested));
         Throwable wrapped = new CompletionException(new ExecutionException(domain));
         Throwable emptyWrapper = new CompletionException("no cause", null);
 
         assertSame(domain, ThrowableUtils.unwrapCompletion(wrapped));
         assertSame(domain, ThrowableUtils.unwrapCompletion(domain));
         assertSame(emptyWrapper, ThrowableUtils.unwrapCompletion(emptyWrapper));
+        verify(domain, never()).getCause();
     }
 
     @Test

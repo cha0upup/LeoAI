@@ -32,9 +32,10 @@ public final class ThrowableUtils {
     /** Removes Java asynchronous wrappers while preserving the first domain exception. */
     public static Throwable unwrapCompletion(Throwable error) {
         Throwable result = error;
-        for (Throwable cause : causes(error)) {
-            result = cause;
-            if (!(cause instanceof CompletionException || cause instanceof ExecutionException)) break;
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable current = error; current != null && visited.add(current); current = current.getCause()) {
+            result = current;
+            if (!(current instanceof CompletionException || current instanceof ExecutionException)) break;
         }
         return result;
     }
