@@ -91,6 +91,11 @@ class UserFileControllerTest {
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 6L, "lastModified", modified)), items);
             reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class));
+            reads.when(() -> Files.readAttributes(file, BasicFileAttributes.class))
+                    .thenThrow(new java.io.IOException("fixture attributes unavailable"));
+            var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
+            assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
+                    "isDirectory", false, "size", 0L, "lastModified", 0L)), fallback.get("fileList"));
         }
     }
 
@@ -181,6 +186,13 @@ class UserFileControllerTest {
         Files.createSymbolicLink(artifacts.root(userId).resolve("link.txt"), actual);
         assertThrows(IllegalArgumentException.class, () -> artifacts.resolve(userId, "link.txt", false));
         assertEquals(1, artifacts.list(userId, "", "", "", 1, 50).get("count"));
+        var directory = (Map<?, ?>) controller.list(request, "", false, 1, 50, "", "").get("data");
+        assertEquals(1, directory.get("count"));
+        assertEquals(Map.of("code", 404, "msg", "目录不存在"),
+                controller.list(request, "missing", false, 1, 50, "", ""));
+        assertEquals(Map.of("code", 400, "msg", "path不是目录"),
+                controller.list(request, "original.txt", false, 1, 50, "", ""));
+        assertEquals(401, controller.list(new MockHttpServletRequest(), "", false, 1, 50, "", "").get("code"));
         assertEquals(401, controller.archive(new MockHttpServletRequest(), null).get("code"));
     }
 

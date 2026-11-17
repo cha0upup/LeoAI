@@ -23,12 +23,9 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.stream.Stream;
 
 @RestController
@@ -73,27 +70,8 @@ public class UserFileController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             if (recursive) return ApiResponse.success(artifacts.list(user.getUserId(), relativePath, search, source, page, pageSize));
-            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
-            if (!Files.exists(target)) {
-                return ApiResponse.notFound("目录不存在");
-            }
-            if (!Files.isDirectory(target)) {
-                return ApiResponse.badRequest("path不是目录");
-            }
-
-            Path base = artifacts.root(user.getUserId());
-            List<HashMap<String, Object>> fileList = new ArrayList<>();
-            try (var stream = Files.list(target)) {
-                stream.filter(path -> !path.getFileName().toString().startsWith(".")
-                                && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
-                        .sorted(Comparator.comparing(p -> p.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
-                        .forEach(path -> fileList.add(toItem(base, path)));
-            }
-            HashMap<String, Object> data = new HashMap<>();
-            data.put("path", toUserRelativePath(base, target));
-            data.put("count", fileList.size());
-            data.put("fileList", fileList);
-            return ApiResponse.success(data);
+            var directory = artifacts.listDirectory(user.getUserId(), relativePath);
+            return directory == null ? ApiResponse.notFound("目录不存在") : ApiResponse.success(directory);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -352,24 +330,6 @@ public class UserFileController {
             throw new IllegalArgumentException("文件名包含非法字符");
         }
         return safe.trim();
-    }
-
-    private HashMap<String, Object> toItem(Path base, Path path) {
-        HashMap<String, Object> item = new HashMap<>();
-        item.put("name", path.getFileName().toString());
-        item.put("path", toUserRelativePath(base, path));
-        item.put("parentPath", toUserRelativePath(base, path.getParent()));
-        try {
-            BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
-            item.put("isDirectory", attrs.isDirectory());
-            item.put("size", attrs.isDirectory() ? 0L : attrs.size());
-            item.put("lastModified", attrs.lastModifiedTime().toMillis());
-        } catch (Exception e) {
-            item.put("isDirectory", Files.isDirectory(path));
-            item.put("size", 0L);
-            item.put("lastModified", 0L);
-        }
-        return item;
     }
 
     private String toUserRelativePath(String userId, Path path) {

@@ -84,15 +84,22 @@ public class UserArtifactService {
         return CATEGORIES.contains(first) ? first : "imports";
     }
 
-    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs) {
+    private Map<String, Object> fileInfo(Path base, Path path, BasicFileAttributes attrs) {
         String relative = relative(base, path);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("name", path.getFileName().toString());
         result.put("path", relative);
         result.put("parentPath", relative(base, path.getParent()));
-        result.put("isDirectory", attrs.isDirectory());
-        result.put("size", attrs.isDirectory() ? 0L : attrs.size());
-        result.put("lastModified", attrs.lastModifiedTime().toMillis());
+        boolean directory = attrs != null ? attrs.isDirectory() : Files.isDirectory(path);
+        result.put("isDirectory", directory);
+        result.put("size", attrs == null || directory ? 0L : attrs.size());
+        result.put("lastModified", attrs == null ? 0L : attrs.lastModifiedTime().toMillis());
+        return result;
+    }
+
+    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs) {
+        Map<String, Object> result = fileInfo(base, path, attrs);
+        String relative = (String) result.get("path");
         result.put("category", category(relative));
         if (attrs.isRegularFile()) result.put("metadata", metadata(base, relative));
         return result;
@@ -120,6 +127,31 @@ public class UserArtifactService {
                         .map(entry -> item(base, entry.getKey(), entry.getValue())).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
+    }
+
+    /** Returns a visible directory listing, or null when the requested directory is missing. */
+    public Map<String, Object> listDirectory(String userId, String relativePath) throws IOException {
+        Path target = resolve(userId, relativePath, true);
+        if (!Files.exists(target)) return null;
+        if (!Files.isDirectory(target)) throw new IllegalArgumentException("path不是目录");
+        Path base = root(userId);
+        List<Map<String, Object>> files = new ArrayList<>();
+        try (var stream = Files.list(target)) {
+            stream.filter(path -> !path.getFileName().toString().startsWith(".")
+                            && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
+                    .forEach(path -> {
+                        BasicFileAttributes attrs;
+                        try { attrs = Files.readAttributes(path, BasicFileAttributes.class); }
+                        catch (Exception ignored) { attrs = null; }
+                        files.add(fileInfo(base, path, attrs));
+                    });
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", relative(base, target));
+        result.put("count", files.size());
+        result.put("fileList", files);
+        return result;
     }
 
     public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize) throws IOException {
