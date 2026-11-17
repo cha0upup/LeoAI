@@ -31,10 +31,12 @@ final class AiTurnTimelineEventAdapter {
     void accept(AiTurnEvent event) {
         switch (event.type()) {
             case THINKING_DELTA -> {
+                String text = (String) event.data();
+                if (text == null || text.isEmpty()) return;
                 if (!recorder.hasPendingThinking()) {
                     thinkingStarted.run();
                 }
-                recorder.appendThinking((String) event.data());
+                recorder.appendThinking(text);
             }
             case TEXT_DELTA -> {
                 recorder.appendVisibleDelta((String) event.data());

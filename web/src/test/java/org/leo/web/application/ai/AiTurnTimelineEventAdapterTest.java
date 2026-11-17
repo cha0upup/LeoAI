@@ -28,8 +28,12 @@ class AiTurnTimelineEventAdapterTest {
         LinkedHashMap<String, Object> tool = new LinkedHashMap<>();
         tool.put("kind", "tool");
 
+        adapter.accept(AiTurnEvent.thinkingDelta(null));
+        adapter.accept(AiTurnEvent.thinkingDelta(""));
         adapter.accept(AiTurnEvent.thinkingDelta("分析"));
         adapter.accept(AiTurnEvent.textDelta("答案"));
+        adapter.accept(AiTurnEvent.thinkingDelta(null));
+        adapter.accept(AiTurnEvent.thinkingDelta(""));
         adapter.accept(AiTurnEvent.toolStarted(tool));
         adapter.accept(AiTurnEvent.toolCompleted(tool));
         recorder.onBoundary();
