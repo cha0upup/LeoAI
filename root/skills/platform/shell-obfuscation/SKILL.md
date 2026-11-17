@@ -15,7 +15,7 @@ Shell 是独立生成的制品，不从平台已有 Agent 自动继承配置。�
 2. 用户本次选择的通信参数：传输协议、请求伪装器、响应伪装器。
 3. 兼容与结构参数：JSP/JSPX、Java/Servlet 版本、容器、注入器、Packer、输出模式和混淆策略。
 4. Java WebShell 的 Core 字节码只保存在服务端 `CoreArtifactStore`，AI 仅设计不含 Payload 的 Wrapper 模板。
-5. 结果交付：生成器把完整结果写入 `ShellResultStore`，工具返回 `resultId`、元数据和取回按钮。
+5. 结果交付：生成器把完整结果写入 `ShellResultStore`，工具返回 `resultId`、元数据和取回按钮。缓存最多保留 256 条、最长 30 分钟，满容量时淘汰最早写入的结果，需及时取回或归档。
 
 不要手写或转述完整生成代码，不要虚构工具未返回的结果。
 
