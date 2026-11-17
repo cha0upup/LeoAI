@@ -360,7 +360,7 @@ public class DownloadTask {
             if (cancelled.get()) return;
             try {
                 byte[] data = readChunk(offset, size);
-                store.writeChunk(offset, data, data.length);
+                store.writeChunk(offset, data);
                 markChunkDone(chunkIndex, data.length);
                 maybePersist();
                 return;

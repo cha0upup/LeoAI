@@ -115,11 +115,13 @@ class DownloadTaskTest {
         workers.remove(0).run();
         assertEquals(TransferTaskState.PAUSED, first.getState());
         assertEquals(1, first.snapshot().get("doneChunks"));
+        byte[] partial = Files.readAllBytes(store.getTempFile().toPath());
 
         DownloadTask restored = DownloadTask.loadFromDisk(node, "owner", "session", "task",
                 new DownloadStore("owner", "task"), executor);
         assertEquals(TransferTaskState.PAUSED, restored.getState());
         assertEquals(4L, restored.snapshot().get("downloadedBytes"));
+        assertArrayEquals(partial, Files.readAllBytes(store.getTempFile().toPath()));
         restored.ensureStarted();
         workers.remove(0).run();
         assertEquals(TransferTaskState.COMPLETED, restored.getState());

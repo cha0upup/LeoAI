@@ -7,7 +7,6 @@ import org.leo.service.transfer.TransferTaskState;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.FileVisitResult;
@@ -110,13 +109,7 @@ public class DownloadStore {
     }
 
     public void prepareContent(long expectedLength) throws Exception {
-        File parent = tempFile.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-        if (!tempFile.exists()) {
-            tempFile.createNewFile();
-        }
+        ensureTaskDirectory();
         try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw")) {
             if (raf.length() != expectedLength) {
                 raf.setLength(expectedLength);
@@ -124,12 +117,11 @@ public class DownloadStore {
         }
     }
 
-    public void writeChunk(long offset, byte[] data, int len) throws Exception {
+    public void writeChunk(long offset, byte[] data) throws Exception {
         synchronized (writeLock) {
-            try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw");
-                 FileChannel ch = raf.getChannel()) {
-                ch.position(offset);
-                ch.write(java.nio.ByteBuffer.wrap(data, 0, len));
+            try (RandomAccessFile raf = new RandomAccessFile(tempFile, "rw")) {
+                raf.seek(offset);
+                raf.write(data);
             }
         }
     }
