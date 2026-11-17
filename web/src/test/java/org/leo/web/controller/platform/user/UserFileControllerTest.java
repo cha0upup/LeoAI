@@ -3,6 +3,7 @@ package org.leo.web.controller.platform.user;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -19,6 +20,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -92,13 +94,15 @@ class UserFileControllerTest {
         }
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"en-US", "tr-TR"})
+    @ResourceLock("java.util.Locale.default")
     @SuppressWarnings("unchecked")
-    void countsEveryCategoryInOneVisibleWorkspaceWithoutRuntimeOrInternalFiles() throws Exception {
+    void countsAndListsVisibleWorkspaceWithoutRuntimeOrInternalFiles(String languageTag) throws Exception {
         var request = authenticatedRequest();
         controller.createFile(request, "script-builds/a/b/c/d/e/f/g/h/build.txt", "build", false);
         controller.createFile(request, "ai-reports/report.md", "report", false);
-        controller.createFile(request, "legacy/note.txt", "note", false);
+        controller.createFile(request, "Imports/note.txt", "note", false);
         Path runtime = artifacts.root(userId).resolve("ai-tasks/job/.internal/versions/cache.txt");
         Files.createDirectories(runtime.getParent());
         Files.writeString(runtime, "runtime cache");
@@ -108,6 +112,16 @@ class UserFileControllerTest {
         var categories = (List<Map<String, Object>>) overview.get("categories");
         assertEquals(List.of(1L, 1L, 0L, 1L), categories.stream().map(row -> row.get("files")).toList());
         assertEquals(3, ((List<?>) overview.get("recentFiles")).size());
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            var directory = (Map<String, Object>) controller.list(request, "", false, 1, 50, "", "").get("data");
+            var items = (List<Map<String, Object>>) directory.get("fileList");
+            assertEquals(List.of("ai-reports", "Imports", "script-builds"),
+                    items.stream().map(item -> item.get("name")).toList());
+        } finally {
+            Locale.setDefault(previous);
+        }
         var listing = spy(artifacts);
         var page = listing.list(userId, "", "", "", 1, 2);
         verify(listing).root(userId);

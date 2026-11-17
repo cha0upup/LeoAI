@@ -86,7 +86,7 @@ public class UserFileController {
             try (var stream = Files.list(target)) {
                 stream.filter(path -> !path.getFileName().toString().startsWith(".")
                                 && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
-                        .sorted(Comparator.comparing(p -> p.getFileName().toString().toLowerCase()))
+                        .sorted(Comparator.comparing(p -> p.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
                         .forEach(path -> fileList.add(toItem(base, path)));
             }
             HashMap<String, Object> data = new HashMap<>();
