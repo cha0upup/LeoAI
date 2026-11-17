@@ -41,14 +41,5 @@ public class MySqlDialect extends AbstractSqlDialect {
                 "CASE WHEN c.COLUMN_KEY = 'PRI' THEN 1 ELSE 0 END AS primary_key FROM information_schema.COLUMNS c " +
                 "WHERE c.TABLE_SCHEMA = " + schemaExpr + " AND c.TABLE_NAME = " + formatLiteral(table) + " ORDER BY c.ORDINAL_POSITION";
     }
-    protected String buildQualifiedTable(SqlObjectRef tableRef) {
-        String database = tableRef == null ? null : tableRef.namespace();
-        String table = tableRef == null ? null : tableRef.name();
-        if (isBlank(database)) {
-            return escapeIdentifier(table);
-        }
-        return escapeIdentifier(database) + "." + escapeIdentifier(table);
-    }
-    protected String buildPaginationSql(String baseSql, int offset, int pageSize) { return baseSql + " LIMIT " + pageSize + " OFFSET " + offset; }
     protected String escapeIdentifier(String identifier) { return "`" + identifier.replace("`", "``") + "`"; }
 }

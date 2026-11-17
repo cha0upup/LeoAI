@@ -61,6 +61,4 @@ public class PostgreSqlDialect extends AbstractSqlDialect {
         String schema = isBlank(database) ? "public" : database;
         return escapeIdentifier(schema) + "." + escapeIdentifier(table);
     }
-    protected String buildPaginationSql(String baseSql, int offset, int pageSize) { return baseSql + " LIMIT " + pageSize + " OFFSET " + offset; }
-    protected String escapeIdentifier(String identifier) { return "\"" + identifier.replace("\"", "\"\"") + "\""; }
 }

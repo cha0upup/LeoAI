@@ -37,17 +37,8 @@ public final class GenericSqlDialect extends AbstractSqlDialect {
     public String buildTablesSql(SqlObjectRef namespace) { throw unsupported("获取数据表列表"); }
     public String buildTableColumnsSql(SqlObjectRef table) { throw unsupported("获取字段列表"); }
     public String buildCreateDatabaseSql(String database) { throw unsupported("创建数据库"); }
-    protected String buildQualifiedTable(SqlObjectRef table) {
-        String namespace = table == null ? null : table.namespace();
-        String name = table == null ? null : table.name();
-        if (isBlank(namespace)) return escapeIdentifier(name);
-        return escapeIdentifier(namespace) + "." + escapeIdentifier(name);
-    }
     protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
         return baseSql + " OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
-    }
-    protected String escapeIdentifier(String identifier) {
-        return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
     private IllegalArgumentException unsupported(String operation) {
         return new IllegalArgumentException("Generic SQL 方言不支持" + operation + "，请直接执行厂商 SQL");

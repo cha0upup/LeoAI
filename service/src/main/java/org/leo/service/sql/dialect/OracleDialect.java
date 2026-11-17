@@ -53,14 +53,7 @@ public class OracleDialect extends AbstractSqlDialect {
                 "AND acc.column_name = c.column_name) THEN 1 ELSE 0 END AS primary_key FROM all_tab_columns c " +
                 "WHERE c.owner = " + ownerExpr + " AND c.table_name = " + formatLiteral(table) + " ORDER BY c.column_id";
     }
-    protected String buildQualifiedTable(SqlObjectRef tableRef) {
-        String database = tableRef == null ? null : tableRef.namespace();
-        String table = tableRef == null ? null : tableRef.name();
-        if (isBlank(database)) return escapeIdentifier(table);
-        return escapeIdentifier(database) + "." + escapeIdentifier(table);
-    }
     protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
         return "SELECT * FROM (SELECT inner_query.*, ROWNUM rn FROM (" + baseSql + ") inner_query WHERE ROWNUM <= " + (offset + pageSize) + ") WHERE rn > " + offset;
     }
-    protected String escapeIdentifier(String identifier) { return "\"" + identifier.replace("\"", "\"\"") + "\""; }
 }

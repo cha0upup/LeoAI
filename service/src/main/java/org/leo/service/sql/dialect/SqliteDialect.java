@@ -41,6 +41,5 @@ public class SqliteDialect extends AbstractSqlDialect {
         String database = tableRef == null || isBlank(tableRef.catalog()) ? "main" : tableRef.catalog();
         return escapeIdentifier(database) + "." + escapeIdentifier(tableRef.name());
     }
-    protected String buildPaginationSql(String baseSql, int offset, int pageSize) { return baseSql + " LIMIT " + pageSize + " OFFSET " + offset; }
     protected String escapeIdentifier(String identifier) { return "[" + identifier.replace("]", "]]") + "]"; }
 }

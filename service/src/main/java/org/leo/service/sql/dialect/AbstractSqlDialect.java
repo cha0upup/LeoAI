@@ -59,11 +59,20 @@ public abstract class AbstractSqlDialect {
         return Map.of("java", true, "php", true);
     }
 
-    protected abstract String buildQualifiedTable(SqlObjectRef table);
+    protected String buildQualifiedTable(SqlObjectRef table) {
+        String namespace = table == null ? null : table.namespace();
+        String name = table == null ? null : table.name();
+        if (isBlank(namespace)) return escapeIdentifier(name);
+        return escapeIdentifier(namespace) + "." + escapeIdentifier(name);
+    }
 
-    protected abstract String buildPaginationSql(String baseSql, int offset, int pageSize);
+    protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
+        return baseSql + " LIMIT " + pageSize + " OFFSET " + offset;
+    }
 
-    protected abstract String escapeIdentifier(String identifier);
+    protected String escapeIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
 
     public SqlCommand buildCountCommand(SqlObjectRef table, List<Map<String, Object>> filters) {
         BoundClause where = buildBoundWhereClause(filters);
