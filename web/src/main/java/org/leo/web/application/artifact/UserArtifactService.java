@@ -261,8 +261,32 @@ public class UserArtifactService {
         record(root(userId), target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
     }
 
-    public void removeMetadata(String userId, Path target) throws IOException {
+    /** Deletes an artifact and its metadata; missing paths return null. */
+    public Map<String, Object> delete(String userId, String relativePath, boolean recursive) throws IOException {
+        Path target = resolve(userId, relativePath, true);
         Path base = root(userId);
+        if (target.equals(base)) throw new IllegalArgumentException("请选择具体成果");
+        if (!Files.exists(target)) return null;
+        if (Files.isDirectory(target)) {
+            if (!recursive) throw new IllegalArgumentException("目录删除需要设置recursive=true");
+            try (var walk = Files.walk(target)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                    try { deletePath(base, path); }
+                    catch (Exception error) { throw new RuntimeException(error); }
+                });
+            }
+        } else {
+            deletePath(base, target);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", relative(base, target));
+        result.put("deleted", true);
+        result.put("recursive", recursive);
+        return result;
+    }
+
+    private void deletePath(Path base, Path target) throws IOException {
+        Files.deleteIfExists(target);
         Files.deleteIfExists(metadataPath(base, relative(base, target)));
     }
 
@@ -301,8 +325,7 @@ public class UserArtifactService {
             record(base, target, source);
             return item(base, target, Files.readAttributes(target, BasicFileAttributes.class));
         } catch (Exception error) {
-            Files.deleteIfExists(target);
-            removeMetadata(userId, target);
+            deletePath(base, target);
             throw error;
         }
     }

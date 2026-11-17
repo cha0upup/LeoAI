@@ -23,9 +23,7 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/platform/user/file")
@@ -264,28 +262,8 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
-            if (target.equals(artifacts.root(user.getUserId()))) return ApiResponse.badRequest("请选择具体成果");
-            if (!Files.exists(target)) {
-                return ApiResponse.notFound("文件或目录不存在");
-            }
-            boolean recursiveDelete = Boolean.TRUE.equals(recursive);
-            if (Files.isDirectory(target) && !recursiveDelete) {
-                return ApiResponse.badRequest("目录删除需要设置recursive=true");
-            }
-
-            if (Files.isDirectory(target)) {
-                deleteRecursively(user.getUserId(), target);
-            } else {
-                Files.deleteIfExists(target);
-                artifacts.removeMetadata(user.getUserId(), target);
-            }
-
-            HashMap<String, Object> result = new HashMap<>();
-            result.put("path", toUserRelativePath(user.getUserId(), target));
-            result.put("deleted", true);
-            result.put("recursive", recursiveDelete);
-            return ApiResponse.success("删除成功", result);
+            var deleted = artifacts.delete(user.getUserId(), relativePath, Boolean.TRUE.equals(recursive));
+            return deleted == null ? ApiResponse.notFound("文件或目录不存在") : ApiResponse.success("删除成功", deleted);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -314,19 +292,6 @@ public class UserFileController {
             return "";
         }
         return base.relativize(p).toString().replace(File.separatorChar, '/');
-    }
-
-    private void deleteRecursively(String userId, Path rootPath) throws Exception {
-        try (Stream<Path> walk = Files.walk(rootPath)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                    artifacts.removeMetadata(userId, path);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            });
-        }
     }
 
 }

@@ -140,9 +140,10 @@ class UserFileControllerTest {
         assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50).get("count"));
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     @SuppressWarnings("unchecked")
-    void persistsProvenanceAndFiltersAcrossDirectoriesWithoutSharingUserData() throws Exception {
+    void persistsProvenanceAndCleansMetadataOnDeletion(boolean recursive) throws Exception {
         var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "# Report", null,
                 Map.of("title", "Database review", "sourceModule", "node-ai", "sourceId", "thread-a", "hostName", "db-host")));
         var reopened = new UserArtifactService(new ObjectMapper(), systemConfigService);
@@ -158,8 +159,18 @@ class UserFileControllerTest {
         controller.createFile(authenticatedRequest(), String.valueOf(saved.get("path")), "manual revision", true);
         assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50).get("count"));
         assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50).get("count"));
-        assertEquals(200, controller.delete(authenticatedRequest(), String.valueOf(saved.get("path")), false).get("code"));
+        if (recursive) {
+            controller.createFile(authenticatedRequest(), "ai-reports/nested/extra.txt", "extra", false);
+            assertEquals(400, controller.delete(authenticatedRequest(), "ai-reports", false).get("code"));
+        }
+        String target = recursive ? "ai-reports" : String.valueOf(saved.get("path"));
+        assertEquals(Map.of("code", 200, "msg", "删除成功",
+                        "data", Map.of("path", target, "deleted", true, "recursive", recursive)),
+                controller.delete(authenticatedRequest(), target, recursive));
+        assertTrue(Files.notExists(artifacts.root(userId).resolve(target)));
         try (var files = Files.list(artifacts.root(userId).resolve(".artifacts"))) { assertEquals(0, files.count()); }
+        assertEquals(Map.of("code", 404, "msg", "文件或目录不存在"),
+                controller.delete(authenticatedRequest(), target, recursive));
     }
 
     @Test
@@ -183,6 +194,7 @@ class UserFileControllerTest {
         assertEquals(400, controller.createFile(request, "ai-tasks/job/files/a.txt", "changed", true).get("code"));
         assertEquals(400, controller.createDir(request, ".artifacts").get("code"));
         assertEquals(400, controller.delete(request, "", true).get("code"));
+        assertEquals(401, controller.delete(new MockHttpServletRequest(), "original.txt", false).get("code"));
         assertEquals(400, controller.list(request, "ai-tasks", false, 1, 50, "", "").get("code"));
         Path actual = artifacts.root(userId).resolve("original.txt");
         Files.writeString(actual, "content");
