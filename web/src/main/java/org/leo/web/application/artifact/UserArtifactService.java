@@ -3,8 +3,10 @@ package org.leo.web.application.artifact;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -257,8 +259,51 @@ public class UserArtifactService {
         } finally { Files.deleteIfExists(temporary); }
     }
 
-    public void recordManual(String userId, Path target) throws IOException {
-        record(root(userId), target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
+    public Map<String, Object> upload(String userId, String relativeDir, String filename,
+                                      boolean overwrite, InputStreamSource content) throws IOException {
+        Path directory = resolve(userId, relativeDir, true);
+        Files.createDirectories(directory);
+        Path base = root(userId);
+        Path target = resolve(userId, relative(base, directory.resolve(filename)), true);
+        return writeFile(base, target, overwrite, content);
+    }
+
+    public Map<String, Object> createFile(String userId, String relativePath,
+                                          String content, boolean overwrite) throws IOException {
+        Path target = resolve(userId, relativePath, true);
+        Path parent = target.getParent();
+        if (parent != null) Files.createDirectories(parent);
+        return writeFile(root(userId), target, overwrite, () -> {
+            byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
+            if (data.length > maxUploadBytes()) throw new IllegalArgumentException("成果内容超过归档上限");
+            return new ByteArrayInputStream(data);
+        });
+    }
+
+    /** Checks conflicts before opening the source or truncating the destination. */
+    private Map<String, Object> writeFile(Path base, Path target, boolean overwrite,
+                                           InputStreamSource content) throws IOException {
+        if (Files.exists(target) && !overwrite) throw new FileAlreadyExistsException(target.toString());
+        StandardOpenOption[] options = overwrite
+                ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING}
+                : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW};
+        try (InputStream input = content.getInputStream(); var output = Files.newOutputStream(target, options)) {
+            input.transferTo(output);
+        }
+        record(base, target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", relative(base, target));
+        result.put("size", Files.size(target));
+        return result;
+    }
+
+    public Map<String, Object> createDirectory(String userId, String relativePath) throws IOException {
+        Path target = resolve(userId, relativePath, true);
+        if (Files.exists(target) && !Files.isDirectory(target)) throw new FileAlreadyExistsException(target.toString());
+        Files.createDirectories(target);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", relative(root(userId), target));
+        return result;
     }
 
     /** Deletes an artifact and its metadata; missing paths return null. */

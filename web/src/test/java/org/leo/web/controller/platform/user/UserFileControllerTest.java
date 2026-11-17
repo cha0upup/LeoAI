@@ -13,6 +13,7 @@ import org.leo.service.config.SystemConfigService;
 import org.leo.web.application.artifact.UserArtifactService;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Files;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -73,19 +75,32 @@ class UserFileControllerTest {
         }
     }
 
-    @Test
-    void requiresExplicitOverwriteAndListsTheReplacementMetadata() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void requiresExplicitOverwriteAndListsTheReplacementMetadata(boolean upload) throws Exception {
         MockHttpServletRequest request = authenticatedRequest();
+        BiFunction<String, Boolean, Map<String, Object>> write = (content, overwrite) -> upload
+                ? controller.upload(request, new MockMultipartFile("file", "report.md", "text/plain",
+                        content.getBytes(java.nio.charset.StandardCharsets.UTF_8)), "notes", null, overwrite)
+                : controller.createFile(request, "notes/report.md", content, overwrite);
 
-        var created = controller.createFile(request, "notes/report.md", "first", false);
-        var conflict = controller.createFile(request, "notes/report.md", "second", false);
-        var overwritten = controller.createFile(request, "notes/report.md", "second", true);
+        var created = write.apply("first", false);
+        var conflict = write.apply("second", false);
+        var overwritten = write.apply("second", true);
 
         assertEquals(200, created.get("code"));
         assertEquals(409, conflict.get("code"));
         assertEquals(200, overwritten.get("code"));
+        assertEquals(Map.of("path", "notes/report.md", "size", 6L), overwritten.get("data"));
+        assertEquals(409, controller.createDir(request, "notes/report.md").get("code"));
+        assertEquals(Map.of("path", "notes"), controller.createDir(request, "notes").get("data"));
         Path file = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
                 .toPath().toAbsolutePath().normalize().resolve("notes/report.md");
+        assertEquals("second", Files.readString(file));
+        when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
+        String oversized = "x".repeat(1024 * 1024 + 1);
+        assertEquals(upload ? 400 : 409, write.apply(oversized, false).get("code"));
+        assertEquals(400, write.apply(oversized, true).get("code"));
         assertEquals("second", Files.readString(file));
         long modified = Files.getLastModifiedTime(file).toMillis();
         try (var reads = mockStatic(Files.class, CALLS_REAL_METHODS)) {

@@ -16,13 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 
 @RestController
@@ -110,29 +105,8 @@ public class UserFileController {
                 return ApiResponse.badRequest("文件名不能为空");
             }
 
-            Path dir = artifacts.resolve(user.getUserId(), relativeDir, true);
-            Files.createDirectories(dir);
-            Path target = artifacts.resolve(user.getUserId(), toUserRelativePath(user.getUserId(), dir.resolve(uploadName)), true);
-            if (!target.startsWith(artifacts.root(user.getUserId()))) {
-                return ApiResponse.forbidden("非法路径");
-            }
-            boolean overwriteExisting = Boolean.TRUE.equals(overwrite);
-            if (Files.exists(target) && !overwriteExisting) {
-                return ApiResponse.conflict("同名文件已存在，请确认后覆盖上传");
-            }
-            StandardOpenOption[] writeOptions = overwriteExisting
-                    ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING}
-                    : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW};
-            try (InputStream input = file.getInputStream();
-                 OutputStream output = Files.newOutputStream(target, writeOptions)) {
-                input.transferTo(output);
-            }
-            artifacts.recordManual(user.getUserId(), target);
-
-            HashMap<String, Object> data = new HashMap<>();
-            data.put("path", toUserRelativePath(user.getUserId(), target));
-            data.put("size", Files.size(target));
-            return ApiResponse.success("上传成功", data);
+            return ApiResponse.success("上传成功", artifacts.upload(
+                    user.getUserId(), relativeDir, uploadName, Boolean.TRUE.equals(overwrite), file::getInputStream));
         } catch (FileAlreadyExistsException e) {
             return ApiResponse.conflict("同名文件已存在，请确认后覆盖上传");
         } catch (IllegalArgumentException e) {
@@ -180,28 +154,8 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
-            Path parent = target.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            boolean overwriteExisting = Boolean.TRUE.equals(overwrite);
-            if (Files.exists(target) && !overwriteExisting) {
-                return ApiResponse.conflict("同名文件已存在，请确认后覆盖创建");
-            }
-            byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
-            if (data.length > artifacts.maxUploadBytes()) return ApiResponse.badRequest("成果内容超过归档上限");
-            if (overwriteExisting) {
-                Files.write(target, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            } else {
-                Files.write(target, data, StandardOpenOption.CREATE_NEW);
-            }
-            artifacts.recordManual(user.getUserId(), target);
-
-            HashMap<String, Object> result = new HashMap<>();
-            result.put("path", toUserRelativePath(user.getUserId(), target));
-            result.put("size", Files.size(target));
-            return ApiResponse.success("文件创建成功", result);
+            return ApiResponse.success("文件创建成功", artifacts.createFile(
+                    user.getUserId(), relativePath, content, Boolean.TRUE.equals(overwrite)));
         } catch (FileAlreadyExistsException e) {
             return ApiResponse.conflict("同名文件已存在，请确认后覆盖创建");
         } catch (IllegalArgumentException e) {
@@ -219,15 +173,9 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = artifacts.resolve(user.getUserId(), relativePath, true);
-            if (Files.exists(target) && !Files.isDirectory(target)) {
-                return ApiResponse.conflict("同名文件已存在，无法创建目录");
-            }
-            Files.createDirectories(target);
-
-            HashMap<String, Object> result = new HashMap<>();
-            result.put("path", toUserRelativePath(user.getUserId(), target));
-            return ApiResponse.success("目录创建成功", result);
+            return ApiResponse.success("目录创建成功", artifacts.createDirectory(user.getUserId(), relativePath));
+        } catch (FileAlreadyExistsException e) {
+            return ApiResponse.conflict("同名文件已存在，无法创建目录");
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -280,18 +228,6 @@ public class UserFileController {
             throw new IllegalArgumentException("文件名包含非法字符");
         }
         return safe.trim();
-    }
-
-    private String toUserRelativePath(String userId, Path path) {
-        return toUserRelativePath(artifacts.root(userId), path);
-    }
-
-    private String toUserRelativePath(Path base, Path path) {
-        Path p = path.toAbsolutePath().normalize();
-        if (!p.startsWith(base)) {
-            return "";
-        }
-        return base.relativize(p).toString().replace(File.separatorChar, '/');
     }
 
 }
