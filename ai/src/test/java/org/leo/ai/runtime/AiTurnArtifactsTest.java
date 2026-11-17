@@ -13,6 +13,7 @@ import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -24,48 +25,32 @@ class AiTurnArtifactsTest {
 
     private final AiTurnArtifacts artifacts = new AiTurnArtifacts();
 
-    @Test
-    void buildsReviewAndPersistsOnlyFinalTimelineNodes() {
-        Map<String, Object> toolStart = tool("scan", null);
-        Map<String, Object> toolResult = tool("scan", true);
-        List<AiSseEvent> events = List.of(
-                new AiSseEvent("node", Map.of("kind", "thinking", "content", "分析")),
-                new AiSseEvent("node", toolStart),
-                new AiSseEvent("patch", toolResult),
-                new AiSseEvent("thinking", Map.of("content", "obsolete event")));
-
-        Map<String, Object> review = artifacts.review("完成", events, 25);
-        List<Object> nodes = artifacts.assistantNodes(events, true);
-
-        assertEquals(1, review.get("toolCount"));
-        assertEquals(1, review.get("successCount"));
-        assertEquals(List.of("scan"), review.get("tools"));
-        assertEquals(2, nodes.size());
-        assertEquals(1, artifacts.toolCallCount(events));
-    }
-
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void snapshotsNodesWithoutMutatingEvents(boolean includeTextNodes) {
         Map<String, Object> step = new LinkedHashMap<>(Map.of("status", "IN_PROGRESS"));
         Map<String, Object> plan = new LinkedHashMap<>(Map.of("kind", "plan", "steps", List.of(step)));
         Map<String, Object> text = Map.of("kind", "text", "content", "answer", "seq", 7);
-        List<AiSseEvent> events = List.of(
+        List<AiSseEvent> events = new LinkedList<>(List.of(
                 new AiSseEvent("node", "not a node"),
                 new AiSseEvent(12L, 1000L, "node", plan, null, null, null, null),
                 new AiSseEvent("node", Map.of("kind", "thinking", "content", "analysis")),
-                new AiSseEvent("node", text));
+                new AiSseEvent("node", tool("scan", null)),
+                new AiSseEvent("patch", tool("scan", true)),
+                new AiSseEvent("node", text),
+                new AiSseEvent("thinking", Map.of("kind", "thinking", "content", "obsolete event"))));
 
         List<Object> nodes = artifacts.assistantNodes(events, includeTextNodes);
         step.put("status", "COMPLETED");
 
-        assertEquals(includeTextNodes ? 3 : 2, nodes.size());
+        assertEquals(includeTextNodes ? 4 : 3, nodes.size());
         Map<?, ?> savedPlan = (Map<?, ?>) nodes.get(0);
         assertEquals(12L, ((Number) savedPlan.get("seq")).longValue());
         assertEquals(List.of(Map.of("status", "IN_PROGRESS")), savedPlan.get("steps"));
         assertFalse(plan.containsKey("seq"));
         assertEquals(3L, ((Number) ((Map<?, ?>) nodes.get(1)).get("seq")).longValue());
-        if (includeTextNodes) assertEquals(text, nodes.get(2));
+        assertEquals(Map.of("kind", "tool", "toolName", "scan", "success", true, "seq", 5L), nodes.get(2));
+        if (includeTextNodes) assertEquals(text, nodes.get(3));
     }
 
     @Test

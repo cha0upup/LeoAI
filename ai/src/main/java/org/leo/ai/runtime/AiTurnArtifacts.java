@@ -74,8 +74,9 @@ public class AiTurnArtifacts {
                                        boolean includeTextNodes) {
         if (eventLog == null || eventLog.isEmpty()) return List.of();
         List<Object> nodes = new ArrayList<>();
-        for (int index = 0; index < eventLog.size(); index++) {
-            AiSseEvent event = eventLog.get(index);
+        long eventPosition = 0;
+        for (AiSseEvent event : eventLog) {
+            eventPosition++;
             if (!(event.data() instanceof Map<?, ?> data)) continue;
             String name = event.name();
             Object kind = data.get("kind");
@@ -88,7 +89,7 @@ public class AiTurnArtifacts {
                             || "subtask".equals(kind)))) {
                 // 保留独立快照，避免计划等嵌套对象的后续更新修改已完成的节点。
                 Map<String, Object> node = JSON.parseObject(JSON.toJSONString(data));
-                node.putIfAbsent("seq", event.seq() > 0 ? event.seq() : index + 1L);
+                node.putIfAbsent("seq", event.seq() > 0 ? event.seq() : eventPosition);
                 nodes.add(node);
             }
         }
