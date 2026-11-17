@@ -184,6 +184,7 @@ public final class AiTurnTrace {
 
     private Map<String, Object> toolMetrics() {
         Map<String, Object> metrics = new LinkedHashMap<>();
+        List<Map<String, Object>> executions = new ArrayList<>(toolExecutions.size());
         long totalDurationMs = 0L;
         int successCount = 0;
         int failureCount = 0;
@@ -193,6 +194,7 @@ public final class AiTurnTrace {
         int retryableFailureCount = 0;
         int maxAttempt = 0;
         for (Map<String, Object> tool : toolExecutions) {
+            executions.add(new LinkedHashMap<>(tool));
             Object duration = tool.get("durationMs");
             if (duration instanceof Number number) totalDurationMs += number.longValue();
             if (Boolean.FALSE.equals(tool.get("success"))) failureCount++;
@@ -215,7 +217,7 @@ public final class AiTurnTrace {
         metrics.put("deduplicatedCount", deduplicatedCount);
         metrics.put("retryableFailureCount", retryableFailureCount);
         metrics.put("maxAttempt", maxAttempt);
-        metrics.put("executions", new ArrayList<>(toolExecutions));
+        metrics.put("executions", executions);
         return metrics;
     }
 

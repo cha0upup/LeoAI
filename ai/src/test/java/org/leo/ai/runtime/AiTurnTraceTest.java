@@ -9,6 +9,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -118,6 +119,13 @@ class AiTurnTraceTest {
         assertEquals(1, metrics.get("deduplicatedCount"));
         assertEquals(1, metrics.get("retryableFailureCount"));
         assertEquals(2, metrics.get("maxAttempt"));
+
+        List<?> executions = (List<?>) metrics.get("executions");
+        ((Map<?, ?>) executions.get(0)).clear();
+        executions.clear();
+        Map<?, ?> nextMetrics = (Map<?, ?>) trace.snapshot().get("toolMetrics");
+        assertEquals(2, ((List<?>) nextMetrics.get("executions")).size());
+        assertEquals(60L, nextMetrics.get("totalDurationMs"));
     }
 
     @Test
