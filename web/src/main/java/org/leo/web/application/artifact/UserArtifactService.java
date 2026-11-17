@@ -6,6 +6,7 @@ import org.leo.service.config.SystemConfigService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -20,6 +21,8 @@ public class UserArtifactService {
     private static final List<String> CATEGORIES = List.of("script-builds", "ai-reports", "task-results", "imports");
     private static final Set<String> SOURCES = Set.of("script-generator", "platform-ai", "node-ai", "task-output", "manual");
     private static final long MAX_ARCHIVE_BYTES = 100L * 1024 * 1024;
+    private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
+    private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
     private final ObjectMapper mapper;
     private final SystemConfigService config;
 
@@ -59,6 +62,13 @@ public class UserArtifactService {
                 throw new IllegalArgumentException("运行文件请通过任务详情访问或归档");
         }
         return target;
+    }
+
+    /** Finds a workspace or public task output file; missing paths and directories return null. */
+    public Path findFile(String userId, String relativePath) {
+        if (userId == null || userId.isBlank()) throw new IllegalArgumentException("用户信息无效");
+        Path target = resolve(userId, relativePath, false);
+        return Files.exists(target) && Files.isRegularFile(target) ? target : null;
     }
 
     private void walk(Path base, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
@@ -151,6 +161,27 @@ public class UserArtifactService {
         result.put("path", relative(base, target));
         result.put("count", files.size());
         result.put("fileList", files);
+        return result;
+    }
+
+    /** Returns a bounded preview, or null when the requested path is not a file. */
+    public Map<String, Object> preview(String userId, String relativePath, Long size) throws IOException {
+        Path target = findFile(userId, relativePath);
+        if (target == null) return null;
+        long previewSize = size == null ? DEFAULT_PREVIEW_SIZE : Math.min(Math.max(size, 1L), MAX_PREVIEW_SIZE);
+        long fileSize = Files.size(target);
+        int readSize = (int) Math.min(previewSize, fileSize);
+        byte[] actual;
+        try (InputStream input = Files.newInputStream(target)) {
+            actual = input.readNBytes(readSize);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", relative(root(userId), target));
+        result.put("size", fileSize);
+        result.put("previewSize", actual.length);
+        result.put("truncated", fileSize > actual.length);
+        result.put("content", new String(actual, StandardCharsets.UTF_8));
+        result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
         return result;
     }
 

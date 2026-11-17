@@ -18,12 +18,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -267,6 +270,21 @@ class UserFileControllerTest {
         assertEquals("hello fixture", complete.get("content"));
         assertEquals(13, complete.get("previewSize"));
         assertEquals(false, complete.get("truncated"));
+        var minimum = (Map<String, Object>) controller.preview(request, "notes/preview.txt", 0L).get("data");
+        assertEquals(1, minimum.get("previewSize"));
+        assertEquals("h", minimum.get("content"));
+
+        byte[] binary = new byte[1024 * 1024 + 17];
+        Arrays.fill(binary, (byte) 0xff);
+        Files.write(artifacts.root(userId).resolve("notes/binary.bin"), binary);
+        var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE).get("data");
+        assertEquals((long) binary.length, maximum.get("size"));
+        assertEquals(1024 * 1024, maximum.get("previewSize"));
+        assertEquals(true, maximum.get("truncated"));
+        assertArrayEquals(Arrays.copyOf(binary, 1024 * 1024), Base64.getDecoder().decode((String) maximum.get("contentBase64")));
+        var defaultSize = (Map<String, Object>) controller.preview(request, "notes/binary.bin", null).get("data");
+        assertEquals(64 * 1024, defaultSize.get("previewSize"));
+
         controller.createFile(request, "notes/empty.txt", "", false);
         var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null).get("data");
         assertEquals(0, empty.get("previewSize"));
@@ -277,7 +295,8 @@ class UserFileControllerTest {
 
         var userWithoutId = new MockHttpServletRequest();
         userWithoutId.getSession().setAttribute("user", new User());
-        assertEquals(400, controller.preview(userWithoutId, "notes/preview.txt", null).get("code"));
+        assertEquals(Map.of("code", 400, "msg", "用户信息无效"),
+                controller.preview(userWithoutId, "notes/preview.txt", null));
     }
 
     private MockHttpServletRequest authenticatedRequest() {

@@ -23,7 +23,6 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.stream.Stream;
@@ -31,8 +30,6 @@ import java.util.stream.Stream;
 @RestController
 @RequestMapping("/platform/user/file")
 public class UserFileController {
-    private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
-    private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
     private final UserArtifactService artifacts;
 
     public UserFileController(UserArtifactService artifacts) {
@@ -158,8 +155,8 @@ public class UserFileController {
                 response.setStatus(401);
                 return;
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath);
-            if (!Files.exists(target) || !Files.isRegularFile(target)) {
+            Path target = artifacts.findFile(user.getUserId(), relativePath);
+            if (target == null) {
                 response.setStatus(404);
                 return;
             }
@@ -249,26 +246,8 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            Path target = resolveUserPath(user.getUserId(), relativePath);
-            if (!Files.exists(target) || !Files.isRegularFile(target)) {
-                return ApiResponse.notFound("文件不存在");
-            }
-            long previewSize = size == null ? DEFAULT_PREVIEW_SIZE : Math.min(Math.max(size, 1L), MAX_PREVIEW_SIZE);
-            long fileSize = Files.size(target);
-            int readSize = (int) Math.min(previewSize, fileSize);
-            byte[] actual;
-            try (InputStream in = Files.newInputStream(target)) {
-                actual = in.readNBytes(readSize);
-            }
-
-            HashMap<String, Object> result = new HashMap<>();
-            result.put("path", toUserRelativePath(user.getUserId(), target));
-            result.put("size", fileSize);
-            result.put("previewSize", actual.length);
-            result.put("truncated", fileSize > actual.length);
-            result.put("content", new String(actual, StandardCharsets.UTF_8));
-            result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
-            return ApiResponse.success(result);
+            var preview = artifacts.preview(user.getUserId(), relativePath, size);
+            return preview == null ? ApiResponse.notFound("文件不存在") : ApiResponse.success(preview);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -312,13 +291,6 @@ public class UserFileController {
         } catch (Exception e) {
             return ApiResponse.error("删除失败: " + e.getMessage());
         }
-    }
-
-    private Path resolveUserPath(String userId, String relativePath) {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("用户信息无效");
-        }
-        return artifacts.resolve(userId, relativePath, false);
     }
 
     private String sanitizeFileName(String fileName) {
