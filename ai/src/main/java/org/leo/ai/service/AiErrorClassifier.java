@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Component
 public class AiErrorClassifier {
@@ -23,6 +24,9 @@ public class AiErrorClassifier {
     public static final String CATEGORY_MALFORMED_RESPONSE = "malformed_response";
     public static final String CATEGORY_SERVER_ERROR = "server_error";
     public static final String CATEGORY_UNKNOWN = "unknown";
+
+    private static final Pattern SERVER_STATUS = Pattern.compile(
+            "(?:\\bhttp(?:/\\d(?:\\.\\d)?)?\\s+|\\bstatus(?:\\s+code)?[\\s:=]+|^)5\\d\\d\\b");
 
     public Classification classify(Throwable error) {
         boolean serverError = false;
@@ -46,8 +50,7 @@ public class AiErrorClassifier {
         String text = message == null ? "" : message.trim();
         String lower = text.toLowerCase(Locale.ROOT);
         String category;
-        if (lower.matches("(?s).*(?:\\bhttp(?:/\\d(?:\\.\\d)?)?\\s+|\\bstatus(?:\\s+code)?[\\s:=]+)5\\d\\d\\b.*")
-                || lower.matches("(?s)^5\\d\\d\\b.*")
+        if (SERVER_STATUS.matcher(lower).find()
                 || lower.contains("service unavailable") || lower.contains("bad gateway")
                 || lower.contains("internal server error")) {
             category = CATEGORY_SERVER_ERROR;

@@ -15,11 +15,18 @@ class AiErrorClassifierTest {
     private final AiErrorClassifier classifier = new AiErrorClassifier();
 
     @ParameterizedTest
-    @ValueSource(strings = {
-            "HTTP 503 Service Unavailable", "status code: 502", "500 upstream failure", "HTTP/1.1 504 Gateway Timeout"
+    @CsvSource({
+            "HTTP 503 Service Unavailable,server_error",
+            "status code: 502,server_error",
+            "500 upstream failure,server_error",
+            "HTTP/1.1 504 Gateway Timeout,server_error",
+            "'sdk response:\nstatus:503\nretry',server_error",
+            "sdk request 503,unknown",
+            "status:5030,unknown",
+            "upstreamstatus:503,unknown"
     })
-    void classifiesServerFailuresAsTransient(String message) {
-        assertEquals(AiErrorClassifier.CATEGORY_SERVER_ERROR, classifier.classify(message).category());
+    void classifiesServerStatusesWithoutConfusingUnrelatedNumbers(String message, String category) {
+        assertEquals(category, classifier.classify(message).category());
     }
 
     @Test
