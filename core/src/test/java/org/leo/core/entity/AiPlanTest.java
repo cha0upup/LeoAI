@@ -27,6 +27,7 @@ class AiPlanTest {
             case COMPLETED -> {
                 assertTrue(plan.startStep(0));
                 assertTrue(plan.completeStep(0, "findings"));
+                assertEquals(planStatus, plan.getStatus());
                 plan.complete("finished");
             }
             case FAILED -> {
@@ -34,10 +35,12 @@ class AiPlanTest {
                 assertTrue(plan.failStep(0, "first failure"));
                 assertTrue(plan.startStep(0));
                 assertTrue(plan.failStep(0, "retry exhausted"));
+                assertEquals(planStatus, plan.getStatus());
                 plan.complete("failed");
             }
             case SKIPPED -> {
                 assertTrue(plan.skipStep(0, "not needed"));
+                assertEquals(planStatus, plan.getStatus());
                 plan.complete("skipped");
             }
         }
@@ -70,22 +73,11 @@ class AiPlanTest {
 
         assertThrows(IllegalStateException.class,
                 () -> plan.complete("too early"));
-    }
-
-    @Test
-    void reconcilesSuccessfulAndFailedTerminalStates() {
-        AiPlan successful = new AiPlan("success", "goal", List.of(
-                step(0, null, 1, List.of())));
-        assertTrue(successful.startStep(0));
-        assertTrue(successful.completeStep(0, "done"));
-        assertEquals(AiPlanStatus.COMPLETED, successful.getStatus());
-
-        AiPlan failed = new AiPlan("failed", "goal", List.of(
-                step(0, null, 0, List.of())));
-        assertTrue(failed.startStep(0));
-        assertTrue(failed.failStep(0, "boom"));
-        failed.complete("finished with failure");
-        assertEquals(AiPlanStatus.FAILED, failed.getStatus());
+        assertFalse(plan.allStepsTerminated());
+        assertTrue(plan.startStep(0));
+        assertThrows(IllegalStateException.class,
+                () -> plan.complete("still running"));
+        assertFalse(plan.allStepsTerminated());
     }
 
     @Test

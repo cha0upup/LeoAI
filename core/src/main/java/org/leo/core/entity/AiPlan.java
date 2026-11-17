@@ -211,10 +211,7 @@ public class AiPlan {
     }
 
     private void reconcileStatus() {
-        boolean hasActive = steps.stream().anyMatch(step ->
-                step.getStatus() == AiStepStatus.PENDING
-                        || step.getStatus() == AiStepStatus.IN_PROGRESS);
-        if (hasActive) {
+        if (!allStepsTerminated()) {
             this.status = AiPlanStatus.IN_PROGRESS;
         } else {
             this.status = hasFailedSteps()
