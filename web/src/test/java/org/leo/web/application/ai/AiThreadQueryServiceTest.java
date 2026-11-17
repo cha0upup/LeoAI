@@ -140,13 +140,22 @@ class AiThreadQueryServiceTest {
         record.setConfigProtocol("openai");
         record.setConfigModel("model");
         record.setLastActiveAt(lastActiveAt);
-        when(store.listPlatformThreads("user-1")).thenReturn(List.of(record));
+        AiThreadRecord stored = new AiThreadRecord();
+        stored.setThreadId(PLATFORM_THREAD_ID + "-stored");
+        stored.setLastActiveAt(2L);
+        AiThreadRecord undated = new AiThreadRecord();
+        undated.setThreadId(PLATFORM_THREAD_ID + "-undated");
+        when(store.listPlatformThreads("user-1")).thenReturn(lastActiveAt != null && lastActiveAt > 2L
+                ? List.of(record, stored, undated) : List.of(stored, record, undated));
         PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_THREAD_ID);
         state.setAiConfigId(99);
         when(protocol.snapshotThread(PLATFORM_THREAD_ID, state.getRunStatus()))
                 .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));
 
-        Map<String, Object> item = queries.listPlatformThreads("user-1").get(0);
+        List<Map<String, Object>> threads = queries.listPlatformThreads("user-1");
+        assertEquals(List.of(PLATFORM_THREAD_ID, stored.getThreadId(), undated.getThreadId()),
+                threads.stream().map(thread -> thread.get("threadId")).toList());
+        Map<String, Object> item = threads.get(0);
 
         assertEquals("queued", item.get("runStatus"));
         assertEquals(true, item.get("executing"));

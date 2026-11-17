@@ -25,6 +25,10 @@ import java.util.Map;
 @Service
 public class AiThreadQueryService {
 
+    private static final Comparator<Map<String, Object>> LAST_ACTIVE_FIRST = Comparator.comparingLong(
+            (Map<String, Object> item) -> item.get("lastActiveAt") instanceof Number time ? time.longValue() : 0L)
+            .reversed();
+
     private final AiConversationStoreService conversationStore;
     private final AiMessageRepository messages;
     private final AiEventJournalRepository eventJournal;
@@ -52,8 +56,7 @@ public class AiThreadQueryService {
             }
         }
         for (AiThread thread : memoryById.values()) result.add(nodeThread(thread, null));
-        result.sort(Comparator.comparingLong((Map<String, Object> item) ->
-                item.get("lastActiveAt") instanceof Number time ? time.longValue() : 0L).reversed());
+        result.sort(LAST_ACTIVE_FIRST);
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("threads", result);
@@ -74,7 +77,7 @@ public class AiThreadQueryService {
             applyProtocolSnapshot(item, record.getThreadId(),
                     runtime != null ? runtime.getRunStatus() : record.getRunStatus());
             return item;
-        }).toList();
+        }).sorted(LAST_ACTIVE_FIRST).toList();
     }
 
     /** 游标按稳定消息序号向前翻页，新增消息不会使旧页偏移。 */
