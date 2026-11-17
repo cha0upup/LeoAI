@@ -3,8 +3,9 @@ package org.leo.ai.runtime;
 import com.alibaba.fastjson.JSON;
 import org.leo.core.entity.AiSseEvent;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,8 +34,9 @@ public final class AiTurnRecoveryContext {
 
     public static String build(List<AiSseEvent> eventLog, Object planSnapshot) {
         String visibleOutput = visibleOutput(eventLog);
-        List<String> progress = new ArrayList<>();
-        Set<String> completedCalls = new LinkedHashSet<>();
+        Deque<String> progress = new ArrayDeque<>();
+        Set<String> completedCalls = new HashSet<>();
+        int omittedProgress = 0;
         Object latestPlan = planSnapshot;
 
         if (eventLog != null) {
@@ -51,6 +53,10 @@ public final class AiTurnRecoveryContext {
                 } else if ("subtask".equals(kind)) {
                     addSubtaskProgress(progress, data);
                 }
+                if (progress.size() > MAX_PROGRESS_ITEMS) {
+                    progress.removeFirst();
+                    omittedProgress++;
+                }
             }
         }
 
@@ -63,13 +69,12 @@ public final class AiTurnRecoveryContext {
                     .append("\n\n");
         }
         context.append("[执行在此处中断；以下是可用于继续任务的已完成进度]");
-        int firstProgress = Math.max(0, progress.size() - MAX_PROGRESS_ITEMS);
-        if (firstProgress > 0) {
+        if (omittedProgress > 0) {
             context.append("\n- 更早已完成进度: ")
-                    .append(firstProgress).append(" 项（详见原 Turn 时间线）");
+                    .append(omittedProgress).append(" 项（详见原 Turn 时间线）");
         }
-        for (int i = firstProgress; i < progress.size(); i++) {
-            context.append("\n- ").append(progress.get(i));
+        for (String item : progress) {
+            context.append("\n- ").append(item);
         }
         if (hasPlan) {
             context.append("\n- 当前计划快照: ")
@@ -79,7 +84,7 @@ public final class AiTurnRecoveryContext {
         return truncate(context.toString(), MAX_CONTEXT_CHARS);
     }
 
-    private static void addToolProgress(List<String> progress,
+    private static void addToolProgress(Deque<String> progress,
                                         Set<String> completedCalls,
                                         Map<?, ?> data) {
         String status = string(data.get("status"));
@@ -112,7 +117,7 @@ public final class AiTurnRecoveryContext {
         progress.add(truncateInline(item.toString(), MAX_PROGRESS_ITEM_CHARS));
     }
 
-    private static void addSubtaskProgress(List<String> progress, Map<?, ?> data) {
+    private static void addSubtaskProgress(Deque<String> progress, Map<?, ?> data) {
         String status = string(data.get("status"));
         if (status == null || "pending".equalsIgnoreCase(status)
                 || "running".equalsIgnoreCase(status)) {

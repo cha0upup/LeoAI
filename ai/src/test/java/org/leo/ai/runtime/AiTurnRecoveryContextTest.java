@@ -78,14 +78,22 @@ class AiTurnRecoveryContextTest {
                     "resultPreview", "result-" + i + "-" + "y".repeat(500),
                     "archiveId", "archive-" + i)));
         }
+        // 已移出摘要窗口的调用也只统计一次。
+        events.add(events.get(1));
+        events.add(new AiSseEvent("patch", Map.of(
+                "kind", "subtask", "status", "completed", "task", "recent-subtask")));
+        events.add(new AiSseEvent("node", Map.of(
+                "kind", "plan", "details", "latest-plan-" + "z".repeat(5_000))));
 
-        String context = AiTurnRecoveryContext.build(
-                events, Map.of("details", "z".repeat(5_000)));
+        String context = AiTurnRecoveryContext.build(events, "stale-plan");
 
         assertTrue(context.length() <= 20_000);
-        assertTrue(context.contains("更早已完成进度: 10 项"));
+        assertTrue(context.contains("更早已完成进度: 11 项"));
         assertTrue(context.contains("tool-69"));
         assertTrue(context.contains("archive-69"));
+        assertTrue(context.contains("recent-subtask"));
+        assertTrue(context.contains("latest-plan-"));
+        assertFalse(context.contains("stale-plan"));
         assertFalse(context.contains("tool-0 ["));
     }
 }
