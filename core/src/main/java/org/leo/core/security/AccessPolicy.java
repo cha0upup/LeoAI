@@ -57,9 +57,7 @@ public final class AccessPolicy {
         if (PERMISSION_PUBLIC.equals(agent.getPermission())) {
             return true;
         }
-        return isTeamVisiblePermission(agent.getPermission())
-                && user.getTeamId() != null
-                && user.getTeamId().equals(agent.getTeamId());
+        return hasTeamAccess(agent, user);
     }
 
     public static boolean canModifyAgent(Agent agent, User user) {
@@ -75,9 +73,13 @@ public final class AccessPolicy {
         if (user.getUserId().equals(agent.getCreateByUserId())) {
             return true;
         }
-        return isLeader(user)
-                && isTeamVisiblePermission(agent.getPermission())
-                && user.getTeamId() != null
-                && user.getTeamId().equals(agent.getTeamId());
+        return isLeader(user) && hasTeamAccess(agent, user);
+    }
+
+    private static boolean hasTeamAccess(Agent agent, User user) {
+        String teamId = user.getTeamId();
+        return isTeamVisiblePermission(agent.getPermission())
+                && teamId != null && !teamId.isBlank()
+                && teamId.equals(agent.getTeamId());
     }
 }

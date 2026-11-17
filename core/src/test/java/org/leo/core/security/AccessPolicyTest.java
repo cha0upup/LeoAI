@@ -77,6 +77,13 @@ class AccessPolicyTest {
         assertFalse(AccessPolicy.canModifyAgent(agent, user("leader", "leader", null)));
         agent.setPermission("private");
         assertFalse(AccessPolicy.canModifyAgent(agent, user("leader", "leader", "team-a")));
+        agent.setPermission("team");
+        for (String missingTeam : new String[]{null, "", " ", "\t"}) {
+            agent.setTeamId(missingTeam);
+            User unassignedLeader = user("leader", "leader", missingTeam);
+            assertFalse(AccessPolicy.canAccessAgent(agent, unassignedLeader));
+            assertFalse(AccessPolicy.canModifyAgent(agent, unassignedLeader));
+        }
     }
 
     @Test

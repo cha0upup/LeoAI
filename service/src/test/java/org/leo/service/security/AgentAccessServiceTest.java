@@ -31,7 +31,8 @@ class AgentAccessServiceTest {
 
     @Test
     void removingMembershipRevokesAPreviouslyCreatedSession() {
-        when(agents.findAgentById("host")).thenReturn(agent("host", "root", "owner", "team-a", "team"));
+        Agent shared = agent("host", "root", "owner", "team-a", "team");
+        when(agents.findAgentById("host")).thenReturn(shared);
         User user = user("reader", "team-a", "normal");
         AgentNodeSession session = session("reader", "host");
         assertTrue(access.canAccessSession(session, user));
@@ -39,6 +40,10 @@ class AgentAccessServiceTest {
         user.setTeamId("team-b");
 
         assertFalse(access.canAccessSession(session, user));
+        shared.setTeamId("");
+        user.setTeamId("");
+        assertFalse(access.canAccessSession(session, user));
+        verifyNoInteractions(users);
     }
 
     @Test
