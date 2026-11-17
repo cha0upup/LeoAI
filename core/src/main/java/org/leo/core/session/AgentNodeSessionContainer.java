@@ -54,10 +54,10 @@ public final class AgentNodeSessionContainer {
     }
 
     /**
-     * 添加会话。若当前会话数已达上限，先驱逐最久未活跃的会话再添加。
+     * 添加或替换会话。仅新增会话在达到上限时触发最久未活跃会话的驱逐。
      */
     public static void addSession(String sessionId, AgentNodeSession session) {
-        evictIfOverCapacity();
+        if (!sessionMap.containsKey(sessionId)) evictIfOverCapacity();
         sessionMap.put(sessionId, session);
     }
 

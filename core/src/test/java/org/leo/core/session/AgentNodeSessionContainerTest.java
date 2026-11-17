@@ -69,6 +69,11 @@ class AgentNodeSessionContainerTest {
         for (int i = 2; i < 500; i++) {
             AgentNodeSessionContainer.addSession("session-" + i, new AgentNodeSession());
         }
+        TrackingSession refreshed = new TrackingSession();
+        AgentNodeSessionContainer.addSession("session-499", refreshed);
+        assertSame(refreshed, AgentNodeSessionContainer.getSession("session-499"));
+        assertEquals(500, AgentNodeSessionContainer.getAllSessions().size());
+        assertFalse(oldest.closed);
 
         Consumer<String> listener = sessionId -> {
             if ("oldest".equals(sessionId)) {
