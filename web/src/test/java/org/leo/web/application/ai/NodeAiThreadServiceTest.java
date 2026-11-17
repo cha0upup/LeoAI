@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -45,6 +46,10 @@ class NodeAiThreadServiceTest {
     void restoresOnlyMissingThreadsAndKeepsExistingJournalBindings(String action, boolean inMemory) {
         Fixture fixture = fixture();
         AgentNodeSession session = cacheSession();
+        for (int index = 0; index < 20; index++) {
+            session.restoreAiThread("resident-" + index, "resident", 1L, 100L + index);
+        }
+        AiThread oldest = session.getAiThread("resident-0");
         AiThread cached = inMemory ? session.createAiThread("thread", "runtime title") : null;
         if (cached != null) {
             cached.setAiConfigId(2);
@@ -52,6 +57,8 @@ class NodeAiThreadServiceTest {
             AiThreadRecord record = ownedRecord("thread");
             record.setTitle("stored title");
             record.setConfigId(2);
+            record.setCreatedAt(1L);
+            record.setLastActiveAt(1L);
             when(fixture.conversationStore.findThread("thread")).thenReturn(record);
         }
         AiModelConfig config = new AiModelConfig();
@@ -67,6 +74,10 @@ class NodeAiThreadServiceTest {
 
         AiThread thread = session.getAiThread("thread");
         assertNotNull(thread);
+        assertSame(thread, session.getActiveThread());
+        assertEquals(20, session.listAiThreads().size());
+        assertNull(session.getAiThread("resident-0"));
+        assertTrue(oldest.isStopRequested());
         assertEquals(inMemory ? "runtime title" : "stored title", thread.getTitle());
         assertEquals("load".equals(action) ? 2 : config.getId(), thread.getAiConfigId());
         assertEquals("reset".equals(action), thread.isStopRequested());

@@ -99,25 +99,21 @@ public class AgentNodeSession {
 
     /**
      * 创建新的 AI 对话线程并设为活跃线程。
-     * 若线程数超过 {@link #MAX_AI_THREADS}，自动删除最旧的线程。
+     * 若线程数超过 {@link #MAX_AI_THREADS}，保留新线程并删除最旧的其他线程。
      *
      * @param threadId 线程 ID（通常为 UUID）
      * @param title    线程标题（可为 null，后续由首条消息自动生成）
      * @return 新建的 AiThread
      */
     public AiThread createAiThread(String threadId, String title) {
-        AiThread thread = new AiThread(threadId, title != null ? title : "新对话");
-        aiThreads.put(threadId, thread);
-        activeThreadId = threadId;
-        pruneAiThreadsIfNeeded();
-        return thread;
+        return restoreAiThread(threadId, title != null ? title : "新对话", 0L, 0L);
     }
 
     public AiThread restoreAiThread(String threadId, String title, long createdAt, long lastActiveAt) {
         AiThread thread = new AiThread(threadId, title != null ? title : "历史对话", createdAt, lastActiveAt);
         aiThreads.put(threadId, thread);
         activeThreadId = threadId;
-        pruneAiThreadsIfNeeded();
+        pruneAiThreadsIfNeeded(threadId);
         return thread;
     }
 
@@ -174,10 +170,11 @@ public class AgentNodeSession {
         }
     }
 
-    /** 超出上限时删除最旧的线程（按 lastActiveAt 升序）。 */
-    private void pruneAiThreadsIfNeeded() {
+    /** 超出上限时删除最旧的其他线程，保留本次装载的线程。 */
+    private void pruneAiThreadsIfNeeded(String retainedThreadId) {
         if (aiThreads.size() <= MAX_AI_THREADS) return;
         aiThreads.values().stream()
+                .filter(thread -> !retainedThreadId.equals(thread.getThreadId()))
                 .sorted(Comparator.comparingLong(AiThread::getLastActiveAt))
                 .limit(aiThreads.size() - MAX_AI_THREADS)
                 .forEach(t -> {
