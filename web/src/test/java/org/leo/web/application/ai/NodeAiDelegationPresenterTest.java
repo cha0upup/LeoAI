@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -34,6 +35,9 @@ class NodeAiDelegationPresenterTest {
 
         fixture.presentation.onStarted();
         fixture.presentation.onEvent(AiTurnEvent.textDelta("answer"));
+        AiSseEvent warning = fixture.thread.offerSseEvent("warn", "queued warning");
+        AiSseEvent nested = fixture.thread.recordSseEvent("plan", Map.of("title", "nested"), "invocation-child");
+        fixture.thread.getAiSseEventQueue().add(nested);
         fixture.presentation.beforeCommit();
         fixture.thread.markCompleted();
         fixture.presentation.onCommitted(completed("answer"));
@@ -43,9 +47,13 @@ class NodeAiDelegationPresenterTest {
         assertEquals("thread-1", response.get("threadId"));
         assertEquals("completed", response.get("status"));
         assertEquals("answer", response.get("summary"));
-        assertEquals(List.of("trace", "status", "delta", "node", "status"),
+        assertEquals(List.of("trace", "status", "delta", "node", "warn", "plan", "status"),
                 fixture.events.stream().map(AiSseEvent::name).toList());
-        assertTrue(fixture.events.stream().allMatch(
+        assertEquals(warning.withSubagent("invocation-1"), fixture.events.get(4));
+        assertSame(nested, fixture.events.get(5));
+        assertEquals(fixture.events, fixture.presentation.eventLog());
+        assertEquals(fixture.events.size(), fixture.thread.getLastSseEventSeq());
+        assertTrue(fixture.events.stream().filter(event -> event != nested).allMatch(
                 event -> "invocation-1".equals(
                         event.subagentInvocationId())));
         verify(fixture.store, times(2))

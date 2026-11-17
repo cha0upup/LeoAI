@@ -221,8 +221,10 @@ public class NodeAiDelegationPresenter {
         }
 
         private void recordEvent(String name, Object data) {
-            AiSseEvent event = context.thread().recordSseEvent(
-                    name, data, context.invocationId());
+            forwardEvent(context.thread().recordSseEvent(name, data, context.invocationId()));
+        }
+
+        private void forwardEvent(AiSseEvent event) {
             eventLog.add(event);
             if (context.eventSink() != null) {
                 context.eventSink().accept(event);
@@ -232,12 +234,8 @@ public class NodeAiDelegationPresenter {
         private void drainQueuedEvents() {
             AiSseEvent queued;
             while ((queued = context.thread().getAiSseEventQueue().poll()) != null) {
-                AiSseEvent event = queued.subagentInvocationId() != null
-                        ? queued : queued.withSubagent(context.invocationId());
-                eventLog.add(event);
-                if (context.eventSink() != null) {
-                    context.eventSink().accept(event);
-                }
+                forwardEvent(queued.subagentInvocationId() != null
+                        ? queued : queued.withSubagent(context.invocationId()));
             }
         }
 
