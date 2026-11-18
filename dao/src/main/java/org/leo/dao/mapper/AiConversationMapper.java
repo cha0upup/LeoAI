@@ -48,7 +48,7 @@ public interface AiConversationMapper {
     String RECENT_CONTEXT_WINDOW = CONTEXT_MESSAGE_SCOPE
             + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}";
 
-    // A pending question (unique per thread) blocks all Turns except its own answer.
+    // An unexpired pending question blocks all Turns except its own answer.
     String DISPATCHABLE_QUEUED_TURNS = """
             FROM ai_turns queued
             WHERE queued.protocol_status = 'inProgress' AND queued.dispatch_status = 'queued'
@@ -60,6 +60,7 @@ public interface AiConversationMapper {
             AND NOT EXISTS (
                 SELECT 1 FROM ai_user_input_requests input
                 WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING'
+                AND (input.expires_at IS NULL OR input.expires_at > #{now})
                 AND (queued.answer_to_question_id = input.request_id) IS NOT TRUE
             )
             """;
@@ -168,7 +169,8 @@ public interface AiConversationMapper {
 
     @Select("SELECT queued.* " + DISPATCHABLE_QUEUED_TURNS
             + "AND queued.thread_id = #{threadId} " + NEXT_QUEUED_TURN_ORDER)
-    AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId);
+    AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId,
+                                   @Param("now") long now);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
             + "AND protocol_status = 'inProgress' "
@@ -178,15 +180,15 @@ public interface AiConversationMapper {
     List<AiTurnRecord> listInProgressTurns(@Param("threadId") String threadId);
 
     @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS)
-    List<String> listDispatchableThreadIds();
+    List<String> listDispatchableThreadIds(@Param("now") long now);
 
     @Update("UPDATE ai_turns SET dispatch_status = 'running', "
-            + "started_at = COALESCE(started_at, #{startedAt}) "
+            + "started_at = COALESCE(started_at, #{now}) "
             + "WHERE turn_id = #{turnId} "
             + "AND turn_id = (SELECT queued.turn_id " + DISPATCHABLE_QUEUED_TURNS
             + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ")")
     int markProtocolTurnStarted(@Param("turnId") String turnId,
-                                @Param("startedAt") long startedAt);
+                                @Param("now") long now);
 
     @Update("UPDATE ai_turns SET interrupt_requested = 1, "
             + "dispatch_status = CASE WHEN dispatch_status = 'running' "

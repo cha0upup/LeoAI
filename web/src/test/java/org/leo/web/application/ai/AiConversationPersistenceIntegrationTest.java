@@ -193,10 +193,25 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void expiredQuestionStopsBlockingTurnsBeforeThePeriodicCleanup() {
+        var queued = reserve();
+        requests.create(confirmation("question-1"));
+        assertNull(protocol.findNextQueued("thread-1"));
+        jdbc.update("UPDATE ai_user_input_requests SET expires_at=1 WHERE request_id='question-1'");
+
+        assertEquals(queued.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(AiUserInputRequest.STATUS_PENDING, requests.find("question-1").getStatus());
+        assertTrue(protocol.tryStart(queued.id()).claimed());
+
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
+        assertEquals(AiUserInputRequest.STATUS_EXPIRED, requests.find("question-1").getStatus());
+    }
+
+    @Test
     void dispatchScanUsesTheQueuedTurnIndex() {
         String sql = "EXPLAIN QUERY PLAN SELECT DISTINCT queued.thread_id "
-                + AiConversationMapper.DISPATCHABLE_QUEUED_TURNS;
-        String plan = String.join("\n", jdbc.query(sql, (row, index) -> row.getString("detail")));
+                + AiConversationMapper.DISPATCHABLE_QUEUED_TURNS.replace("#{now}", "?");
+        String plan = String.join("\n", jdbc.query(sql, (row, index) -> row.getString("detail"), 1L));
 
         assertTrue(plan.contains("idx_ai_turns_queued_thread"), plan);
     }

@@ -27,9 +27,7 @@ public class AiProtocolTurnRepository {
     }
 
     public AiTurnRecord findNextQueued(String threadId) {
-        if (blank(threadId)) return null;
-        mapper.expireUserInputRequests(threadId.trim(), System.currentTimeMillis());
-        return mapper.findNextQueuedTurn(threadId);
+        return blank(threadId) ? null : mapper.findNextQueuedTurn(threadId, System.currentTimeMillis());
     }
 
     public List<AiTurnRecord> listInProgress(String threadId) {
@@ -37,8 +35,9 @@ public class AiProtocolTurnRepository {
     }
 
     public List<String> listDispatchableThreadIds() {
-        mapper.expireAllUserInputRequests(System.currentTimeMillis());
-        return mapper.listDispatchableThreadIds();
+        long now = System.currentTimeMillis();
+        mapper.expireAllUserInputRequests(now);
+        return mapper.listDispatchableThreadIds(now);
     }
 
     public boolean claimStart(String turnId, long startedAt) {
