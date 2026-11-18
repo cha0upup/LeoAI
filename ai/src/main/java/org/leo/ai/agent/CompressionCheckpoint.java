@@ -93,8 +93,8 @@ final class CompressionCheckpoint {
 
     static String sourceHash(List<ChatMessage> messages) {
         MessageDigest digest = sha256();
-        for (String fingerprint : fingerprints(messages)) {
-            digest.update(fingerprint.getBytes(StandardCharsets.UTF_8));
+        for (ChatMessage message : messages) {
+            digest.update(fingerprint(message).getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
         }
         return HexFormat.of().formatHex(digest.digest());

@@ -55,8 +55,8 @@ class CompressingChatMemory implements ChatMemory {
         }
 
         List<ChatMessage> candidate = projected != null ? projected.messages() : current;
-        String sourceHash = CompressionCheckpoint.sourceHash(candidate);
-        if (sourceHash.equals(failedSourceHash)) {
+        String sourceHash = failedSourceHash == null ? null : CompressionCheckpoint.sourceHash(candidate);
+        if (sourceHash != null && sourceHash.equals(failedSourceHash)) {
             return candidate;
         }
 
@@ -66,7 +66,7 @@ class CompressingChatMemory implements ChatMemory {
             return candidate;
         }
         if (!result.succeeded()) {
-            failedSourceHash = sourceHash;
+            failedSourceHash = sourceHash != null ? sourceHash : CompressionCheckpoint.sourceHash(candidate);
             return candidate;
         }
 
