@@ -29,14 +29,25 @@ public interface ProjectMapper {
     boolean insertProject(Project project);
 
     @Update("UPDATE projects SET project_name=#{projectName}, project_code=#{projectCode}, description=#{description}, " +
-            "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} WHERE project_id=#{projectId}")
+            "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} " +
+            "WHERE project_id=#{projectId} AND owner_user_id=#{ownerUserId}")
     boolean updateProject(Project project);
+
+    @Update("""
+            UPDATE projects SET owner_user_id = #{newOwnerId}, update_time = #{updatedAt}
+            WHERE project_id = #{projectId} AND owner_user_id = #{currentOwnerId}
+              AND EXISTS (SELECT 1 FROM users WHERE user_id = #{newOwnerId} AND status = 1)
+            """)
+    boolean transferOwner(@Param("projectId") String projectId,
+                          @Param("currentOwnerId") String currentOwnerId,
+                          @Param("newOwnerId") String newOwnerId,
+                          @Param("updatedAt") String updatedAt);
 
     @Delete("DELETE FROM project_agents WHERE project_id=#{projectId}")
     int deleteAgentRelations(@Param("projectId") String projectId);
 
-    @Delete("DELETE FROM projects WHERE project_id=#{projectId}")
-    int deleteProject(@Param("projectId") String projectId);
+    @Delete("DELETE FROM projects WHERE project_id=#{projectId} AND owner_user_id=#{ownerUserId}")
+    int deleteProject(@Param("projectId") String projectId, @Param("ownerUserId") String ownerUserId);
 
     /** Omitted metadata keeps its existing value; an unchanged relation does not count as a write. */
     @Insert("""

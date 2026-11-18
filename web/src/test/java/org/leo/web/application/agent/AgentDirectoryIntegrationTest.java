@@ -79,6 +79,10 @@ class AgentDirectoryIntegrationTest {
         host("child", "parent", "owner");
         host("grandchild", "child", "owner");
         host("hidden-child", "leaf", "other-owner");
+        jdbc.update("""
+                INSERT INTO users (user_id, user_name, password, create_time, update_time)
+                VALUES ('owner', 'owner', 'fixture-hash', '2026-10-04', '2026-10-04')
+                """);
         jdbc.update("INSERT INTO projects (project_id, project_name, owner_user_id, permission, status, create_time, update_time) "
                 + "VALUES ('project', 'Project', 'owner', 'private', 'active', '2026-10-04', '2026-10-04')");
         jdbc.update("INSERT INTO project_agents (project_id, agent_id, added_by_user_id, create_time) "

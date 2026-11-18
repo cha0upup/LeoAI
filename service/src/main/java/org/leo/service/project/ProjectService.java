@@ -143,6 +143,10 @@ public class ProjectService {
         return project;
     }
 
+    public boolean transferOwner(Project project, String newOwnerId) {
+        return projectMapper.transferOwner(project.getProjectId(), project.getOwnerUserId(), newOwnerId, now());
+    }
+
     /**
      * 永久删除项目及其主机归属关系，保留主机资产本身。
      * 运行中会话的项目关联由 Web 应用层解除。
@@ -156,7 +160,7 @@ public class ProjectService {
         }
         String projectId = project.getProjectId().trim();
         int detachedAgents = projectMapper.deleteAgentRelations(projectId);
-        if (projectMapper.deleteProject(projectId) != 1) {
+        if (projectMapper.deleteProject(projectId, project.getOwnerUserId()) != 1) {
             throw new IllegalStateException("删除项目失败");
         }
         return detachedAgents;

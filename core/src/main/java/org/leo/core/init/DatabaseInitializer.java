@@ -69,6 +69,8 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireColumns(connection, "users", Set.of("account_revision"));
             requireForeignKey(connection, "users", "teams", Map.of("team_id", "team_id"));
             requireForeignKey(connection, "teams", "users", Map.of("team_id", "team_id", "leader_id", "user_id"));
+            requireForeignKey(connection, "projects", "users", Map.of("owner_user_id", "user_id"));
+            requireForeignKey(connection, "projects", "teams", Map.of("team_id", "team_id"));
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "agent_ssh_connections",

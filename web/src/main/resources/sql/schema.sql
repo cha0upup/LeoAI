@@ -158,7 +158,11 @@ CREATE TABLE IF NOT EXISTS projects (
     team_id VARCHAR(50),
     permission VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public')),
     create_time DATETIME NOT NULL,
-    update_time DATETIME NOT NULL
+    update_time DATETIME NOT NULL,
+    CHECK ((permission = 'team' AND team_id IS NOT NULL)
+        OR (permission <> 'team' AND team_id IS NULL)),
+    FOREIGN KEY (owner_user_id) REFERENCES users(user_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);

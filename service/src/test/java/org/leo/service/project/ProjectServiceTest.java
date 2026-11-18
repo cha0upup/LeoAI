@@ -226,22 +226,25 @@ class ProjectServiceTest {
     @Test
     void deletesRelationsBeforeDeletingProject() {
         Project project = projectWithId("project-1");
+        project.setOwnerUserId("user-1");
         when(mapper.deleteAgentRelations("project-1")).thenReturn(3);
-        when(mapper.deleteProject("project-1")).thenReturn(1);
+        when(mapper.deleteProject("project-1", "user-1")).thenReturn(1);
 
         assertEquals(3, service.delete(project));
 
         InOrder order = inOrder(mapper);
         order.verify(mapper).deleteAgentRelations("project-1");
-        order.verify(mapper).deleteProject("project-1");
+        order.verify(mapper).deleteProject("project-1", "user-1");
     }
 
     @Test
     void reportsConcurrentOrMissingProjectDeletion() {
-        when(mapper.deleteProject("project-1")).thenReturn(0);
+        Project project = projectWithId("project-1");
+        project.setOwnerUserId("user-1");
+        when(mapper.deleteProject("project-1", "user-1")).thenReturn(0);
 
         IllegalStateException error = assertThrows(
-                IllegalStateException.class, () -> service.delete(projectWithId("project-1")));
+                IllegalStateException.class, () -> service.delete(project));
 
         assertEquals("删除项目失败", error.getMessage());
     }

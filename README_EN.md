@@ -226,6 +226,8 @@ ZIP imports for fingerprints, plugins, and disguises share decompression limits:
 | **Audit Logs** | Operation auditing (command execution, file operations, etc.), AI conversation auditing |
 | **Session Management** | Session records, result export, operation report generation |
 
+Before deleting an account, transfer any teams and projects it leads or owns, including archived projects. Administrators can call `POST /platform/projects/transfer` with `projectId` and `newOwnerUserId`. The new owner must be enabled. Transfers preserve the project's sharing scope and archived state.
+
 ---
 
 ## Tech Stack

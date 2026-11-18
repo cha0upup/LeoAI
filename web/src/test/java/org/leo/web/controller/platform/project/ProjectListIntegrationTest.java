@@ -22,6 +22,7 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.dao.mapper.TeamMapper;
+import org.leo.dao.mapper.UserMapper;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.project.ProjectService;
@@ -31,12 +32,14 @@ import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectOwnerTransferRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -74,7 +77,9 @@ class ProjectListIntegrationTest {
             jdbc.update("""
                     INSERT INTO users (user_id, user_name, password, team_id, create_time, update_time)
                     VALUES ('lead-1', 'lead-1', 'fixture-hash', 'team-1', '2026-10-01', '2026-10-01'),
-                           ('lead-2', 'lead-2', 'fixture-hash', 'team-2', '2026-10-01', '2026-10-01')
+                           ('lead-2', 'lead-2', 'fixture-hash', 'team-2', '2026-10-01', '2026-10-01'),
+                           ('user-1', 'user-1', 'fixture-hash', 'team-1', '2026-10-01', '2026-10-01'),
+                           ('user-2', 'user-2', 'fixture-hash', 'team-2', '2026-10-01', '2026-10-01')
                     """);
             jdbc.update("""
                     INSERT INTO teams (team_id, team_name, leader_id, create_time, update_time)
@@ -85,6 +90,7 @@ class ProjectListIntegrationTest {
         Configuration configuration = SqliteTestDatabase.myBatisConfiguration(dataSource);
         configuration.addMapper(ProjectMapper.class);
         configuration.addMapper(TeamMapper.class);
+        configuration.addMapper(UserMapper.class);
         configuration.addInterceptor(queries);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
         agents = mock(AgentService.class);
@@ -159,7 +165,6 @@ class ProjectListIntegrationTest {
     @Test
     void administratorSharesAPrivateProjectWithItsOwnersTeam() throws Exception {
         project("owned", "user-1", "private", "active", "Original");
-        jdbc.update("UPDATE projects SET team_id=NULL WHERE project_id='owned'");
         requestAs("normal");
         Project input = new Project();
         input.setProjectId("owned");
@@ -174,6 +179,46 @@ class ProjectListIntegrationTest {
         assertEquals(List.of("owned"), listAs(requestAs("normal", "colleague", "team-1")).stream()
                 .map(item -> item.project().getProjectId()).toList());
         assertTrue(listAs(requestAs("normal", "outsider", "team-2")).isEmpty());
+    }
+
+    @Test
+    void administratorTransfersOwnershipWithoutChangingTheSharingTeam() {
+        project("owned", "user-1", "team", "archived", "Original");
+        ProjectMapper projectMapper = sqlSession.getMapper(ProjectMapper.class);
+        Project beforeTransfer = projectMapper.findProjectById("owned");
+        UserService storedUsers = new UserService(sqlSession.getMapper(UserMapper.class));
+        assertFalse(storedUsers.delUser("user-1"));
+        assertNotNull(storedUsers.getUserById("user-1"));
+
+        var transfer = new ProjectOwnerTransferRequest("owned", "user-2");
+        assertEquals(403, assertThrows(ApiException.class,
+                () -> controller.transferProject(requestAs("normal"), transfer)).getCode());
+        var admin = requestAs("admin", "manager", "team-2");
+        jdbc.update("UPDATE users SET status=0 WHERE user_id='user-2'");
+        assertEquals(409, assertThrows(ApiException.class,
+                () -> controller.transferProject(admin, transfer)).getCode());
+        jdbc.update("UPDATE users SET status=1 WHERE user_id='user-2'");
+
+        assertEquals(200, controller.transferProject(admin, transfer).get("code"));
+        assertEquals(Map.of("owner_user_id", "user-2", "team_id", "team-1", "status", "archived"),
+                jdbc.queryForMap("SELECT owner_user_id, team_id, status FROM projects WHERE project_id='owned'"));
+        assertFalse(projectMapper.updateProject(beforeTransfer));
+        assertEquals(0, projectMapper.deleteProject("owned", beforeTransfer.getOwnerUserId()));
+        assertTrue(storedUsers.delUser("user-1"));
+        assertFalse(storedUsers.delUser("user-2"));
+    }
+
+    @Test
+    void schemaRejectsInvalidOwnersAndSharingTeams() {
+        assertThrows(DataAccessException.class, () -> project("orphan", "missing", "private", "active", "Orphan"));
+        project("shared", "user-1", "team", "active", "Shared");
+        assertThrows(DataAccessException.class, () -> jdbc.update(
+                "UPDATE projects SET team_id='missing' WHERE project_id='shared'"));
+        assertThrows(DataAccessException.class, () -> jdbc.update(
+                "UPDATE projects SET team_id=NULL WHERE project_id='shared'"));
+        assertThrows(DataAccessException.class, () -> jdbc.update(
+                "UPDATE projects SET permission='private' WHERE project_id='shared'"));
+        assertThrows(DataAccessException.class, () -> jdbc.update("DELETE FROM users WHERE user_id='user-1'"));
     }
 
     @Test
@@ -348,7 +393,8 @@ class ProjectListIntegrationTest {
 
     private void project(String id, String owner, String permission, String status, String name) {
         jdbc.update("INSERT INTO projects (project_id, project_name, owner_user_id, team_id, permission, status, create_time, update_time) "
-                + "VALUES (?, ?, ?, 'team-1', ?, ?, '2026-10-01', '2026-10-01')", id, name, owner, permission, status);
+                + "VALUES (?, ?, ?, ?, ?, ?, '2026-10-01', '2026-10-01')", id, name, owner,
+                "team".equals(permission) ? "team-1" : null, permission, status);
     }
 
     private void host(String id) {

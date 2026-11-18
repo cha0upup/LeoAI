@@ -13,6 +13,8 @@ public final class ProjectDtos {
 
     public record ProjectIdRequest(String projectId) {}
 
+    public record ProjectOwnerTransferRequest(String projectId, String newOwnerUserId) {}
+
     public record ProjectAgentsRequest(
             String projectId,
             List<String> agentIds,

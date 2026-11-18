@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
+import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentDirectoryService;
@@ -14,6 +15,7 @@ import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectChildrenRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectMembershipSummary;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectOwnerTransferRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.exception.ApiException;
@@ -97,6 +99,18 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         Project project = requireManageable(body != null ? body.projectId() : null, user);
         return ApiResponse.success(projectService.archive(project));
+    }
+
+    @PostMapping("/transfer")
+    public Map<String, Object> transferProject(HttpServletRequest request, @RequestBody ProjectOwnerTransferRequest body) {
+        User user = permissionService.requireLogin(request);
+        if (!AccessPolicy.isAdmin(user)) throw ApiException.forbidden("只有管理员可以交接项目负责人");
+        Project project = requireManageable(body != null ? body.projectId() : null, user);
+        String newOwnerId = PermissionService.requireText(body.newOwnerUserId(), "newOwnerUserId不能为空");
+        if (!projectService.transferOwner(project, newOwnerId)) {
+            throw ApiException.conflict("接任账号不存在或未启用，或项目负责人已变更");
+        }
+        return ApiResponse.success(Map.of("projectId", project.getProjectId(), "ownerUserId", newOwnerId));
     }
 
     @PostMapping("/delete")

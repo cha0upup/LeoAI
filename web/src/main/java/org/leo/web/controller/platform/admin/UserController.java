@@ -314,7 +314,7 @@ public class UserController {
         }
 
         boolean ok = userService.delUser(target.getUserId());
-        return ok ? ApiResponse.success() : ApiResponse.error("删除失败");
+        return ok ? ApiResponse.success() : ApiResponse.conflict("账号已变化，或仍负责项目或团队；请刷新后检查归属并先完成交接");
     }
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────────

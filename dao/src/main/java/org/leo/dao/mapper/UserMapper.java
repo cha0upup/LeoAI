@@ -43,7 +43,11 @@ public interface UserMapper {
             """)
     boolean insertUser(@Param("user") User user, @Param("timestamp") String timestamp);
 
-    @Delete("DELETE FROM users WHERE user_id = #{userId}")
+    @Delete("""
+            DELETE FROM users WHERE user_id = #{userId}
+              AND NOT EXISTS (SELECT 1 FROM projects WHERE owner_user_id = #{userId})
+              AND NOT EXISTS (SELECT 1 FROM teams WHERE leader_id = #{userId})
+            """)
     boolean delUser(@Param("userId") String userId);
 
     @Update("""
