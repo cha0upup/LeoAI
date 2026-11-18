@@ -19,7 +19,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
-import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,30 +32,49 @@ class SchemaInitializationTest {
         var source = initializedSource();
         new DatabaseInitializer(source).run();
         var jdbc = new JdbcTemplate(source);
-        for (var entry : Map.of(
-                "ai_messages", new String[]{"nodes_json", "recovery_context"},
-                "ai_threads", new String[]{"host_id"},
-                "ai_runs", new String[]{"runtime_json", "trace_json"},
-                "agents", new String[]{"last_connected_at"}).entrySet()) {
-            for (String name : entry.getValue()) assertEquals(1, column(jdbc, entry.getKey(), name), name);
-        }
-        for (var entry : Map.of(
-                "agents", new String[]{"last_heartbeat", "heartbeat_interval"},
-                "agent_database_connections", new String[]{"max_connections"},
-                "ai_threads", new String[]{"root_plan_id", "profile"},
-                "ai_subagent_invocations", new String[]{"parent_message_id", "input_json", "profile"},
-                "ai_messages", new String[]{"thinking_logs_json", "tool_calls_json"}).entrySet()) {
-            for (String name : entry.getValue()) assertEquals(0, column(jdbc, entry.getKey(), name), name);
-        }
-        for (String name : new String[]{"idx_ai_messages_run", "uk_ai_turns_active_thread",
-                "uk_users_user_name_nocase", "idx_scan_tasks_owner_cursor", "idx_scan_tasks_owner_active_cursor"}) {
+        assertEquals(Set.of(
+                        "agent_database_connections", "agent_ssh_connections", "agents",
+                        "ai_events", "ai_messages", "ai_model_capabilities", "ai_model_capability_observations",
+                        "ai_model_configs", "ai_providers", "ai_runs", "ai_subagent_invocations",
+                        "ai_thread_leases", "ai_threads", "ai_turns", "ai_user_input_requests",
+                        "audit_logs", "project_agents", "projects", "scan_endpoint_results", "scan_evidence",
+                        "scan_fingerprint_results", "scan_observations", "scan_tasks", "system_configs", "teams", "users"),
+                Set.copyOf(jdbc.queryForList(
+                        "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'", String.class)));
+
+        assertColumns(jdbc, "agents",
+                "agent_id", "agent_name", "parent_agent_id", "create_by_user_id", "team_id", "conn_link", "protocol",
+                "headers", "req_disguise_id", "resp_disguise_id", "payload_key", "proxy_enabled", "proxy_type",
+                "proxy_host", "proxy_port", "max_req_count", "permission", "last_connected_at", "create_time",
+                "update_time", "remark", "url_strategy", "padding_strategy", "header_noise_strategy",
+                "tls_fingerprint_strategy", "component_class_name_strategy", "type");
+        assertColumns(jdbc, "agent_database_connections",
+                "connection_id", "connection_name", "agent_id", "dialect", "connection_spec", "username", "password",
+                "status", "test_status", "last_test_time", "last_test_message", "timeout_seconds", "create_user_id",
+                "create_time", "update_time", "description", "remark");
+        assertColumns(jdbc, "ai_threads",
+                "thread_id", "scope", "user_id", "agent_id", "host_id", "session_id", "title", "config_id", "config_name",
+                "config_protocol", "config_model", "config_base_url", "config_completions_path", "config_max_output_tokens",
+                "created_at", "last_active_at", "message_count", "run_status", "parent_thread_id", "context_summary",
+                "context_checkpoint_json");
+        assertColumns(jdbc, "ai_subagent_invocations",
+                "invocation_id", "parent_thread_id", "child_thread_id", "task", "summary", "status",
+                "created_at", "completed_at");
+        assertColumns(jdbc, "ai_messages",
+                "message_id", "thread_id", "turn_id", "run_id", "message_seq", "status", "role", "content",
+                "recovery_context", "timestamp", "attachments_json", "nodes_json", "review_json", "plan_json");
+        assertEquals(1, column(jdbc, "ai_runs", "runtime_json"));
+        assertEquals(1, column(jdbc, "ai_runs", "trace_json"));
+
+        assertExplicitIndexes(jdbc, "ai_runs", "idx_ai_runs_thread_time");
+        assertExplicitIndexes(jdbc, "ai_events",
+                "idx_ai_events_run_seq", "idx_ai_events_turn_started", "idx_ai_events_turn_completed");
+        assertExplicitIndexes(jdbc, "scan_tasks", "idx_scan_tasks_owner_cursor", "idx_scan_tasks_owner_active_cursor");
+        for (String name : Set.of("idx_ai_messages_run", "uk_ai_turns_active_thread", "uk_users_user_name_nocase")) {
             assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
                     Integer.class, name), name);
         }
-        for (String name : new String[]{"sessions", "agent_sessions", "ai_operation_assessments",
-                "idx_ai_runs_turn", "idx_ai_events_thread_seq", "idx_scan_tasks_session_cursor", "idx_scan_tasks_active_cursor"}) {
-            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name=?", Integer.class, name), name);
-        }
+
         assertEquals(Set.of("audit.mode", "max.file.upload.size.mb", "security.password.min.length",
                         "security.login.max.attempts", "security.login.lock.seconds"),
                 Set.copyOf(jdbc.queryForList("SELECT config_key FROM system_configs", String.class)));
@@ -137,7 +155,7 @@ class SchemaInitializationTest {
     }
 
     @Test
-    void rejectsThePreviousMembershipSchemaInsteadOfAddingConstraintsInPlace() {
+    void rejectsMissingTeamForeignKeyWithoutAddingIt() {
         var source = source();
         var jdbc = new JdbcTemplate(source);
         jdbc.execute("CREATE TABLE users (user_id TEXT PRIMARY KEY, team_id TEXT, account_revision INTEGER)");
@@ -175,6 +193,17 @@ class SchemaInitializationTest {
 
     private int column(JdbcTemplate jdbc, String table, String name) {
         return jdbc.queryForObject("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", Integer.class, table, name);
+    }
+
+    private void assertColumns(JdbcTemplate jdbc, String table, String... names) {
+        assertEquals(Set.of(names),
+                Set.copyOf(jdbc.queryForList("SELECT name FROM pragma_table_info(?)", String.class, table)), table);
+    }
+
+    private void assertExplicitIndexes(JdbcTemplate jdbc, String table, String... names) {
+        assertEquals(Set.of(names), Set.copyOf(jdbc.queryForList(
+                "SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+                String.class, table)), table);
     }
 
     private SQLiteDataSource initializedSource() {
