@@ -1,12 +1,16 @@
 package org.leo.service.audit;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
 import org.leo.dao.mapper.AuditLogMapper;
 import org.mockito.ArgumentCaptor;
 
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -52,6 +56,25 @@ class AuditLogServiceTest {
         assertEquals(1, logs.findAllAuditLogs(2001, -5).size());
 
         verify(mapper).findAllAuditLogs(1000, 0);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 3})
+    void trendQueriesWholeCalendarDaysAndFillsMissingCounts(int days) {
+        when(mapper.countAuditLogsByDay(anyString(), anyString())).thenAnswer(call -> {
+            String startTime = call.getArgument(0);
+            return List.of(Map.of("day", startTime.substring(0, 10), "count", 2L));
+        });
+
+        var trend = logs.getTrendStatistics(days);
+
+        assertEquals(days, trend.size());
+        LocalDate start = LocalDate.parse((String) trend.get(0).get("day"));
+        verify(mapper).countAuditLogsByDay(start + " 00:00:00", start.plusDays(days) + " 00:00:00");
+        for (int i = 0; i < days; i++) {
+            assertEquals(start.plusDays(i).toString(), trend.get(i).get("day"));
+            assertEquals(i == 0 ? 2 : 0, trend.get(i).get("count"));
+        }
     }
 
     @Test

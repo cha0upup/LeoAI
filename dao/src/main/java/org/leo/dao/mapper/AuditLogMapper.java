@@ -146,8 +146,14 @@ public interface AuditLogMapper {
     @Select("SELECT operation_type AS operation, MIN(operation_name) AS operationName, COUNT(*) AS count FROM audit_logs GROUP BY operation_type ORDER BY count DESC")
     List<Map<String, Object>> countAuditLogsByOperationType();
 
-    @Select("SELECT strftime('%Y-%m-%d', create_time) AS day, COUNT(*) AS count FROM audit_logs WHERE create_time >= datetime('now', '-' || #{days} || ' days') GROUP BY day ORDER BY day ASC")
-    List<Map<String, Object>> countAuditLogsByDay(@Param("days") Integer days);
+    @Select("""
+            SELECT strftime('%Y-%m-%d', create_time) AS day, COUNT(*) AS count
+            FROM audit_logs
+            WHERE create_time >= #{startTime} AND create_time < #{endExclusive}
+            GROUP BY day ORDER BY day ASC
+            """)
+    List<Map<String, Object>> countAuditLogsByDay(@Param("startTime") String startTime,
+                                                  @Param("endExclusive") String endExclusive);
 
     @Delete("DELETE FROM audit_logs WHERE create_time < datetime('now', '-' || #{days} || ' days')")
     Integer deleteOldAuditLogs(@Param("days") Integer days);

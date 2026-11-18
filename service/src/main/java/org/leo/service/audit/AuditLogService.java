@@ -182,7 +182,11 @@ public class AuditLogService {
 
     public List<Map<String, Object>> getTrendStatistics(Integer days) {
         int normalizedDays = normalizeTrendDays(days);
-        List<Map<String, Object>> rows = auditLogMapper.countAuditLogsByDay(normalizedDays - 1);
+        LocalDate today = LocalDate.now();
+        LocalDate start = today.minusDays(normalizedDays - 1L);
+        List<Map<String, Object>> rows = auditLogMapper.countAuditLogsByDay(
+                start.atStartOfDay().format(DATE_TIME_FORMAT),
+                today.plusDays(1).atStartOfDay().format(DATE_TIME_FORMAT));
         Map<String, Integer> countsByDay = new HashMap<>();
         if (rows != null) {
             for (Map<String, Object> row : rows) {
@@ -195,7 +199,6 @@ public class AuditLogService {
         }
 
         List<Map<String, Object>> trend = new ArrayList<>();
-        LocalDate start = LocalDate.now().minusDays(normalizedDays - 1L);
         for (int i = 0; i < normalizedDays; i++) {
             LocalDate day = start.plusDays(i);
             Map<String, Object> item = new LinkedHashMap<>();
