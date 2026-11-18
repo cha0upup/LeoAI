@@ -490,6 +490,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_turns_active_thread
 CREATE INDEX IF NOT EXISTS idx_ai_turns_thread_dispatch
     ON ai_turns(thread_id, protocol_status, dispatch_status, created_at);
 
+-- 以 dispatch_status 定位排队 Turn，避免后台扫描遍历历史记录。
+CREATE INDEX IF NOT EXISTS idx_ai_turns_queued_thread
+    ON ai_turns(dispatch_status, thread_id)
+    WHERE protocol_status = 'inProgress' AND dispatch_status = 'queued';
+
 -- 11. AI 单次运行记录：一个 Turn 对应一个 Run
 CREATE TABLE IF NOT EXISTS ai_runs (
     run_id VARCHAR(64) PRIMARY KEY,

@@ -193,6 +193,15 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void dispatchScanUsesTheQueuedTurnIndex() {
+        String sql = "EXPLAIN QUERY PLAN SELECT DISTINCT queued.thread_id "
+                + AiConversationMapper.DISPATCHABLE_QUEUED_TURNS;
+        String plan = String.join("\n", jdbc.query(sql, (row, index) -> row.getString("detail")));
+
+        assertTrue(plan.contains("idx_ai_turns_queued_thread"), plan);
+    }
+
+    @Test
     void matchingConfirmationCanBeConsumedOnlyOnceAcrossConcurrentCallers() throws Exception {
         requests.create(confirmation("question-1"));
         protocol.begin("thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1");
