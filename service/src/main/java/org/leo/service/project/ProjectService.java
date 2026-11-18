@@ -8,6 +8,8 @@ import org.leo.core.security.AccessPolicy;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
+import org.leo.service.team.TeamService;
+import org.leo.service.user.UserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +21,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -33,10 +36,14 @@ public class ProjectService {
 
     private final ProjectMapper projectMapper;
     private final AgentService agentService;
+    private final UserService users;
+    private final TeamService teams;
 
-    public ProjectService(ProjectMapper projectMapper, AgentService agentService) {
+    public ProjectService(ProjectMapper projectMapper, AgentService agentService, UserService users, TeamService teams) {
         this.projectMapper = projectMapper;
         this.agentService = agentService;
+        this.users = users;
+        this.teams = teams;
     }
 
     public Project findById(String projectId) {
@@ -79,6 +86,7 @@ public class ProjectService {
         String permission = normalizePermission(input.getPermission(), owner);
         String name = requireName(input.getProjectName());
         String status = normalizeStatus(input.getStatus());
+        String teamId = resolveTeamId(permission, null, owner);
         String now = now();
         input.setProjectId(UUID.randomUUID().toString());
         input.setProjectName(name);
@@ -87,7 +95,7 @@ public class ProjectService {
         input.setStatus(status);
         input.setPermission(permission);
         input.setOwnerUserId(owner.getUserId());
-        input.setTeamId("team".equals(input.getPermission()) ? owner.getTeamId() : trimToNull(input.getTeamId()));
+        input.setTeamId(teamId);
         input.setCreateTime(now);
         input.setUpdateTime(now);
         if (!projectMapper.insertProject(input)) throw new IllegalStateException("创建项目失败");
@@ -99,18 +107,33 @@ public class ProjectService {
         String permission = normalizePermission(changes.getPermission(), actor);
         String name = requireName(changes.getProjectName());
         String status = normalizeStatus(changes.getStatus());
+        String teamId = resolveTeamId(permission, existing, actor);
         existing.setProjectName(name);
         existing.setProjectCode(trimToNull(changes.getProjectCode()));
         existing.setDescription(trimToNull(changes.getDescription()));
         existing.setPermission(permission);
         existing.setStatus(status);
-        String teamId = trimToNull(changes.getTeamId());
-        if (teamId != null || !"team".equals(existing.getPermission())) {
-            existing.setTeamId(teamId);
-        }
+        existing.setTeamId(teamId);
         existing.setUpdateTime(now());
         if (!projectMapper.updateProject(existing)) throw new IllegalStateException("更新项目失败");
         return existing;
+    }
+
+    private String resolveTeamId(String permission, Project existing, User actor) {
+        if (!AccessPolicy.PERMISSION_TEAM.equals(permission)) return null;
+        // Keep the existing audience when editing a shared project, even if its owner moved teams.
+        String teamId = existing != null && AccessPolicy.PERMISSION_TEAM.equals(existing.getPermission())
+                ? trimToNull(existing.getTeamId()) : null;
+        if (teamId == null) {
+            User owner = existing == null || Objects.equals(existing.getOwnerUserId(), actor.getUserId())
+                    ? actor : users.getUserById(existing.getOwnerUserId());
+            teamId = owner == null ? null : trimToNull(owner.getTeamId());
+            if (teamId == null) throw new IllegalArgumentException("团队协作需要项目负责人先加入团队");
+        }
+        if (teams.getTeamById(teamId) == null) {
+            throw new IllegalArgumentException("项目所属团队不存在，请检查团队归属或调整共享范围");
+        }
+        return teamId;
     }
 
     public Project archive(Project project) {
@@ -232,10 +255,6 @@ public class ProjectService {
      * 项目以入口主机为归属单位。用户从树中选中子节点时，自动提升到其入口主机，
      * 避免生成在项目根列表中不可见的孤立关系。
      */
-    public String resolveEntryAgentId(String agentId) {
-        return resolveEntryAgentId(agentId, new HashMap<>());
-    }
-
     private String resolveEntryAgentId(String agentId, Map<String, Agent> ancestors) {
         String currentId = trimToNull(agentId);
         if (currentId == null) return null;

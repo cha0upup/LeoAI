@@ -21,9 +21,11 @@ import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.dao.mapper.ProjectMapper;
+import org.leo.dao.mapper.TeamMapper;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.project.ProjectService;
+import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
@@ -66,15 +68,20 @@ class ProjectListIntegrationTest {
     void setUp() {
         SQLiteDataSource dataSource = SqliteTestDatabase.create(temp.resolve("projects.db"));
         jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("INSERT INTO teams (team_id, team_name, leader_id, create_time, update_time) VALUES "
+                + "('team-1', 'First', 'lead-1', '2026-10-01', '2026-10-01'),"
+                + "('team-2', 'Second', 'lead-2', '2026-10-01', '2026-10-01')");
         Configuration configuration = SqliteTestDatabase.myBatisConfiguration(dataSource);
         configuration.addMapper(ProjectMapper.class);
+        configuration.addMapper(TeamMapper.class);
         configuration.addInterceptor(queries);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
         agents = mock(AgentService.class);
         users = mock(UserService.class);
         permissions = new PermissionService(agents, users);
+        TeamService teams = new TeamService(sqlSession.getMapper(TeamMapper.class), users);
         controller = new ProjectController(
-                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents), permissions,
+                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents, users, teams), permissions,
                 new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)));
     }
 
@@ -123,6 +130,7 @@ class ProjectListIntegrationTest {
         input.setProjectId("owned");
         input.setProjectName(" Changed ");
         input.setPermission(permission);
+        input.setTeamId("team-2");
         MockHttpServletRequest request = requestAs(privilege);
 
         var response = update ? controller.updateProject(request, input) : controller.createProject(request, input);
@@ -130,10 +138,31 @@ class ProjectListIntegrationTest {
         assertEquals(200, response.get("code"));
         Project saved = (Project) response.get("data");
         assertEquals(expectedPermission, saved.getPermission());
+        assertEquals("team".equals(expectedPermission) ? "team-1" : null, saved.getTeamId());
         assertEquals("Changed", saved.getProjectName());
         assertEquals(expectedPermission, jdbc.queryForObject(
                 "SELECT permission FROM projects WHERE project_id=?", String.class, saved.getProjectId()));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM projects", Integer.class));
+    }
+
+    @Test
+    void administratorSharesAPrivateProjectWithItsOwnersTeam() throws Exception {
+        project("owned", "user-1", "private", "active", "Original");
+        jdbc.update("UPDATE projects SET team_id=NULL WHERE project_id='owned'");
+        requestAs("normal");
+        Project input = new Project();
+        input.setProjectId("owned");
+        input.setProjectName("Edited");
+        input.setPermission("team");
+        input.setTeamId("team-2");
+
+        var admin = requestAs("admin", "manager", "team-2");
+        Project saved = (Project) controller.updateProject(admin, input).get("data");
+
+        assertEquals("team-1", saved.getTeamId());
+        assertEquals(List.of("owned"), listAs(requestAs("normal", "colleague", "team-1")).stream()
+                .map(item -> item.project().getProjectId()).toList());
+        assertTrue(listAs(requestAs("normal", "outsider", "team-2")).isEmpty());
     }
 
     @Test
@@ -270,9 +299,12 @@ class ProjectListIntegrationTest {
         assertTwoProjectQueries();
     }
 
-    @SuppressWarnings("unchecked")
     private List<ProjectSummary> listAs(String privilege) throws Exception {
-        MockHttpServletRequest request = requestAs(privilege);
+        return listAs(requestAs(privilege));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ProjectSummary> listAs(MockHttpServletRequest request) throws Exception {
         HandlerMethod handler = new HandlerMethod(controller,
                 ProjectController.class.getMethod("listProjects", HttpServletRequest.class));
         assertTrue(new LoginInterceptor(permissions).preHandle(request, new MockHttpServletResponse(), handler));
@@ -282,12 +314,16 @@ class ProjectListIntegrationTest {
     }
 
     private MockHttpServletRequest requestAs(String privilege) {
+        return requestAs(privilege, "user-1", "team-1");
+    }
+
+    private MockHttpServletRequest requestAs(String privilege, String userId, String teamId) {
         User user = new User();
-        user.setUserId("user-1");
+        user.setUserId(userId);
         user.setStatus(1);
-        user.setTeamId("team-1");
+        user.setTeamId(teamId);
         user.setPrivilege(privilege);
-        when(users.getUserById("user-1")).thenReturn(user);
+        when(users.getUserById(userId)).thenReturn(user);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/platform/projects");
         request.getSession(true).setAttribute("user", user);
         return request;

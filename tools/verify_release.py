@@ -12,6 +12,8 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+from check_packaged_startup import java_executable
+
 
 def assert_version_alignment(backend, frontend):
     project = ET.parse(backend / 'pom.xml').getroot()
@@ -83,17 +85,12 @@ def assert_packaged_static_matches(frontend, backend):
 
 
 def verify_packaged_ssh_crypto(backend):
-    java_name = 'java.exe' if os.name == 'nt' else 'java'
-    java_home = os.environ.get('JAVA_HOME')
-    java = Path(java_home) / 'bin' / java_name if java_home else shutil.which(java_name)
-    if not java or not Path(java).is_file():
-        raise ValueError('java is required for packaged SSH crypto verification')
     classes = (backend / 'web/target/test-classes').resolve()
     main = 'org.leo.web.adapter.ssh.PackagedSshCryptoProbe'
     if not (classes / (main.replace('.', '/') + '.class')).is_file():
         raise ValueError('Missing compiled packaged SSH crypto probe')
     # Use Boot's nested dependency loader without starting Spring or touching application data.
-    run_command('Packaged SSH crypto initialization', [java, '-Dloader.main=' + main,
+    run_command('Packaged SSH crypto initialization', [java_executable(), '-Dloader.main=' + main,
                 '-Dloader.path=' + str(classes), '-cp', packaged_application(backend).resolve(),
                 'org.springframework.boot.loader.launch.PropertiesLauncher'], backend)
 
@@ -132,6 +129,9 @@ def verify_release(backend, frontend, install=True):
     assert_static_matches(frontend, backend)
     assert_packaged_static_matches(frontend, backend)
     verify_packaged_ssh_crypto(backend)
+    run_command('Packaged application startup',
+                [sys.executable, backend / 'tools/check_packaged_startup.py',
+                 packaged_application(backend).resolve()], backend)
     print('\nRelease checks passed.', flush=True)
 
 

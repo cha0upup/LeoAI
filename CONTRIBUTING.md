@@ -64,6 +64,7 @@
 ## 注意事项
 
 - 发布入口会安装 lockfile 依赖，执行前端 lint/测试/构建、静态目录逐文件比对、组件 Java 6 API 与运行字节码检查、工具测试以及后端 `clean verify`。本地已准备依赖时可使用 `--skip-install`，CI 使用完整入口。
+- 打包后会直接启动 JAR，在临时 SQLite 与 VFS 中验证首次设置管理员、登录和同库重启，并确认修改过的配置会被保留。已有 JAR 可单独运行 `python3 tools/check_packaged_startup.py web/target/LeoAi-3.0.1.jar`（应用 JDK 17）。检查仅监听本机回环地址，不使用工作区的数据库。
 - 发布入口先校验父/子 POM、前端 package 与 lockfile 的版本一致性；修改版本时请同步两个仓库。
 - 静态比对失败时先同步前端构建产物并审阅差异；检查器保持后端静态目录原样。组件比对只忽略源码、行号与局部变量调试表，仍校验指令、访问标志、注解及反射方法参数。
 - GitHub Actions 的 `Release checks` 需输入前端仓库与精确提交 SHA。私有前端仓库可配置只读的 `FRONTEND_READ_TOKEN`；流程仅做检查和打包，不自动发布或修改仓库。

@@ -15,6 +15,7 @@ import org.leo.service.agentnode.AgentService;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.discovery.UrlProbeService;
 import org.leo.service.project.ProjectService;
+import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.controller.platform.agent.AgentManageController;
 import org.leo.web.controller.platform.project.ProjectController;
@@ -66,7 +67,8 @@ class AgentDirectoryIntegrationTest {
         when(users.getUserById("owner")).thenReturn(user);
         permissions = new PermissionService(agents, users);
         directory = new AgentDirectoryService(agents);
-        ProjectService projectService = new ProjectService(session.getMapper(ProjectMapper.class), agents);
+        ProjectService projectService = new ProjectService(session.getMapper(ProjectMapper.class), agents,
+                users, mock(TeamService.class));
         global = new AgentManageController(agents, users, mock(UrlProbeService.class), projectService, directory);
         projects = new ProjectController(projectService, permissions, directory,
                 new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)));

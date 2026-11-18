@@ -12,6 +12,8 @@ import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
+import org.leo.service.team.TeamService;
+import org.leo.service.user.UserService;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
@@ -21,7 +23,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,7 +37,8 @@ import static org.mockito.Mockito.when;
 class ProjectServiceTest {
     private final ProjectMapper mapper = mock(ProjectMapper.class);
     private final AgentService agentService = mock(AgentService.class);
-    private final ProjectService service = new ProjectService(mapper, agentService);
+    private final ProjectService service = new ProjectService(mapper, agentService,
+            mock(UserService.class), mock(TeamService.class));
 
     @ParameterizedTest
     @CsvSource({"false, normal", "true, normal", "false, leader", "true, leader"})
@@ -108,16 +110,6 @@ class ProjectServiceTest {
         when(agentService.findAgentById("child")).thenReturn(child);
 
         assertTrue(service.containsAgent("project-1", "child"));
-    }
-
-    @Test
-    void resolvesChildSelectionToItsEntryAgent() {
-        Agent child = agent("child", "gateway");
-        Agent gateway = agent("gateway", "root");
-        when(agentService.findAgentById("child")).thenReturn(child);
-        when(agentService.findAgentById("gateway")).thenReturn(gateway);
-
-        assertEquals("gateway", service.resolveEntryAgentId("child"));
     }
 
     @Test
@@ -198,7 +190,7 @@ class ProjectServiceTest {
         when(agentService.findAgentById("child")).thenReturn(agent("child", "parent"));
         when(agentService.findAgentById("parent")).thenReturn(cycle ? agent("parent", "child") : null);
 
-        assertNull(service.resolveEntryAgentId("child"));
+        assertEquals(0, service.detachAgents("project-1", List.of("child")));
         assertFalse(service.containsAgent("project-1", "child"));
 
         verify(agentService, times(2)).findAgentById("child");
