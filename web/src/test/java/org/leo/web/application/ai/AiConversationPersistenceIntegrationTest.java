@@ -230,6 +230,28 @@ class AiConversationPersistenceIntegrationTest {
                 .allMatch(message -> "committed".equals(message.get("status"))));
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void activeTurnBlocksQueuedTurnUntilItTerminates(boolean interrupted) {
+        var active = reserve();
+        assertTrue(protocol.tryStart(active.id()).claimed());
+        if (interrupted) {
+            assertEquals("cancelling", protocol.requestInterrupt("thread-1", active.id()).status());
+        }
+        var queued = protocol.begin(
+                "thread-1", "client-2", "platform", "{}", "next", null, null).turn();
+
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
+        assertFalse(protocol.tryStart(queued.id()).claimed());
+        assertNull(protocol.findNextQueued("thread-1"));
+
+        protocol.completeFromRuntime(active.id(), interrupted ? "interrupted" : "completed", null, null);
+
+        assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
+        assertEquals(queued.id(), protocol.findNextQueued("thread-1").id());
+        assertTrue(protocol.tryStart(queued.id()).claimed());
+    }
+
     @Test
     void queuedCancellationDiscardsMessagesAndAppendsOneReplayableCompletion() {
         var turn = reserve();

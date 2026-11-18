@@ -53,6 +53,11 @@ public interface AiConversationMapper {
             FROM ai_turns queued
             WHERE queued.protocol_status = 'inProgress' AND queued.dispatch_status = 'queued'
             AND NOT EXISTS (
+                SELECT 1 FROM ai_turns active
+                WHERE active.thread_id = queued.thread_id
+                AND active.dispatch_status IN ('running', 'cancelling')
+            )
+            AND NOT EXISTS (
                 SELECT 1 FROM ai_user_input_requests input
                 WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING'
                 AND (queued.answer_to_question_id = input.request_id) IS NOT TRUE
@@ -172,20 +177,14 @@ public interface AiConversationMapper {
             + "created_at, turn_id")
     List<AiTurnRecord> listInProgressTurns(@Param("threadId") String threadId);
 
-    @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS
-            + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
-            + "WHERE active.thread_id = queued.thread_id "
-            + "AND active.dispatch_status IN ('running', 'cancelling'))")
+    @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS)
     List<String> listDispatchableThreadIds();
 
     @Update("UPDATE ai_turns SET dispatch_status = 'running', "
             + "started_at = COALESCE(started_at, #{startedAt}) "
             + "WHERE turn_id = #{turnId} "
             + "AND turn_id = (SELECT queued.turn_id " + DISPATCHABLE_QUEUED_TURNS
-            + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ") "
-            + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
-            + "WHERE active.thread_id = ai_turns.thread_id "
-            + "AND active.dispatch_status IN ('running', 'cancelling'))")
+            + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ")")
     int markProtocolTurnStarted(@Param("turnId") String turnId,
                                 @Param("startedAt") long startedAt);
 
