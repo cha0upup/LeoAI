@@ -214,6 +214,16 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void dispatchScanIsReadOnlyWhenNoQuestionHasExpired() {
+        reserve();
+        var transaction = new TransactionTemplate(context.getBean(DataSourceTransactionManager.class));
+        transaction.executeWithoutResult(status -> {
+            jdbc.execute("PRAGMA query_only = ON");
+            assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
+        });
+    }
+
+    @Test
     void dispatchScanUsesTheQueuedTurnIndex() {
         String sql = "EXPLAIN QUERY PLAN SELECT DISTINCT queued.thread_id "
                 + AiConversationMapper.DISPATCHABLE_QUEUED_TURNS.replace("#{now}", "?");

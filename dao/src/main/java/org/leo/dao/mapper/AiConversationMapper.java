@@ -68,6 +68,7 @@ public interface AiConversationMapper {
     String NEXT_QUEUED_TURN_ORDER = """
             ORDER BY queued.answer_to_question_id IS NULL, queued.created_at, queued.turn_id LIMIT 1
             """;
+    String EXPIRED_PENDING_USER_INPUT = "status = 'PENDING' AND expires_at IS NOT NULL AND expires_at <= #{now}";
 
     @Select(THREAD_METADATA_SELECT + "WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
             + "AND host_id = #{hostId} AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
@@ -267,13 +268,15 @@ public interface AiConversationMapper {
                                                   @Param("now") long now);
 
     @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
-            + "WHERE thread_id = #{threadId} AND status = 'PENDING' "
-            + "AND expires_at IS NOT NULL AND expires_at <= #{now}")
+            + "WHERE thread_id = #{threadId} AND " + EXPIRED_PENDING_USER_INPUT)
     int expireUserInputRequests(@Param("threadId") String threadId,
                                 @Param("now") long now);
 
+    @Select("SELECT EXISTS (SELECT 1 FROM ai_user_input_requests WHERE " + EXPIRED_PENDING_USER_INPUT + ")")
+    boolean hasExpiredUserInputRequests(@Param("now") long now);
+
     @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
-            + "WHERE status = 'PENDING' AND expires_at IS NOT NULL AND expires_at <= #{now}")
+            + "WHERE " + EXPIRED_PENDING_USER_INPUT)
     int expireAllUserInputRequests(@Param("now") long now);
 
     @Update("UPDATE ai_user_input_requests SET status = 'ANSWERED', answer = #{answer}, "

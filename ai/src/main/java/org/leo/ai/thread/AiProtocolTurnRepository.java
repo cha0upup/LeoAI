@@ -36,7 +36,9 @@ public class AiProtocolTurnRepository {
 
     public List<String> listDispatchableThreadIds() {
         long now = System.currentTimeMillis();
-        mapper.expireAllUserInputRequests(now);
+        if (mapper.hasExpiredUserInputRequests(now)) {
+            mapper.expireAllUserInputRequests(now);
+        }
         return mapper.listDispatchableThreadIds(now);
     }
 
