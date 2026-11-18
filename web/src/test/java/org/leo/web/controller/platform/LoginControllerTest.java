@@ -90,7 +90,7 @@ class LoginControllerTest {
         user.setPassword(PasswordUtil.hash("secret"));
         user.setStatus(1);
         when(userService.getUserByName("alice")).thenReturn(user);
-        when(userService.recordSuccessfulLogin("user-1")).thenReturn(user);
+        when(userService.recordSuccessfulLogin("user-1", user.getPassword())).thenReturn(user);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession(true);
         String previousSessionId = request.getSession().getId();
@@ -99,7 +99,7 @@ class LoginControllerTest {
 
         assertEquals(200, response.get("code"));
         assertSame(user, request.getSession(false).getAttribute("user"));
-        verify(userService).recordSuccessfulLogin("user-1");
+        verify(userService).recordSuccessfulLogin("user-1", user.getPassword());
         verify(loginAttemptService).recordSuccess("alice", "127.0.0.1");
         // MockHttpServletRequest supports session rotation just like the servlet container.
         assertFalse(previousSessionId.equals(request.getSession(false).getId()));
@@ -119,7 +119,7 @@ class LoginControllerTest {
         changed.setStatus(1);
         changed.setPassword(PasswordUtil.hash("replacement"));
         when(userService.getUserByName("alice")).thenReturn(authenticated);
-        when(userService.recordSuccessfulLogin("user-1")).thenReturn(changed);
+        when(userService.recordSuccessfulLogin("user-1", authenticated.getPassword())).thenReturn(changed);
         MockHttpServletRequest request = new MockHttpServletRequest();
 
         ApiException error = assertThrows(ApiException.class,
@@ -187,7 +187,7 @@ class LoginControllerTest {
     }
 
     @Test
-    void updatesOnlyEditableProfileFieldsAndRefreshesSession() {
+    void updatesOnlyEditableProfileFieldsAndLeavesSessionCredentialsAlone() {
         User sessionUser = new User();
         sessionUser.setUserId("user-1");
         User storedUser = new User();
@@ -212,7 +212,7 @@ class LoginControllerTest {
         assertNull(storedUser.getRemark());
         assertEquals("alice", storedUser.getUserName());
         assertEquals("team-1", storedUser.getTeamId());
-        assertSame(storedUser, request.getSession(false).getAttribute("user"));
+        assertSame(sessionUser, request.getSession(false).getAttribute("user"));
         verify(userService).updateUser(storedUser);
     }
 

@@ -51,16 +51,15 @@ public interface UserMapper {
                 user_name=#{user.userName}, password=#{user.password},
                 privilege=#{user.privilege}, email=#{user.email},
                 phone=#{user.phone}, status=#{user.status},
-                last_login_time=#{user.lastLoginTime}, login_count=#{user.loginCount},
                 password_change_required=COALESCE(#{user.passwordChangeRequired}, 0), update_time=#{timestamp},
-                team_id=#{user.teamId}, remark=#{user.remark}
-            WHERE user_id=#{user.userId}
+                team_id=#{user.teamId}, remark=#{user.remark}, account_revision=account_revision + 1
+            WHERE user_id=#{user.userId} AND account_revision=#{user.accountRevision}
             """)
     boolean updateUserById(@Param("user") User user, @Param("timestamp") String timestamp);
 
     @Update("UPDATE users SET last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
-            + "update_time=#{updateTime} WHERE user_id=#{userId}")
+            + "update_time=#{lastLoginTime} WHERE user_id=#{userId} AND status=1 AND password=#{verifiedPasswordHash}")
     boolean recordSuccessfulLogin(@Param("userId") String userId,
-                                  @Param("lastLoginTime") String lastLoginTime,
-                                  @Param("updateTime") String updateTime);
+                                  @Param("verifiedPasswordHash") String verifiedPasswordHash,
+                                  @Param("lastLoginTime") String lastLoginTime);
 }

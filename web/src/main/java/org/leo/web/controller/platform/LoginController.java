@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -92,9 +93,9 @@ public class LoginController {
             throw ApiException.forbidden("账号已禁用，请联系管理员");
         }
 
-        User refreshed = userService.recordSuccessfulLogin(user.getUserId());
+        User refreshed = userService.recordSuccessfulLogin(user.getUserId(), user.getPassword());
         if (refreshed == null || !Integer.valueOf(1).equals(refreshed.getStatus())
-                || !java.util.Objects.equals(user.getPassword(), refreshed.getPassword())) {
+                || !Objects.equals(user.getPassword(), refreshed.getPassword())) {
             throw ApiException.unauthorized("账号凭据已更新，请重新登录");
         }
         user = refreshed;
@@ -178,10 +179,10 @@ public class LoginController {
         user.setPhone(phone);
         user.setRemark(remark);
         if (!userService.updateUser(user)) {
-            throw ApiException.serverError("个人资料更新失败");
+            throw ApiException.conflict("账号信息已变化，请刷新后重试");
         }
 
-        request.getSession().setAttribute(SESSION_ATTR_USER, user);
+        // Profile changes do not replace the authenticated credential in the session.
         logger.info("个人资料更新成功，userId: {}", user.getUserId());
         return ApiResponse.success(profileView(user));
     }
@@ -207,7 +208,7 @@ public class LoginController {
         user.setPassword(PasswordUtil.hash(newPassword));
         user.setPasswordChangeRequired(0);
         if (!userService.updateUser(user)) {
-            throw ApiException.serverError("密码修改失败");
+            throw ApiException.conflict("账号信息已变化，请刷新后重试");
         }
 
         // 更新 Session 中的用户信息

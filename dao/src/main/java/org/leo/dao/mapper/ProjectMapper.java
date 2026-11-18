@@ -38,10 +38,18 @@ public interface ProjectMapper {
     @Delete("DELETE FROM projects WHERE project_id=#{projectId}")
     int deleteProject(@Param("projectId") String projectId);
 
-    @Insert("INSERT INTO project_agents (project_id, agent_id, alias, environment, tags, sort_order, added_by_user_id, create_time) " +
-            "VALUES (#{projectId}, #{agentId}, #{alias}, #{environment}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime}) " +
-            "ON CONFLICT(project_id, agent_id) DO UPDATE SET alias=excluded.alias, environment=excluded.environment, " +
-            "tags=excluded.tags, sort_order=excluded.sort_order")
+    /** Omitted metadata keeps its existing value; an unchanged relation does not count as a write. */
+    @Insert("""
+            INSERT INTO project_agents (project_id, agent_id, alias, environment, tags, sort_order, added_by_user_id, create_time)
+            VALUES (#{projectId}, #{agentId}, #{alias}, #{environment}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime})
+            ON CONFLICT(project_id, agent_id) DO UPDATE SET
+                alias=COALESCE(excluded.alias, project_agents.alias),
+                environment=COALESCE(excluded.environment, project_agents.environment),
+                tags=COALESCE(excluded.tags, project_agents.tags)
+            WHERE (excluded.alias IS NOT NULL AND project_agents.alias IS NOT excluded.alias)
+               OR (excluded.environment IS NOT NULL AND project_agents.environment IS NOT excluded.environment)
+               OR (excluded.tags IS NOT NULL AND project_agents.tags IS NOT excluded.tags)
+            """)
     boolean attachAgent(ProjectAgent projectAgent);
 
     @Delete("DELETE FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")

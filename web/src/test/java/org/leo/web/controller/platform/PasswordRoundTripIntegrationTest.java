@@ -3,6 +3,7 @@ package org.leo.web.controller.platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +45,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -56,6 +58,7 @@ class PasswordRoundTripIntegrationTest {
 
     @TempDir Path temp;
     private final ObjectMapper json = new ObjectMapper();
+    private SqlSessionFactory factory;
     private SqlSession sqlSession;
     private UserService users;
     private UserTools tools;
@@ -68,7 +71,8 @@ class PasswordRoundTripIntegrationTest {
         Configuration configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(UserMapper.class);
         configuration.addMapper(SystemConfigMapper.class);
-        sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
+        factory = new SqlSessionFactoryBuilder().build(configuration);
+        sqlSession = factory.openSession(true);
         users = new UserService(sqlSession.getMapper(UserMapper.class));
         SystemConfigService config = new SystemConfigService(sqlSession.getMapper(SystemConfigMapper.class));
         PasswordPolicy passwords = new PasswordPolicy(config);
@@ -166,6 +170,62 @@ class PasswordRoundTripIntegrationTest {
         mvc.perform(body("/platform/user/login", Map.of("username", "member", "password", " \t ")))
                 .andExpect(status().isBadRequest());
         assertEquals(member.getPassword(), users.getUserById(member.getUserId()).getPassword());
+    }
+
+    @Test
+    void staleProfileWriteDoesNotUndoAnAccountChange() throws Exception {
+        createUser("current-fixture-password", false);
+        String userId = users.getUserByName("member").getUserId();
+        try (SqlSession request = factory.openSession(true)) {
+            UserService editor = new UserService(request.getMapper(UserMapper.class));
+            User profile = editor.getUserById(userId);
+
+            mvc.perform(body("/platform/admin/users/reset-password",
+                            Map.of("userId", userId, "newPassword", "replacement-fixture-password"))
+                            .session(adminSession))
+                    .andExpect(status().isOk());
+            profile.setEmail("member@example.test");
+            assertFalse(editor.updateUser(profile));
+        }
+        User stored = users.getUserById(userId);
+        assertTrue(PasswordUtil.verify("replacement-fixture-password", stored.getPassword()));
+        assertEquals(1, stored.getPasswordChangeRequired());
+        assertNull(stored.getEmail());
+    }
+
+    @Test
+    void editingAnAccountDoesNotOverwriteLoginStatisticsFromAConcurrentLogin() throws Exception {
+        createUser("current-fixture-password", false);
+        try (SqlSession request = factory.openSession(true)) {
+            UserService editor = new UserService(request.getMapper(UserMapper.class));
+            User profile = editor.getUserByName("member");
+            assertEquals(0, profile.getLoginCount());
+
+            assertLogin("member", "current-fixture-password");
+            profile.setEmail("member@example.test");
+            assertTrue(editor.updateUser(profile));
+        }
+        sqlSession.clearCache();
+        User stored = users.getUserByName("member");
+        assertEquals("member@example.test", stored.getEmail());
+        assertEquals(1, stored.getLoginCount());
+        assertNotNull(stored.getLastLoginTime());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void loginStatsIgnoreAChangedPasswordOrDisabledAccount(boolean disable) throws Exception {
+        createUser("current-fixture-password", false);
+        User original = users.getUserByName("member");
+        String verifiedHash = original.getPassword();
+        if (disable) original.setStatus(0);
+        else original.setPassword(PasswordUtil.hash("replacement-fixture-password"));
+        assertTrue(users.updateUser(original));
+
+        assertNull(users.recordSuccessfulLogin(original.getUserId(), verifiedHash));
+        User stored = users.getUserById(original.getUserId());
+        assertEquals(0, stored.getLoginCount());
+        assertNull(stored.getLastLoginTime());
     }
 
     private void createUser(String password, boolean ai) throws Exception {

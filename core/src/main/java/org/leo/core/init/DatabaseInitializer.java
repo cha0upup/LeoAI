@@ -64,6 +64,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     /** 校验当前数据库基线，不迁移历史结构或数据。 */
     private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
+            requireColumns(connection, "users", Set.of("account_revision"));
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "agent_ssh_connections",

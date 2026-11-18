@@ -242,7 +242,7 @@ public class UserController {
         if (params.containsKey("remark")) target.setRemark(remark);
 
         boolean ok = userService.updateUser(target);
-        return ok ? ApiResponse.success() : ApiResponse.error("更新失败");
+        return ok ? ApiResponse.success() : ApiResponse.conflict("账号信息已变化，请刷新后重试");
     }
 
     /**
@@ -288,7 +288,7 @@ public class UserController {
         target.setPassword(PasswordUtil.hash(newPassword));
         target.setPasswordChangeRequired(1);
         boolean ok = userService.updateUser(target);
-        return ok ? ApiResponse.success() : ApiResponse.error("重置失败");
+        return ok ? ApiResponse.success() : ApiResponse.conflict("账号信息已变化，请刷新后重试");
     }
 
     // ── 用户删除 ─────────────────────────────────────────────────────────────────

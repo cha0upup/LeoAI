@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
@@ -26,8 +27,10 @@ import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
+import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
@@ -55,6 +58,7 @@ class ProjectListIntegrationTest {
     private SqlSession sqlSession;
     private ProjectController controller;
     private PermissionService permissions;
+    private AgentService agents;
     private UserService users;
     private final QueryCounter queries = new QueryCounter();
 
@@ -66,7 +70,7 @@ class ProjectListIntegrationTest {
         configuration.addMapper(ProjectMapper.class);
         configuration.addInterceptor(queries);
         sqlSession = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
-        AgentService agents = mock(AgentService.class);
+        agents = mock(AgentService.class);
         users = mock(UserService.class);
         permissions = new PermissionService(agents, users);
         controller = new ProjectController(
@@ -208,6 +212,37 @@ class ProjectListIntegrationTest {
         assertNotNull(AgentNodeSessionContainer.getSession("retained-session"));
         assertNull(AgentNodeSessionContainer.getSession("retained-session").getProjectId());
         assertEquals("kept", AgentNodeSessionContainer.getSession("other-session").getProjectId());
+    }
+
+    @Test
+    void reattachingAnExistingHostPreservesOmittedMetadataAndCountsOnlyChanges() {
+        project("owned", "user-1", "private", "active", "Owned");
+        host("existing");
+        host("new");
+        attach("owned", "existing");
+        jdbc.update("UPDATE project_agents SET alias='entry', environment='prod', tags='blue', sort_order=7 "
+                + "WHERE project_id='owned' AND agent_id='existing'");
+        for (String id : List.of("existing", "new")) {
+            Agent host = new Agent();
+            host.setAgentId(id);
+            host.setCreateByUserId("user-1");
+            host.setParentAgentId("root");
+            when(agents.findAgentById(id)).thenReturn(host);
+        }
+        MockHttpServletRequest request = requestAs("normal");
+        var selection = new ProjectAgentsRequest(" owned ", List.of("existing", "new"), null, null, null);
+        assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, selection).get("data"));
+        assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, selection).get("data"));
+        var mark = new ProjectAgentsRequest("owned", List.of("existing"), null, " test ", null);
+        assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, mark).get("data"));
+        assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, mark).get("data"));
+
+        assertEquals(Map.of("alias", "entry", "environment", "test", "tags", "blue", "sort_order", 7),
+                jdbc.queryForMap("SELECT alias, environment, tags, sort_order FROM project_agents "
+                        + "WHERE project_id='owned' AND agent_id='existing'"));
+
+        var remove = new ProjectAgentsRequest(" owned ", List.of("new"), null, null, null);
+        assertEquals(new RelationMutationResponse("owned", 1), controller.detachAgents(request, remove).get("data"));
     }
 
     @Test

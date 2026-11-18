@@ -1,5 +1,7 @@
 package org.leo.core.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * 用户模型
  * 
@@ -17,6 +19,7 @@ public class User {
     private String lastLoginTime;
     private Integer loginCount;
     private Integer passwordChangeRequired;
+    private long accountRevision;
     private String createTime;
     private String updateTime;
     private String teamId;
@@ -119,6 +122,15 @@ public class User {
 
     public boolean requiresPasswordChange() {
         return Integer.valueOf(1).equals(passwordChangeRequired);
+    }
+
+    @JsonIgnore
+    public long getAccountRevision() {
+        return accountRevision;
+    }
+
+    public void setAccountRevision(long accountRevision) {
+        this.accountRevision = accountRevision;
     }
 
     public String getCreateTime() {

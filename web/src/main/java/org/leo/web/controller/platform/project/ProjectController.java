@@ -143,8 +143,8 @@ public class ProjectController {
     public Map<String, Object> attachAgents(HttpServletRequest request,
                                               @RequestBody ProjectAgentsRequest body) {
         User user = permissionService.requireLogin(request);
-        String projectId = body != null ? body.projectId() : null;
-        Project project = requireContentEditable(projectId, user);
+        Project project = requireContentEditable(body != null ? body.projectId() : null, user);
+        String projectId = project.getProjectId();
         if (Project.STATUS_ARCHIVED.equals(project.getStatus())) {
             throw ApiException.badRequest("已归档项目不能添加主机");
         }
@@ -162,8 +162,8 @@ public class ProjectController {
     public Map<String, Object> detachAgents(HttpServletRequest request,
                                               @RequestBody ProjectAgentsRequest body) {
         User user = permissionService.requireLogin(request);
-        String projectId = body != null ? body.projectId() : null;
-        requireContentEditable(projectId, user);
+        Project project = requireContentEditable(body != null ? body.projectId() : null, user);
+        String projectId = project.getProjectId();
         List<String> agentIds = body.agentIds() != null ? body.agentIds() : List.of();
         if (agentIds.isEmpty()) throw ApiException.badRequest("agentIds不能为空");
         int changed = projectService.detachAgents(projectId, agentIds);

@@ -9,6 +9,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
+import org.leo.core.init.DatabaseInitializer;
 import org.leo.core.util.PasswordUtil;
 import org.leo.dao.mapper.SystemConfigMapper;
 import org.leo.dao.mapper.SystemInitializationMapper;
@@ -71,14 +72,14 @@ class SystemInitializationIntegrationTest {
     static class Transactions {}
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         var config = new SQLiteConfig();
         config.enforceForeignKeys(true);
         config.setBusyTimeout(15000);
         config.setJournalMode(SQLiteConfig.JournalMode.WAL);
         source = new SQLiteDataSource(config);
         source.setUrl("jdbc:sqlite:" + temp.resolve("setup.db"));
-        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
+        initializeDatabase();
         context = application();
         setup = context.getBean(SystemInitializationService.class);
         users = context.getBean(UserService.class);
@@ -90,6 +91,11 @@ class SystemInitializationIntegrationTest {
                                 context.getBean(PasswordPolicy.class), setup))
                 .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice())
                 .build();
+    }
+
+    private void initializeDatabase() throws Exception {
+        new ResourceDatabasePopulator(new ClassPathResource("sql/schema.sql")).execute(source);
+        new DatabaseInitializer(source).run();
     }
 
     private AnnotationConfigApplicationContext application() {
@@ -202,19 +208,28 @@ class SystemInitializationIntegrationTest {
     }
 
     @Test
-    void currentAccountsKeepTheirCredentialsAndPasswordChangeFlagAcrossRestart() {
+    void currentAccountsAndCustomizedDefaultsSurviveStartupOnTheSameDatabase() throws Exception {
         setup.initializeAdmin("chosen-fixture-password", "chosen-fixture-password");
         User admin = users.getUserById("admin");
         admin.setStatus(0);
         admin.setPasswordChangeRequired(1);
-        users.updateUser(admin);
-        new DataInitializer(setup).init();
-        User stored = users.getUserById("admin");
-        assertEquals(admin.getPassword(), stored.getPassword());
-        assertEquals(0, stored.getStatus());
-        assertEquals(1, stored.getPasswordChangeRequired());
-        assertEquals(1, count("teams"));
-        assertFalse(setup.isInitializationRequired());
+        assertTrue(users.updateUser(admin));
+        context.getBean(SystemConfigMapper.class).upsert("security.password.min.length", "12", "number", "fixture");
+        int configCount = count("system_configs");
+
+        initializeDatabase();
+        try (var next = application()) {
+            var restarted = next.getBean(SystemInitializationService.class);
+            new DataInitializer(restarted).init();
+            User stored = next.getBean(UserService.class).getUserById("admin");
+            assertEquals(admin.getPassword(), stored.getPassword());
+            assertEquals(0, stored.getStatus());
+            assertEquals(1, stored.getPasswordChangeRequired());
+            assertEquals(12, next.getBean(PasswordPolicy.class).getMinimumLength());
+            assertEquals(configCount, count("system_configs"));
+            assertEquals(1, count("teams"));
+            assertFalse(restarted.isInitializationRequired());
+        }
     }
 
     @Test

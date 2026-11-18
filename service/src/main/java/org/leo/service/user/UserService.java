@@ -76,12 +76,16 @@ public class UserService {
         return userMapper.insertUser(user, now);
     }
 
+    /** Updates a previously read account snapshot; false means it changed or disappeared. */
     public boolean updateUser(User user) {
         if (user == null || user.getUserId() == null || user.getUserId().isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
         String now = now();
-        return userMapper.updateUserById(user, now);
+        if (!userMapper.updateUserById(user, now)) return false;
+        user.setAccountRevision(user.getAccountRevision() + 1);
+        user.setUpdateTime(now);
+        return true;
     }
 
     public boolean delUser(String userId) {
@@ -89,13 +93,12 @@ public class UserService {
         return userMapper.delUser(userId.trim());
     }
 
-    /** Atomically records a successful login. */
-    public User recordSuccessfulLogin(String userId) {
+    /** Records the login only if the account still accepts the verified credential. */
+    public User recordSuccessfulLogin(String userId, String verifiedPasswordHash) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
-        String now = now();
-        userMapper.recordSuccessfulLogin(userId.trim(), now, now);
+        if (!userMapper.recordSuccessfulLogin(userId.trim(), verifiedPasswordHash, now())) return null;
         return getUserById(userId);
     }
 

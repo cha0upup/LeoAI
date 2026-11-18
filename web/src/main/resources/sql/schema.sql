@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_time DATETIME,
     login_count INTEGER DEFAULT 0 CHECK (login_count >= 0),
     password_change_required INTEGER NOT NULL DEFAULT 0 CHECK (password_change_required IN (0, 1)),
+    account_revision INTEGER NOT NULL DEFAULT 0 CHECK (account_revision >= 0),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     team_id VARCHAR(50),
