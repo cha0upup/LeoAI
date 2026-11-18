@@ -40,22 +40,17 @@ class AiMessageRepositoryTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"0,50,0,50", "-8,20,0,20", "7,20,7,20", "0,0,0,1",
-            "0,200,0,200", "0,201,0,200", "0,-1,0,200", "0,-2147483648,0,200"})
-    void preservesOffsetPaginationBounds(int offset, int limit, int expectedOffset, int expectedLimit) {
+    @CsvSource({"7,20,7,20,20", "-8,0,0,1,1", "0,200,0,200,200", "0,201,0,200,200",
+            "0,-1,0,200,1", "0,-2147483648,0,200,1"})
+    void boundsHistoryPagesConsistentlyWithoutChangingModelContextLimits(
+            int offset, int limit, int expectedOffset, int historyLimit, int contextLimit) {
         messages.list("thread", offset, limit);
-
-        verify(mapper).listMessages("thread", expectedOffset, expectedLimit);
-    }
-
-    @ParameterizedTest
-    @CsvSource({"0,1", "20,20", "200,200", "201,200", "-1,1", "-2147483648,1"})
-    void cursorAndContextReadsKeepTheirExistingPageBounds(int limit, int expectedLimit) {
         messages.listBefore("thread", 10L, limit);
         messages.contextMessages("thread", limit);
 
-        verify(mapper).listMessagesBefore("thread", 10L, expectedLimit);
-        verify(mapper).recentContextMessages("thread", expectedLimit);
+        verify(mapper).listMessages("thread", expectedOffset, historyLimit);
+        verify(mapper).listMessagesBefore("thread", 10L, historyLimit);
+        verify(mapper).recentContextMessages("thread", contextLimit);
     }
 
     @ParameterizedTest

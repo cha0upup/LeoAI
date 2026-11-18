@@ -16,6 +16,7 @@ import java.util.UUID;
 @Repository
 public class AiMessageRepository {
 
+    private static final int MAX_PAGE_SIZE = 200;
     private final AiConversationMapper mapper;
 
     public AiMessageRepository(AiConversationMapper mapper) {
@@ -42,14 +43,11 @@ public class AiMessageRepository {
     }
 
     public List<Map<String, Object>> list(String threadId, int offset, int limit) {
-        int safeOffset = Math.max(0, offset);
-        int safeLimit = limit < 0 ? 200 : boundedLimit(limit);
-        return toMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
+        return toMaps(mapper.listMessages(threadId, Math.max(0, offset), historyLimit(limit)));
     }
 
     public List<Map<String, Object>> listBefore(String threadId, long beforeSequence, int limit) {
-        int safeLimit = boundedLimit(limit);
-        return toMaps(mapper.listMessagesBefore(threadId, beforeSequence, safeLimit));
+        return toMaps(mapper.listMessagesBefore(threadId, beforeSequence, historyLimit(limit)));
     }
 
     public boolean hasBefore(String threadId, long beforeSequence) {
@@ -83,8 +81,12 @@ public class AiMessageRepository {
         return null;
     }
 
+    private static int historyLimit(int limit) {
+        return limit < 0 ? MAX_PAGE_SIZE : boundedLimit(limit);
+    }
+
     private static int boundedLimit(int limit) {
-        return Math.max(1, Math.min(limit, 200));
+        return Math.max(1, Math.min(limit, MAX_PAGE_SIZE));
     }
 
     private static ConversationMessage toContext(AiMessageRecord record) {

@@ -193,19 +193,19 @@ class AiThreadQueryServiceTest {
     }
 
     @Test
-    void returnsStableCursorMetadataAndClampsPageSize() {
+    void returnsStableCursorMetadataAndIgnoresOffset() {
         List<Map<String, Object>> messages = List.of(
                 Map.of("messageId", "m-10", "sequence", 10L),
                 Map.of("messageId", "m-11", "sequence", 11L));
-        when(messageRepository.listBefore("thread", 20L, 200)).thenReturn(messages);
+        when(messageRepository.listBefore("thread", 20L, -1)).thenReturn(messages);
         when(messageRepository.hasBefore("thread", 10L)).thenReturn(true);
 
-        Map<String, Object> page = queries.messages("thread", 0, 500, 20L);
+        Map<String, Object> page = queries.messages("thread", 7, -1, 20L);
 
         assertEquals(messages, page.get("messages"));
         assertEquals(10L, page.get("nextBeforeSequence"));
         assertEquals(true, page.get("hasMore"));
-        verify(messageRepository).listBefore("thread", 20L, 200);
+        verify(messageRepository).listBefore("thread", 20L, -1);
         verify(messageRepository, never()).count(anyString());
         assertEquals(java.util.Set.of("messages", "nextBeforeSequence", "hasMore"), page.keySet());
         verify(messageRepository, never()).list(anyString(), anyInt(), anyInt());
@@ -229,16 +229,14 @@ class AiThreadQueryServiceTest {
         verifyNoInteractions(store, messageRepository, journal, protocol);
     }
 
-    @ParameterizedTest
-    @CsvSource(value = {"null,null,0,50", "-8,15,0,15", "7,20,7,20", "0,0,0,1", "0,-1,0,200", "0,500,0,200"}, nullValues = "null")
-    void preservesMessagePagination(Integer offset, Integer limit, int expectedOffset, int expectedLimit) {
+    @Test
+    void forwardsExplicitOffsetAndLimitToTheRepository() {
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L, "content", "hello"));
-        when(messageRepository.list("thread", expectedOffset, expectedLimit)).thenReturn(messages);
+        when(messageRepository.list("thread", -8, 500)).thenReturn(messages);
 
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),
-                queries.messages("thread", offset, limit, null));
-        verify(messageRepository).list("thread", expectedOffset, expectedLimit);
+                queries.messages("thread", -8, 500, null));
         verify(messageRepository, never()).count(anyString());
     }
 

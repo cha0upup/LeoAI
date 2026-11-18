@@ -328,7 +328,7 @@ class NodeAiThreadServiceTest {
 
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),
-                fixture.service.threadMessages(cacheSession(), "thread-1", -2, null, null));
+                fixture.service.threadMessages(cacheSession(), "thread-1", null, null, null));
     }
 
     @ParameterizedTest

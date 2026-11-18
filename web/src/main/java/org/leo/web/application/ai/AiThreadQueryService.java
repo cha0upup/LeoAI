@@ -87,9 +87,8 @@ public class AiThreadQueryService {
         if (beforeSequence != null && beforeSequence <= 0) {
             throw new UseCaseException(Kind.INVALID_INPUT, "历史消息游标必须大于 0");
         }
-        int offset = beforeSequence == null && requestedOffset != null ? Math.max(0, requestedOffset) : 0;
+        int offset = requestedOffset != null ? requestedOffset : 0;
         int limit = requestedLimit != null ? requestedLimit : 50;
-        limit = limit < 0 ? 200 : Math.max(1, Math.min(limit, 200));
         List<Map<String, Object>> page = beforeSequence == null
                 ? messages.list(threadId, offset, limit)
                 : messages.listBefore(threadId, beforeSequence, limit);
