@@ -26,8 +26,8 @@ public class AiProtocolTurnRepository {
         return blank(turnId) ? null : mapper.findTurnById(turnId);
     }
 
-    public AiTurnRecord findNextQueued(String threadId) {
-        return blank(threadId) ? null : mapper.findNextQueuedTurn(threadId, System.currentTimeMillis());
+    public String findNextQueuedTurnId(String threadId) {
+        return blank(threadId) ? null : mapper.findNextQueuedTurnId(threadId, System.currentTimeMillis());
     }
 
     public List<AiTurnRecord> listInProgress(String threadId) {

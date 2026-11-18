@@ -167,10 +167,10 @@ public interface AiConversationMapper {
     @Select("SELECT * FROM ai_turns WHERE turn_id = #{turnId}")
     AiTurnRecord findTurnById(@Param("turnId") String turnId);
 
-    @Select("SELECT queued.* " + DISPATCHABLE_QUEUED_TURNS
+    @Select("SELECT queued.turn_id " + DISPATCHABLE_QUEUED_TURNS
             + "AND queued.thread_id = #{threadId} " + NEXT_QUEUED_TURN_ORDER)
-    AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId,
-                                   @Param("now") long now);
+    String findNextQueuedTurnId(@Param("threadId") String threadId,
+                                @Param("now") long now);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
             + "AND protocol_status = 'inProgress' "

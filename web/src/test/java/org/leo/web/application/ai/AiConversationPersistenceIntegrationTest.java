@@ -179,27 +179,30 @@ class AiConversationPersistenceIntegrationTest {
         var ordinary = reserve();
         requests.create(confirmation("question-1"));
 
-        assertNull(protocol.findNextQueued("thread-1"));
+        assertNull(protocol.findNextQueuedTurnId("thread-1"));
         assertTrue(protocol.listDispatchableThreadIds().isEmpty());
         assertFalse(protocol.tryStart(ordinary.id()).claimed());
 
+        String answerCommand = "{\"userMessage\":\"confirm\"}";
         var answer = protocol.begin(
-                "thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1").turn();
+                "thread-1", "answer-client", "platform", answerCommand, "confirm", null, "question-1").turn();
 
-        assertEquals(answer.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(answer.id(), protocol.findNextQueuedTurnId("thread-1"));
         assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
         assertFalse(protocol.tryStart(ordinary.id()).claimed());
-        assertTrue(protocol.tryStart(answer.id()).claimed());
+        var claim = protocol.tryStart(answer.id());
+        assertTrue(claim.claimed());
+        assertEquals(answerCommand, claim.turn().commandJson());
     }
 
     @Test
     void expiredQuestionStopsBlockingTurnsBeforeThePeriodicCleanup() {
         var queued = reserve();
         requests.create(confirmation("question-1"));
-        assertNull(protocol.findNextQueued("thread-1"));
+        assertNull(protocol.findNextQueuedTurnId("thread-1"));
         jdbc.update("UPDATE ai_user_input_requests SET expires_at=1 WHERE request_id='question-1'");
 
-        assertEquals(queued.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(queued.id(), protocol.findNextQueuedTurnId("thread-1"));
         assertEquals(AiUserInputRequest.STATUS_PENDING, requests.find("question-1").getStatus());
         assertTrue(protocol.tryStart(queued.id()).claimed());
 
@@ -232,7 +235,7 @@ class AiConversationPersistenceIntegrationTest {
     @Test
     void queuedTurnsHaveExclusiveClaimsAndCanBeRequeuedBeforeRunning() throws Exception {
         var turn = reserve();
-        assertEquals(turn.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(turn.id(), protocol.findNextQueuedTurnId("thread-1"));
         assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
 
         assertEquals(1, concurrentSuccesses(() -> protocol.tryStart(turn.id()).claimed()));
@@ -249,7 +252,7 @@ class AiConversationPersistenceIntegrationTest {
 
         assertEquals("completed", protocol.completeFromRuntime(turn.id(), "completed", null, null).status());
         assertTrue(turns.listInProgress("thread-1").isEmpty());
-        assertNull(protocol.findNextQueued("thread-1"));
+        assertNull(protocol.findNextQueuedTurnId("thread-1"));
         assertTrue(messages.list("thread-1", 0, 20).stream()
                 .allMatch(message -> "committed".equals(message.get("status"))));
     }
@@ -267,12 +270,12 @@ class AiConversationPersistenceIntegrationTest {
 
         assertTrue(protocol.listDispatchableThreadIds().isEmpty());
         assertFalse(protocol.tryStart(queued.id()).claimed());
-        assertNull(protocol.findNextQueued("thread-1"));
+        assertNull(protocol.findNextQueuedTurnId("thread-1"));
 
         protocol.completeFromRuntime(active.id(), interrupted ? "interrupted" : "completed", null, null);
 
         assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
-        assertEquals(queued.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(queued.id(), protocol.findNextQueuedTurnId("thread-1"));
         assertTrue(protocol.tryStart(queued.id()).claimed());
     }
 

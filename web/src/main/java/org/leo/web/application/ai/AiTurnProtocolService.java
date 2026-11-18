@@ -85,8 +85,8 @@ public class AiTurnProtocolService {
         throw new IllegalStateException("Turn 创建失败");
     }
 
-    public TurnSnapshot findNextQueued(String threadId) {
-        return snapshot(turns.findNextQueued(threadId));
+    public String findNextQueuedTurnId(String threadId) {
+        return turns.findNextQueuedTurnId(threadId);
     }
 
     public List<String> listDispatchableThreadIds() {

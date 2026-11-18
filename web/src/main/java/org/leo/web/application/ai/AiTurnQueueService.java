@@ -69,14 +69,14 @@ public class AiTurnQueueService {
     }
 
     private void drain(String threadId) {
-        AiTurnProtocolService.TurnSnapshot next;
+        String nextTurnId;
         try {
-            next = protocol.findNextQueued(threadId);
+            nextTurnId = protocol.findNextQueuedTurnId(threadId);
         } catch (RuntimeException error) {
             scheduledThreads.remove(threadId);
             throw error;
         }
-        if (next == null) {
+        if (nextTurnId == null) {
             releaseAndResignal(threadId);
             return;
         }
@@ -86,7 +86,7 @@ public class AiTurnQueueService {
         }
         CompletableFuture<Boolean> execution;
         try {
-            AiTurnProtocolService.StartClaim claim = protocol.tryStart(next.id());
+            AiTurnProtocolService.StartClaim claim = protocol.tryStart(nextTurnId);
             execution = claim.claimed()
                     ? Objects.requireNonNull(application.execute(claim.turn()), "execution")
                     : CompletableFuture.completedFuture(true);
@@ -107,6 +107,6 @@ public class AiTurnQueueService {
 
     private void releaseAndResignal(String threadId) {
         scheduledThreads.remove(threadId);
-        if (protocol.findNextQueued(threadId) != null) signal(threadId);
+        if (protocol.findNextQueuedTurnId(threadId) != null) signal(threadId);
     }
 }

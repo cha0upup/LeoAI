@@ -41,7 +41,7 @@ class AiTurnQueueServiceTest {
     void captureScheduledTasksAndClaimTheQueuedTurn() {
         when(executor.tryAcquireTurn()).thenReturn(true);
         doAnswer(this::captureTask).when(executor).submitChat(any());
-        when(protocol.findNextQueued("thread-1")).thenReturn(turn);
+        when(protocol.findNextQueuedTurnId("thread-1")).thenReturn(turn.id());
         when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, true));
         when(application.execute(turn)).thenReturn(completion);
     }
@@ -91,7 +91,7 @@ class AiTurnQueueServiceTest {
     void startupFailuresReleaseTheScheduleAndAnyAcquiredSlot(String failure) {
         IllegalStateException error = new IllegalStateException("startup failed");
         switch (failure) {
-            case "lookup" -> when(protocol.findNextQueued("thread-1")).thenThrow(error);
+            case "lookup" -> when(protocol.findNextQueuedTurnId("thread-1")).thenThrow(error);
             case "claim" -> when(protocol.tryStart("turn-1")).thenThrow(error);
             case "execute" -> when(application.execute(turn)).thenThrow(error);
             case "missing-future" -> when(application.execute(turn)).thenReturn(null);
@@ -171,7 +171,7 @@ class AiTurnQueueServiceTest {
 
     @Test
     void idleRecheckFailureKeepsANewerScheduleReserved() {
-        when(protocol.findNextQueued("thread-1")).thenReturn(null).thenAnswer(invocation -> {
+        when(protocol.findNextQueuedTurnId("thread-1")).thenReturn(null).thenAnswer(invocation -> {
             queue.signal("thread-1");
             throw new IllegalStateException("recheck failed");
         });
