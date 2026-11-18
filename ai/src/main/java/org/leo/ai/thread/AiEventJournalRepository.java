@@ -65,7 +65,7 @@ public class AiEventJournalRepository {
     }
 
     public boolean hasTurnCompleted(String threadId, String turnId) {
-        return blank(turnId) || mapper.countTurnCompletedEvents(threadId, turnId) > 0;
+        return blank(turnId) || mapper.hasTurnCompletedEvent(threadId, turnId);
     }
 
     public long latestTurnStartSequence(String threadId) {
@@ -73,7 +73,7 @@ public class AiEventJournalRepository {
     }
 
     public boolean hasLatestTurnCompleted(String threadId) {
-        return blank(threadId) || mapper.hasLatestTurnCompletedEvent(threadId) > 0;
+        return blank(threadId) || mapper.hasLatestTurnCompletedEvent(threadId);
     }
 
     private AiSseEvent toSseEvent(AiEventRecord row) {

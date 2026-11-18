@@ -110,6 +110,29 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void replayStatusTracksOnlyTheLatestStartedTurn() {
+        String threadId = "thread-1";
+        assertEquals(0L, journal.latestTurnStartSequence(threadId));
+        assertTrue(journal.hasLatestTurnCompleted(threadId));
+
+        journal.append(threadId, new AiSseEvent(1, 1, "turn/started", null,
+                null, "earlier-turn", null, null), null);
+        journal.append(threadId, new AiSseEvent(2, 2, "turn/completed", null,
+                null, "earlier-turn", null, null), null);
+        assertTrue(journal.hasTurnCompleted(threadId, "earlier-turn"));
+        assertTrue(journal.hasLatestTurnCompleted(threadId));
+
+        journal.append(threadId, new AiSseEvent(3, 3, "turn/started", null,
+                null, "current-turn", null, null), null);
+        assertEquals(2L, journal.latestTurnStartSequence(threadId));
+        assertFalse(journal.hasLatestTurnCompleted(threadId));
+
+        journal.append(threadId, new AiSseEvent(4, 4, "turn/completed", null,
+                null, "current-turn", null, null), null);
+        assertTrue(journal.hasLatestTurnCompleted(threadId));
+    }
+
+    @Test
     void pendingQuestionIsReusedUntilItExpires() {
         requests.create(confirmation("question-1"));
         AiUserInputRequest next = confirmation("question-2");

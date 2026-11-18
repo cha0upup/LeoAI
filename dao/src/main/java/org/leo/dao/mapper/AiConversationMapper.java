@@ -490,23 +490,27 @@ public interface AiConversationMapper {
     @Select("SELECT COALESCE(MAX(event_seq), 0) FROM ai_events WHERE thread_id = #{threadId}")
     long findLastEventSeq(@Param("threadId") String threadId);
 
-    @Select("SELECT COUNT(*) FROM ai_events WHERE thread_id = #{threadId} "
-            + "AND turn_id = #{turnId} AND name = 'turn/completed'")
-    int countTurnCompletedEvents(@Param("threadId") String threadId,
-                                 @Param("turnId") String turnId);
+    @Select("SELECT EXISTS (SELECT 1 FROM ai_events WHERE thread_id = #{threadId} "
+            + "AND turn_id = #{turnId} AND name = 'turn/completed')")
+    boolean hasTurnCompletedEvent(@Param("threadId") String threadId,
+                                  @Param("turnId") String turnId);
 
     @Select("SELECT COALESCE(MAX(event_seq) - 1, 0) FROM ai_events "
             + "WHERE thread_id = #{threadId} AND name = 'turn/started'")
     long findLatestTurnStartSeq(@Param("threadId") String threadId);
 
-    @Select("SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM ai_events "
-            + "WHERE thread_id = #{threadId} AND name = 'turn/started') THEN 1 "
-            + "WHEN EXISTS (SELECT 1 FROM ai_events WHERE thread_id = #{threadId} "
-            + "AND name = 'turn/completed' AND turn_id = "
-            + "(SELECT turn_id FROM ai_events WHERE thread_id = #{threadId} "
-            + "AND name = 'turn/started' ORDER BY event_seq DESC LIMIT 1)) "
-            + "THEN 1 ELSE 0 END")
-    int hasLatestTurnCompletedEvent(@Param("threadId") String threadId);
+    @Select("""
+            SELECT COALESCE((
+                SELECT EXISTS (SELECT 1 FROM ai_events completed
+                               WHERE completed.thread_id = started.thread_id
+                               AND completed.turn_id = started.turn_id
+                               AND completed.name = 'turn/completed')
+                FROM ai_events started
+                WHERE started.thread_id = #{threadId} AND started.name = 'turn/started'
+                ORDER BY started.event_seq DESC LIMIT 1
+            ), 1)
+            """)
+    boolean hasLatestTurnCompletedEvent(@Param("threadId") String threadId);
 
     // ── 跨实例线程执行租约 ───────────────────────────────────────────────────
     @Insert("INSERT INTO ai_thread_leases "

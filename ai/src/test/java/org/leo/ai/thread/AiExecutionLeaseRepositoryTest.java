@@ -28,7 +28,6 @@ class AiExecutionLeaseRepositoryTest {
         when(mapper.listRunningRuns("thread-1")).thenReturn(List.of(run));
         when(mapper.failOrphanedRun(
                 eq("run-1"), eq(1_000L), any(String.class))).thenReturn(1);
-        when(mapper.countTurnCompletedEvents("thread-1", "turn-1")).thenReturn(0);
         when(mapper.findLastEventSeq("thread-1")).thenReturn(7L);
         when(mapper.insertEvent(
                 anyString(), eq("run-1"), eq("thread-1"), eq("turn-1"),

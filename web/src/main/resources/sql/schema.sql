@@ -574,6 +574,13 @@ CREATE TABLE IF NOT EXISTS ai_events (
 CREATE INDEX IF NOT EXISTS idx_ai_events_run_seq
     ON ai_events(run_id, event_seq);
 
+-- 回放游标与终态检查跳过普通增量事件。
+CREATE INDEX IF NOT EXISTS idx_ai_events_turn_started
+    ON ai_events(thread_id, event_seq, turn_id) WHERE name = 'turn/started';
+
+CREATE INDEX IF NOT EXISTS idx_ai_events_turn_completed
+    ON ai_events(thread_id, turn_id) WHERE name = 'turn/completed';
+
 -- 14. AI 线程执行租约：跨实例保证同一线程同一时刻只有一个执行者
 CREATE TABLE IF NOT EXISTS ai_thread_leases (
     thread_id VARCHAR(64) PRIMARY KEY,
