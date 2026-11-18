@@ -5,6 +5,7 @@ import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.ai.thread.AiMessageRepository;
+import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiSseEvent;
@@ -103,10 +104,7 @@ public class AiThreadQueryService {
 
     public Map<String, Object> events(String threadId, AiRuntimeState runtime, String runStatus,
                                       Long requestedAfterSeq, Integer requestedLimit) {
-        long cursor = requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
-        long afterSeq = cursor > 0L ? cursor : Math.max(
-                runtime != null ? runtime.getCurrentRunStartSeq() : 0L,
-                eventJournal.latestTurnStartSequence(threadId));
+        long afterSeq = replayCursor(threadId, runtime, requestedAfterSeq);
         int limit = requestedLimit != null ? requestedLimit : 200;
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("events", eventJournal.listAfter(threadId, afterSeq, limit).stream()
@@ -116,6 +114,13 @@ public class AiThreadQueryService {
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
         applyProtocolSnapshot(data, threadId, runStatus);
         return data;
+    }
+
+    /** 正数游标用于断点续读；未指定时只读取当前或最近 Turn 的事件。 */
+    public long replayCursor(String threadId, AiEventStreamRuntime runtime, Long requestedAfterSeq) {
+        if (requestedAfterSeq != null && requestedAfterSeq > 0L) return requestedAfterSeq;
+        return Math.max(runtime != null ? runtime.getCurrentRunStartSeq() : 0L,
+                eventJournal.latestTurnStartSequence(threadId));
     }
 
     private void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {

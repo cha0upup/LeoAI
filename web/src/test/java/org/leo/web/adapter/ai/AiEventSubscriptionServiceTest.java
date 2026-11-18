@@ -7,12 +7,15 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
+import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.thread.AiProtocolTurnRepository;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.session.AiThread;
+import org.leo.web.application.ai.AiThreadQueryService;
+import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.infrastructure.concurrent.AiExecutionExecutor;
 import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
@@ -53,7 +56,10 @@ class AiEventSubscriptionServiceTest {
     private final AiConversationStoreService conversations = mock(AiConversationStoreService.class);
     private final AiEventJournalRepository eventStore = mock(AiEventJournalRepository.class);
     private final AiProtocolTurnRepository turns = mock(AiProtocolTurnRepository.class);
-    private final AiEventSubscriptionService service = new AiEventSubscriptionService(executor, writer, conversations, eventStore, turns);
+    private final AiThreadQueryService threadQueries = new AiThreadQueryService(
+            conversations, mock(AiMessageRepository.class), eventStore, mock(AiTurnProtocolService.class));
+    private final AiEventSubscriptionService service = new AiEventSubscriptionService(
+            executor, writer, conversations, eventStore, turns, threadQueries);
 
     @ParameterizedTest
     @CsvSource({"1,false", "200,false", "201,false", "401,false", "2,true"})
@@ -116,27 +122,34 @@ class AiEventSubscriptionServiceTest {
         verify(emitter).complete();
     }
 
-    @Test
-    void freshSubscriberStartsAtTheCurrentRunBoundary() throws Exception {
+    @ParameterizedTest
+    @CsvSource(value = {"null,2,2", "1,3,1"}, nullValues = "null")
+    void subscriptionUsesTheReplayCursor(Long requestedCursor, long persistedStart, long expectedCursor) throws Exception {
         AiThread thread = new AiThread("thread-3", "test");
         AiSseEvent previousTurn = thread.recordSseEvent("turn", "previous");
         assertTrue(thread.claimExecution());
+        AiSseEvent opening = thread.recordSseEvent("turn", "opening");
         AiSseEvent currentTurn = thread.recordSseEvent("turn", "current");
         thread.markCompleted();
         thread.clearExecuting();
-        SseEmitter emitter = mock(SseEmitter.class);
-        when(eventStore.listAfter(
-                "thread-3", thread.getCurrentRunStartSeq(), 200))
-                .thenReturn(List.of(currentTurn));
+        when(eventStore.latestTurnStartSequence("thread-3")).thenReturn(persistedStart);
+        when(eventStore.listAfter(eq("thread-3"), anyLong(), eq(200)))
+                .thenAnswer(call -> List.of(previousTurn, opening, currentTurn).stream()
+                        .filter(event -> event.seq() > call.<Long>getArgument(1)).toList());
         when(eventStore.lastSequence("thread-3")).thenReturn(currentTurn.seq());
         when(conversations.findThread("thread-3"))
                 .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompleted("thread-3")).thenReturn(true);
 
-        service.stream("test", "thread-3", thread, emitter,
-                thread.getCurrentRunStartSeq(), new AtomicBoolean(false));
+        SseEmitter emitter = service.subscribe("test", "thread-3", thread, requestedCursor);
+        var task = ArgumentCaptor.forClass(Runnable.class);
+        verify(executor).submitSubscription(task.capture());
+        task.getValue().run();
 
+        verify(eventStore).listAfter("thread-3", expectedCursor, 200);
+        verify(eventStore, times(requestedCursor == null ? 1 : 0)).latestTurnStartSequence("thread-3");
         verify(writer, never()).sendEvent(emitter, previousTurn);
+        verify(writer, times(requestedCursor == null ? 0 : 1)).sendEvent(emitter, opening);
         verify(writer).sendEvent(emitter, currentTurn);
     }
 
@@ -209,7 +222,7 @@ class AiEventSubscriptionServiceTest {
     void sharesJournalReadsAcrossConcurrentSubscribersAndReleasesTheCache(int subscriberCount)
             throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, conversations, eventStore, turns, () -> 0L);
+                executor, writer, conversations, eventStore, turns, threadQueries, () -> 0L);
         AiThread thread = new AiThread("shared", "test");
         assertTrue(thread.claimExecution());
 
@@ -243,7 +256,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void overlappingSubscribersKeepIndependentReplayCursors() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, conversations, eventStore, turns, () -> 0L);
+                executor, writer, conversations, eventStore, turns, threadQueries, () -> 0L);
         AiThread thread = new AiThread("independent", "test");
         assertTrue(thread.claimExecution());
         List<AiSseEvent> events = IntStream.range(0, 3)
@@ -268,7 +281,7 @@ class AiEventSubscriptionServiceTest {
     void refreshesCachedEmptyPagesToObserveEventsFromAnotherRuntime() throws Exception {
         AtomicLong clock = new AtomicLong();
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, conversations, eventStore, turns, clock::get);
+                executor, writer, conversations, eventStore, turns, threadQueries, clock::get);
         AiThread thread = new AiThread("refresh", "test");
         assertTrue(thread.claimExecution());
         SseEmitter first = mock(SseEmitter.class);
@@ -316,7 +329,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void journalReadFailureDoesNotPoisonTheNextSubscription() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, conversations, eventStore, turns, () -> 0L);
+                executor, writer, conversations, eventStore, turns, threadQueries, () -> 0L);
         AiThread thread = new AiThread("read-failure", "test");
         thread.markCompleted();
         AiSseEvent event = thread.recordSseEvent("delta", "persisted");
@@ -341,7 +354,7 @@ class AiEventSubscriptionServiceTest {
     @Test
     void newerEventsInvalidateACachedTerminalStateBeforeItsExpiry() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
-                executor, writer, conversations, eventStore, turns, () -> 0L);
+                executor, writer, conversations, eventStore, turns, threadQueries, () -> 0L);
         AiThread thread = new AiThread("new-turn", "test");
         thread.markCompleted();
         AiSseEvent oldEvent = new AiSseEvent(1L, 1L, "turn/completed", "old", null, null, null, null);

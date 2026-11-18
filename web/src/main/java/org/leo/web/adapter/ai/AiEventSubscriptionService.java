@@ -7,6 +7,7 @@ import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.web.application.ai.AiThreadQueryService;
 import org.leo.web.infrastructure.concurrent.AiExecutionExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,7 @@ public class AiEventSubscriptionService {
     private final AiConversationStoreService conversations;
     private final AiEventJournalRepository eventJournal;
     private final AiProtocolTurnRepository turns;
+    private final AiThreadQueryService threadQueries;
     private final LongSupplier nanoTime;
     private final ConcurrentHashMap<String, SharedJournal> journals = new ConcurrentHashMap<>();
 
@@ -55,8 +57,9 @@ public class AiEventSubscriptionService {
                                       AiSseEmitterWriter writer,
                                       AiConversationStoreService conversations,
                                       AiEventJournalRepository eventJournal,
-                                      AiProtocolTurnRepository turns) {
-        this(executor, writer, conversations, eventJournal, turns, System::nanoTime);
+                                      AiProtocolTurnRepository turns,
+                                      AiThreadQueryService threadQueries) {
+        this(executor, writer, conversations, eventJournal, turns, threadQueries, System::nanoTime);
     }
 
     AiEventSubscriptionService(AiExecutionExecutor executor,
@@ -64,12 +67,14 @@ public class AiEventSubscriptionService {
                               AiConversationStoreService conversations,
                               AiEventJournalRepository eventJournal,
                               AiProtocolTurnRepository turns,
+                              AiThreadQueryService threadQueries,
                               LongSupplier nanoTime) {
         this.executor = executor;
         this.writer = writer;
         this.conversations = conversations;
         this.eventJournal = eventJournal;
         this.turns = turns;
+        this.threadQueries = threadQueries;
         this.nanoTime = nanoTime;
     }
 
@@ -85,12 +90,7 @@ public class AiEventSubscriptionService {
         emitter.onTimeout(() -> closed.set(true));
         emitter.onError(error -> closed.set(true));
 
-        long requestedCursor = requestedAfterSeq != null
-                ? Math.max(0L, requestedAfterSeq) : 0L;
-        long afterSeq = requestedCursor > 0L
-                ? requestedCursor
-                : Math.max(runtime.getCurrentRunStartSeq(),
-                        eventJournal.latestTurnStartSequence(threadId));
+        long afterSeq = threadQueries.replayCursor(threadId, runtime, requestedAfterSeq);
         try {
             executor.submitSubscription(() ->
                     stream(source, threadId, runtime, emitter, afterSeq, closed));
