@@ -228,6 +228,8 @@ ZIP imports for fingerprints, plugins, and disguises share decompression limits:
 
 Before deleting an account, transfer any teams and projects it leads or owns, including archived projects. Administrators can call `POST /platform/projects/transfer` with `projectId` and `newOwnerUserId`. The new owner must be enabled. Transfers preserve the project's sharing scope and archived state.
 
+Team audit statistics use the team recorded when each log entry was written. Moving a member or deleting an account or team leaves historical attribution intact.
+
 ---
 
 ## Tech Stack

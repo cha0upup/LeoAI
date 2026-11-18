@@ -258,6 +258,8 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 
 删除账号前需先交接其负责的团队和项目（含已归档项目）。管理员可用 `POST /platform/projects/transfer`，请求字段为 `projectId` 和 `newOwnerUserId`。接任账号须已启用；交接只变更负责人，原共享范围和归档状态保持原样。
 
+团队审计统计使用日志写入时记录的团队归属；成员调组或删除账号、团队都不会改变已记录的归属。
+
 <img src="docs/images/screenshot-admin-console.png" alt="管理后台" width="800" />
 
 *管理后台：账号与组织、审计治理、AI 模型接入和操作趋势统计*

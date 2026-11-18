@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     log_id VARCHAR(50) PRIMARY KEY,
     user_id VARCHAR(50), -- 操作用户ID
     user_name VARCHAR(100), -- 操作用户名
+    actor_team_id VARCHAR(50), -- 写入日志时的团队快照；无关联外键，保留历史归属
     agent_id VARCHAR(50), -- 目标主机ID
     agent_name VARCHAR(100), -- 目标主机名
     session_id VARCHAR(100), -- 会话ID
@@ -208,6 +209,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_create_time ON audit_logs(create_time);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_team_time
+    ON audit_logs(actor_team_id, create_time) WHERE actor_team_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_agent_id ON audit_logs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id ON audit_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation_type);

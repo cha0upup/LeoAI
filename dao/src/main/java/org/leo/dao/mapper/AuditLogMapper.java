@@ -68,13 +68,14 @@ public interface AuditLogMapper {
 
     @Insert("""
             INSERT INTO audit_logs (
-                log_id, user_id, user_name, agent_id,
+                log_id, user_id, user_name, actor_team_id, agent_id,
                 agent_name, session_id, operation_type, operation_name,
                 operation_path, request_params, response_code, response_message,
                 status, error_message, client_ip, create_time,
                 remark
             ) VALUES (
-                #{log.logId}, #{log.userId}, #{log.userName}, #{log.agentId},
+                #{log.logId}, #{log.userId}, #{log.userName},
+                (SELECT team_id FROM users WHERE user_id = #{log.userId}), #{log.agentId},
                 #{log.agentName}, #{log.sessionId}, #{log.operationType}, #{log.operationName},
                 #{log.operationPath}, #{log.requestParams}, #{log.responseCode}, #{log.responseMessage},
                 #{log.status}, #{log.errorMessage}, #{log.clientIp}, #{log.createTime},
@@ -131,13 +132,13 @@ public interface AuditLogMapper {
     @Select("SELECT * FROM audit_logs WHERE agent_id = #{agentId} ORDER BY create_time DESC LIMIT 1")
     AuditLog findLatestAuditLogByAgentId(@Param("agentId") String agentId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs a JOIN users u ON a.user_id = u.user_id WHERE u.team_id = #{teamId}")
+    @Select("SELECT COUNT(*) FROM audit_logs WHERE actor_team_id = #{teamId}")
     Integer countAuditLogsByTeamId(@Param("teamId") String teamId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs a JOIN users u ON a.user_id = u.user_id WHERE u.team_id = #{teamId} AND a.create_time >= datetime('now', '-' || #{days} || ' days')")
+    @Select("SELECT COUNT(*) FROM audit_logs WHERE actor_team_id = #{teamId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
     Integer countRecentAuditLogsByTeamId(@Param("teamId") String teamId, @Param("days") Integer days);
 
-    @Select("SELECT a.* FROM audit_logs a JOIN users u ON a.user_id = u.user_id WHERE u.team_id = #{teamId} ORDER BY a.create_time DESC LIMIT 1")
+    @Select("SELECT * FROM audit_logs WHERE actor_team_id = #{teamId} ORDER BY create_time DESC LIMIT 1")
     AuditLog findLatestAuditLogByTeamId(@Param("teamId") String teamId);
 
     @Select("SELECT COUNT(*) FROM audit_logs")
