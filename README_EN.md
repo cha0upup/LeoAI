@@ -271,8 +271,6 @@ Team audit statistics use the team recorded when each log entry was written. Mov
 
 > Validate this development version as a fresh installation. Use a new working directory or SQLite path; startup creates the current schema directly without adding columns to old databases or migrating them.
 >
-> On databases that match the current baseline, startup removes the retired project host environment column while preserving projects and host associations. This cleanup requires no database rebuild.
->
 > Historical databases, old configuration packages, and old session caches are incompatible. Back up the database and VFS before redeployment, deploy matching frontend and backend versions, and recreate node configurations. Rebuild node scripts, plugins referencing old Java package names, and cached artifacts. For rollback, restore the old version together with its matching data directory.
 >
 > For Docker, use a fresh persistent data volume or data directory. Restarting or rebuilding a container still reuses its existing data volume and does not rebuild the database.
