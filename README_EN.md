@@ -12,7 +12,7 @@
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
 [![PHP Runtime](https://img.shields.io/badge/PHP%20Agent-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
-[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
+[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.23.0-purple)](https://github.com/langchain4j/langchain4j)
 
 LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v3.0.1 introduces equal Java and PHP Agent runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
 

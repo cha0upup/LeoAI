@@ -1,6 +1,7 @@
 package org.leo.ai.channel;
 
 import com.alibaba.fastjson.JSON;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -17,6 +18,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * 动态模型提供者：从 {@link AiModelConfigService#getActive()} 读取激活配置，
@@ -253,7 +256,8 @@ public class DynamicModelProvider {
 
     private StreamingChatModel buildResponsesStreaming(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiResponsesStreamingChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, true)))
+                .httpClientBuilder(responsesHttpClient(timeout(plan, true)))
+                .customHeaders(sdkHeaders(plan.customHeaders()))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(plan.modelName())
@@ -269,7 +273,8 @@ public class DynamicModelProvider {
 
     private ChatModel buildResponsesBlocking(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiResponsesChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, false)))
+                .httpClientBuilder(responsesHttpClient(timeout(plan, false)))
+                .customHeaders(sdkHeaders(plan.customHeaders()))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(plan.modelName())
@@ -285,7 +290,8 @@ public class DynamicModelProvider {
 
     private StreamingChatModel buildChatStreaming(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiStreamingChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, true)))
+                .httpClientBuilder(new JdkHttpClientBuilder())
+                .customHeaders(sdkHeaders(plan.customHeaders()))
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(plan.modelName())
@@ -304,7 +310,8 @@ public class DynamicModelProvider {
 
     private ChatModel buildChatBlocking(String apiKey, String baseUrl, ModelRequestPlan plan) {
         var builder = OpenAiChatModel.builder()
-                .httpClientBuilder(new ModelHttpClientBuilder(plan.customHeaders(), timeout(plan, false)))
+                .httpClientBuilder(new JdkHttpClientBuilder())
+                .customHeaders(sdkHeaders(plan.customHeaders()))
                 .maxRetries(plan.probe() ? 0 : 2)
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
@@ -322,6 +329,24 @@ public class DynamicModelProvider {
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────
+
+    private static JdkHttpClientBuilder responsesHttpClient(Duration readTimeout) {
+        return new JdkHttpClientBuilder().connectTimeout(Duration.ofSeconds(15)).readTimeout(readTimeout);
+    }
+
+    private static Map<String, String> sdkHeaders(Map<String, String> headers) {
+        if (headers.isEmpty()) return headers;
+        // Match the SDK's case-sensitive keys for its defaults so HTTP overrides do not send duplicates.
+        Map<String, String> normalized = new LinkedHashMap<>();
+        headers.forEach((name, value) -> normalized.put(switch (name.toLowerCase(Locale.ROOT)) {
+            case "authorization" -> "Authorization";
+            case "content-type" -> "Content-Type";
+            case "accept" -> "Accept";
+            case "user-agent" -> "User-Agent";
+            default -> name;
+        }, value));
+        return normalized;
+    }
 
     private static Duration timeout(ModelRequestPlan plan, boolean streaming) {
         return plan.probe() ? Duration.ofSeconds(30) : streaming ? STREAMING_TIMEOUT : BLOCKING_TIMEOUT;

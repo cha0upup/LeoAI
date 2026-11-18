@@ -2,6 +2,7 @@ package org.leo.ai.channel;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -21,8 +22,10 @@ import org.leo.core.entity.ProviderCapabilities;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -30,6 +33,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class DynamicModelProviderTest {
+    private static final String CUSTOM_HEADERS = """
+            {"X-Gateway-Key":"gateway-test","authorization":"Bearer override-test",
+             "content-type":"application/json; charset=utf-8","accept":"application/*","user-agent":"leo-test"}
+            """;
+
     private HttpServer server;
 
     @AfterEach
@@ -264,13 +272,11 @@ class DynamicModelProviderTest {
     @ValueSource(strings = {"responses", "chat_completions"})
     void probeIgnoresNegativeCapabilitiesAndSendsHeadersWithBoundedOutput(String protocol) throws Exception {
         AtomicReference<String> path = new AtomicReference<>();
-        AtomicReference<String> auth = new AtomicReference<>();
-        AtomicReference<String> header = new AtomicReference<>();
+        AtomicReference<Headers> headers = new AtomicReference<>();
         AtomicReference<JSONObject> body = new AtomicReference<>();
         String baseUrl = serve("/", exchange -> {
             path.set(exchange.getRequestURI().getPath());
-            auth.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            header.set(exchange.getRequestHeaders().getFirst("X-Gateway-Key"));
+            headers.set(exchange.getRequestHeaders());
             body.set(JSON.parseObject(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
             String json = protocol.equals("responses")
                     ? "{\"id\":\"resp_test\",\"object\":\"response\",\"model\":\"test-model\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}"
@@ -279,7 +285,7 @@ class DynamicModelProviderTest {
         });
         AiModelConfigService configs = mock(AiModelConfigService.class);
         AiModelConfig config = config(baseUrl, protocol);
-        config.setHeadersJson("{\"X-Gateway-Key\":\"gateway-test\",\"authorization\":\"Bearer override-test\"}");
+        config.setHeadersJson(CUSTOM_HEADERS);
         config.setMaxOutputTokens(100_000);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, false));
         DynamicModelProvider provider = provider(configs);
@@ -287,23 +293,27 @@ class DynamicModelProviderTest {
         var runtime = provider.buildProbeRuntime(config, false);
         assertEquals("OK", runtime.chatModel().chat(ChatRequest.builder().messages(UserMessage.from("OK")).build()).aiMessage().text());
         assertEquals("/v1/" + (protocol.equals("responses") ? "responses" : "chat/completions"), path.get());
-        assertEquals("gateway-test", header.get());
-        assertEquals("Bearer override-test", auth.get());
+        assertCustomHeaders(headers.get());
         assertEquals(256, body.get().getIntValue(protocol.equals("responses") ? "max_output_tokens" : "max_tokens"));
     }
 
-    @Test
-    void responsesStreamingAlsoCarriesCustomHeaders() throws Exception {
-        AtomicReference<String> header = new AtomicReference<>();
-        String baseUrl = serve("/v1/responses", exchange -> {
-            header.set(exchange.getRequestHeaders().getFirst("X-Gateway-Key"));
+    @ParameterizedTest
+    @ValueSource(strings = {"responses", "chat_completions"})
+    void streamingAlsoCarriesCustomHeaders(String protocol) throws Exception {
+        AtomicReference<Headers> headers = new AtomicReference<>();
+        boolean responses = protocol.equals("responses");
+        String baseUrl = serve("/v1" + DynamicModelProvider.defaultPathForProtocol(protocol), exchange -> {
+            headers.set(exchange.getRequestHeaders());
             exchange.getRequestBody().readAllBytes();
-            String sse = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
-                    + "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"test-model\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}}\n\n";
+            String sse = responses
+                    ? "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
+                        + "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"test-model\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}}\n\n"
+                    : "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\n"
+                        + "data: [DONE]\n\n";
             respond(exchange, "text/event-stream", sse);
         });
-        AiModelConfig config = config(baseUrl, "responses");
-        config.setHeadersJson("{\"X-Gateway-Key\":\"stream-test\"}");
+        AiModelConfig config = config(baseUrl, protocol);
+        config.setHeadersJson(CUSTOM_HEADERS);
         AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, true));
         CompletableFuture<ChatResponse> result = new CompletableFuture<>();
@@ -313,7 +323,42 @@ class DynamicModelProviderTest {
                     public void onError(Throwable error) { result.completeExceptionally(error); }
                 });
         assertEquals("OK", result.get(5, TimeUnit.SECONDS).aiMessage().text());
-        assertEquals("stream-test", header.get());
+        assertCustomHeaders(headers.get());
+    }
+
+    @Test
+    void chatStreamingReportsProviderErrorAfterPartialOutput() throws Exception {
+        String baseUrl = serve("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, "text/event-stream", """
+                    data: {"choices":[{"index":0,"delta":{"content":"Partial"}}]}
+
+                    data: {"error":{"message":"provider unavailable"}}
+
+                    """);
+        });
+        AiModelConfig config = config(baseUrl, "chat_completions");
+        AiModelConfigService configs = mock(AiModelConfigService.class);
+        when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, true));
+        CompletableFuture<ChatResponse> result = new CompletableFuture<>();
+        StringBuilder partial = new StringBuilder();
+        provider(configs).buildRuntime(config).streamingModel().chat(
+                ChatRequest.builder().messages(UserMessage.from("Hello")).build(), new StreamingChatResponseHandler() {
+                    public void onPartialResponse(String text) { partial.append(text); }
+                    public void onCompleteResponse(ChatResponse response) { result.complete(response); }
+                    public void onError(Throwable error) { result.completeExceptionally(error); }
+                });
+        var error = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+        assertEquals("Partial", partial.toString());
+        assertTrue(error.getCause().getMessage().contains("provider unavailable"));
+    }
+
+    private static void assertCustomHeaders(Headers headers) {
+        assertEquals(List.of("gateway-test"), headers.get("X-Gateway-Key"));
+        assertEquals(List.of("Bearer override-test"), headers.get("Authorization"));
+        assertEquals(List.of("application/json; charset=utf-8"), headers.get("Content-Type"));
+        assertEquals(List.of("application/*"), headers.get("Accept"));
+        assertEquals(List.of("leo-test"), headers.get("User-Agent"));
     }
 
     private String serve(String path, HttpHandler handler) throws IOException {

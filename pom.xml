@@ -49,7 +49,7 @@
         <mybatis.version>3.5.19</mybatis.version>
         <mybatis-spring-boot.version>3.0.5</mybatis-spring-boot.version>
         <sqlite-jdbc.version>3.41.2.2</sqlite-jdbc.version>
-        <langchain4j.version>1.16.1</langchain4j.version>
+        <langchain4j.version>1.23.0</langchain4j.version>
         <jsoup.version>1.23.1</jsoup.version>
     </properties>
     <dependencies>

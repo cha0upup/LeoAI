@@ -12,7 +12,7 @@
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
 [![PHP Runtime](https://img.shields.io/badge/PHP%20Agent-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
-[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
+[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.23.0-purple)](https://github.com/langchain4j/langchain4j)
 
 LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Agent 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v3.0.1 引入平等的 Java/PHP Agent 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Node AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
 
