@@ -13,6 +13,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 一次压缩对应的原始消息边界。
@@ -79,7 +80,7 @@ final class CompressionCheckpoint {
         return new ProjectedView(view, safeBoundary);
     }
 
-    private static int longestSuffixPrefixOverlap(List<String> previous, List<String> current) {
+    static int longestSuffixPrefixOverlap(List<String> previous, List<String> current) {
         int max = Math.min(previous.size(), current.size());
         for (int length = max; length > 0; length--) {
             if (previous.subList(previous.size() - length, previous.size())
@@ -115,37 +116,31 @@ final class CompressionCheckpoint {
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    static DurableMessage durableMessage(ChatMessage message) {
+    static String durableFingerprint(ChatMessage message) {
         if (message instanceof UserMessage userMessage) {
             StringBuilder text = new StringBuilder();
             for (var content : userMessage.contents()) {
                 if (content instanceof TextContent textContent) text.append(textContent.text());
                 else return null;
             }
-            return durableMessage("user", text.toString());
+            return durableFingerprint("user", text.toString());
         }
         if (message instanceof AiMessage aiMessage
                 && !aiMessage.hasToolExecutionRequests()
                 && aiMessage.text() != null) {
-            return durableMessage("assistant", aiMessage.text());
+            return durableFingerprint("assistant", aiMessage.text());
         }
         return null;
     }
 
-    static DurableMessage durableMessage(String role, String content) {
+    static String durableFingerprint(String role, String content) {
         if (role == null || content == null || content.isBlank()) return null;
-        String normalizedRole = role.trim().toLowerCase(java.util.Locale.ROOT);
+        String normalizedRole = role.trim().toLowerCase(Locale.ROOT);
         if (!"user".equals(normalizedRole) && !"assistant".equals(normalizedRole)) {
             return null;
         }
-        return new DurableMessage(
-                normalizedRole, content, durableFingerprint(normalizedRole, content));
-    }
-
-    static String durableFingerprint(String role, String content) {
         MessageDigest digest = sha256();
-        digest.update(role.trim().toLowerCase(java.util.Locale.ROOT)
-                .getBytes(StandardCharsets.UTF_8));
+        digest.update(normalizedRole.getBytes(StandardCharsets.UTF_8));
         digest.update((byte) 0);
         digest.update(content.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(digest.digest());
@@ -186,8 +181,5 @@ final class CompressionCheckpoint {
     }
 
     record ProjectedView(List<ChatMessage> messages, int summarizedSourceCount) {
-    }
-
-    record DurableMessage(String role, String content, String fingerprint) {
     }
 }

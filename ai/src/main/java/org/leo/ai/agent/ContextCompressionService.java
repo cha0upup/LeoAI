@@ -117,40 +117,37 @@ public class ContextCompressionService {
 
             ConversationMessage boundary = messages.contextMessage(
                     threadId, persisted.boundarySequence());
-            CompressionCheckpoint.DurableMessage durableBoundary = boundary != null
-                    ? CompressionCheckpoint.durableMessage(boundary.role(), boundary.content())
+            String boundaryFingerprint = boundary != null
+                    ? CompressionCheckpoint.durableFingerprint(boundary.role(), boundary.content())
                     : null;
-            if (durableBoundary == null
-                    || !durableBoundary.fingerprint().equals(persisted.boundaryHash())) {
+            if (boundaryFingerprint == null || !boundaryFingerprint.equals(persisted.boundaryHash())) {
                 log.debug("忽略无效上下文 checkpoint: memoryId={}, reason=boundary-mismatch",
                         safeMemoryId(memoryId));
                 return null;
             }
 
-            List<ConversationMessage> recent = visibleMessages(
+            List<StoredFingerprint> recent = storedFingerprints(
                     messages.contextMessages(threadId, 200));
-            List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
+            List<String> current = durableFingerprints(currentMessages);
             if (current.size() != currentMessages.size() || current.size() > recent.size()) {
                 return null;
             }
 
             int recentOffset = recent.size() - current.size();
             for (int i = 0; i < current.size(); i++) {
-                CompressionCheckpoint.DurableMessage stored = CompressionCheckpoint.durableMessage(
-                        recent.get(recentOffset + i).role(), recent.get(recentOffset + i).content());
-                if (stored == null || !stored.fingerprint().equals(current.get(i).fingerprint())) {
+                if (!recent.get(recentOffset + i).fingerprint().equals(current.get(i))) {
                     return null;
                 }
             }
 
-            long firstSequence = requireSequence(recent.get(recentOffset));
+            long firstSequence = recent.get(recentOffset).sequence();
             int summarizedCount;
             if (persisted.boundarySequence() < firstSequence) {
                 summarizedCount = 0;
             } else {
                 summarizedCount = -1;
                 for (int i = recentOffset; i < recent.size(); i++) {
-                    if (requireSequence(recent.get(i)) == persisted.boundarySequence()) {
+                    if (recent.get(i).sequence() == persisted.boundarySequence()) {
                         summarizedCount = i - recentOffset + 1;
                         break;
                     }
@@ -181,27 +178,24 @@ public class ContextCompressionService {
         }
         String threadId = threadIdFromMemoryId(memoryId);
         try {
-            List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
-            int summarizedDurableCount = durableMessages(
+            List<String> current = durableFingerprints(currentMessages);
+            int summarizedDurableCount = durableFingerprints(
                     currentMessages.subList(0,
                             Math.min(summarizedSourceCount, currentMessages.size()))).size();
             if (current.isEmpty() || summarizedDurableCount == 0) return;
 
-            List<ConversationMessage> recent = visibleMessages(
+            List<StoredFingerprint> recent = storedFingerprints(
                     messages.contextMessages(threadId, 200));
-            int overlap = durableSuffixPrefixOverlap(recent, current);
+            int overlap = CompressionCheckpoint.longestSuffixPrefixOverlap(
+                    recent.stream().map(StoredFingerprint::fingerprint).toList(), current);
             int durableBoundary = Math.min(summarizedDurableCount, overlap);
             if (durableBoundary <= 0) return;
 
-            ConversationMessage boundary = recent.get(
+            StoredFingerprint boundary = recent.get(
                     recent.size() - overlap + durableBoundary - 1);
-            CompressionCheckpoint.DurableMessage durableMessage =
-                    CompressionCheckpoint.durableMessage(boundary.role(), boundary.content());
-            if (durableMessage == null) return;
-
             checkpoints.update(
-                    threadId, summaryMessage.text(), requireSequence(boundary),
-                    durableMessage.fingerprint(), CHECKPOINT_VERSION);
+                    threadId, summaryMessage.text(), boundary.sequence(),
+                    boundary.fingerprint(), CHECKPOINT_VERSION);
             recordTelemetry("compression.checkpoint_persisted");
         } catch (RuntimeException e) {
             recordTelemetry("compression.checkpoint_persist_failed");
@@ -368,57 +362,27 @@ public class ContextCompressionService {
         telemetryRegistry.recordRuntimeEvent(event);
     }
 
-    private static List<CompressionCheckpoint.DurableMessage> durableMessages(
-            List<ChatMessage> messages) {
-        List<CompressionCheckpoint.DurableMessage> durable = new ArrayList<>();
+    private static List<String> durableFingerprints(List<ChatMessage> messages) {
+        List<String> durable = new ArrayList<>();
         for (ChatMessage message : messages) {
-            CompressionCheckpoint.DurableMessage item =
-                    CompressionCheckpoint.durableMessage(message);
-            if (item != null) durable.add(item);
+            String fingerprint = CompressionCheckpoint.durableFingerprint(message);
+            if (fingerprint != null) durable.add(fingerprint);
         }
         return durable;
     }
 
-    private static List<ConversationMessage> visibleMessages(
-            List<ConversationMessage> messages) {
+    private static List<StoredFingerprint> storedFingerprints(List<ConversationMessage> messages) {
         if (messages == null || messages.isEmpty()) return List.of();
-        return messages.stream()
-                .filter(message -> message != null
-                        && message.sequence() != null
-                        && CompressionCheckpoint.durableMessage(
-                                message.role(), message.content()) != null)
-                .toList();
+        List<StoredFingerprint> fingerprints = new ArrayList<>();
+        for (ConversationMessage message : messages) {
+            if (message == null || message.sequence() == null) continue;
+            String fingerprint = CompressionCheckpoint.durableFingerprint(message.role(), message.content());
+            if (fingerprint != null) fingerprints.add(new StoredFingerprint(message.sequence(), fingerprint));
+        }
+        return fingerprints;
     }
 
-    private static int durableSuffixPrefixOverlap(
-            List<ConversationMessage> stored,
-            List<CompressionCheckpoint.DurableMessage> current) {
-        int max = Math.min(stored.size(), current.size());
-        for (int length = max; length > 0; length--) {
-            int storedOffset = stored.size() - length;
-            boolean matches = true;
-            for (int i = 0; i < length; i++) {
-                CompressionCheckpoint.DurableMessage storedMessage =
-                        CompressionCheckpoint.durableMessage(
-                                stored.get(storedOffset + i).role(),
-                                stored.get(storedOffset + i).content());
-                if (storedMessage == null
-                        || !storedMessage.fingerprint().equals(current.get(i).fingerprint())) {
-                    matches = false;
-                    break;
-                }
-            }
-            if (matches) return length;
-        }
-        return 0;
-    }
-
-    private static long requireSequence(ConversationMessage message) {
-        if (message == null || message.sequence() == null) {
-            throw new IllegalStateException("committed message sequence is missing");
-        }
-        return message.sequence();
-    }
+    private record StoredFingerprint(long sequence, String fingerprint) {}
 
     private static String threadIdFromMemoryId(String memoryId) {
         if (memoryId == null) return "";
