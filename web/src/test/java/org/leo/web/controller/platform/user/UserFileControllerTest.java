@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
@@ -32,10 +33,13 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -123,10 +127,15 @@ class UserFileControllerTest {
     @SuppressWarnings("unchecked")
     void countsAndListsVisibleWorkspaceWithoutRuntimeOrInternalFiles(String languageTag) throws Exception {
         var request = authenticatedRequest();
-        controller.createFile(request, "script-builds/a/b/c/d/e/f/g/h/build.txt", "build", false);
+        String buildPath = "script-builds/a/b/c/d/e/f/g/h/build.txt";
+        controller.createFile(request, buildPath, "build", false);
         controller.createFile(request, "ai-reports/report.md", "report", false);
         controller.createFile(request, "Imports/note.txt", "note", false);
-        Path runtime = artifacts.root(userId).resolve("ai-tasks/job/.internal/versions/cache.txt");
+        Path workspace = artifacts.root(userId);
+        for (String path : List.of(buildPath, "ai-reports/report.md", "Imports/note.txt")) {
+            Files.setLastModifiedTime(workspace.resolve(path), FileTime.fromMillis(1000));
+        }
+        Path runtime = workspace.resolve("ai-tasks/job/.internal/versions/cache.txt");
         Files.createDirectories(runtime.getParent());
         Files.writeString(runtime, "runtime cache");
         var overview = (Map<String, Object>) controller.overview(request).get("data");
@@ -145,12 +154,18 @@ class UserFileControllerTest {
         } finally {
             Locale.setDefault(previous);
         }
-        var listing = spy(artifacts);
+        var metadataReader = spy(new ObjectMapper());
+        var listing = spy(new UserArtifactService(metadataReader, systemConfigService));
         var page = listing.list(userId, "", "", "", 1, 2);
         verify(listing).root(userId);
         assertEquals(3, page.get("count"));
-        assertEquals(2, ((List<?>) page.get("fileList")).size());
+        var pageFiles = (List<Map<String, Object>>) page.get("fileList");
+        assertEquals(List.of("Imports/note.txt", "ai-reports/report.md"),
+                pageFiles.stream().map(file -> file.get("path")).toList());
+        assertEquals(List.of("note.txt", "report.md"),
+                pageFiles.stream().map(file -> ((Map<?, ?>) file.get("metadata")).get("title")).toList());
         assertEquals(true, page.get("hasMore"));
+        verify(metadataReader, times(2)).readValue(anyString(), eq(Map.class));
         assertEquals(1, ((List<?>) artifacts.list(userId, "", "", "", 2, 2).get("fileList")).size());
         assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50).get("count"));
     }

@@ -109,11 +109,11 @@ public class UserArtifactService {
         return result;
     }
 
-    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs) {
+    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs, boolean includeMetadata) {
         Map<String, Object> result = fileInfo(base, path, attrs);
         String relative = (String) result.get("path");
         result.put("category", category(relative));
-        if (attrs.isRegularFile()) result.put("metadata", metadata(base, relative));
+        if (includeMetadata && attrs.isRegularFile()) result.put("metadata", metadata(base, relative));
         return result;
     }
 
@@ -136,7 +136,7 @@ public class UserArtifactService {
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
                         .sorted(Comparator.comparingLong((Map.Entry<Path, BasicFileAttributes> entry) -> entry.getValue().lastModifiedTime().toMillis()).reversed())
-                        .map(entry -> item(base, entry.getKey(), entry.getValue())).toList(),
+                        .map(entry -> item(base, entry.getKey(), entry.getValue(), true)).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
     }
@@ -192,25 +192,31 @@ public class UserArtifactService {
         int size = Math.max(1, Math.min(200, pageSize));
         int current = Math.max(1, page);
         String keyword = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
+        boolean filterSource = source != null && !source.isBlank();
+        boolean filterMetadata = filterSource || !keyword.isEmpty();
         List<Map<String, Object>> files = new ArrayList<>();
         Path base = root(userId);
         walk(base, (path, attrs) -> {
             if (!attrs.isRegularFile()) return;
             String relative = relative(base, path);
             if (category != null && !category.isBlank() && !category.equals(category(relative))) return;
-            Map<String, Object> item = item(base, path, attrs);
-            Map<?, ?> metadata = (Map<?, ?>) item.get("metadata");
-            String module = Objects.toString(metadata.get("sourceModule"), "unrecorded");
-            if (source != null && !source.isBlank() && !source.equals(module)) return;
-            String searchable = relative + " " + metadata.values();
-            if (!keyword.isEmpty() && !searchable.toLowerCase(Locale.ROOT).contains(keyword)) return;
+            Map<String, Object> item = item(base, path, attrs, filterMetadata);
+            if (filterMetadata) {
+                Map<?, ?> metadata = (Map<?, ?>) item.get("metadata");
+                if (filterSource && !source.equals(Objects.toString(metadata.get("sourceModule"), "unrecorded"))) return;
+                if (!keyword.isEmpty() && !(relative + " " + metadata.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
+            }
             files.add(item);
         });
         files.sort(Comparator.comparingLong((Map<String, Object> file) -> ((Number) file.get("lastModified")).longValue())
                 .reversed().thenComparing(file -> String.valueOf(file.get("path"))));
         int start = (int) Math.min(files.size(), (long) (current - 1) * size);
         int end = Math.min(files.size(), start + size);
-        return Map.of("fileList", new ArrayList<>(files.subList(start, end)), "count", files.size(),
+        List<Map<String, Object>> pageFiles = new ArrayList<>(files.subList(start, end));
+        if (!filterMetadata) {
+            pageFiles.forEach(file -> file.put("metadata", metadata(base, (String) file.get("path"))));
+        }
+        return Map.of("fileList", pageFiles, "count", files.size(),
                 "page", current, "pageSize", size, "hasMore", end < files.size());
     }
 
@@ -368,7 +374,7 @@ public class UserArtifactService {
             if (input != null) Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
             else Files.write(target, content, StandardOpenOption.TRUNCATE_EXISTING);
             record(base, target, source);
-            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class));
+            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), true);
         } catch (Exception error) {
             deletePath(base, target);
             throw error;
