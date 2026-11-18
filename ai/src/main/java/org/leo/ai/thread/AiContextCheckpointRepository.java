@@ -20,7 +20,7 @@ public class AiContextCheckpointRepository {
 
     public ConversationCheckpoint find(String threadId) {
         if (blank(threadId)) return null;
-        AiThreadRecord thread = mapper.findThread(threadId);
+        AiThreadRecord thread = mapper.findThreadContextCheckpoint(threadId);
         if (thread == null || blank(thread.getContextSummary())
                 || blank(thread.getContextCheckpointJson())) return null;
         try {

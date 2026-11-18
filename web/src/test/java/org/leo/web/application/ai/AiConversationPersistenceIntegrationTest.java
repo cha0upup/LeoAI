@@ -225,12 +225,14 @@ class AiConversationPersistenceIntegrationTest {
         checkpoints.update("thread-1", "summary", 42L, "hash-42", 2);
 
         assertEquals(new ConversationCheckpoint("summary", 42L, "hash-42", 2), checkpoints.find("thread-1"));
-        assertEquals("summary", store.findThread("thread-1").getContextSummary());
+        assertNull(store.findThread("thread-1").getContextSummary());
+        assertNull(store.listPlatformThreads("fixture-user").get(0).getContextCheckpointJson());
         checkpoints.clear("thread-1");
         assertNull(checkpoints.find("thread-1"));
-        var cleared = store.findThread("thread-1");
-        assertNull(cleared.getContextSummary());
-        assertNull(cleared.getContextCheckpointJson());
+        var cleared = jdbc.queryForMap(
+                "SELECT context_summary, context_checkpoint_json FROM ai_threads WHERE thread_id='thread-1'");
+        assertNull(cleared.get("context_summary"));
+        assertNull(cleared.get("context_checkpoint_json"));
         assertTrue(messages.list("thread-1", 0, 20).isEmpty());
     }
 

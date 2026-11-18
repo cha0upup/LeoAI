@@ -30,7 +30,7 @@ class AiContextCheckpointRepositoryTest {
         var thread = new AiThreadRecord();
         thread.setContextSummary(summary);
         thread.setContextCheckpointJson(metadata.getValue());
-        when(mapper.findThread("thread")).thenReturn(thread);
+        when(mapper.findThreadContextCheckpoint("thread")).thenReturn(thread);
 
         assertEquals(new ConversationCheckpoint(summary, 42L, "hash-42", version), checkpoints.find("thread"));
     }
@@ -52,7 +52,7 @@ class AiContextCheckpointRepositoryTest {
         var thread = new AiThreadRecord();
         thread.setContextSummary("summary");
         thread.setContextCheckpointJson(metadata);
-        when(mapper.findThread("thread")).thenReturn(thread);
+        when(mapper.findThreadContextCheckpoint("thread")).thenReturn(thread);
 
         assertNull(checkpoints.find("thread"));
     }
@@ -64,7 +64,7 @@ class AiContextCheckpointRepositoryTest {
         var thread = new AiThreadRecord();
         thread.setContextSummary(summary);
         thread.setContextCheckpointJson("{\"version\":2,\"boundarySequence\":42,\"boundaryHash\":\"hash\"}");
-        when(mapper.findThread("thread")).thenReturn(thread);
+        when(mapper.findThreadContextCheckpoint("thread")).thenReturn(thread);
 
         assertNull(checkpoints.find("thread"));
     }

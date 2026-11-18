@@ -21,6 +21,13 @@ import java.util.List;
 @Mapper
 public interface AiConversationMapper {
 
+    String THREAD_METADATA_SELECT = """
+            SELECT thread_id, scope, user_id, agent_id, host_id, session_id, title, config_id,
+                   config_name, config_protocol, config_model, config_base_url, config_completions_path,
+                   config_max_output_tokens, created_at, last_active_at, message_count, run_status, parent_thread_id
+            FROM ai_threads
+            """;
+
     String MESSAGE_HISTORY_SELECT = "SELECT m.*, r.status AS run_status, "
             + "t.protocol_status, t.dispatch_status, t.error_message AS protocol_error_message, "
             + "t.answer_to_question_id FROM ai_messages m "
@@ -41,19 +48,22 @@ public interface AiConversationMapper {
     String RECENT_CONTEXT_WINDOW = CONTEXT_MESSAGE_SCOPE
             + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}";
 
-    @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
+    @Select(THREAD_METADATA_SELECT + "WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
             + "AND host_id = #{hostId} AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listThreads(@Param("scope") String scope,
                                      @Param("userId") String userId,
                                      @Param("agentId") String agentId,
                                      @Param("hostId") String hostId);
 
-    @Select("SELECT * FROM ai_threads WHERE scope = 'platform' AND user_id = #{userId} "
+    @Select(THREAD_METADATA_SELECT + "WHERE scope = 'platform' AND user_id = #{userId} "
             + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listPlatformThreads(@Param("userId") String userId);
 
-    @Select("SELECT * FROM ai_threads WHERE thread_id = #{threadId}")
+    @Select(THREAD_METADATA_SELECT + "WHERE thread_id = #{threadId}")
     AiThreadRecord findThread(@Param("threadId") String threadId);
+
+    @Select("SELECT context_summary, context_checkpoint_json FROM ai_threads WHERE thread_id = #{threadId}")
+    AiThreadRecord findThreadContextCheckpoint(@Param("threadId") String threadId);
 
     @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, agent_id, host_id, session_id, title, config_id, "
             + "config_name, config_protocol, config_model, config_base_url, config_completions_path, "
