@@ -224,6 +224,19 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void expiryProbeAndCleanupUseThePendingExpiryIndex() {
+        String where = " WHERE " + AiConversationMapper.EXPIRED_PENDING_USER_INPUT.replace("#{now}", "?");
+        for (String sql : List.of(
+                "SELECT EXISTS (SELECT 1 FROM ai_user_input_requests" + where + ")",
+                "UPDATE ai_user_input_requests SET status = 'EXPIRED'" + where)) {
+            String plan = String.join("\n", jdbc.query(
+                    "EXPLAIN QUERY PLAN " + sql, (row, index) -> row.getString("detail"), 100L));
+
+            assertTrue(plan.contains("idx_ai_user_input_pending_expiry"), plan);
+        }
+    }
+
+    @Test
     void dispatchScanUsesTheQueuedTurnIndex() {
         String sql = "EXPLAIN QUERY PLAN SELECT DISTINCT queued.thread_id "
                 + AiConversationMapper.DISPATCHABLE_QUEUED_TURNS.replace("#{now}", "?");

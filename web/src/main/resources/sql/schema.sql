@@ -648,6 +648,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
     ON ai_user_input_requests(thread_id)
     WHERE status = 'PENDING';
 
+-- 过期探测和清理按到期时间查找，跳过尚未到期和无期限的请求。
+CREATE INDEX IF NOT EXISTS idx_ai_user_input_pending_expiry
+    ON ai_user_input_requests(expires_at)
+    WHERE status = 'PENDING' AND expires_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
     ON ai_user_input_requests(thread_id, created_at);
 
