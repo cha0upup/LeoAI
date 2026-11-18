@@ -487,6 +487,8 @@ LeoAI reads Provider and model settings from the admin interface:
 3. Fill in the channel name, API key, base URL, and model name
 4. Click **Test Connection** to verify, then save
 
+Connection URLs, protocols, API keys, and custom headers are stored on the provider and inherited by its models. Each model retains its own parameters and fallback model.
+
 ### Supported AI Models
 
 Compatible with any service that follows the OpenAI API format:

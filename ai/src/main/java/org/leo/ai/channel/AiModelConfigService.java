@@ -180,15 +180,14 @@ public class AiModelConfigService {
         validateProvider(patch, false);
         normalizeProvider(patch, existing);
         if (Integer.valueOf(1).equals(existing.getEnabled())) {
-            for (AiModelConfig stored : mapper.listByProviderId(id)) {
+            for (AiModelConfig stored : mapper.listSettingsByProviderId(id)) {
                 AiModelConfig model = copyModel(stored);
-                applyProviderSnapshot(model, existing);
+                applyProviderConnection(model, existing);
                 validateModelParameters(model);
             }
         }
         existing.setUpdateTime(nowSqlite());
         withEncryptedProviderSecrets(existing, () -> providerMapper.update(existing));
-        syncProviderSnapshot(existing);
         if (!Integer.valueOf(1).equals(existing.getEnabled())) {
             mapper.disableByProviderId(existing.getId(), nowSqlite());
         }
@@ -341,7 +340,7 @@ public class AiModelConfigService {
             assertUsable(row);
             mapper.clearActive();
         }
-        withEncryptedModelSecrets(row, () -> mapper.insert(row));
+        mapper.insert(row);
         if (notify && Integer.valueOf(1).equals(row.getIsActive())) {
             notifyModelRefresh();
         }
@@ -355,19 +354,7 @@ public class AiModelConfigService {
         boolean wasActive = Integer.valueOf(1).equals(existing.getIsActive());
         if (!isBlank(patch.getName())) existing.setName(patch.getName().trim());
         if (patch.getProviderId() != null) existing.setProviderId(patch.getProviderId());
-        if (!isBlank(patch.getProviderKey())) existing.setProviderKey(patch.getProviderKey().trim());
-        if (patch.getProviderName() != null) existing.setProviderName(blankToNull(patch.getProviderName()));
-        if (!isBlank(patch.getBaseUrl())) existing.setBaseUrl(patch.getBaseUrl().trim());
-        if (patch.getApiKey() != null && !patch.getApiKey().isEmpty()) {
-            existing.setApiKey(patch.getApiKey());
-        }
         if (!isBlank(patch.getModel())) existing.setModel(patch.getModel().trim());
-        if (!isBlank(patch.getProtocol())) {
-            existing.setProtocol(patch.getProtocol().trim());
-        }
-        if (!isBlank(patch.getCompletionsPath())) {
-            existing.setCompletionsPath(patch.getCompletionsPath().trim());
-        }
         existing.setMaxOutputTokens(patch.getMaxOutputTokens());
         existing.setThinkingEnabled(patch.getThinkingEnabled());
         if (patch.getReasoningEffort() != null) {
@@ -375,7 +362,6 @@ public class AiModelConfigService {
         }
         existing.setContextWindowTokens(patch.getContextWindowTokens());
         existing.setTemperature(patch.getTemperature());
-        if (patch.getHeadersJson() != null) existing.setHeadersJson(blankToNull(patch.getHeadersJson()));
         if (patch.getEnabled() != null) {
             existing.setEnabled(Integer.valueOf(1).equals(patch.getEnabled()) ? 1 : 0);
         }
@@ -406,7 +392,7 @@ public class AiModelConfigService {
         if (activating) {
             mapper.clearActive();
         }
-        withEncryptedModelSecrets(existing, () -> mapper.update(existing));
+        mapper.update(existing);
         boolean isActiveNow = Integer.valueOf(1).equals(existing.getIsActive());
         if (wasActive || isActiveNow) {
             notifyModelRefresh();
@@ -470,10 +456,6 @@ public class AiModelConfigService {
         if (draft == null) throw new IllegalArgumentException("请填写模型参数");
         AiModelConfig candidate = copyModel(draft);
         candidate.setName(isBlank(candidate.getName()) ? "参数预览" : candidate.getName());
-        candidate.setProtocol(null);
-        candidate.setApiKey(null);
-        candidate.setBaseUrl(null);
-        candidate.setHeadersJson(null);
         validateRequired(candidate);
         normalize(candidate);
         applyProvider(candidate);
@@ -493,24 +475,10 @@ public class AiModelConfigService {
 
     private void normalize(AiModelConfig row) {
         row.setName(row.getName().trim());
-        if (isBlank(row.getProviderKey())) {
-            row.setProviderKey("custom");
-        } else {
-            row.setProviderKey(row.getProviderKey().trim());
-        }
-        row.setProviderName(blankToNull(row.getProviderName()));
-        if (!isBlank(row.getBaseUrl())) row.setBaseUrl(row.getBaseUrl().trim());
         row.setModel(row.getModel().trim());
         if (row.getEnabled() == null) row.setEnabled(1);
         row.setEnabled(Integer.valueOf(1).equals(row.getEnabled()) ? 1 : 0);
-        row.setProtocol(DynamicModelProvider.normalizeProtocol(row.getProtocol()));
-        if (isBlank(row.getCompletionsPath())) {
-            row.setCompletionsPath(DynamicModelProvider.defaultPathForProtocol(row.getProtocol()));
-        } else {
-            row.setCompletionsPath(row.getCompletionsPath().trim());
-        }
         row.setReasoningEffort(normalizeReasoningEffort(row.getReasoningEffort()));
-        row.setHeadersJson(blankToNull(row.getHeadersJson()));
     }
 
     private void applyProvider(AiModelConfig row) {
@@ -518,10 +486,10 @@ public class AiModelConfigService {
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
         }
-        applyProviderSnapshot(row, provider);
+        applyProviderConnection(row, provider);
     }
 
-    private static void applyProviderSnapshot(AiModelConfig row, AiProvider provider) {
+    private static void applyProviderConnection(AiModelConfig row, AiProvider provider) {
         row.setProviderKey(provider.getProviderKey());
         row.setProviderName(provider.getName());
         row.setBaseUrl(provider.getBaseUrl());
@@ -591,14 +559,6 @@ public class AiModelConfigService {
             cursor = findById(nextId);
             if (cursor == null) break;
         }
-    }
-
-    private void syncProviderSnapshot(AiProvider provider) {
-        AiModelConfig snapshot = new AiModelConfig();
-        snapshot.setProviderId(provider.getId());
-        applyProviderSnapshot(snapshot, provider);
-        snapshot.setUpdateTime(provider.getUpdateTime());
-        withEncryptedModelSecrets(snapshot, () -> mapper.updateProviderSnapshot(snapshot));
     }
 
     private List<AiProvider> decryptProviders(List<AiProvider> rows) {
@@ -681,19 +641,6 @@ public class AiModelConfigService {
     }
 
     private void withEncryptedProviderSecrets(AiProvider row, Runnable writer) {
-        String apiKey = row.getApiKey();
-        String headersJson = row.getHeadersJson();
-        row.setApiKey(secretCryptoService.encrypt(apiKey));
-        row.setHeadersJson(secretCryptoService.encrypt(headersJson));
-        try {
-            writer.run();
-        } finally {
-            row.setApiKey(apiKey);
-            row.setHeadersJson(headersJson);
-        }
-    }
-
-    private void withEncryptedModelSecrets(AiModelConfig row, Runnable writer) {
         String apiKey = row.getApiKey();
         String headersJson = row.getHeadersJson();
         row.setApiKey(secretCryptoService.encrypt(apiKey));

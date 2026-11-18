@@ -72,6 +72,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireForeignKey(connection, "projects", "users", Map.of("owner_user_id", "user_id"));
             requireForeignKey(connection, "projects", "teams", Map.of("team_id", "team_id"));
             requireColumns(connection, "audit_logs", Set.of("actor_team_id"));
+            requireNormalizedModelSchema(connection);
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "agent_ssh_connections",
@@ -118,6 +119,19 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "rule_hash", "rule_name", "status", "result_json", "updated_at"));
         } catch (SQLException error) {
             throw new IllegalStateException("校验数据库结构失败", error);
+        }
+    }
+
+    private void requireNormalizedModelSchema(Connection connection) throws SQLException {
+        Set<String> columns = tableColumns(connection, "ai_model_configs");
+        if (!columns.containsAll(Set.of("id", "provider_id", "model"))) {
+            throw new IllegalStateException("数据库结构不完整，缺少模型配置字段，请使用新的 SQLite 文件");
+        }
+        columns.retainAll(Set.of("provider_key", "provider_name", "api_key", "base_url",
+                "protocol", "completions_path", "headers_json"));
+        if (!columns.isEmpty()) {
+            throw new IllegalStateException("ai_model_configs 仍包含旧版供应商字段 " + columns
+                    + "，请使用新的 SQLite 文件");
         }
     }
 

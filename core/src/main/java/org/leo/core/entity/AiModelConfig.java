@@ -1,7 +1,7 @@
 package org.leo.core.entity;
 
 /**
- * AI 模型配置。模型归属于供应商，并保存运行时所需的供应商配置快照。
+ * AI 模型配置。读取模型时关联供应商，提供运行时所需的连接配置。
  *
  * <p>任意时刻只有一条 {@code is_active=1}，主 Agent、子 Agent和摘要任务使用同一条记录。
  * {@link #thinkingEnabled} 三态：1=显式启用 reasoning，0=显式禁用，null=按

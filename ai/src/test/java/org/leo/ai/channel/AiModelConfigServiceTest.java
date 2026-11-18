@@ -92,7 +92,7 @@ class AiModelConfigServiceTest {
     }
 
     @Test
-    void providerValidationLeavesTheMyBatisCachedModelSnapshotUntouched() {
+    void providerValidationLeavesTheMyBatisCachedModelSettingsUntouched() {
         AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
         service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto, events);
         AiProvider provider = new AiProvider();
@@ -107,11 +107,7 @@ class AiModelConfigServiceTest {
         AiModelConfig stored = new AiModelConfig();
         stored.setProviderId(1);
         stored.setModel("test-model");
-        stored.setProviderName("saved-provider");
-        stored.setBaseUrl("https://example.test/v1");
-        stored.setApiKey("obsolete-model-ciphertext");
-        stored.setHeadersJson("obsolete-headers-ciphertext");
-        when(mapper.listByProviderId(1)).thenReturn(List.of(stored));
+        when(mapper.listSettingsByProviderId(1)).thenReturn(List.of(stored));
         AiProvider patch = new AiProvider();
         patch.setName("updated-provider");
         patch.setBaseUrl("https://example.test/v2");
@@ -119,11 +115,11 @@ class AiModelConfigServiceTest {
 
         service.updateProvider(1, patch);
 
-        assertEquals("saved-provider", stored.getProviderName());
-        assertEquals("https://example.test/v1", stored.getBaseUrl());
-        assertEquals("obsolete-model-ciphertext", stored.getApiKey());
-        assertEquals("obsolete-headers-ciphertext", stored.getHeadersJson());
-        verify(mapper).listByProviderId(1);
+        assertNull(stored.getProviderName());
+        assertNull(stored.getBaseUrl());
+        assertNull(stored.getApiKey());
+        assertNull(stored.getHeadersJson());
+        verify(mapper).listSettingsByProviderId(1);
         verify(mapper, never()).listAll();
     }
 

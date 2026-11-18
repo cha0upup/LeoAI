@@ -6,7 +6,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
@@ -109,7 +108,8 @@ class AiModelConfigurationIntegrationTest {
     void runtimeChangesOnlyAfterCommitAndDeletingTheDefaultClearsDelegates(String damagedColumn) {
         AiProvider provider = provider("primary");
         AiModelConfig first = model(provider, "first");
-        AiModelConfig second = model(provider, "second");
+        AiProvider secondary = provider("secondary");
+        AiModelConfig second = model(secondary, "second");
         jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", second.getId(), first.getId());
         Object delegate = chat.getDelegate();
         TransactionTemplate transaction = new TransactionTemplate(transactions);
@@ -127,8 +127,8 @@ class AiModelConfigurationIntegrationTest {
         assertNotSame(delegate, chat.getDelegate());
         assertEquals(second.getId(), configs.getActive().getId());
         if (!damagedColumn.isEmpty()) {
-            jdbc.update("UPDATE ai_model_configs SET " + damagedColumn + "=? WHERE id=?",
-                    "invalid-fixture-ciphertext", second.getId());
+            jdbc.update("UPDATE ai_providers SET " + damagedColumn + "=? WHERE id=?",
+                    "invalid-fixture-ciphertext", secondary.getId());
         }
         assertTrue(configs.deleteById(second.getId()));
         assertFalse(configs.deleteById(second.getId()));
@@ -176,27 +176,79 @@ class AiModelConfigurationIntegrationTest {
     }
 
     @Test
-    void providerAndModelCredentialsRollBackTogetherWhenSnapshotWriteFails() {
+    void providerChangeUsesOneStoredConnectionAndRefreshesRuntimeOnlyAfterCommit() {
         AiProvider provider = provider("primary");
-        AiModelConfig model = model(provider, "first");
+        AiModelConfig first = model(provider, "first");
+        AiModelConfig second = model(provider, "second");
         Object delegate = chat.getDelegate();
-        jdbc.execute("CREATE TRIGGER fail_snapshot BEFORE UPDATE ON ai_model_configs BEGIN SELECT RAISE(ABORT, 'snapshot rejected'); END");
+        assertNotNull(delegate);
+        String oldModelTime = "2000-01-01 00:00:00";
+        jdbc.update("UPDATE ai_model_configs SET update_time=? WHERE provider_id=?", oldModelTime, provider.getId());
+        jdbc.execute("CREATE TRIGGER reject_model_write BEFORE UPDATE ON ai_model_configs "
+                + "BEGIN SELECT RAISE(ABORT, 'provider update must not rewrite model settings'); END");
         AiProvider patch = new AiProvider();
+        patch.setName("updated-provider");
         patch.setApiKey("replacement-key");
-        assertThrows(RuntimeException.class, () -> configs.updateProvider(provider.getId(), patch));
+        patch.setHeadersJson("{\"X-Fixture\":\"replacement\"}");
+        var transaction = new TransactionTemplate(transactions);
+        transaction.executeWithoutResult(status -> {
+            assertEquals("test-key", configs.findById(first.getId()).getApiKey());
+            configs.updateProvider(provider.getId(), patch);
+            assertEquals("replacement-key", configs.findById(first.getId()).getApiKey());
+            assertSame(delegate, chat.getDelegate());
+            status.setRollbackOnly();
+        });
         assertEquals("test-key", configs.findProviderById(provider.getId()).getApiKey());
-        assertEquals("test-key", configs.findById(model.getId()).getApiKey());
+        assertEquals("test-key", configs.findById(first.getId()).getApiKey());
         assertSame(delegate, chat.getDelegate());
+
+        AiProvider updated = configs.updateProvider(provider.getId(), patch);
+        var enabled = configs.listEnabled();
+        assertEquals(Set.of(first.getId(), second.getId()),
+                enabled.stream().map(AiModelConfig::getId).collect(Collectors.toSet()));
+        for (AiModelConfig row : enabled) {
+            assertEquals("updated-provider", row.getProviderName());
+            assertEquals("replacement-key", row.getApiKey());
+            assertEquals(updated.getHeadersJson(), row.getHeadersJson());
+            assertEquals(updated.getUpdateTime(), row.getUpdateTime());
+        }
+        assertEquals(Set.of(first.getId(), second.getId()),
+                configs.listAll().stream().map(AiModelConfig::getId).collect(Collectors.toSet()));
+        assertEquals(oldModelTime, jdbc.queryForObject(
+                "SELECT update_time FROM ai_model_configs WHERE id=?", String.class, first.getId()));
+        assertNotNull(chat.getDelegate());
+        assertNotSame(delegate, chat.getDelegate());
+    }
+
+    @Test
+    void disablingProviderClearsItsDefaultAndEnabledModelsButKeepsOtherModels() {
+        AiProvider primary = provider("primary");
+        AiModelConfig active = model(primary, "active");
+        AiModelConfig sibling = model(primary, "sibling");
+        AiModelConfig unrelated = model(provider("unrelated"), "unrelated");
+        AiProvider patch = new AiProvider();
+        patch.setEnabled(0);
+
+        configs.updateProvider(primary.getId(), patch);
+
+        assertNull(configs.getActive());
+        assertNull(chat.getDelegate());
+        assertEquals(0, configs.findById(active.getId()).getIsActive());
+        assertEquals(0, configs.findById(active.getId()).getEnabled());
+        assertEquals(0, configs.findById(sibling.getId()).getEnabled());
+        assertEquals(Set.of(unrelated.getId()), configs.listEnabled().stream()
+                .map(AiModelConfig::getId).collect(Collectors.toSet()));
     }
 
     @ParameterizedTest
-    @CsvSource({"false, api_key", "true, api_key", "false, headers_json", "true, headers_json"})
-    void providerUpdateDoesNotDependOnStoredModelSecrets(boolean sameProvider, String secretColumn) {
+    @ValueSource(strings = {"api_key", "headers_json"})
+    void providerUpdateDoesNotDependOnUnrelatedProviderCredentials(String secretColumn) {
         AiProvider primary = provider("primary");
         AiModelConfig active = model(primary, "active");
-        AiModelConfig damaged = sameProvider ? active : model(provider("unrelated"), "unrelated");
+        AiProvider unrelated = provider("unrelated");
+        model(unrelated, "unrelated");
         String invalidSecret = "invalid-fixture-ciphertext";
-        jdbc.update("UPDATE ai_model_configs SET " + secretColumn + "=? WHERE id=?", invalidSecret, damaged.getId());
+        jdbc.update("UPDATE ai_providers SET " + secretColumn + "=? WHERE id=?", invalidSecret, unrelated.getId());
         AiProvider patch = new AiProvider();
         patch.setName("updated-provider");
         patch.setApiKey("replacement-key");
@@ -210,11 +262,11 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(updated.getHeadersJson(), refreshed.getHeadersJson());
         AiSecretCryptoService crypto = context.getBean(AiSecretCryptoService.class);
         assertTrue(crypto.isEncrypted(jdbc.queryForObject(
-                "SELECT api_key FROM ai_model_configs WHERE id=?", String.class, active.getId())));
+                "SELECT api_key FROM ai_providers WHERE id=?", String.class, primary.getId())));
         assertTrue(crypto.isEncrypted(jdbc.queryForObject(
-                "SELECT headers_json FROM ai_model_configs WHERE id=?", String.class, active.getId())));
-        if (!sameProvider) assertEquals(invalidSecret, jdbc.queryForObject(
-                "SELECT " + secretColumn + " FROM ai_model_configs WHERE id=?", String.class, damaged.getId()));
+                "SELECT headers_json FROM ai_providers WHERE id=?", String.class, primary.getId())));
+        assertEquals(invalidSecret, jdbc.queryForObject(
+                "SELECT " + secretColumn + " FROM ai_providers WHERE id=?", String.class, unrelated.getId()));
         assertNotNull(chat.getDelegate());
     }
 
