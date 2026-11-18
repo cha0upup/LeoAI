@@ -268,8 +268,9 @@ public interface AiConversationMapper {
     AiUserInputRequest findUserInputRequest(@Param("requestId") String requestId);
 
     @Select("SELECT * FROM ai_user_input_requests WHERE thread_id = #{threadId} "
-            + "AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1")
-    AiUserInputRequest findPendingUserInputRequest(@Param("threadId") String threadId);
+            + "AND status = 'PENDING' AND (expires_at IS NULL OR expires_at > #{now})")
+    AiUserInputRequest findPendingUserInputRequest(@Param("threadId") String threadId,
+                                                  @Param("now") long now);
 
     @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
             + "WHERE thread_id = #{threadId} AND status = 'PENDING' "

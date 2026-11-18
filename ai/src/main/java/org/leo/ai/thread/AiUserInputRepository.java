@@ -20,24 +20,26 @@ public class AiUserInputRepository {
     }
 
     public AiUserInputRequest findPending(String threadId) {
-        if (blank(threadId)) return null;
-        String normalized = threadId.trim();
-        mapper.expireUserInputRequests(normalized, System.currentTimeMillis());
-        return mapper.findPendingUserInputRequest(normalized);
+        return blank(threadId) ? null
+                : mapper.findPendingUserInputRequest(threadId.trim(), System.currentTimeMillis());
     }
 
     public AiUserInputRequest create(AiUserInputRequest request) {
         if (request == null || blank(request.getThreadId())) {
             throw new IllegalArgumentException("用户输入请求缺少 threadId");
         }
-        AiUserInputRequest pending = findPending(request.getThreadId());
+        String threadId = request.getThreadId().trim();
+        long now = System.currentTimeMillis();
+        // Release the unique pending slot before inserting a replacement.
+        mapper.expireUserInputRequests(threadId, now);
+        AiUserInputRequest pending = mapper.findPendingUserInputRequest(threadId, now);
         if (pending != null) return pending;
         try {
             if (mapper.insertUserInputRequest(request) != 1) {
                 throw new IllegalStateException("创建用户输入请求失败");
             }
         } catch (DataIntegrityViolationException conflict) {
-            AiUserInputRequest winner = findPending(request.getThreadId());
+            AiUserInputRequest winner = findPending(threadId);
             if (winner != null) return winner;
             throw conflict;
         }

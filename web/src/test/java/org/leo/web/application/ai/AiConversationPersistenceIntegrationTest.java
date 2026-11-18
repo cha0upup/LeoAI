@@ -141,9 +141,12 @@ class AiConversationPersistenceIntegrationTest {
         assertNull(requests.find("question-2"));
         jdbc.update("UPDATE ai_user_input_requests SET expires_at=1 WHERE request_id='question-1'");
 
-        assertNull(requests.findPending("thread-1"));
-        assertEquals(AiUserInputRequest.STATUS_EXPIRED, requests.find("question-1").getStatus());
+        var snapshot = protocol.snapshotThread("thread-1", "waiting_for_user");
+        assertNull(snapshot.pendingUserInput());
+        assertEquals("completed", snapshot.status());
+        assertEquals(AiUserInputRequest.STATUS_PENDING, requests.find("question-1").getStatus());
         assertEquals("question-2", requests.create(next).getRequestId());
+        assertEquals(AiUserInputRequest.STATUS_EXPIRED, requests.find("question-1").getStatus());
         assertEquals("question-2", requests.findPending("thread-1").getRequestId());
     }
 
