@@ -221,12 +221,20 @@ class AiConversationPersistenceIntegrationTest {
     void contextCheckpointsRoundTripIndependentlyOfTurnStorage() {
         var checkpoints = context.getBean(AiContextCheckpointRepository.class);
         assertNull(checkpoints.find("thread-1"));
+        checkpoints.clear("thread-1");
+        assertEquals(1L, store.findThread("thread-1").getLastActiveAt());
 
         checkpoints.update("thread-1", "summary", 42L, "hash-42", 2);
 
         assertEquals(new ConversationCheckpoint("summary", 42L, "hash-42", 2), checkpoints.find("thread-1"));
         assertNull(store.findThread("thread-1").getContextSummary());
         assertNull(store.listPlatformThreads("fixture-user").get(0).getContextCheckpointJson());
+        jdbc.update("UPDATE ai_threads SET last_active_at=2 WHERE thread_id='thread-1'");
+        checkpoints.update("thread-1", "summary", 42L, "hash-42", 2);
+        assertEquals(2L, store.findThread("thread-1").getLastActiveAt());
+        checkpoints.update("thread-1", "summary", 43L, "hash-43", 2);
+        assertEquals(new ConversationCheckpoint("summary", 43L, "hash-43", 2), checkpoints.find("thread-1"));
+        assertTrue(store.findThread("thread-1").getLastActiveAt() > 2L);
         checkpoints.clear("thread-1");
         assertNull(checkpoints.find("thread-1"));
         var cleared = jdbc.queryForMap(

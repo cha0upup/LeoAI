@@ -106,7 +106,8 @@ public interface AiConversationMapper {
 
     @Update("UPDATE ai_threads SET context_summary = #{contextSummary}, "
             + "context_checkpoint_json = #{contextCheckpointJson}, last_active_at = #{lastActiveAt} "
-            + "WHERE thread_id = #{threadId}")
+            + "WHERE thread_id = #{threadId} AND (context_summary IS NOT #{contextSummary} "
+            + "OR context_checkpoint_json IS NOT #{contextCheckpointJson})")
     int updateThreadContextCheckpoint(@Param("threadId") String threadId,
                                       @Param("contextSummary") String contextSummary,
                                       @Param("contextCheckpointJson") String contextCheckpointJson,
