@@ -40,8 +40,8 @@ public class AiProtocolTurnRepository {
         return mapper.listDispatchableThreadIds(now);
     }
 
-    public boolean claimStart(String turnId, long startedAt) {
-        return !blank(turnId) && mapper.markProtocolTurnStarted(turnId, startedAt) == 1;
+    public AiTurnRecord claimStart(String turnId, long startedAt) {
+        return blank(turnId) ? null : mapper.claimProtocolTurnStart(turnId, startedAt);
     }
 
     public boolean hasInterruptRequest(String threadId) {

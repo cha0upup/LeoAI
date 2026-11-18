@@ -3,6 +3,7 @@ package org.leo.dao.mapper;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -182,13 +183,15 @@ public interface AiConversationMapper {
     @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS)
     List<String> listDispatchableThreadIds(@Param("now") long now);
 
-    @Update("UPDATE ai_turns SET dispatch_status = 'running', "
+    @Select(value = "UPDATE ai_turns SET dispatch_status = 'running', "
             + "started_at = COALESCE(started_at, #{now}) "
             + "WHERE turn_id = #{turnId} "
             + "AND turn_id = (SELECT queued.turn_id " + DISPATCHABLE_QUEUED_TURNS
-            + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ")")
-    int markProtocolTurnStarted(@Param("turnId") String turnId,
-                                @Param("now") long now);
+            + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ") RETURNING *",
+            affectData = true)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    AiTurnRecord claimProtocolTurnStart(@Param("turnId") String turnId,
+                                        @Param("now") long now);
 
     @Update("UPDATE ai_turns SET interrupt_requested = 1, "
             + "dispatch_status = CASE WHEN dispatch_status = 'running' "

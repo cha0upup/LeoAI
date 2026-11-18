@@ -76,7 +76,7 @@ class AiTurnQueueServiceTest {
 
     @Test
     void skipsUnclaimedTurnsAndReleasesTheirExecutionSlot() {
-        when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(turn, false));
+        when(protocol.tryStart("turn-1")).thenReturn(new AiTurnProtocolService.StartClaim(null, false));
         queue.signal("thread-1");
         submitted.get(0).run();
 

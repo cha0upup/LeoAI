@@ -120,9 +120,8 @@ public class AiTurnProtocolService {
     }
 
     public StartClaim tryStart(String turnId) {
-        long startedAt = System.currentTimeMillis();
-        boolean claimed = turns.claimStart(turnId, startedAt);
-        return new StartClaim(snapshot(turns.find(turnId)), claimed);
+        TurnSnapshot claimed = snapshot(turns.claimStart(turnId, System.currentTimeMillis()));
+        return new StartClaim(claimed, claimed != null);
     }
 
     public TurnSnapshot requestInterrupt(String threadId, String turnId) {

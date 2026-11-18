@@ -23,6 +23,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -189,7 +190,9 @@ class AiConversationPersistenceIntegrationTest {
 
         assertEquals(answer.id(), protocol.findNextQueuedTurnId("thread-1"));
         assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
-        assertFalse(protocol.tryStart(ordinary.id()).claimed());
+        var skipped = protocol.tryStart(ordinary.id());
+        assertFalse(skipped.claimed());
+        assertNull(skipped.turn());
         var claim = protocol.tryStart(answer.id());
         assertTrue(claim.claimed());
         assertEquals(answerCommand, claim.turn().commandJson());
@@ -255,6 +258,27 @@ class AiConversationPersistenceIntegrationTest {
         assertNull(protocol.findNextQueuedTurnId("thread-1"));
         assertTrue(messages.list("thread-1", 0, 20).stream()
                 .allMatch(message -> "committed".equals(message.get("status"))));
+    }
+
+    @Test
+    void turnClaimRefreshesTransactionReadsAndRollsBack() {
+        var turn = reserve();
+        long startedAt = 123L;
+        var transaction = new TransactionTemplate(context.getBean(DataSourceTransactionManager.class));
+        transaction.executeWithoutResult(status -> {
+            assertEquals("queued", turns.find(turn.id()).getDispatchStatus());
+
+            var claimed = turns.claimStart(turn.id(), startedAt);
+            assertNotNull(claimed);
+            assertEquals("running", claimed.getDispatchStatus());
+            assertEquals(startedAt, claimed.getStartedAt());
+            assertEquals("running", turns.find(turn.id()).getDispatchStatus());
+            assertNull(turns.claimStart(turn.id(), startedAt));
+            status.setRollbackOnly();
+        });
+
+        assertEquals(turn.id(), protocol.findNextQueuedTurnId("thread-1"));
+        assertNull(turns.find(turn.id()).getStartedAt());
     }
 
     @ParameterizedTest
