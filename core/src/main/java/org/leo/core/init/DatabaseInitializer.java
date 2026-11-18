@@ -71,12 +71,13 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireForeignKey(connection, "teams", "users", Map.of("team_id", "team_id", "leader_id", "user_id"));
             requireForeignKey(connection, "projects", "users", Map.of("owner_user_id", "user_id"));
             requireForeignKey(connection, "projects", "teams", Map.of("team_id", "team_id"));
-            if (!tableColumns(connection, "project_agents").equals(
-                    Set.of("project_id", "agent_id", "alias", "tags", "sort_order", "added_by_user_id", "create_time"))) {
-                throw new IllegalStateException("数据库结构与当前版本不匹配：project_agents，请使用新的 SQLite 文件");
-            }
+            requireExactColumns(connection, "project_agents",
+                    Set.of("project_id", "agent_id", "alias", "tags", "sort_order", "added_by_user_id", "create_time"));
             requireColumns(connection, "audit_logs", Set.of("actor_team_id"));
-            requireNormalizedModelSchema(connection);
+            requireExactColumns(connection, "ai_model_configs",
+                    Set.of("id", "provider_id", "name", "model", "is_active", "enabled", "fallback_model_id",
+                            "max_output_tokens", "thinking_enabled", "reasoning_effort", "context_window_tokens",
+                            "temperature", "create_time", "update_time", "remark"));
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "agent_ssh_connections",
@@ -126,19 +127,6 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    private void requireNormalizedModelSchema(Connection connection) throws SQLException {
-        Set<String> columns = tableColumns(connection, "ai_model_configs");
-        if (!columns.containsAll(Set.of("id", "provider_id", "model"))) {
-            throw new IllegalStateException("数据库结构不完整，缺少模型配置字段，请使用新的 SQLite 文件");
-        }
-        columns.retainAll(Set.of("provider_key", "provider_name", "api_key", "base_url",
-                "protocol", "completions_path", "headers_json"));
-        if (!columns.isEmpty()) {
-            throw new IllegalStateException("ai_model_configs 仍包含旧版供应商字段 " + columns
-                    + "，请使用新的 SQLite 文件");
-        }
-    }
-
     private void requireForeignKey(Connection connection, String table, String target,
                                    Map<String, String> columns) throws SQLException {
         Map<Integer, Map<String, String>> foreignKeys = new HashMap<>();
@@ -165,6 +153,13 @@ public class DatabaseInitializer implements CommandLineRunner {
             missing.removeAll(actual);
             throw new IllegalStateException(
                     "数据库结构不完整，缺少 " + table + "." + missing);
+        }
+    }
+
+    private void requireExactColumns(Connection connection, String table,
+                                     Set<String> expectedColumns) throws SQLException {
+        if (!tableColumns(connection, table).equals(expectedColumns)) {
+            throw new IllegalStateException("数据库结构与当前版本不匹配：" + table + "，请使用新的 SQLite 文件");
         }
     }
 

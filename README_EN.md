@@ -653,7 +653,7 @@ tags:
 
 ### AI Assistant
 
-On interruption, failure, or orphaned-run recovery, partial user-visible replies stay in `ai_messages.content`. Plans, tool progress, and resume instructions are stored separately in the internal `recovery_context` column and used only to rebuild model memory; history responses do not expose this field. Legacy recovery blocks embedded in message bodies are separated on read without rewriting original history, while tool timelines and failure reasons remain visible. Startup adds the missing column to existing message tables. Restart the backend and refresh history after upgrading; model TLS connection failures remain a separate issue.
+On interruption, failure, or orphaned-run recovery, partial user-visible replies stay in `ai_messages.content`. Plans, tool progress, and resume instructions are stored separately in the internal `recovery_context` column and used only to rebuild model memory. History responses do not expose this field, but still show tool timelines and failure reasons.
 
 **Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
 

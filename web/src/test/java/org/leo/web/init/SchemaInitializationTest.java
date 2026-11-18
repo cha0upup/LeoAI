@@ -43,8 +43,6 @@ class SchemaInitializationTest {
         for (var entry : Map.of(
                 "agents", new String[]{"last_heartbeat", "heartbeat_interval"},
                 "agent_database_connections", new String[]{"max_connections"},
-                "ai_model_configs", new String[]{"provider_key", "provider_name", "api_key", "base_url",
-                        "protocol", "completions_path", "headers_json"},
                 "ai_threads", new String[]{"root_plan_id", "profile"},
                 "ai_subagent_invocations", new String[]{"parent_message_id", "input_json", "profile"},
                 "ai_messages", new String[]{"thinking_logs_json", "tool_calls_json"}).entrySet()) {
@@ -149,27 +147,16 @@ class SchemaInitializationTest {
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM pragma_foreign_key_list('users')", Integer.class));
     }
 
-    @Test
-    void rejectsTheLegacyModelConnectionColumnsInsteadOfRemovingThemInPlace() {
+    @ParameterizedTest
+    @ValueSource(strings = {"project_agents", "ai_model_configs"})
+    void rejectsUnexpectedColumnsWithoutAlteringExactSchemaTables(String table) {
         var source = initializedSource();
         var jdbc = new JdbcTemplate(source);
-        jdbc.execute("ALTER TABLE ai_model_configs ADD COLUMN api_key TEXT");
-        var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
-
-        assertTrue(error.getMessage().contains("ai_model_configs"));
-        assertTrue(error.getMessage().contains("api_key"));
-        assertEquals(1, column(jdbc, "ai_model_configs", "api_key"));
-    }
-
-    @Test
-    void rejectsUnexpectedProjectAssociationColumnsWithoutAlteringTheSchema() {
-        var source = initializedSource();
-        var jdbc = new JdbcTemplate(source);
-        jdbc.execute("ALTER TABLE project_agents ADD COLUMN unexpected_column TEXT");
+        jdbc.execute("ALTER TABLE " + table + " ADD COLUMN unexpected_column TEXT");
 
         var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
-        assertTrue(error.getMessage().contains("project_agents"));
-        assertEquals(1, column(jdbc, "project_agents", "unexpected_column"));
+        assertTrue(error.getMessage().contains(table));
+        assertEquals(1, column(jdbc, table, "unexpected_column"));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
     }
 
