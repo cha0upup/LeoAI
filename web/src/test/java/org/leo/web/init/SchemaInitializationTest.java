@@ -43,6 +43,7 @@ class SchemaInitializationTest {
         for (var entry : Map.of(
                 "agents", new String[]{"last_heartbeat", "heartbeat_interval"},
                 "agent_database_connections", new String[]{"max_connections"},
+                "project_agents", new String[]{"environment"},
                 "ai_model_configs", new String[]{"provider_key", "provider_name", "api_key", "base_url",
                         "protocol", "completions_path", "headers_json"},
                 "ai_threads", new String[]{"root_plan_id", "profile"},
@@ -159,6 +160,42 @@ class SchemaInitializationTest {
         assertTrue(error.getMessage().contains("ai_model_configs"));
         assertTrue(error.getMessage().contains("api_key"));
         assertEquals(1, column(jdbc, "ai_model_configs", "api_key"));
+    }
+
+    @Test
+    void startupRemovesObsoleteProjectEnvironmentWithoutLosingMemberships() throws Exception {
+        var source = initializedSource();
+        var jdbc = new JdbcTemplate(source);
+        jdbc.execute("ALTER TABLE project_agents ADD COLUMN environment VARCHAR(30)");
+        jdbc.update("""
+                INSERT INTO users(user_id, user_name, password, create_time, update_time)
+                VALUES ('owner','owner','fixture',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO projects(project_id, project_name, owner_user_id, create_time, update_time)
+                VALUES ('project','Project','owner',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO agents(agent_id, agent_name, parent_agent_id, create_by_user_id, conn_link,
+                                   req_disguise_id, resp_disguise_id, create_time, update_time)
+                VALUES ('host','Host','root','owner','/','request','response',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO project_agents(project_id, agent_id, alias, tags, sort_order, added_by_user_id,
+                                           create_time, environment)
+                VALUES ('project','host','entry','blue',7,'owner','2000-01-01 00:00:00','prod')
+                """);
+        String remainingColumns = """
+                SELECT project_id, agent_id, alias, tags, sort_order, added_by_user_id, create_time FROM project_agents
+                """;
+        var before = jdbc.queryForMap(remainingColumns);
+        var initializer = new DatabaseInitializer(source);
+        initializer.run();
+        initializer.run();
+
+        assertEquals(0, column(jdbc, "project_agents", "environment"));
+        assertEquals(before, jdbc.queryForMap(remainingColumns));
+        assertTrue(jdbc.queryForList("PRAGMA foreign_key_check").isEmpty());
     }
 
     @ParameterizedTest

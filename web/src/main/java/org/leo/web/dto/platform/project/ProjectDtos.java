@@ -19,7 +19,6 @@ public final class ProjectDtos {
             String projectId,
             List<String> agentIds,
             String alias,
-            String environment,
             String tags
     ) {}
 

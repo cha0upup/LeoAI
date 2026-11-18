@@ -173,7 +173,6 @@ CREATE TABLE IF NOT EXISTS project_agents (
     project_id VARCHAR(50) NOT NULL,
     agent_id VARCHAR(50) NOT NULL,
     alias VARCHAR(100),
-    environment VARCHAR(30),
     tags TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     added_by_user_id VARCHAR(50) NOT NULL,

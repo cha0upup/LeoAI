@@ -172,7 +172,7 @@ class ProjectServiceTest {
 
         if (attach) {
             when(mapper.attachAgent(any())).thenReturn(true);
-            assertEquals(1, service.attachAgents("project-1", ids, null, null, null, "user-1"));
+            assertEquals(1, service.attachAgents("project-1", ids, null, null, "user-1"));
             var relation = ArgumentCaptor.forClass(ProjectAgent.class);
             verify(mapper).attachAgent(relation.capture());
             assertEquals("gateway", relation.getValue().getAgentId());

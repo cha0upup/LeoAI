@@ -147,7 +147,7 @@ public class AgentManageController {
         if (result) {
             if (project != null) {
                 projectService.attachAgents(project.getProjectId(), List.of(id),
-                        null, null, null, user.getUserId());
+                        null, null, user.getUserId());
             }
             return ApiResponse.success(Collections.singletonMap("agentId", id));
         } else {

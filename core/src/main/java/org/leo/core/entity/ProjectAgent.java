@@ -5,7 +5,6 @@ public class ProjectAgent {
     private String projectId;
     private String agentId;
     private String alias;
-    private String environment;
     private String tags;
     private Integer sortOrder;
     private String addedByUserId;
@@ -17,8 +16,6 @@ public class ProjectAgent {
     public void setAgentId(String agentId) { this.agentId = agentId; }
     public String getAlias() { return alias; }
     public void setAlias(String alias) { this.alias = alias; }
-    public String getEnvironment() { return environment; }
-    public void setEnvironment(String environment) { this.environment = environment; }
     public String getTags() { return tags; }
     public void setTags(String tags) { this.tags = tags; }
     public Integer getSortOrder() { return sortOrder; }

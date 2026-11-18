@@ -168,7 +168,7 @@ public class ProjectController {
             permissionService.requireAccessibleAgentChain(agentId, user);
         }
         int changed = projectService.attachAgents(projectId, agentIds,
-                body.alias(), body.environment(), body.tags(), user.getUserId());
+                body.alias(), body.tags(), user.getUserId());
         return ApiResponse.success(new RelationMutationResponse(projectId, changed));
     }
 

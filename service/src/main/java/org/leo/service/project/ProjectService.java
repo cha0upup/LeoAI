@@ -168,14 +168,13 @@ public class ProjectService {
 
     @Transactional
     public int attachAgents(String projectId, Collection<String> agentIds,
-                             String alias, String environment, String tags, String userId) {
+                             String alias, String tags, String userId) {
         int changed = 0;
         for (String agentId : normalizedEntryIds(agentIds)) {
             ProjectAgent relation = new ProjectAgent();
             relation.setProjectId(projectId);
             relation.setAgentId(agentId);
             relation.setAlias(trimToNull(alias));
-            relation.setEnvironment(trimToNull(environment));
             relation.setTags(trimToNull(tags));
             relation.setSortOrder(0);
             relation.setAddedByUserId(userId);

@@ -305,7 +305,7 @@ class ProjectListIntegrationTest {
         host("existing");
         host("new");
         attach("owned", "existing");
-        jdbc.update("UPDATE project_agents SET alias='entry', environment='prod', tags='blue', sort_order=7 "
+        jdbc.update("UPDATE project_agents SET alias='entry', tags='blue', sort_order=7 "
                 + "WHERE project_id='owned' AND agent_id='existing'");
         for (String id : List.of("existing", "new")) {
             Agent host = new Agent();
@@ -315,18 +315,18 @@ class ProjectListIntegrationTest {
             when(agents.findAgentById(id)).thenReturn(host);
         }
         MockHttpServletRequest request = requestAs("normal");
-        var selection = new ProjectAgentsRequest(" owned ", List.of("existing", "new"), null, null, null);
+        var selection = new ProjectAgentsRequest(" owned ", List.of("existing", "new"), null, null);
         assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, selection).get("data"));
         assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, selection).get("data"));
-        var mark = new ProjectAgentsRequest("owned", List.of("existing"), null, " test ", null);
+        var mark = new ProjectAgentsRequest("owned", List.of("existing"), " updated ", null);
         assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, mark).get("data"));
         assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, mark).get("data"));
 
-        assertEquals(Map.of("alias", "entry", "environment", "test", "tags", "blue", "sort_order", 7),
-                jdbc.queryForMap("SELECT alias, environment, tags, sort_order FROM project_agents "
+        assertEquals(Map.of("alias", "updated", "tags", "blue", "sort_order", 7),
+                jdbc.queryForMap("SELECT alias, tags, sort_order FROM project_agents "
                         + "WHERE project_id='owned' AND agent_id='existing'"));
 
-        var remove = new ProjectAgentsRequest(" owned ", List.of("new"), null, null, null);
+        var remove = new ProjectAgentsRequest(" owned ", List.of("new"), null, null);
         assertEquals(new RelationMutationResponse("owned", 1), controller.detachAgents(request, remove).get("data"));
     }
 

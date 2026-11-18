@@ -34,7 +34,22 @@ public class DatabaseInitializer implements CommandLineRunner {
     public void run(String... args) throws Exception {
         enableWalMode();
         validateSchema();
+        dropProjectEnvironmentColumn();
         executeScript("sql/data.sql");
+    }
+
+    /** Remove this retired metadata column only after validating the current schema baseline. */
+    private void dropProjectEnvironmentColumn() throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            if (!tableColumns(connection, "project_agents").contains("environment")) return;
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("ALTER TABLE project_agents DROP COLUMN environment");
+            } catch (SQLException error) {
+                // Another instance may have removed the column after our initial schema read.
+                Set<String> columns = tableColumns(connection, "project_agents");
+                if (columns.contains("environment") || !columns.containsAll(Set.of("project_id", "agent_id"))) throw error;
+            }
+        }
     }
 
     private void executeScript(String resource) throws SQLException {
@@ -71,6 +86,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireForeignKey(connection, "teams", "users", Map.of("team_id", "team_id", "leader_id", "user_id"));
             requireForeignKey(connection, "projects", "users", Map.of("owner_user_id", "user_id"));
             requireForeignKey(connection, "projects", "teams", Map.of("team_id", "team_id"));
+            requireColumns(connection, "project_agents", Set.of("project_id", "agent_id"));
             requireColumns(connection, "audit_logs", Set.of("actor_team_id"));
             requireNormalizedModelSchema(connection);
             requireColumns(connection, "agents",
