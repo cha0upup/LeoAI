@@ -17,6 +17,41 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SchemaIntegrityTest {
 
     @Test
+    void teamLeaderMustRemainAMemberAndMembersMustReferenceAnExistingTeam() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+             Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys=ON");
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+
+            connection.setAutoCommit(false);
+            statement.executeUpdate("""
+                    INSERT INTO users (user_id, user_name, password, team_id, create_time, update_time)
+                    VALUES ('leader', 'leader', 'fixture-hash', 'team', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                           ('outsider', 'outsider', 'fixture-hash', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """);
+            statement.executeUpdate("""
+                    INSERT INTO teams (team_id, team_name, leader_id, create_time, update_time)
+                    VALUES ('team', 'team', 'leader', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """);
+            connection.commit();
+            connection.setAutoCommit(true);
+
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE users SET team_id='missing' WHERE user_id='outsider'"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE teams SET leader_id='outsider' WHERE team_id='team'"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE users SET team_id=NULL WHERE user_id='leader'"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "DELETE FROM users WHERE user_id='leader'"));
+            assertEquals(1, scalar(statement, """
+                    SELECT COUNT(*) FROM teams t JOIN users u
+                    ON u.team_id=t.team_id AND u.user_id=t.leader_id
+                    """));
+        }
+    }
+
+    @Test
     void freshSchemaEnforcesDomainChecksAndAiCascadeRelationships() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             try (Statement statement = connection.createStatement()) {

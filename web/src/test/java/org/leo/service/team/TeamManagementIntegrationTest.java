@@ -28,6 +28,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -102,8 +103,7 @@ class TeamManagementIntegrationTest {
     @CsvSource({"false,system-admin,protected", "true,system-admin,protected",
             "false,protected,系统管理员", "true,protected,系统管理员"})
     void protectedTeamsAreRejectedBeforeAnyMemberIsDetached(boolean ai, String id, String name) {
-        seedTeam(id, name);
-        seedUser("leader", "leader", id);
+        seedTeam(id, name, "leader");
 
         assertThrows(RuntimeException.class, () -> delete(ai, id));
 
@@ -204,9 +204,8 @@ class TeamManagementIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"admin", "leader", "normal", "unassigned"})
     void teamListingKeepsRoleAndMembershipBoundaries(String role) {
-        seedTeam("team", "research");
-        seedTeam("other", "other");
-        jdbc.update("UPDATE teams SET leader_id='someone-else' WHERE team_id='other'");
+        seedTeam("team", "research", "leader");
+        seedTeam("other", "other", "someone-else");
         User caller = new User();
         caller.setUserId("leader");
         caller.setPrivilege(role.equals("unassigned") ? "normal" : role);
@@ -246,13 +245,17 @@ class TeamManagementIntegrationTest {
     }
 
     private void seedMembership() {
-        seedTeam("team", "research");
-        seedUser("leader", "leader", "team");
+        seedTeam("team", "research", "leader");
         seedUser("member", "normal", "team");
         seedUser("admin", "admin", "team");
     }
 
-    private void seedTeam(String id, String name) { assertTrue(teams.addTeam(team(id, name, "leader"))); }
+    private void seedTeam(String id, String name, String leader) {
+        new TransactionTemplate(context.getBean(DataSourceTransactionManager.class)).executeWithoutResult(status -> {
+            seedUser(leader, "leader", id);
+            assertTrue(teams.addTeam(team(id, name, leader)));
+        });
+    }
 
     private Team team(String id, String name, String leader) {
         Team team = new Team();

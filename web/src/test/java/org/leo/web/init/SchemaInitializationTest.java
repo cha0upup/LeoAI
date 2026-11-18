@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.init.DatabaseInitializer;
+import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.sql.init.SqlDataSourceScriptDatabaseInitializer;
@@ -13,6 +14,8 @@ import org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConf
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
@@ -57,6 +60,11 @@ class SchemaInitializationTest {
         assertEquals(Set.of("audit.mode", "max.file.upload.size.mb", "security.password.min.length",
                         "security.login.max.attempts", "security.login.lock.seconds"),
                 Set.copyOf(jdbc.queryForList("SELECT config_key FROM system_configs", String.class)));
+        assertTrue(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_model_capabilities WHERE source='system'", Integer.class) > 0);
+        for (String table : Set.of("users", "teams", "projects", "ai_providers")) {
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class), table);
+        }
     }
 
     @Test
@@ -66,10 +74,16 @@ class SchemaInitializationTest {
         initializer.run();
         var jdbc = new JdbcTemplate(source);
         jdbc.update("UPDATE system_configs SET config_value='write' WHERE config_key='audit.mode'");
-        jdbc.update("""
-                INSERT INTO users(user_id,user_name,password,create_time,update_time,team_id)
-                VALUES ('fixture','fixture','hash',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'team-a')
-                """);
+        new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
+            jdbc.update("""
+                    INSERT INTO users(user_id,user_name,password,create_time,update_time,team_id)
+                    VALUES ('fixture','fixture','hash',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'team-a')
+                    """);
+            jdbc.update("""
+                    INSERT INTO teams(team_id,team_name,leader_id,create_time,update_time)
+                    VALUES ('team-a','Team A','fixture',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                    """);
+        });
         jdbc.update("""
                 INSERT INTO agents(agent_id,agent_name,parent_agent_id,create_by_user_id,conn_link,
                   req_disguise_id,resp_disguise_id,permission,create_time,update_time,team_id)
@@ -83,7 +97,7 @@ class SchemaInitializationTest {
         assertEquals("hash", jdbc.queryForObject("SELECT password FROM users WHERE user_id='fixture'", String.class));
         assertEquals("team-a", jdbc.queryForObject("SELECT team_id FROM agents WHERE agent_id='team-agent'", String.class));
         assertEquals("write", jdbc.queryForObject("SELECT config_value FROM system_configs WHERE config_key='audit.mode'", String.class));
-        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM teams", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM teams", Integer.class));
         var error = assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO agents(agent_id,agent_name,parent_agent_id,create_by_user_id,conn_link,
                   req_disguise_id,resp_disguise_id,permission,create_time,update_time)
@@ -122,6 +136,17 @@ class SchemaInitializationTest {
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
     }
 
+    @Test
+    void rejectsThePreviousMembershipSchemaInsteadOfAddingConstraintsInPlace() {
+        var source = source();
+        var jdbc = new JdbcTemplate(source);
+        jdbc.execute("CREATE TABLE users (user_id TEXT PRIMARY KEY, team_id TEXT, account_revision INTEGER)");
+        var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
+
+        assertTrue(error.getMessage().contains("users → teams"));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM pragma_foreign_key_list('users')", Integer.class));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"spring.sql.init.mode=never", "spring.sql.init.enabled=false"})
     void disabledInitializationDoesNotCreateTables(String setting) {
@@ -156,7 +181,9 @@ class SchemaInitializationTest {
     }
 
     private SQLiteDataSource source() {
-        var source = new SQLiteDataSource();
+        var config = new SQLiteConfig();
+        config.enforceForeignKeys(true);
+        var source = new SQLiteDataSource(config);
         source.setUrl("jdbc:sqlite:" + temp.resolve("test.db"));
         return source;
     }

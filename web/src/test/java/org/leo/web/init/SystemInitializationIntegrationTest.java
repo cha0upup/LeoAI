@@ -38,6 +38,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -233,9 +234,12 @@ class SystemInitializationIntegrationTest {
     }
 
     @Test
-    void accountRemovalAfterSetupAndRestartDoesNotReopenTheWizard() {
+    void removingAccountsAndTeamsAfterSetupAndRestartDoesNotReopenTheWizard() {
         setup.initializeAdmin("chosen-fixture-password", "chosen-fixture-password");
-        jdbc.update("DELETE FROM users");
+        new TransactionTemplate(context.getBean(PlatformTransactionManager.class)).executeWithoutResult(status -> {
+            jdbc.update("DELETE FROM teams");
+            jdbc.update("DELETE FROM users");
+        });
         try (var next = application()) {
             var restarted = next.getBean(SystemInitializationService.class);
             new DataInitializer(restarted).init();

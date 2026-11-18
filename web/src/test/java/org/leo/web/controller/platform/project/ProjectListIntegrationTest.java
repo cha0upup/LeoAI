@@ -38,6 +38,8 @@ import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
@@ -68,9 +70,18 @@ class ProjectListIntegrationTest {
     void setUp() {
         SQLiteDataSource dataSource = SqliteTestDatabase.create(temp.resolve("projects.db"));
         jdbc = new JdbcTemplate(dataSource);
-        jdbc.update("INSERT INTO teams (team_id, team_name, leader_id, create_time, update_time) VALUES "
-                + "('team-1', 'First', 'lead-1', '2026-10-01', '2026-10-01'),"
-                + "('team-2', 'Second', 'lead-2', '2026-10-01', '2026-10-01')");
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)).executeWithoutResult(status -> {
+            jdbc.update("""
+                    INSERT INTO users (user_id, user_name, password, team_id, create_time, update_time)
+                    VALUES ('lead-1', 'lead-1', 'fixture-hash', 'team-1', '2026-10-01', '2026-10-01'),
+                           ('lead-2', 'lead-2', 'fixture-hash', 'team-2', '2026-10-01', '2026-10-01')
+                    """);
+            jdbc.update("""
+                    INSERT INTO teams (team_id, team_name, leader_id, create_time, update_time)
+                    VALUES ('team-1', 'First', 'lead-1', '2026-10-01', '2026-10-01'),
+                           ('team-2', 'Second', 'lead-2', '2026-10-01', '2026-10-01')
+                    """);
+        });
         Configuration configuration = SqliteTestDatabase.myBatisConfiguration(dataSource);
         configuration.addMapper(ProjectMapper.class);
         configuration.addMapper(TeamMapper.class);

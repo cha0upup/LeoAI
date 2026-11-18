@@ -279,7 +279,7 @@ LeoAi-3.0.1.jar
 
 ### Step 2: Launch
 
-Launch directly without configuring an administrator password in the environment. A fresh database opens the web initialization wizard on the first visit. Existing installations retain their login flow and credentials.
+A fresh database seeds system defaults and the built-in model capability catalog, but no accounts or passwords. On the first visit, the web initialization wizard creates the administrator and built-in team. Installations already using the current schema retain their login flow and credentials.
 
 ```bash
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar

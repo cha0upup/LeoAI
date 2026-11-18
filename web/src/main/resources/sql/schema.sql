@@ -4,7 +4,7 @@
 
 -- 1. 用户表
 CREATE TABLE IF NOT EXISTS users (
-    user_id VARCHAR(50) PRIMARY KEY,
+    user_id VARCHAR(50) PRIMARY KEY NOT NULL,
     user_name VARCHAR(100) NOT NULL,
     password VARCHAR(255) NOT NULL,
     privilege VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (privilege IN ('admin', 'leader', 'normal')),
@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     team_id VARCHAR(50),
-    remark TEXT
+    remark TEXT,
+    UNIQUE (team_id, user_id),
+    FOREIGN KEY (team_id) REFERENCES teams(team_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uk_users_user_name_nocase
@@ -26,14 +28,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_users_user_name_nocase
 
 -- 2. 团队表
 CREATE TABLE IF NOT EXISTS teams (
-    team_id VARCHAR(50) PRIMARY KEY,
+    team_id VARCHAR(50) PRIMARY KEY NOT NULL,
     team_name VARCHAR(100) NOT NULL,
     leader_id VARCHAR(50) NOT NULL,
     description TEXT,
     status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
-    remark TEXT
+    remark TEXT,
+    -- 首次设置、创建和解散团队都在事务结束时校验双向关系。
+    FOREIGN KEY (team_id, leader_id) REFERENCES users(team_id, user_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_team_name_nocase

@@ -13,7 +13,9 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /** Ensures the current database schema, indexes, journal mode and seed data. */
@@ -65,6 +67,8 @@ public class DatabaseInitializer implements CommandLineRunner {
     private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
             requireColumns(connection, "users", Set.of("account_revision"));
+            requireForeignKey(connection, "users", "teams", Map.of("team_id", "team_id"));
+            requireForeignKey(connection, "teams", "users", Map.of("team_id", "team_id", "leader_id", "user_id"));
             requireColumns(connection, "agents",
                     Set.of("agent_id", "create_by_user_id", "team_id", "permission", "payload_key", "last_connected_at"));
             requireColumns(connection, "agent_ssh_connections",
@@ -111,6 +115,24 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "rule_hash", "rule_name", "status", "result_json", "updated_at"));
         } catch (SQLException error) {
             throw new IllegalStateException("校验数据库结构失败", error);
+        }
+    }
+
+    private void requireForeignKey(Connection connection, String table, String target,
+                                   Map<String, String> columns) throws SQLException {
+        Map<Integer, Map<String, String>> foreignKeys = new HashMap<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA foreign_key_list('" + table + "')")) {
+            while (result.next()) {
+                if (target.equals(result.getString("table"))) {
+                    foreignKeys.computeIfAbsent(result.getInt("id"), id -> new HashMap<>())
+                            .put(result.getString("from"), result.getString("to"));
+                }
+            }
+        }
+        if (!foreignKeys.containsValue(columns)) {
+            throw new IllegalStateException("数据库结构不完整，缺少 " + table + " → " + target
+                    + " 的外键，请使用新的 SQLite 文件");
         }
     }
 
