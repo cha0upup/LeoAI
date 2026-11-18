@@ -44,6 +44,9 @@ public interface TeamMapper {
             """)
     boolean insertTeam(@Param("team") Team team, @Param("timestamp") String timestamp);
 
+    @Select("SELECT EXISTS (SELECT 1 FROM projects WHERE team_id = #{teamId} AND permission = 'team')")
+    boolean hasSharedProjects(@Param("teamId") String teamId);
+
     @Delete("DELETE FROM teams WHERE team_id = #{teamId}")
     boolean delTeam(@Param("teamId") String teamId);
 

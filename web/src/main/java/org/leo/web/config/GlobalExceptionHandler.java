@@ -99,6 +99,7 @@ public class GlobalExceptionHandler {
             case VALIDATION -> HttpStatus.BAD_REQUEST;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case CONFLICT -> HttpStatus.CONFLICT;
             case PERSISTENCE -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
         return businessError(error, status, Map.of());

@@ -12,14 +12,21 @@ import org.leo.core.entity.Team;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.TeamMapper;
 import org.leo.dao.mapper.UserMapper;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
+import org.leo.web.config.GlobalExceptionHandler;
+import org.leo.web.controller.platform.admin.TeamController;
+import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import java.nio.file.Path;
@@ -27,6 +34,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class TeamManagementIntegrationTest {
     @TempDir Path directory;
@@ -110,6 +121,32 @@ class TeamManagementIntegrationTest {
         assertAccount("leader", "normal", null);
         assertAccount("member", "normal", null);
         assertAccount("admin", "admin", null);
+    }
+
+    @Test
+    void sharedProjectBlocksTeamDeletionWithoutChangingData() throws Exception {
+        seedMembership();
+        jdbc.update("""
+                INSERT INTO projects (project_id, project_name, owner_user_id, team_id, permission,
+                                      status, create_time, update_time)
+                VALUES ('shared', 'Shared project', 'leader', 'team', 'team', 'archived', 'fixture', 'fixture')
+                """);
+        var session = new MockHttpSession();
+        session.setAttribute("user", users.getUserById("admin"));
+        var controller = new TeamController(teams, new PermissionService(mock(AgentService.class), users));
+        var mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
+
+        mvc.perform(post("/platform/admin/teams/delete").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"id\":\"team\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(409));
+
+        assertNotNull(teams.getTeamById("team"));
+        assertAccount("leader", "leader", "team");
+        assertAccount("member", "normal", "team");
+        assertAccount("admin", "admin", "team");
+        assertEquals(Map.of("team_id", "team", "permission", "team", "status", "archived"),
+                jdbc.queryForMap("SELECT team_id, permission, status FROM projects WHERE project_id='shared'"));
     }
 
     @ParameterizedTest

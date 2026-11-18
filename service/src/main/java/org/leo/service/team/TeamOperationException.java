@@ -2,7 +2,7 @@ package org.leo.service.team;
 
 /** Team management failures; callers decide how to present them. */
 public final class TeamOperationException extends RuntimeException {
-    public enum Kind { VALIDATION, NOT_FOUND, FORBIDDEN, PERSISTENCE }
+    public enum Kind { VALIDATION, NOT_FOUND, FORBIDDEN, CONFLICT, PERSISTENCE }
 
     private final Kind kind;
 

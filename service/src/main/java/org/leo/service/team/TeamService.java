@@ -173,6 +173,9 @@ public class TeamService {
         if (ADMIN_TEAM_ID.equals(team.getTeamId()) || ADMIN_TEAM_NAME.equals(team.getTeamName())) {
             throw failure(FORBIDDEN, "不能删除内置团队 " + ADMIN_TEAM_NAME);
         }
+        if (teamMapper.hasSharedProjects(normalized)) {
+            throw failure(CONFLICT, "该团队仍有共享项目，请先取消相关项目的团队共享");
+        }
         for (User member : userService.getUsersByTeamId(normalized)) {
             if (member == null) continue;
             member.setTeamId(null);
