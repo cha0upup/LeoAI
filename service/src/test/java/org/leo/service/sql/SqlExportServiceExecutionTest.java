@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -16,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
@@ -106,21 +108,28 @@ class SqlExportServiceExecutionTest {
         verify(sql, times(2)).queryTable(eq(node), anyMap(), eq(orders), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull());
     }
 
-    @Test void emptyDatabasesStillProduceAManifestWithTheDefaultExportOptions() throws Exception {
-        var namespace = new SqlObjectRef("app", "sales", null, "schema");
-        when(sql.getTables(node, Map.of(), namespace)).thenReturn(Map.of("tables", List.of()));
-        var task = service.startDatabaseExport(node, "owner", "session", Map.of(), namespace, List.of(), null, null, "zip");
-        queued.get(0).run();
-        var result = service.progress("owner", id(task));
-        assertEquals("COMPLETED", result.get("status"));
-        assertEquals(0, result.get("tableCount"));
-        assertEquals(true, result.get("includeStructure"));
-        assertEquals(true, result.get("includeData"));
-        Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
-        try (var zip = new ZipFile(output.toFile())) {
-            assertEquals(List.of("manifest.json"), zip.stream().map(entry -> entry.getName()).toList());
-        }
-        verify(sql, never()).getTableColumns(any(), anyMap(), any());
+    @ParameterizedTest
+    @CsvSource({"en-US,zip", "tr-TR,ZIP"})
+    @ResourceLock("java.util.Locale.default")
+    void emptyDatabasesStillProduceAManifestWithTheDefaultExportOptions(String languageTag, String format) throws Exception {
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            var namespace = new SqlObjectRef("app", "sales", null, "schema");
+            when(sql.getTables(node, Map.of(), namespace)).thenReturn(Map.of("tables", List.of()));
+            var task = service.startDatabaseExport(node, "owner", "session", Map.of(), namespace, List.of(), null, null, format);
+            queued.get(0).run();
+            var result = service.progress("owner", id(task));
+            assertEquals("COMPLETED", result.get("status"));
+            assertEquals(0, result.get("tableCount"));
+            assertEquals(true, result.get("includeStructure"));
+            assertEquals(true, result.get("includeData"));
+            Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
+            try (var zip = new ZipFile(output.toFile())) {
+                assertEquals(List.of("manifest.json"), zip.stream().map(entry -> entry.getName()).toList());
+            }
+            verify(sql, never()).getTableColumns(any(), anyMap(), any());
+        } finally { Locale.setDefault(previous); }
     }
 
     @ParameterizedTest

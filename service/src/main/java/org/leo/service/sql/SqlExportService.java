@@ -355,7 +355,7 @@ public class SqlExportService {
     }
 
     private String safeLower(String value) {
-        return value == null ? "" : value.trim().toLowerCase();
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static boolean isBlank(String value) {

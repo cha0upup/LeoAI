@@ -70,9 +70,12 @@ public final class SqlTableCsvExporter {
     }
 
     private static void writeLine(BufferedWriter writer, List<String> values) throws Exception {
-        List<String> escaped = new ArrayList<>(values.size());
-        for (String value : values) escaped.add("\"" + (value == null ? "" : value).replace("\"", "\"\"") + "\"");
-        writer.write(String.join(",", escaped));
+        String separator = "";
+        for (String value : values) {
+            writer.append(separator).append('"')
+                    .append(value == null ? "" : value.replace("\"", "\"\"")).append('"');
+            separator = ",";
+        }
         writer.newLine();
     }
 
