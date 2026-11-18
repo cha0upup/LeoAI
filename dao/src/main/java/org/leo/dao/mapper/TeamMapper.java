@@ -47,7 +47,7 @@ public interface TeamMapper {
     @Select("SELECT EXISTS (SELECT 1 FROM projects WHERE team_id = #{teamId} AND permission = 'team')")
     boolean hasSharedProjects(@Param("teamId") String teamId);
 
-    @Delete("DELETE FROM teams WHERE team_id = #{teamId}")
+    @Delete("DELETE FROM teams WHERE team_id = #{teamId} AND NOT EXISTS (SELECT 1 FROM users WHERE team_id = #{teamId})")
     boolean delTeam(@Param("teamId") String teamId);
 
     @Update("""

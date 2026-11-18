@@ -57,6 +57,13 @@ public interface UserMapper {
             """)
     boolean updateUserById(@Param("user") User user, @Param("timestamp") String timestamp);
 
+    @Update("""
+            UPDATE users SET team_id=NULL, update_time=#{timestamp}, account_revision=account_revision + 1,
+                privilege=CASE WHEN privilege='leader' THEN 'normal' ELSE privilege END
+            WHERE team_id=#{teamId}
+            """)
+    int detachTeamMembers(@Param("teamId") String teamId, @Param("timestamp") String timestamp);
+
     @Update("UPDATE users SET last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
             + "update_time=#{lastLoginTime} WHERE user_id=#{userId} AND status=1 AND password=#{verifiedPasswordHash}")
     boolean recordSuccessfulLogin(@Param("userId") String userId,

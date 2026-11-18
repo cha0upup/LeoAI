@@ -93,6 +93,12 @@ public class UserService {
         return userMapper.delUser(userId.trim());
     }
 
+    /** Updates membership without rewriting unrelated account fields. */
+    public void detachTeamMembers(String teamId) {
+        if (teamId == null || teamId.isBlank()) throw new IllegalArgumentException("teamId不能为空");
+        userMapper.detachTeamMembers(teamId.trim(), now());
+    }
+
     /** Records the login only if the account still accepts the verified credential. */
     public User recordSuccessfulLogin(String userId, String verifiedPasswordHash) {
         if (userId == null || userId.isBlank()) {

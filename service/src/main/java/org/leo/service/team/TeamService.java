@@ -176,12 +176,7 @@ public class TeamService {
         if (teamMapper.hasSharedProjects(normalized)) {
             throw failure(CONFLICT, "该团队仍有共享项目，请先取消相关项目的团队共享");
         }
-        for (User member : userService.getUsersByTeamId(normalized)) {
-            if (member == null) continue;
-            member.setTeamId(null);
-            if (UserService.PRIVILEGE_LEADER.equals(member.getPrivilege())) member.setPrivilege(UserService.PRIVILEGE_NORMAL);
-            if (!userService.updateUser(member)) throw failure(PERSISTENCE, "解除团队成员关系失败");
-        }
+        userService.detachTeamMembers(normalized);
         if (!teamMapper.delTeam(normalized)) throw failure(PERSISTENCE, "删除团队失败");
         return team;
     }

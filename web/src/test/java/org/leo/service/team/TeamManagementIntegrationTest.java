@@ -115,12 +115,16 @@ class TeamManagementIntegrationTest {
     @ValueSource(booleans = {false, true})
     void deletionDetachesMembersAndDemotesOnlyLeaders(boolean ai) {
         seedMembership();
+        seedUser("unassigned", "normal", null);
+        User staleMember = users.getUserById("member");
         delete(ai, " team ");
 
         assertNull(teams.getTeamById("team"));
         assertAccount("leader", "normal", null);
         assertAccount("member", "normal", null);
         assertAccount("admin", "admin", null);
+        assertFalse(users.updateUser(staleMember));
+        assertEquals(0L, users.getUserById("unassigned").getAccountRevision());
     }
 
     @Test
@@ -150,10 +154,12 @@ class TeamManagementIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void failedDeletionRollsBackEveryMemberChange(boolean ai) {
+    @CsvSource({"false,member", "true,team"})
+    void failedDeletionRollsBackEveryMemberChange(boolean ai, String failurePoint) {
         seedMembership();
-        jdbc.execute("CREATE TRIGGER reject_delete BEFORE DELETE ON teams BEGIN SELECT RAISE(ABORT, 'fixture rejected'); END");
+        jdbc.execute("member".equals(failurePoint)
+                ? "CREATE TRIGGER skip_detach BEFORE UPDATE ON users WHEN OLD.user_id='member' BEGIN SELECT RAISE(IGNORE); END"
+                : "CREATE TRIGGER reject_delete BEFORE DELETE ON teams BEGIN SELECT RAISE(ABORT, 'fixture rejected'); END");
 
         assertThrows(RuntimeException.class, () -> delete(ai, "team"));
 
