@@ -48,6 +48,20 @@ public interface AiConversationMapper {
     String RECENT_CONTEXT_WINDOW = CONTEXT_MESSAGE_SCOPE
             + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}";
 
+    // A pending question (unique per thread) blocks all Turns except its own answer.
+    String DISPATCHABLE_QUEUED_TURNS = """
+            FROM ai_turns queued
+            WHERE queued.protocol_status = 'inProgress' AND queued.dispatch_status = 'queued'
+            AND NOT EXISTS (
+                SELECT 1 FROM ai_user_input_requests input
+                WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING'
+                AND (queued.answer_to_question_id = input.request_id) IS NOT TRUE
+            )
+            """;
+    String NEXT_QUEUED_TURN_ORDER = """
+            ORDER BY queued.answer_to_question_id IS NULL, queued.created_at, queued.turn_id LIMIT 1
+            """;
+
     @Select(THREAD_METADATA_SELECT + "WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
             + "AND host_id = #{hostId} AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listThreads(@Param("scope") String scope,
@@ -147,15 +161,8 @@ public interface AiConversationMapper {
     @Select("SELECT * FROM ai_turns WHERE turn_id = #{turnId}")
     AiTurnRecord findTurnById(@Param("turnId") String turnId);
 
-    @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
-            + "AND protocol_status = 'inProgress' AND dispatch_status = 'queued' "
-            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
-            + "WHERE input.thread_id = ai_turns.thread_id AND input.status = 'PENDING') "
-            + "OR answer_to_question_id = (SELECT input.request_id "
-            + "FROM ai_user_input_requests input WHERE input.thread_id = ai_turns.thread_id "
-            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
-            + "ORDER BY CASE WHEN answer_to_question_id IS NOT NULL THEN 0 ELSE 1 END, "
-            + "created_at, turn_id LIMIT 1")
+    @Select("SELECT queued.* " + DISPATCHABLE_QUEUED_TURNS
+            + "AND queued.thread_id = #{threadId} " + NEXT_QUEUED_TURN_ORDER)
     AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
@@ -165,14 +172,7 @@ public interface AiConversationMapper {
             + "created_at, turn_id")
     List<AiTurnRecord> listInProgressTurns(@Param("threadId") String threadId);
 
-    @Select("SELECT DISTINCT queued.thread_id FROM ai_turns queued "
-            + "WHERE queued.protocol_status = 'inProgress' "
-            + "AND queued.dispatch_status = 'queued' "
-            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
-            + "WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING') "
-            + "OR queued.answer_to_question_id = (SELECT input.request_id "
-            + "FROM ai_user_input_requests input WHERE input.thread_id = queued.thread_id "
-            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
+    @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS
             + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
             + "WHERE active.thread_id = queued.thread_id "
             + "AND active.dispatch_status IN ('running', 'cancelling'))")
@@ -180,19 +180,9 @@ public interface AiConversationMapper {
 
     @Update("UPDATE ai_turns SET dispatch_status = 'running', "
             + "started_at = COALESCE(started_at, #{startedAt}) "
-            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress' "
-            + "AND dispatch_status = 'queued' "
-            + "AND turn_id = (SELECT queued.turn_id FROM ai_turns queued "
-            + "WHERE queued.thread_id = ai_turns.thread_id "
-            + "AND queued.protocol_status = 'inProgress' "
-            + "AND queued.dispatch_status = 'queued' "
-            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
-            + "WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING') "
-            + "OR queued.answer_to_question_id = (SELECT input.request_id "
-            + "FROM ai_user_input_requests input WHERE input.thread_id = queued.thread_id "
-            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
-            + "ORDER BY CASE WHEN queued.answer_to_question_id IS NOT NULL THEN 0 ELSE 1 END, "
-            + "queued.created_at, queued.turn_id LIMIT 1) "
+            + "WHERE turn_id = #{turnId} "
+            + "AND turn_id = (SELECT queued.turn_id " + DISPATCHABLE_QUEUED_TURNS
+            + "AND queued.thread_id = ai_turns.thread_id " + NEXT_QUEUED_TURN_ORDER + ") "
             + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
             + "WHERE active.thread_id = ai_turns.thread_id "
             + "AND active.dispatch_status IN ('running', 'cancelling'))")

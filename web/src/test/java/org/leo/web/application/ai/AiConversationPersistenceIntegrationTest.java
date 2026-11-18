@@ -175,6 +175,24 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void pendingQuestionBlocksOrdinaryTurnsAndAnswerTakesPriority() {
+        var ordinary = reserve();
+        requests.create(confirmation("question-1"));
+
+        assertNull(protocol.findNextQueued("thread-1"));
+        assertTrue(protocol.listDispatchableThreadIds().isEmpty());
+        assertFalse(protocol.tryStart(ordinary.id()).claimed());
+
+        var answer = protocol.begin(
+                "thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1").turn();
+
+        assertEquals(answer.id(), protocol.findNextQueued("thread-1").id());
+        assertEquals(List.of("thread-1"), protocol.listDispatchableThreadIds());
+        assertFalse(protocol.tryStart(ordinary.id()).claimed());
+        assertTrue(protocol.tryStart(answer.id()).claimed());
+    }
+
+    @Test
     void matchingConfirmationCanBeConsumedOnlyOnceAcrossConcurrentCallers() throws Exception {
         requests.create(confirmation("question-1"));
         protocol.begin("thread-1", "answer-client", "platform", "{}", "confirm", null, "question-1");
