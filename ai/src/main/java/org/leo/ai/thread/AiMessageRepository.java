@@ -71,11 +71,7 @@ public class AiMessageRepository {
 
     public String findLatestPlanJson(String threadId) {
         if (threadId == null || threadId.isBlank()) return null;
-        List<AiMessageRecord> recent = mapper.recentContextMessages(threadId, 50);
-        if (recent == null) return null;
-        // Context rows are chronological; plan restoration needs the newest snapshot.
-        for (int index = recent.size() - 1; index >= 0; index--) {
-            String planJson = recent.get(index).getPlanJson();
+        for (String planJson : mapper.recentContextPlans(threadId, 50)) {
             if (planJson != null && !planJson.isBlank() && !"null".equals(planJson)) return planJson;
         }
         return null;

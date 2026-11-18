@@ -13,6 +13,7 @@ import org.leo.ai.thread.*;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiUserInputRequest;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -328,6 +329,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("fixture", memory.get(0).content());
         assertEquals(recovery, memory.get(1).content());
         assertEquals(recovery, messages.contextMessage("thread-1", memory.get(1).sequence()).content());
+        assertEquals(plan, JsonUtil.fromJsonString(messages.findLatestPlanJson("thread-1"), Map.class));
 
         var row = new AiMessageRecord();
         row.setContent("visible");
@@ -394,13 +396,17 @@ class AiConversationPersistenceIntegrationTest {
         jdbc.update("UPDATE ai_messages SET plan_json=? WHERE thread_id='thread-1' AND message_seq=2", "{\"step\":\"older\"}");
         String latest = "{\"step\":\"latest\"}";
         jdbc.update("UPDATE ai_messages SET plan_json=? WHERE message_id='message-3'", latest);
-        jdbc.update("UPDATE ai_messages SET plan_json=' ' WHERE message_id='message-4'");
+        jdbc.update("UPDATE ai_messages SET plan_json=? WHERE message_id='message-4'", "\t\u2003");
         jdbc.update("UPDATE ai_messages SET plan_json='null' WHERE message_id='message-5'");
         jdbc.update("UPDATE ai_messages SET status='pending', plan_json=? WHERE message_id='message-6'", "{\"step\":\"pending\"}");
 
         assertEquals(latest, messages.findLatestPlanJson("thread-1"));
         assertEquals(List.of(1L, 2L, 3L, 4L, 5L), messages.contextMessages("thread-1", 20).stream()
                 .map(ConversationMessage::sequence).toList());
+
+        for (int sequence = 7; sequence <= 54; sequence++) appendMessage(turn.id(), sequence);
+        jdbc.update("UPDATE ai_messages SET status='committed' WHERE thread_id='thread-1' AND message_seq > 6");
+        assertNull(messages.findLatestPlanJson("thread-1"));
     }
 
     @ParameterizedTest

@@ -94,21 +94,4 @@ class AiMessageRepositoryTest {
         assertFalse(message.containsKey("recoveryContext"));
         assertFalse(message.containsValue("private progress"));
     }
-
-    @Test
-    void latestPlanScansBackwardThroughChronologicalHistoryAndSkipsEmptySnapshots() {
-        String latest = "{\"step\":\"latest\"}";
-        when(mapper.recentContextMessages("thread", 50))
-                .thenReturn(List.of(plan("{\"step\":\"older\"}"), plan(latest), plan("null"), plan(" "), plan(null)))
-                .thenReturn(List.of());
-
-        assertEquals(latest, messages.findLatestPlanJson("thread"));
-        assertNull(messages.findLatestPlanJson("thread"));
-    }
-
-    private AiMessageRecord plan(String json) {
-        AiMessageRecord row = new AiMessageRecord();
-        row.setPlanJson(json);
-        return row;
-    }
 }

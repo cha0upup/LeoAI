@@ -28,6 +28,19 @@ public interface AiConversationMapper {
             + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
             + "WHERE m.thread_id = #{threadId} ";
 
+    String CONTEXT_MESSAGE_FIELDS = "SELECT m.message_id, m.message_seq, m.role, m.status, m.content, m.recovery_context ";
+    String CONTEXT_MESSAGE_SCOPE = """
+            FROM ai_messages m WHERE m.thread_id = #{threadId}
+            AND (m.status = 'committed' OR (m.status = 'discarded' AND EXISTS (
+                SELECT 1 FROM ai_messages progress WHERE progress.turn_id = m.turn_id
+                AND progress.role = 'assistant' AND progress.status = 'discarded'
+                AND (TRIM(COALESCE(progress.recovery_context, '')) <> ''
+                     OR TRIM(COALESCE(progress.content, '')) <> '')
+            )))
+            """;
+    String RECENT_CONTEXT_WINDOW = CONTEXT_MESSAGE_SCOPE
+            + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}";
+
     @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
             + "AND host_id = #{hostId} AND parent_thread_id IS NULL ORDER BY last_active_at DESC")
     List<AiThreadRecord> listThreads(@Param("scope") String scope,
@@ -334,27 +347,17 @@ public interface AiConversationMapper {
      * 后者仍保持 discarded 展示状态，但 user/assistant 两条消息会一起进入后续记忆。
      * 选取最近的若干条消息，再按稳定消息序号升序返回。
      */
-    @Select("SELECT * FROM (SELECT m.* FROM ai_messages m WHERE m.thread_id = #{threadId} "
-            + "AND (m.status = 'committed' OR (m.status = 'discarded' AND EXISTS ("
-            + "SELECT 1 FROM ai_messages progress WHERE progress.turn_id = m.turn_id "
-            + "AND progress.role = 'assistant' "
-            + "AND progress.status = 'discarded' "
-            + "AND (TRIM(COALESCE(progress.recovery_context, '')) <> '' "
-            + "OR TRIM(COALESCE(progress.content, '')) <> '')))) "
-            + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}) "
-            + "ORDER BY message_seq ASC, message_id ASC")
+    @Select("SELECT * FROM (" + CONTEXT_MESSAGE_FIELDS + RECENT_CONTEXT_WINDOW
+            + ") ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> recentContextMessages(@Param("threadId") String threadId,
                                                 @Param("limit") int limit);
 
-    @Select("SELECT m.* FROM ai_messages m WHERE m.thread_id = #{threadId} "
-            + "AND m.message_seq = #{messageSeq} AND (m.status = 'committed' "
-            + "OR (m.status = 'discarded' AND EXISTS (SELECT 1 FROM ai_messages progress "
-            + "WHERE progress.turn_id = m.turn_id AND progress.role = 'assistant' "
-            + "AND progress.status = 'discarded' "
-            + "AND (TRIM(COALESCE(progress.recovery_context, '')) <> '' "
-            + "OR TRIM(COALESCE(progress.content, '')) <> '')))) LIMIT 1")
+    @Select(CONTEXT_MESSAGE_FIELDS + CONTEXT_MESSAGE_SCOPE + "AND m.message_seq = #{messageSeq} LIMIT 1")
     AiMessageRecord findContextMessageBySequence(@Param("threadId") String threadId,
                                                  @Param("messageSeq") long messageSeq);
+
+    @Select("SELECT m.plan_json " + RECENT_CONTEXT_WINDOW)
+    List<String> recentContextPlans(@Param("threadId") String threadId, @Param("limit") int limit);
 
     @Update("UPDATE ai_messages SET status = #{status} "
             + "WHERE thread_id = #{threadId} AND turn_id = #{turnId}")
