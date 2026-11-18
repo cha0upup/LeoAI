@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.leo.ai.memory.ManagedConversationMemory.threadIdFromMemoryId;
+
 /**
  * 上下文压缩服务：在对话历史接近上下文窗口上限时，将旧消息压缩为摘要。
  *
@@ -383,14 +385,6 @@ public class ContextCompressionService {
     }
 
     private record StoredFingerprint(long sequence, String fingerprint) {}
-
-    private static String threadIdFromMemoryId(String memoryId) {
-        if (memoryId == null) return "";
-        int separator = memoryId.lastIndexOf(':');
-        return separator >= 0 && separator < memoryId.length() - 1
-                ? memoryId.substring(separator + 1)
-                : memoryId;
-    }
 
     private static String safeMemoryId(String memoryId) {
         if (memoryId == null || memoryId.isBlank()) return "unknown";

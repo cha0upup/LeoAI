@@ -3,10 +3,11 @@ package org.leo.ai.memory;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.ConversationMessage;
 import org.leo.ai.thread.AiMessageRepository;
 
@@ -15,28 +16,36 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ManagedConversationMemoryTest {
     private final AiMessageRepository messages = mock(AiMessageRepository.class);
     private final ManagedConversationMemory managedMemory = new ManagedConversationMemory(messages);
 
-    @Test
-    void initializesFreshConversationWithEmptyMemory() {
-        String memoryId = "platform-ai-fresh";
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void clearsTransientMessagesWhenPersistedHistoryIsEmpty(boolean rebuild) {
+        String memoryId = rebuild ? "session-1:fresh-thread" : "fresh-thread";
         var memory = MessageWindowChatMemory.builder()
                 .id(memoryId)
                 .maxMessages(20)
                 .build();
-        when(messages.contextMessages(memoryId, 200)).thenReturn(List.of());
+        memory.add(UserMessage.from("失败请求"));
+        when(messages.contextMessages("fresh-thread", 200)).thenReturn(List.of());
 
-        ChatMemory initialized =
-                managedMemory.initialize(memory);
-
-        assertEquals(memory, initialized);
-        assertTrue(initialized.messages().isEmpty());
+        if (rebuild) {
+            ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
+            when(agent.getChatMemory(memoryId)).thenReturn(memory);
+            assertTrue(managedMemory.rebuild(agent, memoryId));
+        } else {
+            assertSame(memory, managedMemory.initialize(memory));
+        }
+        assertTrue(memory.messages().isEmpty());
+        verify(messages).contextMessages("fresh-thread", 200);
     }
 
     @Test
@@ -78,22 +87,5 @@ class ManagedConversationMemoryTest {
         when(agent.getChatMemory("missing")).thenReturn(null);
 
         assertFalse(managedMemory.rebuild(agent, "missing"));
-    }
-
-    @Test
-    void clearsTransientMessagesWhenCommittedHistoryIsEmpty() {
-        String memoryId = "session-1:fresh-thread";
-        var memory = MessageWindowChatMemory.builder()
-                .id(memoryId)
-                .maxMessages(20)
-                .build();
-        memory.add(UserMessage.from("失败请求"));
-
-        ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
-        when(agent.getChatMemory(memoryId)).thenReturn(memory);
-        when(messages.contextMessages("fresh-thread", 200)).thenReturn(List.of());
-
-        assertTrue(managedMemory.rebuild(agent, memoryId));
-        assertTrue(memory.messages().isEmpty());
     }
 }

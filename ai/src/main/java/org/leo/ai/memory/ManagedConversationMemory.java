@@ -28,11 +28,7 @@ public class ManagedConversationMemory {
      * 初始化新创建的 ChatMemory，并从数据库加载该会话的 committed 历史。
      */
     public ChatMemory initialize(ChatMemory memory) {
-        if (memory == null) {
-            return null;
-        }
-        replaceMessages(memory, toChatMessages(messages.contextMessages(
-                threadIdFromMemoryId(memory.id()), 200)));
+        if (memory != null) loadHistory(memory, memory.id());
         return memory;
     }
 
@@ -50,9 +46,7 @@ public class ManagedConversationMemory {
         if (memory == null) {
             return false;
         }
-        List<ChatMessage> rebuilt = toChatMessages(messages.contextMessages(
-                threadIdFromMemoryId(memoryId), 200));
-        replaceMessages(memory, rebuilt);
+        loadHistory(memory, memoryId);
         return true;
     }
 
@@ -60,23 +54,26 @@ public class ManagedConversationMemory {
      * LangChain4j 1.16 的 {@link ChatMemory#set(List)} 不接受空列表。
      * 全新会话或失败 Turn 清理后没有 committed 历史时，空历史应表达为 clear。
      */
-    private static void replaceMessages(ChatMemory memory, List<ChatMessage> messages) {
-        if (messages == null || messages.isEmpty()) {
+    private void loadHistory(ChatMemory memory, Object memoryId) {
+        String threadId = threadIdFromMemoryId(String.valueOf(memoryId));
+        List<ChatMessage> history = toChatMessages(messages.contextMessages(threadId, 200));
+        if (history.isEmpty()) {
             memory.clear();
-            return;
+        } else {
+            memory.set(history);
         }
-        memory.set(messages);
     }
 
-    static String threadIdFromMemoryId(Object memoryId) {
-        String value = String.valueOf(memoryId);
-        int separator = value.lastIndexOf(':');
-        return separator >= 0 && separator < value.length() - 1
-                ? value.substring(separator + 1)
-                : value;
+    /** 平台记忆直接使用线程 ID，节点记忆使用 Session 前缀区分运行实例。 */
+    public static String threadIdFromMemoryId(String memoryId) {
+        if (memoryId == null) return "";
+        int separator = memoryId.lastIndexOf(':');
+        return separator >= 0 && separator < memoryId.length() - 1
+                ? memoryId.substring(separator + 1)
+                : memoryId;
     }
 
-    static List<ChatMessage> toChatMessages(List<ConversationMessage> messages) {
+    private static List<ChatMessage> toChatMessages(List<ConversationMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return List.of();
         }
