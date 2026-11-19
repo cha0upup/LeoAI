@@ -5,6 +5,7 @@ import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -32,6 +33,16 @@ public interface ProjectMapper {
             "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} " +
             "WHERE project_id=#{projectId} AND owner_user_id=#{ownerUserId}")
     boolean updateProject(Project project);
+
+    @Select(value = """
+            UPDATE projects SET status = 'archived', update_time = #{updatedAt}
+            WHERE project_id = #{projectId} AND owner_user_id = #{ownerUserId}
+            RETURNING *
+            """, affectData = true)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    Project archiveProject(@Param("projectId") String projectId,
+                           @Param("ownerUserId") String ownerUserId,
+                           @Param("updatedAt") String updatedAt);
 
     @Update("""
             UPDATE projects SET owner_user_id = #{newOwnerId}, update_time = #{updatedAt}

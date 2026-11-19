@@ -64,6 +64,7 @@ class ProjectListIntegrationTest {
     private JdbcTemplate jdbc;
     private SqlSession sqlSession;
     private ProjectController controller;
+    private ProjectService projectService;
     private PermissionService permissions;
     private AgentService agents;
     private UserService users;
@@ -97,8 +98,9 @@ class ProjectListIntegrationTest {
         users = mock(UserService.class);
         permissions = new PermissionService(agents, users);
         TeamService teams = new TeamService(sqlSession.getMapper(TeamMapper.class), users);
+        projectService = new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents, users, teams);
         controller = new ProjectController(
-                new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents, users, teams), permissions,
+                projectService, permissions,
                 new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)));
     }
 
@@ -182,6 +184,33 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void archivePreservesProjectDetailsUpdatedAfterTheOriginalRead() {
+        project("owned", "user-1", "private", "active", "Original");
+        Project previous = projectService.findById("owned");
+        jdbc.update("""
+                UPDATE projects SET project_name='Renamed', project_code='current', description='Updated',
+                    permission='team', team_id='team-1' WHERE project_id='owned'
+                """);
+
+        int statementsBeforeArchive = queries.sql.size();
+        Project archived = projectService.archive(previous);
+
+        assertEquals(1, queries.sql.size() - statementsBeforeArchive);
+        assertEquals("archived", archived.getStatus());
+        assertEquals("Renamed", archived.getProjectName());
+        assertEquals("current", archived.getProjectCode());
+        assertEquals("Updated", archived.getDescription());
+        assertEquals("team", archived.getPermission());
+        assertEquals("team-1", archived.getTeamId());
+        assertEquals(Map.of("project_name", "Renamed", "project_code", "current", "description", "Updated",
+                        "permission", "team", "team_id", "team-1", "status", "archived", "update_time", archived.getUpdateTime()),
+                jdbc.queryForMap("""
+                        SELECT project_name, project_code, description, permission, team_id, status, update_time
+                        FROM projects WHERE project_id='owned'
+                        """));
+    }
+
+    @Test
     void administratorTransfersOwnershipWithoutChangingTheSharingTeam() {
         project("owned", "user-1", "team", "archived", "Original");
         ProjectMapper projectMapper = sqlSession.getMapper(ProjectMapper.class);
@@ -203,6 +232,7 @@ class ProjectListIntegrationTest {
         assertEquals(Map.of("owner_user_id", "user-2", "team_id", "team-1", "status", "archived"),
                 jdbc.queryForMap("SELECT owner_user_id, team_id, status FROM projects WHERE project_id='owned'"));
         assertFalse(projectMapper.updateProject(beforeTransfer));
+        assertThrows(IllegalStateException.class, () -> projectService.archive(beforeTransfer));
         assertEquals(0, projectMapper.deleteProject("owned", beforeTransfer.getOwnerUserId()));
         assertTrue(storedUsers.delUser("user-1"));
         assertFalse(storedUsers.delUser("user-2"));

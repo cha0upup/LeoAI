@@ -137,10 +137,9 @@ public class ProjectService {
     }
 
     public Project archive(Project project) {
-        project.setStatus(Project.STATUS_ARCHIVED);
-        project.setUpdateTime(now());
-        if (!projectMapper.updateProject(project)) throw new IllegalStateException("归档项目失败");
-        return project;
+        Project archived = projectMapper.archiveProject(project.getProjectId(), project.getOwnerUserId(), now());
+        if (archived == null) throw new IllegalStateException("归档项目失败");
+        return archived;
     }
 
     public boolean transferOwner(Project project, String newOwnerId) {
