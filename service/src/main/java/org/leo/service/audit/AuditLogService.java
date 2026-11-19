@@ -115,7 +115,7 @@ public class AuditLogService {
         }
         String normalizedUserId = userId.trim();
         Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeUserAuditLogs(normalizedUserId, RECENT_DAYS));
+                auditLogMapper.summarizeUserAuditLogs(normalizedUserId, recentCutoff()));
         statistics.put("userId", normalizedUserId);
         return statistics;
     }
@@ -126,7 +126,7 @@ public class AuditLogService {
         }
         String normalizedAgentId = agentId.trim();
         Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeAgentAuditLogs(normalizedAgentId, RECENT_DAYS));
+                auditLogMapper.summarizeAgentAuditLogs(normalizedAgentId, recentCutoff()));
         statistics.put("hostId", normalizedAgentId);
         statistics.put("agentId", normalizedAgentId);
         return statistics;
@@ -138,9 +138,14 @@ public class AuditLogService {
         }
         String normalizedTeamId = teamId.trim();
         Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, RECENT_DAYS));
+                auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, recentCutoff()));
         statistics.put("teamId", normalizedTeamId);
         return statistics;
+    }
+
+    private static String recentCutoff() {
+        // Audit timestamps are written in the application's local time, not SQLite's UTC time.
+        return DATE_TIME_FORMAT.format(LocalDateTime.now().minusDays(RECENT_DAYS));
     }
 
     private Map<String, Object> toStatisticsResponse(Map<String, Object> summary) {

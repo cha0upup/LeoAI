@@ -22,6 +22,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -131,21 +133,27 @@ class AuditLogControllerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"user, userId, user-a", "agent, agentId, agent-a"})
-    void userAndAgentStatisticsUseOneQueryAndKeepTheirResponse(String subject, String idField, String id,
-                                                               @TempDir Path temp) throws Exception {
+    @CsvSource({"user, userId, user-a", "agent, agentId, agent-a", "team, teamId, team-a"})
+    void subjectStatisticsUseTheApplicationClockAndKeepOneQuery(String subject, String idField, String id,
+                                                                @TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
         var jdbc = new JdbcTemplate(source);
+        var format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        var utcNow = LocalDateTime.parse(jdbc.queryForObject("SELECT CURRENT_TIMESTAMP", String.class), format);
+        var applicationNow = utcNow.plusHours(8);
+        var cutoff = applicationNow.minusDays(7);
+        String latest = cutoff.format(format);
         jdbc.update("""
-                INSERT INTO audit_logs (log_id, user_id, agent_id, operation_type, operation_name, create_time)
-                VALUES ('old', 'user-a', 'agent-a', 'TEST', 'Test', '2000-01-02 03:04:05'),
-                       ('recent', 'user-a', 'agent-a', 'TEST', 'Test', datetime('now', '-1 day')),
-                       ('other', 'user-b', 'agent-b', 'TEST', 'Test', CURRENT_TIMESTAMP)
-                """);
-        String latest = jdbc.queryForObject("SELECT create_time FROM audit_logs WHERE log_id='recent'", String.class);
+                INSERT INTO audit_logs (log_id, user_id, agent_id, actor_team_id, operation_type, operation_name, create_time)
+                VALUES ('old', 'user-a', 'agent-a', 'team-a', 'TEST', 'Test', ?),
+                       ('recent', 'user-a', 'agent-a', 'team-a', 'TEST', 'Test', ?),
+                       ('other', 'user-b', 'agent-b', 'team-b', 'TEST', 'Test', ?)
+                """, cutoff.minusSeconds(1).format(format), latest, applicationNow.format(format));
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(AuditLogMapper.class);
-        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
+             var clock = mockStatic(LocalDateTime.class, CALLS_REAL_METHODS)) {
+            clock.when(LocalDateTime::now).thenReturn(applicationNow);
             var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
                     new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
