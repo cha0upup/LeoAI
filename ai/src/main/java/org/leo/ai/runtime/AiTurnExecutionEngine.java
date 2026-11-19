@@ -86,7 +86,7 @@ public class AiTurnExecutionEngine {
                             : command.streamFactory()).get(),
                     (recovery ? "recoveryStreamFactory" : "streamFactory")
                             + " 返回了 null");
-            stream
+            TokenStream configuredStream = stream
                     .onPartialThinkingWithContext((thinking, context) -> {
                         capture(handleRef, context.streamingHandle(), turn);
                         whileActive(turn, () -> listener.onEvent(AiTurnEvent.thinkingDelta(thinking.text())));
@@ -151,8 +151,11 @@ public class AiTurnExecutionEngine {
                             return;
                         }
                         fail(turn, listener, error, toolErrorScope);
-                    })
-                    .start();
+                    });
+            if (turn.isCancellationRequested()) {
+                throw new InterruptedException(turn.cancellationReason());
+            }
+            configuredStream.start();
         } catch (Throwable error) {
             if (tryRecoverStream(
                     command, listener, turn, toolErrorScope,

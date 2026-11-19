@@ -1,21 +1,37 @@
 package org.leo.ai.runtime;
 
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.model.chat.response.PartialThinkingContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
+import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.agent.AiToolCatalog;
 import org.leo.ai.agent.AiToolErrorHandler;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,6 +50,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -126,6 +144,100 @@ class AiTurnExecutionEngineTest {
         assertFalse(streamCreated.get());
         assertTrue(listener.lastFailure.cancelled());
         assertEquals("启动前停止", listener.lastFailure.cancellationReason());
+    }
+
+    @Test
+    void doesNotStartModelWhenStopArrivesWhilePreparingTheStream() {
+        var runtime = claimedRuntime();
+        var turn = coordinator.attach(runtime);
+        var stream = mock(TokenStream.class, RETURNS_SELF);
+        var listener = new RecordingListener();
+        engine.execute(new AiTurnCommand("thread-1", "memory-1", turn, () -> {
+            runtime.requestStop("准备期间停止");
+            return stream;
+        }, () -> {
+            throw new AssertionError("已取消的 Turn 不应创建恢复流");
+        }), listener);
+
+        verify(stream, never()).start();
+        assertEquals(1, listener.failed.get());
+        assertEquals(AiTurnOutcome.CANCELLED, runtime.outcome);
+        assertEquals(1, runtime.clearCount);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void stopBeforeFirstTextKeepsOneTerminalResultWhenProviderSendsLateText(boolean responses) throws IOException {
+        try (var provider = new ServerSocket()) {
+            provider.bind(new InetSocketAddress("127.0.0.1", 0));
+            provider.setSoTimeout(5000);
+            String baseUrl = "http://127.0.0.1:" + provider.getLocalPort() + "/v1";
+            var httpClient = new JdkHttpClientBuilder().readTimeout(Duration.ofSeconds(15));
+            StreamingChatModel model = responses
+                    ? OpenAiResponsesStreamingChatModel.builder().apiKey("fixture").baseUrl(baseUrl)
+                        .modelName("test").httpClientBuilder(httpClient).build()
+                    : OpenAiStreamingChatModel.builder().apiKey("fixture").baseUrl(baseUrl)
+                        .modelName("test").httpClientBuilder(httpClient).timeout(Duration.ofSeconds(15)).build();
+            var chat = AiServices.create(FixtureChat.class, model);
+            var runtime = claimedRuntime();
+            var turn = coordinator.attach(runtime);
+            var listener = new RecordingListener();
+
+            engine.execute(new AiTurnCommand("thread-1", "memory-1", turn, () -> chat.chat("hello"), () -> {
+                throw new AssertionError("已取消的 Turn 不应创建恢复流");
+            }), listener);
+
+            try (var connection = provider.accept();
+                    var input = new BufferedReader(new InputStreamReader(connection.getInputStream(),
+                            StandardCharsets.ISO_8859_1))) {
+                connection.setSoTimeout(5000);
+                readProviderRequest(input);
+                runtime.requestStop("首包前停止");
+
+                assertEquals(AiTurnOutcome.CANCELLED, runtime.outcome);
+                assertTrue(listener.lastFailure.cancelled());
+                assertEquals("首包前停止", listener.lastFailure.cancellationReason());
+                sendLateTextAndAwaitDisconnect(connection, input, responses);
+                assertEquals(1, listener.failed.get());
+                assertEquals(0, listener.completed.get());
+                assertTrue(listener.eventTypes().isEmpty());
+                assertEquals(1, runtime.clearCount);
+            }
+        }
+    }
+
+    private interface FixtureChat {
+        TokenStream chat(String message);
+    }
+
+    private static void readProviderRequest(BufferedReader input) throws IOException {
+        String requestLine = input.readLine();
+        assertNotNull(requestLine);
+        assertTrue(requestLine.startsWith("POST "));
+        int contentLength = 0;
+        for (String line; (line = input.readLine()) != null && !line.isEmpty();) {
+            if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+                contentLength = Integer.parseInt(line.substring("content-length:".length()).trim());
+            }
+        }
+        assertTrue(contentLength > 0);
+        for (int i = 0; i < contentLength; i++) assertTrue(input.read() != -1);
+    }
+
+    private static void sendLateTextAndAwaitDisconnect(Socket connection, BufferedReader input,
+                                                      boolean responses) throws IOException {
+        String event = responses
+                ? "event: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"late\"}\r\n\r\n"
+                : "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"late\"}}]}\r\n\r\n";
+        // Leave the SSE body open: the disconnect must come from the client, not a terminal event.
+        String response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + Integer.toHexString(event.length()) + "\r\n" + event + "\r\n";
+        try {
+            connection.getOutputStream().write(response.getBytes(StandardCharsets.US_ASCII));
+            assertEquals(-1, input.read());
+        } catch (SocketException reset) {
+            // A reset also means the client closed the connection.
+        }
     }
 
     @Test
