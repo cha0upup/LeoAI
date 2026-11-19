@@ -90,15 +90,6 @@ public class AuditLogService {
         return defaultCount(auditLogMapper.countAuditLogsBySessionId(sessionId));
     }
 
-    /**
-     * 查询所有审计日志
-     */
-    public List<AuditLog> findAllAuditLogs(Integer limit, Integer offset) {
-        AuditLogQuery page = AuditLogQuery.page(limit, offset);
-        List<AuditLog> logs = auditLogMapper.findAllAuditLogs(page.getLimit(), page.getOffset());
-        return logs != null ? logs : new ArrayList<>();
-    }
-
     public List<AuditLog> searchAuditLogs(AuditLogQuery query) {
         AuditLogQuery normalizedQuery = normalizeQuery(query);
         List<AuditLog> logs = auditLogMapper.searchAuditLogs(normalizedQuery);
@@ -189,13 +180,6 @@ public class AuditLogService {
             trend.add(item);
         }
         return trend;
-    }
-
-    /**
-     * 统计所有日志数量
-     */
-    public Integer countAllAuditLogs() {
-        return defaultCount(auditLogMapper.countAllAuditLogs());
     }
 
     /**

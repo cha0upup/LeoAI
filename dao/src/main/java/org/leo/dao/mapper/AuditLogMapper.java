@@ -94,9 +94,6 @@ public interface AuditLogMapper {
     @Select("SELECT * FROM audit_logs WHERE log_id = #{logId}")
     AuditLog findAuditLogById(@Param("logId") String logId);
 
-    @Select("SELECT * FROM audit_logs ORDER BY create_time DESC LIMIT #{limit} OFFSET #{offset}")
-    List<AuditLog> findAllAuditLogs(@Param("limit") Integer limit, @Param("offset") Integer offset);
-
     @Select({
             "<script>",
             "SELECT * FROM audit_logs",
@@ -129,9 +126,6 @@ public interface AuditLogMapper {
 
     @Select(AUDIT_STATISTICS_SELECT + "WHERE actor_team_id = #{teamId}")
     Map<String, Object> summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("recentSince") String recentSince);
-
-    @Select("SELECT COUNT(*) FROM audit_logs")
-    Integer countAllAuditLogs();
 
     @Select("SELECT operation_type AS operation, MIN(operation_name) AS operationName, COUNT(*) AS count FROM audit_logs GROUP BY operation_type ORDER BY count DESC")
     List<Map<String, Object>> countAuditLogsByOperationType();

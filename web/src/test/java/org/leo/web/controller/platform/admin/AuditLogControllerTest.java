@@ -71,11 +71,11 @@ class AuditLogControllerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"10,0,user-a,3,3,0", "10,0,missing,0,0,0", "2,2,user-a,1,3,0",
-            "2,0,user-a,2,3,1", "2,8,user-a,0,3,1"})
+    @CsvSource({"10,0,user-a,3,3,0,log-3", "10,0,missing,0,0,0,", "2,2,user-a,1,3,0,log-1",
+            "2,0,user-a,2,3,1,log-3", "2,8,user-a,0,3,1,", "2,0,,2,4,1,other"})
     void auditPagesOnlyCountWhenTheRowsDoNotDetermineTheTotal(int limit, int offset, String userId,
                                                                int rowCount, int total, int countQueries,
-                                                               @TempDir Path temp) throws Exception {
+                                                               String firstLogId, @TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
         new JdbcTemplate(source).update("""
                 INSERT INTO audit_logs (log_id, user_id, operation_type, operation_name, create_time)
@@ -91,12 +91,14 @@ class AuditLogControllerTest {
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
                     new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
 
-            var response = storedMvc.perform(get("/platform/admin/audit-logs").param("userId", userId)
-                            .param("limit", Integer.toString(limit)).param("offset", Integer.toString(offset)))
+            var request = get("/platform/admin/audit-logs")
+                    .param("limit", Integer.toString(limit)).param("offset", Integer.toString(offset));
+            if (userId != null) request.param("userId", userId);
+            var response = storedMvc.perform(request)
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.logs.length()").value(rowCount))
                     .andExpect(jsonPath("$.data.total").value(total));
-            if (rowCount > 0) response.andExpect(jsonPath("$.data.logs[0].logId").value("log-" + (3 - offset)));
+            if (firstLogId != null) response.andExpect(jsonPath("$.data.logs[0].logId").value(firstLogId));
             verify(mapper).searchAuditLogs(any());
             verify(mapper, times(countQueries)).countAuditLogs(any());
         }

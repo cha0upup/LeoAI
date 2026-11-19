@@ -49,15 +49,6 @@ class AuditLogServiceTest {
         assertEquals(0, normalized.getValue().getOffset());
     }
 
-    @Test
-    void plainListingUsesTheSamePaginationBounds() {
-        when(mapper.findAllAuditLogs(1000, 0)).thenReturn(List.of(new AuditLog()));
-
-        assertEquals(1, logs.findAllAuditLogs(2001, -5).size());
-
-        verify(mapper).findAllAuditLogs(1000, 0);
-    }
-
     @ParameterizedTest
     @ValueSource(ints = {1, 3})
     void trendQueriesWholeCalendarDaysAndFillsMissingCounts(int days) {
