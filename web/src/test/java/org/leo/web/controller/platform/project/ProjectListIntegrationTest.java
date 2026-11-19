@@ -394,6 +394,36 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void detachesSelectedEntryHostsInOneWriteWithoutRemovingOtherRelationsOrAssets() {
+        project("owned", "user-1", "private", "active", "Owned");
+        project("other", "user-1", "private", "active", "Other");
+        for (String id : List.of("first", "second", "unselected")) {
+            host(id);
+            attach("owned", id);
+        }
+        attach("other", "first");
+        for (String id : List.of("child", "first", "second")) {
+            Agent node = new Agent();
+            node.setAgentId(id);
+            node.setParentAgentId("child".equals(id) ? "first" : "root");
+            when(agents.findAgentById(id)).thenReturn(node);
+        }
+        var request = requestAs("normal");
+        var selection = new ProjectAgentsRequest("owned", List.of(" child ", "first", "second", "missing"), null, null);
+
+        assertEquals(new RelationMutationResponse("owned", 2), controller.detachAgents(request, selection).get("data"));
+        assertEquals(1, queries.sql.stream().filter(sql -> sql.startsWith("DELETE FROM project_agents")).count());
+        assertEquals(new RelationMutationResponse("owned", 0), controller.detachAgents(request, selection).get("data"));
+
+        assertEquals(List.of("unselected"), jdbc.queryForList(
+                "SELECT agent_id FROM project_agents WHERE project_id='owned'", String.class));
+        assertEquals(List.of("first"), jdbc.queryForList(
+                "SELECT agent_id FROM project_agents WHERE project_id='other'", String.class));
+        assertEquals(List.of("first", "second", "unselected"), jdbc.queryForList(
+                "SELECT agent_id FROM agents ORDER BY agent_id", String.class));
+    }
+
+    @Test
     void noVisibleProjectsNeedsOnlyTheProjectQuery() throws Exception {
         project("hidden", "user-2", "private", "active", "Hidden");
 

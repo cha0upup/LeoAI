@@ -189,11 +189,8 @@ public class ProjectService {
 
     @Transactional
     public int detachAgents(String projectId, Collection<String> agentIds) {
-        int changed = 0;
-        for (String agentId : normalizedEntryIds(agentIds)) {
-            if (projectMapper.detachAgent(projectId, agentId)) changed++;
-        }
-        return changed;
+        List<String> entryIds = normalizedEntryIds(agentIds);
+        return entryIds.isEmpty() ? 0 : projectMapper.detachAgents(projectId, JsonUtil.toJsonString(entryIds));
     }
 
     public boolean containsAgent(String projectId, String agentId) {

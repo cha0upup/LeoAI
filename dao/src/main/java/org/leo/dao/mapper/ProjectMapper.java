@@ -83,9 +83,13 @@ public interface ProjectMapper {
             """)
     boolean attachAgent(ProjectAgent projectAgent);
 
-    @Delete("DELETE FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
-    boolean detachAgent(@Param("projectId") String projectId,
-                         @Param("agentId") String agentId);
+    @Delete("""
+            DELETE FROM project_agents
+            WHERE project_id = #{projectId}
+              AND agent_id IN (SELECT value FROM json_each(#{agentIdsJson}))
+            """)
+    int detachAgents(@Param("projectId") String projectId,
+                     @Param("agentIdsJson") String agentIdsJson);
 
     @Select("""
             SELECT project_id, COUNT(*) AS agent_count

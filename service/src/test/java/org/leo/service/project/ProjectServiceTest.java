@@ -202,9 +202,9 @@ class ProjectServiceTest {
             verify(mapper).attachAgent(relation.capture());
             assertEquals("gateway", relation.getValue().getAgentId());
         } else {
-            when(mapper.detachAgent("project-1", "gateway")).thenReturn(true);
+            when(mapper.detachAgents("project-1", "[\"gateway\"]")).thenReturn(1);
             assertEquals(1, service.detachAgents("project-1", ids));
-            verify(mapper).detachAgent("project-1", "gateway");
+            verify(mapper).detachAgents("project-1", "[\"gateway\"]");
         }
         for (String id : List.of("child-a", "child-b", "gateway")) verify(agentService).findAgentById(id);
     }
