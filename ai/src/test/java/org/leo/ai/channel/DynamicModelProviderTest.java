@@ -16,15 +16,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.ai.concurrent.AiBackgroundExecutor;
+import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.ProviderCapabilities;
 
+import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -316,14 +325,65 @@ class DynamicModelProviderTest {
         config.setHeadersJson(CUSTOM_HEADERS);
         AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, true));
+        var model = provider(configs).buildProbeRuntime(config, false).streamingModel();
         CompletableFuture<ChatResponse> result = new CompletableFuture<>();
-        provider(configs).buildProbeRuntime(config, false).streamingModel().chat(
+        model.chat(
                 ChatRequest.builder().messages(UserMessage.from("OK")).build(), new StreamingChatResponseHandler() {
                     public void onCompleteResponse(ChatResponse response) { result.complete(response); }
                     public void onError(Throwable error) { result.completeExceptionally(error); }
                 });
         assertEquals("OK", result.get(5, TimeUnit.SECONDS).aiMessage().text());
         assertCustomHeaders(headers.get());
+        var probe = probeService(configs).probeStreaming(model, Duration.ofSeconds(5));
+        assertEquals(AiModelCapabilityProbeService.Outcome.SUPPORTED, probe.outcome());
+        assertCustomHeaders(headers.get());
+    }
+
+    @ParameterizedTest(name = "{0}, headers sent={1}")
+    @CsvSource({"responses,false", "responses,true", "chat_completions,false", "chat_completions,true"})
+    void streamingProbeTimeoutDisconnectsBeforeTheFirstTextFragment(String protocol, boolean sendHeaders) throws Exception {
+        try (var listener = new ServerSocket()) {
+            listener.bind(new InetSocketAddress("127.0.0.1", 0));
+            listener.setSoTimeout(5000);
+            var disconnected = CompletableFuture.runAsync(() -> awaitStreamingDisconnect(listener, sendHeaders));
+
+            AiModelConfig config = config("http://127.0.0.1:" + listener.getLocalPort() + "/v1", protocol);
+            AiModelConfigService configs = mock(AiModelConfigService.class);
+            when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, true));
+            var model = provider(configs).buildProbeRuntime(config, false).streamingModel();
+
+            var probe = probeService(configs).probeStreaming(model, Duration.ofSeconds(2));
+
+            assertEquals(AiModelCapabilityProbeService.Outcome.INCONCLUSIVE, probe.outcome());
+            assertEquals("流式响应在 2 秒内未完成", probe.message());
+            disconnected.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void awaitStreamingDisconnect(ServerSocket listener, boolean sendHeaders) {
+        try (var client = listener.accept();
+                var input = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.ISO_8859_1))) {
+            client.setSoTimeout(5000);
+            String line;
+            do {
+                line = input.readLine();
+                if (line == null) throw new EOFException("Client disconnected before sending its request headers");
+            } while (!line.isEmpty());
+            if (sendHeaders) {
+                // Leave the SSE body open without sending a text event.
+                client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                        + "Transfer-Encoding: chunked\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            }
+            try {
+                while (input.read() != -1) {
+                    // Drain the request body, then wait for the client to close the socket.
+                }
+            } catch (SocketException reset) {
+                // A reset after receiving the request also ends the connection.
+            }
+        } catch (IOException error) {
+            throw new CompletionException(error);
+        }
     }
 
     @Test
@@ -340,9 +400,10 @@ class DynamicModelProviderTest {
         AiModelConfig config = config(baseUrl, "chat_completions");
         AiModelConfigService configs = mock(AiModelConfigService.class);
         when(configs.capabilitiesForModel(config)).thenReturn(caps(8192, true));
+        var model = provider(configs).buildRuntime(config).streamingModel();
         CompletableFuture<ChatResponse> result = new CompletableFuture<>();
         StringBuilder partial = new StringBuilder();
-        provider(configs).buildRuntime(config).streamingModel().chat(
+        model.chat(
                 ChatRequest.builder().messages(UserMessage.from("Hello")).build(), new StreamingChatResponseHandler() {
                     public void onPartialResponse(String text) { partial.append(text); }
                     public void onCompleteResponse(ChatResponse response) { result.complete(response); }
@@ -351,6 +412,9 @@ class DynamicModelProviderTest {
         var error = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
         assertEquals("Partial", partial.toString());
         assertTrue(error.getCause().getMessage().contains("provider unavailable"));
+        var probe = probeService(configs).probeStreaming(model, Duration.ofSeconds(5));
+        assertEquals(AiModelCapabilityProbeService.Outcome.INCONCLUSIVE, probe.outcome());
+        assertEquals("模型服务暂时不可用，请稍后重试或切换通道", probe.message());
     }
 
     private static void assertCustomHeaders(Headers headers) {
@@ -379,6 +443,11 @@ class DynamicModelProviderTest {
 
     private static DynamicModelProvider provider(AiModelConfigService configs) {
         return new DynamicModelProvider(configs, new DelegatingChatModel());
+    }
+
+    private static AiModelCapabilityProbeService probeService(AiModelConfigService configs) {
+        return new AiModelCapabilityProbeService(provider(configs), configs,
+                new AiErrorClassifier(), mock(AiBackgroundExecutor.class));
     }
 
     private static AiModelConfig config(String base, String protocol) {

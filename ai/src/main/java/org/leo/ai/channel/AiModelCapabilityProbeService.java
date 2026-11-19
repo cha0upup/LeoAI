@@ -6,29 +6,32 @@ import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
 import dev.langchain4j.model.chat.request.ToolChoice;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.response.ChatModelStreamingEvent;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.CompleteResponse;
 import dev.langchain4j.model.chat.response.PartialResponse;
-import dev.langchain4j.model.chat.response.PartialResponseContext;
-import dev.langchain4j.model.chat.response.StreamingHandle;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import org.leo.ai.concurrent.AiBackgroundExecutor;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -41,7 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AiModelCapabilityProbeService {
 
     private static final long BLOCKING_TIMEOUT_SECONDS = 35L;
-    private static final long STREAMING_TIMEOUT_SECONDS = 35L;
+    private static final Duration STREAMING_TIMEOUT = Duration.ofSeconds(35);
     private final DynamicModelProvider dynamicModelProvider;
     private final AiModelConfigService configService;
     private final AiErrorClassifier errorClassifier;
@@ -85,7 +88,7 @@ public class AiModelCapabilityProbeService {
                     System.currentTimeMillis() - startedAt, false, null, items);
         }
 
-        items.add(probeStreaming(runtime));
+        items.add(probeStreaming(runtime.streamingModel(), STREAMING_TIMEOUT));
         items.add(probeToolCalling(runtime));
         items.add(probeStructuredOutput(runtime));
         items.add(probeReasoning(config));
@@ -103,58 +106,61 @@ public class AiModelCapabilityProbeService {
                 : ProbeItem.inconclusive("textGeneration", "接口返回成功，但未收到文本响应"), false);
     }
 
-    private ProbeItem probeStreaming(DynamicModelProvider.ModelRuntime runtime) {
+    ProbeItem probeStreaming(StreamingChatModel model, Duration timeout) {
         long startedAt = System.currentTimeMillis();
-        CountDownLatch completed = new CountDownLatch(1);
-        AtomicReference<Throwable> errorRef = new AtomicReference<>();
-        AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
-        AtomicBoolean receivedText = new AtomicBoolean(false);
-        AtomicReference<ChatResponse> responseRef = new AtomicReference<>();
+        var completed = new CompletableFuture<Boolean>();
+        var subscription = new AtomicReference<Flow.Subscription>();
         try {
-            runtime.streamingModel().chat(ChatRequest.builder()
+            model.chat(ChatRequest.builder()
                     .messages(new UserMessage("请以流式方式只回复 STREAM_OK"))
-                    .build(), new StreamingChatResponseHandler() {
+                    .build()).subscribe(new Flow.Subscriber<ChatModelStreamingEvent>() {
+                private boolean receivedText;
+
                 @Override
-                public void onPartialResponse(PartialResponse partial, PartialResponseContext context) {
-                    handleRef.compareAndSet(null, context.streamingHandle());
-                    if (partial != null && partial.text() != null && !partial.text().isBlank()) {
-                        receivedText.set(true);
+                public void onSubscribe(Flow.Subscription current) {
+                    subscription.set(current);
+                    if (completed.isCancelled()) current.cancel();
+                    else current.request(Long.MAX_VALUE);
+                }
+
+                @Override
+                public void onNext(ChatModelStreamingEvent event) {
+                    if ((event instanceof PartialResponse partial && partial.text() != null && !partial.text().isBlank())
+                            || (event instanceof CompleteResponse complete && hasText(complete.chatResponse()))) {
+                        receivedText = true;
                     }
                 }
 
                 @Override
-                public void onCompleteResponse(ChatResponse response) {
-                    responseRef.set(response);
-                    completed.countDown();
+                public void onError(Throwable error) {
+                    completed.completeExceptionally(error);
                 }
 
                 @Override
-                public void onError(Throwable error) {
-                    errorRef.set(error);
-                    completed.countDown();
+                public void onComplete() {
+                    completed.complete(receivedText);
                 }
             });
-            if (!completed.await(STREAMING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                StreamingHandle handle = handleRef.get();
-                if (handle != null) handle.cancel();
-                return ProbeItem.inconclusive("streaming", "流式响应在 " + STREAMING_TIMEOUT_SECONDS + " 秒内未完成",
-                        System.currentTimeMillis() - startedAt);
-            }
-            Throwable error = errorRef.get();
-            if (error != null) return failure("streaming", error, true, startedAt);
-            if (receivedText.get() || hasText(responseRef.get())) {
+            if (completed.get(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 return ProbeItem.supported("streaming", "收到流式文本片段", System.currentTimeMillis() - startedAt);
             }
             return ProbeItem.inconclusive("streaming", "流已完成，但没有可验证的文本片段",
                     System.currentTimeMillis() - startedAt);
+        } catch (TimeoutException error) {
+            return ProbeItem.inconclusive("streaming", "流式响应在 " + timeout.toSeconds() + " 秒内未完成",
+                    System.currentTimeMillis() - startedAt);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             return ProbeItem.inconclusive("streaming", "探测被中断", System.currentTimeMillis() - startedAt);
+        } catch (ExecutionException error) {
+            return failure("streaming", error.getCause(), true, startedAt);
         } catch (Exception error) {
             return failure("streaming", error, true, startedAt);
         } finally {
-            StreamingHandle handle = handleRef.get();
-            if (completed.getCount() > 0 && handle != null) handle.cancel();
+            if (completed.cancel(false)) {
+                Flow.Subscription current = subscription.get();
+                if (current != null) current.cancel();
+            }
         }
     }
 
