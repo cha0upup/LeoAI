@@ -1,11 +1,21 @@
 package org.leo.ai.service;
 
+import dev.langchain4j.exception.AuthenticationException;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.exception.InternalServerException;
+import dev.langchain4j.exception.InvalidRequestException;
+import dev.langchain4j.exception.ModelNotFoundException;
+import dev.langchain4j.exception.RateLimitException;
+import dev.langchain4j.exception.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -29,11 +39,50 @@ class AiErrorClassifierTest {
         assertEquals(category, classifier.classify(message).category());
     }
 
+    @ParameterizedTest
+    @CsvSource({"401,auth", "403,auth", "408,timeout", "429,rate_limit", "503,server_error", "504,server_error"})
+    void usesHttpStatusWhenResponseBodyDoesNotDescribeTheFailure(int status, String category) {
+        var error = new RuntimeException("SDK failed", new HttpException(status, "provider detail"));
+        var result = classifier.classify(error);
+        assertEquals(category, result.category());
+        assertEquals("provider detail", result.rawMessage());
+    }
+
+    @ParameterizedTest
+    @MethodSource("typedFailures")
+    void usesSdkExceptionTypeWhenMessageDoesNotDescribeTheFailure(Throwable error, String category) {
+        var result = classifier.classify(new RuntimeException("SDK failed", error));
+        assertEquals(category, result.category());
+        assertEquals("provider detail", result.rawMessage());
+    }
+
+    private static Stream<Arguments> typedFailures() {
+        return Stream.of(
+                Arguments.of(new AuthenticationException("provider detail"), "auth"),
+                Arguments.of(new RateLimitException("provider detail"), "rate_limit"),
+                Arguments.of(new TimeoutException("provider detail"), "timeout"),
+                Arguments.of(new InternalServerException("provider detail"), "server_error"));
+    }
+
     @Test
-    void usesHttpStatusWhenResponseBodyDoesNotDescribeTheFailure() {
-        var error = new RuntimeException("SDK failed",
-                new dev.langchain4j.exception.HttpException(503, "maintenance"));
+    void prefersStructuredFailureOverMisleadingProviderText() {
+        var error = new RateLimitException(new HttpException(429, "Service unavailable"));
+        assertEquals(AiErrorClassifier.CATEGORY_RATE_LIMIT, classifier.classify(error).category());
+    }
+
+    @Test
+    void keepsGatewayTimeoutInTheServerErrorCategory() {
+        var error = new TimeoutException(new HttpException(504, "time limit"));
         assertEquals(AiErrorClassifier.CATEGORY_SERVER_ERROR, classifier.classify(error).category());
+    }
+
+    @Test
+    void ambiguousSdkErrorsStillUseProviderDetails() {
+        var badThinkingRequest = new InvalidRequestException(
+                new HttpException(400, "reasoning_content must be passed back in thinking mode"));
+        var unsupportedEndpoint = new ModelNotFoundException(new HttpException(404, "Responses API unsupported"));
+        assertEquals(AiErrorClassifier.CATEGORY_THINKING_MODE, classifier.classify(badThinkingRequest).category());
+        assertEquals(AiErrorClassifier.CATEGORY_UNSUPPORTED_PARAMETER, classifier.classify(unsupportedEndpoint).category());
     }
 
     @Test

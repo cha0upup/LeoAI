@@ -1,5 +1,10 @@
 package org.leo.ai.service;
 
+import dev.langchain4j.exception.AuthenticationException;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.exception.InternalServerException;
+import dev.langchain4j.exception.RateLimitException;
+import dev.langchain4j.exception.TimeoutException;
 import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
@@ -29,13 +34,13 @@ public class AiErrorClassifier {
             "(?:\\bhttp(?:/\\d(?:\\.\\d)?)?\\s+|\\bstatus(?:\\s+code)?[\\s:=]+|^)5\\d\\d\\b");
 
     public Classification classify(Throwable error) {
-        boolean serverError = false;
+        String category = null;
         String message = null;
         for (Throwable cause : ThrowableUtils.causes(error)) {
-            if ((cause instanceof dev.langchain4j.exception.HttpException http
-                    && http.statusCode() >= 500 && http.statusCode() <= 599)
-                    || cause instanceof dev.langchain4j.exception.InternalServerException) {
-                serverError = true;
+            String knownCategory = categoryFromCause(cause);
+            // Keep upstream 5xx in the server-error category, even when wrapped as a timeout.
+            if (category == null || CATEGORY_SERVER_ERROR.equals(knownCategory)) {
+                category = knownCategory;
             }
             String causeMessage = cause.getMessage();
             if (causeMessage != null && !causeMessage.isBlank()) {
@@ -43,7 +48,26 @@ public class AiErrorClassifier {
             }
         }
         String rawMessage = message != null ? message : error != null ? error.getClass().getSimpleName() : "";
-        return serverError ? classifyCategory(CATEGORY_SERVER_ERROR, rawMessage) : classify(rawMessage);
+        return category == null ? classify(rawMessage) : classifyCategory(category, rawMessage);
+    }
+
+    private static String categoryFromCause(Throwable cause) {
+        if (cause instanceof AuthenticationException) return CATEGORY_AUTH;
+        if (cause instanceof RateLimitException) return CATEGORY_RATE_LIMIT;
+        if (cause instanceof TimeoutException) return CATEGORY_TIMEOUT;
+        if (cause instanceof InternalServerException) return CATEGORY_SERVER_ERROR;
+        if (cause instanceof HttpException http) {
+            int status = http.statusCode();
+            if (status >= 500 && status < 600) return CATEGORY_SERVER_ERROR;
+            // A generic 400 or 404 is ambiguous; leave it to the provider-message rules.
+            return switch (status) {
+                case 401, 403 -> CATEGORY_AUTH;
+                case 408 -> CATEGORY_TIMEOUT;
+                case 429 -> CATEGORY_RATE_LIMIT;
+                default -> null;
+            };
+        }
+        return null;
     }
 
     public Classification classify(String message) {
