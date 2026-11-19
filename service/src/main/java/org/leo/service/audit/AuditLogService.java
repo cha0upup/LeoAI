@@ -63,33 +63,6 @@ public class AuditLogService {
         return auditLogMapper.findAuditLogById(logId);
     }
 
-    /**
-     * 根据会话ID查询审计日志（按时间升序，适合生成操作报告）
-     */
-    public List<AuditLog> findAuditLogsBySessionId(String sessionId, Integer limit, Integer offset) {
-        if (!hasText(sessionId)) {
-            return new ArrayList<>();
-        }
-        if (limit == null || limit <= 0) {
-            limit = 500;
-        }
-        if (offset == null || offset < 0) {
-            offset = 0;
-        }
-        List<AuditLog> logs = auditLogMapper.findAuditLogsBySessionId(sessionId, limit, offset);
-        return logs != null ? logs : new ArrayList<>();
-    }
-
-    /**
-     * 统计会话的操作日志数量
-     */
-    public Integer countAuditLogsBySessionId(String sessionId) {
-        if (!hasText(sessionId)) {
-            return 0;
-        }
-        return defaultCount(auditLogMapper.countAuditLogsBySessionId(sessionId));
-    }
-
     public List<AuditLog> searchAuditLogs(AuditLogQuery query) {
         AuditLogQuery normalizedQuery = normalizeQuery(query);
         List<AuditLog> logs = auditLogMapper.searchAuditLogs(normalizedQuery);

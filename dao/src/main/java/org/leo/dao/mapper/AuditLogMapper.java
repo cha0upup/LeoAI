@@ -115,12 +115,6 @@ public interface AuditLogMapper {
     @Select(AUDIT_STATISTICS_SELECT + "WHERE user_id = #{userId}")
     Map<String, Object> summarizeUserAuditLogs(@Param("userId") String userId, @Param("recentSince") String recentSince);
 
-    @Select("SELECT * FROM audit_logs WHERE session_id = #{sessionId} ORDER BY create_time ASC LIMIT #{limit} OFFSET #{offset}")
-    List<AuditLog> findAuditLogsBySessionId(@Param("sessionId") String sessionId, @Param("limit") Integer limit, @Param("offset") Integer offset);
-
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE session_id = #{sessionId}")
-    Integer countAuditLogsBySessionId(@Param("sessionId") String sessionId);
-
     @Select(AUDIT_STATISTICS_SELECT + "WHERE agent_id = #{agentId}")
     Map<String, Object> summarizeAgentAuditLogs(@Param("agentId") String agentId, @Param("recentSince") String recentSince);
 

@@ -71,18 +71,19 @@ class AuditLogControllerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"10,0,user-a,3,3,0,log-3", "10,0,missing,0,0,0,", "2,2,user-a,1,3,0,log-1",
-            "2,0,user-a,2,3,1,log-3", "2,8,user-a,0,3,1,", "2,0,,2,4,1,other"})
-    void auditPagesOnlyCountWhenTheRowsDoNotDetermineTheTotal(int limit, int offset, String userId,
-                                                               int rowCount, int total, int countQueries,
+    @CsvSource({"10,0,userId,user-a,3,3,0,log-3", "10,0,userId,missing,0,0,0,", "2,2,userId,user-a,1,3,0,log-1",
+            "2,0,userId,user-a,2,3,1,log-3", "2,8,userId,user-a,0,3,1,", "2,0,,,2,4,1,other",
+            "2,0,sessionId,session-a,2,2,1,log-3"})
+    void auditPagesOnlyCountWhenTheRowsDoNotDetermineTheTotal(int limit, int offset, String filterName,
+                                                               String filterValue, int rowCount, int total, int countQueries,
                                                                String firstLogId, @TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
         new JdbcTemplate(source).update("""
-                INSERT INTO audit_logs (log_id, user_id, operation_type, operation_name, create_time)
-                VALUES ('log-1', 'user-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('log-2', 'user-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('log-3', 'user-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('other', 'user-b', 'TEST', 'Test', '2026-10-01 00:00:00')
+                INSERT INTO audit_logs (log_id, user_id, session_id, operation_type, operation_name, create_time)
+                VALUES ('log-1', 'user-a', 'session-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
+                       ('log-2', 'user-a', 'session-b', 'TEST', 'Test', '2026-10-01 00:00:00'),
+                       ('log-3', 'user-a', 'session-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
+                       ('other', 'user-b', NULL, 'TEST', 'Test', '2026-10-01 00:00:00')
                 """);
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(AuditLogMapper.class);
@@ -93,7 +94,7 @@ class AuditLogControllerTest {
 
             var request = get("/platform/admin/audit-logs")
                     .param("limit", Integer.toString(limit)).param("offset", Integer.toString(offset));
-            if (userId != null) request.param("userId", userId);
+            if (filterName != null) request.param(filterName, filterValue);
             var response = storedMvc.perform(request)
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.logs.length()").value(rowCount))
