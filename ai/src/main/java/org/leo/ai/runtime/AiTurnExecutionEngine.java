@@ -8,7 +8,6 @@ import org.slf4j.LoggerFactory;
 import org.leo.core.util.ThrowableUtils;
 import org.springframework.stereotype.Component;
 
-import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -176,7 +175,7 @@ public class AiTurnExecutionEngine {
                                      AtomicInteger recoveryAttempts,
                                      StringBuilder output,
                                      Throwable error) {
-        if (turn.isFinished() || turn.isCancellationRequested()
+        if (turn.isFinished() || turn.isCancellation(error)
                 || !isRecoverableStreamError(error)
                 || !recoveryAttempts.compareAndSet(0, 1)) {
             return false;
@@ -192,7 +191,6 @@ public class AiTurnExecutionEngine {
 
     private static boolean isRecoverableStreamError(Throwable error) {
         for (Throwable current : ThrowableUtils.causes(error)) {
-            if (current instanceof NoSuchElementException) return true;
             String message = current.getMessage();
             if (message != null) {
                 String normalized = message.trim().toLowerCase(java.util.Locale.ROOT);

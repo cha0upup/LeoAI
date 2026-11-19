@@ -362,6 +362,30 @@ class AiTurnExecutionEngineTest {
         assertFalse(runtime.claimed);
     }
 
+    @ParameterizedTest(name = "interrupted={0}")
+    @ValueSource(booleans = {false, true})
+    void doesNotResumeForUnrelatedEmptyValueOrInterruptedFailure(boolean interrupted) {
+        var runtime = claimedRuntime();
+        var turn = coordinator.attach(runtime);
+        var listener = new RecordingListener();
+        var recoveryCalls = new AtomicInteger();
+        var error = interrupted
+                ? new NoSuchElementException("No value present", new InterruptedException("fixture interrupted"))
+                : new NoSuchElementException("missing fixture value");
+        var primary = new ScriptedTokenStream(tokenStream -> tokenStream.error.accept(error));
+
+        engine.execute(new AiTurnCommand("thread-1", "memory-1", turn, () -> primary.stream, () -> {
+            recoveryCalls.incrementAndGet();
+            return mock(TokenStream.class, RETURNS_SELF);
+        }), listener);
+
+        assertEquals(0, recoveryCalls.get());
+        assertEquals(1, listener.failed.get());
+        assertSame(error, listener.lastFailure.cause());
+        assertEquals(interrupted ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED, runtime.outcome);
+        assertEquals(1, runtime.clearCount);
+    }
+
     @Test
     void continuesOnceFromCurrentMemoryWhenProviderReturnsNoValue() {
         RecordingTurnRuntime runtime = claimedRuntime();
