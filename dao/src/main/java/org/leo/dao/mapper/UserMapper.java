@@ -14,16 +14,22 @@ import java.util.List;
 @Mapper
 public interface UserMapper {
 
+    /** Directory reads omit credentials; single-account lookups still support login and updates. */
+    String USER_LIST_COLUMNS = """
+            user_id, user_name, privilege, email, phone, status, last_login_time, login_count,
+            password_change_required, account_revision, create_time, update_time, team_id, remark
+            """;
+
     @Select("SELECT * FROM users WHERE user_name = #{userName} COLLATE NOCASE")
     User findUserByUsername(@Param("userName") String userName);
 
     @Select("SELECT * FROM users WHERE user_id = #{userId}")
     User findUserById(@Param("userId") String userId);
 
-    @Select("SELECT * FROM users WHERE team_id = #{teamId}")
+    @Select("SELECT " + USER_LIST_COLUMNS + "FROM users WHERE team_id = #{teamId}")
     List<User> findUsersByTeamId(@Param("teamId") String teamId);
 
-    @Select("SELECT * FROM users")
+    @Select("SELECT " + USER_LIST_COLUMNS + "FROM users")
     List<User> getAllUsers();
 
     @Insert("""

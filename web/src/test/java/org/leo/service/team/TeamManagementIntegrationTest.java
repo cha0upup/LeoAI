@@ -14,6 +14,7 @@ import org.leo.dao.mapper.TeamMapper;
 import org.leo.dao.mapper.UserMapper;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
+import org.leo.service.user.UserViews;
 import org.leo.web.config.GlobalExceptionHandler;
 import org.leo.web.controller.platform.admin.TeamController;
 import org.leo.web.security.PermissionService;
@@ -214,6 +215,35 @@ class TeamManagementIntegrationTest {
         List<String> expected = role.equals("admin") ? List.of("other", "team")
                 : role.equals("unassigned") ? List.of() : List.of("team");
         assertEquals(expected, teams.getTeamsForUser(caller).stream().map(Team::getTeamId).sorted().toList());
+    }
+
+    @Test
+    void bulkUserListingsKeepAccountMetadataWithoutReadingPasswordHashes() {
+        seedMembership();
+        seedUser("unassigned", "normal", null);
+        jdbc.update("""
+                UPDATE users SET email='member@example.test', phone='123456789', status=0,
+                    last_login_time='2026-10-01 00:00:00', login_count=3,
+                    password_change_required=1, account_revision=4, remark='fixture-remark'
+                WHERE user_id='member'
+                """);
+
+        List<User> all = users.getAllUsers();
+        List<User> team = users.getUsersByTeamId("team");
+        assertEquals(List.of("admin", "leader", "member", "unassigned"),
+                all.stream().map(User::getUserId).sorted().toList());
+        assertEquals(List.of("admin", "leader", "member"), team.stream().map(User::getUserId).sorted().toList());
+
+        User stored = users.getUserById("member");
+        assertEquals("fixture-hash", stored.getPassword());
+        assertEquals("fixture-hash", users.getUserByName("member").getPassword());
+        for (List<User> listing : List.of(all, team)) {
+            for (User entry : listing) assertNull(entry.getPassword(), entry.getUserId());
+            User member = listing.stream().filter(user -> "member".equals(user.getUserId())).findFirst().orElseThrow();
+            assertEquals(UserViews.profile(stored), UserViews.profile(member));
+            assertEquals(stored.getPasswordChangeRequired(), member.getPasswordChangeRequired());
+            assertEquals(stored.getAccountRevision(), member.getAccountRevision());
+        }
     }
 
     @Test
