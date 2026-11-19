@@ -10,6 +10,7 @@ import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
+import org.leo.dao.mapper.ProjectMapper.MembershipRow;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
@@ -145,13 +146,15 @@ class ProjectServiceTest {
         Project visible = project("user-1", null, "private");
         visible.setProjectId("project-1");
         Project hidden = project("other-user", null, "private");
+        hidden.setProjectId("project-2");
 
         when(agentService.findAgentById("child-a")).thenReturn(agent("child-a", "gateway"));
         when(agentService.findAgentById("child-b")).thenReturn(agent("child-b", "gateway"));
         when(agentService.findAgentById("gateway")).thenReturn(agent("gateway", "root"));
         when(agentService.findAgentById("orphan-a")).thenReturn(agent("orphan-a", "missing"));
         when(agentService.findAgentById("orphan-b")).thenReturn(agent("orphan-b", "missing"));
-        when(mapper.findProjectsByAgentId("gateway")).thenReturn(List.of(visible, hidden));
+        when(mapper.findMembershipsByEntryAgentIds("[\"gateway\"]")).thenReturn(List.of(
+                new MembershipRow("gateway", "project-1", visible), new MembershipRow("gateway", "project-2", hidden)));
 
         Map<String, List<Project>> result = service.listVisibleMemberships(
                 Arrays.asList(" child-a ", "child-b", "gateway", "child-a", null, " ", "orphan-a", "orphan-b"), user);
@@ -163,7 +166,7 @@ class ProjectServiceTest {
         for (String id : List.of("child-a", "child-b", "gateway", "orphan-a", "orphan-b", "missing")) {
             verify(agentService).findAgentById(id);
         }
-        verify(mapper).findProjectsByAgentId("gateway");
+        verify(mapper).findMembershipsByEntryAgentIds("[\"gateway\"]");
         verifyNoMoreInteractions(mapper);
     }
 
@@ -179,8 +182,10 @@ class ProjectServiceTest {
                 .thenReturn(agent("child", "first"), agent("child", "second"));
         when(agentService.findAgentById("first")).thenReturn(agent("first", "root"));
         when(agentService.findAgentById("second")).thenReturn(agent("second", "root"));
-        when(mapper.findProjectsByAgentId("first")).thenReturn(List.of(first));
-        when(mapper.findProjectsByAgentId("second")).thenReturn(List.of(second));
+        when(mapper.findMembershipsByEntryAgentIds("[\"first\"]"))
+                .thenReturn(List.of(new MembershipRow("first", "first-project", first)));
+        when(mapper.findMembershipsByEntryAgentIds("[\"second\"]"))
+                .thenReturn(List.of(new MembershipRow("second", "second-project", second)));
 
         assertEquals(List.of(first), service.listVisibleMemberships(List.of("child"), user).get("child"));
         assertEquals(List.of(second), service.listVisibleMemberships(List.of("child"), user).get("child"));

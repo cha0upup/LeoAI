@@ -30,8 +30,10 @@ import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
+import org.leo.web.dto.platform.project.ProjectDtos.ProjectMembershipSummary;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectOwnerTransferRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectSummary;
 import org.leo.web.dto.platform.project.ProjectDtos.RelationMutationResponse;
@@ -422,6 +424,41 @@ class ProjectListIntegrationTest {
                 "SELECT agent_id FROM project_agents WHERE project_id='other'", String.class));
         assertEquals(List.of("first", "second", "unselected"), jdbc.queryForList(
                 "SELECT agent_id FROM agents ORDER BY agent_id", String.class));
+    }
+
+    @Test
+    void readsMembershipsForMultipleEntryHostsInOneQueryWithoutChangingVisibilityOrOrder() {
+        project("owned", "user-1", "private", "active", "zebra");
+        project("team", "user-2", "team", "active", "Alpha");
+        project("public", "user-2", "public", "archived", "A public");
+        project("hidden", "user-2", "private", "active", "Hidden");
+        jdbc.update("UPDATE projects SET project_code='shared-code' WHERE project_id='team'");
+        host("first");
+        host("second");
+        for (String id : List.of("owned", "team", "public", "hidden")) attach(id, "first");
+        attach("owned", "second");
+        for (String id : List.of("child", "first", "second", "unassigned")) {
+            Agent node = new Agent();
+            node.setAgentId(id);
+            node.setCreateByUserId("user-1");
+            node.setParentAgentId("child".equals(id) ? "first" : "root");
+            when(agents.findAgentById(id)).thenReturn(node);
+        }
+        var selection = new AgentMembershipsRequest(List.of("second", " child ", "first", "second", "unassigned"));
+
+        var response = controller.listMemberships(requestAs("normal"), selection);
+
+        assertEquals(200, response.get("code"));
+        Map<?, ?> memberships = (Map<?, ?>) response.get("data");
+        var owned = new ProjectMembershipSummary("owned", "zebra", null, "active");
+        var first = List.of(new ProjectMembershipSummary("team", "Alpha", "shared-code", "active"), owned,
+                new ProjectMembershipSummary("public", "A public", null, "archived"));
+        assertEquals(List.of("second", "child", "first", "unassigned"), List.copyOf(memberships.keySet()));
+        assertEquals(List.of(owned), memberships.get("second"));
+        assertEquals(first, memberships.get("child"));
+        assertEquals(first, memberships.get("first"));
+        assertEquals(List.of(), memberships.get("unassigned"));
+        assertEquals(1, queries.sql.size(), queries.sql.toString());
     }
 
     @Test

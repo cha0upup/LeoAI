@@ -7,6 +7,8 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.Project;
@@ -33,6 +35,7 @@ public interface ProjectMapper {
                                                 @Param("admin") boolean admin);
 
     @Select("SELECT * FROM projects WHERE project_id = #{projectId}")
+    @Results(id = "projectRow", value = @Result(column = "project_id", property = "projectId", id = true))
     Project findProjectById(@Param("projectId") String projectId);
 
     @Insert("INSERT INTO projects (project_id, project_name, project_code, description, status, owner_user_id, team_id, permission, create_time, update_time) " +
@@ -113,9 +116,21 @@ public interface ProjectMapper {
     int containsAgent(@Param("projectId") String projectId,
                        @Param("agentId") String agentId);
 
-    @Select("SELECT p.* FROM projects p INNER JOIN project_agents pp ON pp.project_id=p.project_id " +
-            "WHERE pp.agent_id=#{agentId} ORDER BY p.status ASC, p.project_name COLLATE NOCASE ASC")
-    List<Project> findProjectsByAgentId(@Param("agentId") String agentId);
+    @Select("""
+            SELECT pp.agent_id AS entry_agent_id, p.*
+            FROM project_agents pp INNER JOIN projects p ON p.project_id = pp.project_id
+            WHERE pp.agent_id IN (SELECT value FROM json_each(#{entryAgentIdsJson}))
+            ORDER BY p.status ASC, p.project_name COLLATE NOCASE ASC
+            """)
+    @ConstructorArgs({
+            @Arg(column = "entry_agent_id", javaType = String.class, id = true),
+            @Arg(column = "project_id", javaType = String.class, id = true),
+            @Arg(javaType = Project.class, resultMap = "projectRow")
+    })
+    List<MembershipRow> findMembershipsByEntryAgentIds(@Param("entryAgentIdsJson") String entryAgentIdsJson);
+
+    // Both IDs are part of the MyBatis row key: each entry can have multiple projects and vice versa.
+    record MembershipRow(String entryAgentId, String projectId, Project project) {}
 
     @Select("SELECT p.* FROM agents p INNER JOIN project_agents pp ON pp.agent_id=p.agent_id " +
             "WHERE pp.project_id=#{projectId} AND p.parent_agent_id=#{parentAgentId} " +

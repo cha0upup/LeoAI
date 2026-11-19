@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -226,22 +227,25 @@ public class ProjectService {
     }
 
     public Map<String, List<Project>> listVisibleMemberships(Collection<String> agentIds, User user) {
-        Map<String, List<Project>> result = new LinkedHashMap<>();
-        Map<String, List<Project>> projectsByEntryId = new HashMap<>();
+        Map<String, String> entryByAgentId = new LinkedHashMap<>();
         Map<String, Agent> ancestors = new HashMap<>();
         for (String agentId : normalizedIds(agentIds)) {
-            String entryId = resolveEntryAgentId(agentId, ancestors);
-            if (entryId == null) {
-                result.put(agentId, List.of());
-                continue;
-            }
-            List<Project> memberships = projectsByEntryId.computeIfAbsent(entryId, id -> {
-                List<Project> projects = projectMapper.findProjectsByAgentId(id);
-                if (projects == null) return List.of();
-                return projects.stream().filter(project -> canView(project, user)).toList();
-            });
-            result.put(agentId, memberships);
+            entryByAgentId.put(agentId, resolveEntryAgentId(agentId, ancestors));
         }
+        List<String> entryIds = entryByAgentId.values().stream().filter(Objects::nonNull).distinct().toList();
+        Map<String, List<Project>> projectsByEntryId = new HashMap<>();
+        if (!entryIds.isEmpty()) {
+            for (var membership : projectMapper.findMembershipsByEntryAgentIds(JsonUtil.toJsonString(entryIds))) {
+                if (canView(membership.project(), user)) {
+                    projectsByEntryId.computeIfAbsent(membership.entryAgentId(), id -> new ArrayList<>())
+                            .add(membership.project());
+                }
+            }
+            projectsByEntryId.replaceAll((id, projects) -> List.copyOf(projects));
+        }
+        Map<String, List<Project>> result = new LinkedHashMap<>();
+        entryByAgentId.forEach((agentId, entryId) -> result.put(agentId,
+                projectsByEntryId.getOrDefault(entryId, List.of())));
         return result;
     }
 
