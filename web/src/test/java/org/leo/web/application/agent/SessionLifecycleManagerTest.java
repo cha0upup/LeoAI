@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -73,7 +74,7 @@ class SessionLifecycleManagerTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void countsVisibleProjectSessionsFromOneSnapshot(boolean admin) {
+    void countsOnlyRequestedProjectSessionsFromOneSnapshot(boolean admin) {
         User user = new User();
         user.setUserId("user");
         user.setPrivilege(admin ? "admin" : "normal");
@@ -83,10 +84,12 @@ class SessionLifecycleManagerTest {
                     "own-2", projectSession("project-1", "user"),
                     "foreign", projectSession("project-1", "other"),
                     "no-owner", projectSession("project-2", null),
+                    "out-of-scope", projectSession("project-outside", "user"),
                     "unassigned", projectSession(null, "user")));
 
             assertEquals(admin ? Map.of("project-1", 3, "project-2", 1) : Map.of("project-1", 2),
-                    lifecycle.countByProject(user));
+                    lifecycle.countByProject(user, Set.of("project-1", "project-2")));
+            assertEquals(Map.of(), lifecycle.countByProject(user, Set.of()));
             sessions.verify(AgentNodeSessionContainer::getAllSessions);
         }
     }

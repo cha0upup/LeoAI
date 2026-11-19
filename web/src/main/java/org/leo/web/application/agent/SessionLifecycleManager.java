@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -79,12 +80,13 @@ public final class SessionLifecycleManager {
         return expired;
     }
 
-    public Map<String, Integer> countByProject(User user) {
+    public Map<String, Integer> countByProject(User user, Set<String> projectIds) {
+        if (projectIds.isEmpty()) return Map.of();
         Map<String, Integer> counts = new HashMap<>();
         for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
             if (session == null) continue;
             String projectId = session.getProjectId();
-            if (projectId != null && AccessPolicy.canAccessSession(session, user)) {
+            if (projectId != null && projectIds.contains(projectId) && AccessPolicy.canAccessSession(session, user)) {
                 counts.merge(projectId, 1, Integer::sum);
             }
         }

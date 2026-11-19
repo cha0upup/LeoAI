@@ -30,6 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/platform/projects")
@@ -53,9 +55,9 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         List<Project> visibleProjects = projectService.listVisible(user);
         if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
-        List<String> visibleProjectIds = visibleProjects.stream().map(Project::getProjectId).toList();
+        Set<String> visibleProjectIds = visibleProjects.stream().map(Project::getProjectId).collect(Collectors.toSet());
         Map<String, Integer> hostCounts = projectService.countAgentsByProject(visibleProjectIds);
-        Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user);
+        Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user, visibleProjectIds);
         List<ProjectSummary> projects = visibleProjects.stream()
                 .map(project -> new ProjectSummary(
                         project,
