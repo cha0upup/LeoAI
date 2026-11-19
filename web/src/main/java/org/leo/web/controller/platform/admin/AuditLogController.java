@@ -141,13 +141,21 @@ public class AuditLogController {
         return readResponse("获取审计日志列表失败", () -> {
             AuditLogQuery query = buildQuery(params, true);
             List<AuditLog> logs = auditLogService.searchAuditLogs(query);
-            Integer total = auditLogService.countAuditLogs(query);
+            int offset = query.getOffset();
+            Integer total;
+            // A short page establishes the end unless an empty page may have skipped past it.
+            if (logs != null && logs.size() < query.getLimit() && (offset == 0 || !logs.isEmpty())
+                    && offset <= Integer.MAX_VALUE - logs.size()) {
+                total = offset + logs.size();
+            } else {
+                total = auditLogService.countAuditLogs(query);
+            }
             
             HashMap<String, Object> data = new HashMap<String, Object>();
             data.put("logs", logs != null ? logs : new ArrayList<AuditLog>());
             data.put("total", total != null ? total : 0);
             data.put("limit", query.getLimit());
-            data.put("offset", query.getOffset());
+            data.put("offset", offset);
             
             return ApiResponse.success(data);
         });
