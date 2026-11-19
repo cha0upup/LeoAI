@@ -20,14 +20,20 @@ import java.util.List;
 @Mapper
 public interface ProjectMapper {
 
+    String VISIBLE_PROJECT_FILTER = """
+            <if test="!admin">
+                AND (p.permission = 'public' OR p.owner_user_id = #{userId}
+                     OR (p.permission = 'team' AND p.team_id = #{teamId}))
+            </if>
+            """;
+
     @Select("""
             <script>
-            SELECT * FROM projects
-            <if test="!admin">
-                WHERE permission = 'public' OR owner_user_id = #{userId}
-                   OR (permission = 'team' AND team_id = #{teamId})
-            </if>
-            ORDER BY status ASC, update_time DESC, project_name COLLATE NOCASE ASC
+            SELECT p.* FROM projects p
+            <where>
+            """ + VISIBLE_PROJECT_FILTER + """
+            </where>
+            ORDER BY p.status ASC, p.update_time DESC, p.project_name COLLATE NOCASE ASC
             </script>
             """)
     List<Project> findVisibleProjectCandidates(@Param("userId") String userId,
@@ -117,17 +123,23 @@ public interface ProjectMapper {
                        @Param("agentId") String agentId);
 
     @Select("""
+            <script>
             SELECT pp.agent_id AS entry_agent_id, p.*
             FROM project_agents pp INNER JOIN projects p ON p.project_id = pp.project_id
             WHERE pp.agent_id IN (SELECT value FROM json_each(#{entryAgentIdsJson}))
+            """ + VISIBLE_PROJECT_FILTER + """
             ORDER BY p.status ASC, p.project_name COLLATE NOCASE ASC
+            </script>
             """)
     @ConstructorArgs({
             @Arg(column = "entry_agent_id", javaType = String.class, id = true),
             @Arg(column = "project_id", javaType = String.class, id = true),
             @Arg(javaType = Project.class, resultMap = "projectRow")
     })
-    List<MembershipRow> findMembershipsByEntryAgentIds(@Param("entryAgentIdsJson") String entryAgentIdsJson);
+    List<MembershipRow> findVisibleMembershipsByEntryAgentIds(@Param("entryAgentIdsJson") String entryAgentIdsJson,
+                                                              @Param("userId") String userId,
+                                                              @Param("teamId") String teamId,
+                                                              @Param("admin") boolean admin);
 
     // Both IDs are part of the MyBatis row key: each entry can have multiple projects and vice versa.
     record MembershipRow(String entryAgentId, String projectId, Project project) {}

@@ -284,25 +284,31 @@ class ProjectListIntegrationTest {
         verify(users).getUserById("user-1");
     }
 
-    @Test
-    void sqliteReturnsOnlyProjectsInTheCallersVisibilityScope() {
+    @ParameterizedTest
+    @CsvSource(value = {
+            "user-1, team-1, false, own/shared/public",
+            "user-1, null, false, own/public",
+            "admin, null, true, own/shared/other-team/hidden/public"
+    }, nullValues = "null")
+    void sqliteReturnsOnlyProjectsInTheCallersVisibilityScope(String userId, String teamId, boolean admin,
+                                                              String expectedIds) {
         project("own", "user-1", "private", "active", "A own");
         project("shared", "user-2", "team", "active", "B shared");
         project("other-team", "user-2", "team", "active", "C other team");
         jdbc.update("UPDATE projects SET team_id='team-2' WHERE project_id='other-team'");
         project("hidden", "user-2", "private", "active", "D hidden");
         project("public", "user-2", "public", "archived", "Public");
+        host("selected");
+        host("unselected");
+        for (String id : List.of("own", "shared", "other-team", "hidden", "public")) attach(id, "selected");
+        attach("public", "unselected");
         ProjectMapper mapper = sqlSession.getMapper(ProjectMapper.class);
 
-        assertEquals(List.of("own", "shared", "public"),
-                mapper.findVisibleProjectCandidates("user-1", "team-1", false).stream()
-                        .map(Project::getProjectId).toList());
-        assertEquals(List.of("own", "public"),
-                mapper.findVisibleProjectCandidates("user-1", null, false).stream()
-                        .map(Project::getProjectId).toList());
-        assertEquals(List.of("own", "shared", "other-team", "hidden", "public"),
-                mapper.findVisibleProjectCandidates("admin", null, true).stream()
-                        .map(Project::getProjectId).toList());
+        List<String> expected = List.of(expectedIds.split("/"));
+        assertEquals(expected, mapper.findVisibleProjectCandidates(userId, teamId, admin).stream()
+                .map(Project::getProjectId).toList());
+        assertEquals(expected, mapper.findVisibleMembershipsByEntryAgentIds("[\"selected\"]", userId, teamId, admin).stream()
+                .map(ProjectMapper.MembershipRow::projectId).toList());
     }
 
     @Test

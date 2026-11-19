@@ -153,7 +153,7 @@ class ProjectServiceTest {
         when(agentService.findAgentById("gateway")).thenReturn(agent("gateway", "root"));
         when(agentService.findAgentById("orphan-a")).thenReturn(agent("orphan-a", "missing"));
         when(agentService.findAgentById("orphan-b")).thenReturn(agent("orphan-b", "missing"));
-        when(mapper.findMembershipsByEntryAgentIds("[\"gateway\"]")).thenReturn(List.of(
+        when(mapper.findVisibleMembershipsByEntryAgentIds("[\"gateway\"]", "user-1", null, false)).thenReturn(List.of(
                 new MembershipRow("gateway", "project-1", visible), new MembershipRow("gateway", "project-2", hidden)));
 
         Map<String, List<Project>> result = service.listVisibleMemberships(
@@ -166,7 +166,7 @@ class ProjectServiceTest {
         for (String id : List.of("child-a", "child-b", "gateway", "orphan-a", "orphan-b", "missing")) {
             verify(agentService).findAgentById(id);
         }
-        verify(mapper).findMembershipsByEntryAgentIds("[\"gateway\"]");
+        verify(mapper).findVisibleMembershipsByEntryAgentIds("[\"gateway\"]", "user-1", null, false);
         verifyNoMoreInteractions(mapper);
     }
 
@@ -182,9 +182,9 @@ class ProjectServiceTest {
                 .thenReturn(agent("child", "first"), agent("child", "second"));
         when(agentService.findAgentById("first")).thenReturn(agent("first", "root"));
         when(agentService.findAgentById("second")).thenReturn(agent("second", "root"));
-        when(mapper.findMembershipsByEntryAgentIds("[\"first\"]"))
+        when(mapper.findVisibleMembershipsByEntryAgentIds("[\"first\"]", "user-1", null, false))
                 .thenReturn(List.of(new MembershipRow("first", "first-project", first)));
-        when(mapper.findMembershipsByEntryAgentIds("[\"second\"]"))
+        when(mapper.findVisibleMembershipsByEntryAgentIds("[\"second\"]", "user-1", null, false))
                 .thenReturn(List.of(new MembershipRow("second", "second-project", second)));
 
         assertEquals(List.of(first), service.listVisibleMemberships(List.of("child"), user).get("child"));

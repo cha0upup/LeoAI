@@ -54,11 +54,15 @@ public class ProjectService {
 
     public List<Project> listVisible(User user) {
         if (user == null) return List.of();
-        String teamId = user.getTeamId();
         List<Project> projects = projectMapper.findVisibleProjectCandidates(user.getUserId(),
-                teamId == null || teamId.isBlank() ? null : teamId, AccessPolicy.isAdmin(user));
+                visibilityTeamId(user), AccessPolicy.isAdmin(user));
         if (projects == null) return List.of();
         return projects.stream().filter(project -> canView(project, user)).toList();
+    }
+
+    private static String visibilityTeamId(User user) {
+        String teamId = user.getTeamId();
+        return teamId == null || teamId.isBlank() ? null : teamId;
     }
 
     public boolean canView(Project project, User user) {
@@ -234,8 +238,9 @@ public class ProjectService {
         }
         List<String> entryIds = entryByAgentId.values().stream().filter(Objects::nonNull).distinct().toList();
         Map<String, List<Project>> projectsByEntryId = new HashMap<>();
-        if (!entryIds.isEmpty()) {
-            for (var membership : projectMapper.findMembershipsByEntryAgentIds(JsonUtil.toJsonString(entryIds))) {
+        if (user != null && !entryIds.isEmpty()) {
+            for (var membership : projectMapper.findVisibleMembershipsByEntryAgentIds(JsonUtil.toJsonString(entryIds),
+                    user.getUserId(), visibilityTeamId(user), AccessPolicy.isAdmin(user))) {
                 if (canView(membership.project(), user)) {
                     projectsByEntryId.computeIfAbsent(membership.entryAgentId(), id -> new ArrayList<>())
                             .add(membership.project());
