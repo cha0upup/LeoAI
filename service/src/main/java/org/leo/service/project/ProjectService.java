@@ -1,7 +1,6 @@
 package org.leo.service.project;
 
 import org.leo.core.entity.Project;
-import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
@@ -172,19 +171,10 @@ public class ProjectService {
     @Transactional
     public int attachAgents(String projectId, Collection<String> agentIds,
                              String alias, String tags, String userId) {
-        int changed = 0;
-        for (String agentId : normalizedEntryIds(agentIds)) {
-            ProjectAgent relation = new ProjectAgent();
-            relation.setProjectId(projectId);
-            relation.setAgentId(agentId);
-            relation.setAlias(trimToNull(alias));
-            relation.setTags(trimToNull(tags));
-            relation.setSortOrder(0);
-            relation.setAddedByUserId(userId);
-            relation.setCreateTime(now());
-            if (projectMapper.attachAgent(relation)) changed++;
-        }
-        return changed;
+        List<String> entryIds = normalizedEntryIds(agentIds);
+        if (entryIds.isEmpty()) return 0;
+        return projectMapper.attachAgents(projectId, JsonUtil.toJsonString(entryIds),
+                trimToNull(alias), trimToNull(tags), userId, now());
     }
 
     @Transactional

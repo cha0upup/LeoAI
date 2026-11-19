@@ -6,7 +6,6 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
-import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.entity.ProjectAgentCount;
@@ -14,7 +13,6 @@ import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import java.util.Arrays;
@@ -25,7 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -196,11 +196,11 @@ class ProjectServiceTest {
         List<String> ids = Arrays.asList(" child-a ", "child-b", "gateway", "child-a", null, " ");
 
         if (attach) {
-            when(mapper.attachAgent(any())).thenReturn(true);
+            when(mapper.attachAgents(eq("project-1"), eq("[\"gateway\"]"), isNull(), isNull(),
+                    eq("user-1"), anyString())).thenReturn(1);
             assertEquals(1, service.attachAgents("project-1", ids, null, null, "user-1"));
-            var relation = ArgumentCaptor.forClass(ProjectAgent.class);
-            verify(mapper).attachAgent(relation.capture());
-            assertEquals("gateway", relation.getValue().getAgentId());
+            verify(mapper).attachAgents(eq("project-1"), eq("[\"gateway\"]"), isNull(), isNull(),
+                    eq("user-1"), anyString());
         } else {
             when(mapper.detachAgents("project-1", "[\"gateway\"]")).thenReturn(1);
             assertEquals(1, service.detachAgents("project-1", ids));

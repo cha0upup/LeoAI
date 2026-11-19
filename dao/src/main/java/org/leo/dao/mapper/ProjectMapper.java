@@ -10,7 +10,6 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.Project;
-import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.Agent;
 import org.leo.dao.entity.ProjectAgentCount;
 
@@ -74,14 +73,21 @@ public interface ProjectMapper {
     /** Omitted metadata keeps its existing value; an unchanged relation does not count as a write. */
     @Insert("""
             INSERT INTO project_agents (project_id, agent_id, alias, tags, sort_order, added_by_user_id, create_time)
-            VALUES (#{projectId}, #{agentId}, #{alias}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime})
+            SELECT #{projectId}, value, #{alias}, #{tags}, 0, #{addedByUserId}, #{createTime}
+            FROM json_each(#{agentIdsJson})
+            WHERE true /* Disambiguate SQLite's ON CONFLICT from a join clause. */
             ON CONFLICT(project_id, agent_id) DO UPDATE SET
                 alias=COALESCE(excluded.alias, project_agents.alias),
                 tags=COALESCE(excluded.tags, project_agents.tags)
             WHERE (excluded.alias IS NOT NULL AND project_agents.alias IS NOT excluded.alias)
                OR (excluded.tags IS NOT NULL AND project_agents.tags IS NOT excluded.tags)
             """)
-    boolean attachAgent(ProjectAgent projectAgent);
+    int attachAgents(@Param("projectId") String projectId,
+                     @Param("agentIdsJson") String agentIdsJson,
+                     @Param("alias") String alias,
+                     @Param("tags") String tags,
+                     @Param("addedByUserId") String addedByUserId,
+                     @Param("createTime") String createTime);
 
     @Delete("""
             DELETE FROM project_agents

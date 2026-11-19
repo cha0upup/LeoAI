@@ -363,7 +363,7 @@ class ProjectListIntegrationTest {
     }
 
     @Test
-    void reattachingAnExistingHostPreservesOmittedMetadataAndCountsOnlyChanges() {
+    void attachesHostsInOneWritePreservingOmittedMetadataAndCountingOnlyChanges() {
         project("owned", "user-1", "private", "active", "Owned");
         host("existing");
         host("new");
@@ -380,9 +380,10 @@ class ProjectListIntegrationTest {
         MockHttpServletRequest request = requestAs("normal");
         var selection = new ProjectAgentsRequest(" owned ", List.of("existing", "new"), null, null);
         assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, selection).get("data"));
+        assertEquals(1, queries.sql.stream().filter(sql -> sql.startsWith("INSERT INTO project_agents")).count());
         assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, selection).get("data"));
-        var mark = new ProjectAgentsRequest("owned", List.of("existing"), " updated ", null);
-        assertEquals(new RelationMutationResponse("owned", 1), controller.attachAgents(request, mark).get("data"));
+        var mark = new ProjectAgentsRequest("owned", List.of("existing", "new"), " updated ", null);
+        assertEquals(new RelationMutationResponse("owned", 2), controller.attachAgents(request, mark).get("data"));
         assertEquals(new RelationMutationResponse("owned", 0), controller.attachAgents(request, mark).get("data"));
 
         assertEquals(Map.of("alias", "updated", "tags", "blue", "sort_order", 7),
