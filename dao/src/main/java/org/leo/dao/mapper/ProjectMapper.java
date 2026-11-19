@@ -19,8 +19,19 @@ import java.util.List;
 @Mapper
 public interface ProjectMapper {
 
-    @Select("SELECT * FROM projects ORDER BY status ASC, update_time DESC, project_name COLLATE NOCASE ASC")
-    List<Project> findAllProjects();
+    @Select("""
+            <script>
+            SELECT * FROM projects
+            <if test="!admin">
+                WHERE permission = 'public' OR owner_user_id = #{userId}
+                   OR (permission = 'team' AND team_id = #{teamId})
+            </if>
+            ORDER BY status ASC, update_time DESC, project_name COLLATE NOCASE ASC
+            </script>
+            """)
+    List<Project> findVisibleProjectCandidates(@Param("userId") String userId,
+                                                @Param("teamId") String teamId,
+                                                @Param("admin") boolean admin);
 
     @Select("SELECT * FROM projects WHERE project_id = #{projectId}")
     Project findProjectById(@Param("projectId") String projectId);

@@ -84,6 +84,23 @@ class ProjectServiceTest {
     }
 
     @Test
+    void skipsProjectLookupWithoutAUser() {
+        assertTrue(service.listVisible(null).isEmpty());
+        verifyNoInteractions(mapper);
+    }
+
+    @Test
+    void stillAppliesVisibilityRulesToCandidatesFromTheMapper() {
+        Project owned = projectWithId("owned");
+        owned.setOwnerUserId("user-1");
+        Project hidden = projectWithId("hidden");
+        hidden.setOwnerUserId("other-user");
+        when(mapper.findVisibleProjectCandidates("user-1", "team-1", false)).thenReturn(List.of(hidden, owned));
+
+        assertEquals(List.of(owned), service.listVisible(actor("normal")));
+    }
+
+    @Test
     void groupsRequestedHostCountsWithOneMapperCall() {
         List<String> projectIds = List.of("project-1", "project-2");
         String projectIdsJson = "[\"project-1\",\"project-2\"]";

@@ -283,6 +283,27 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void sqliteReturnsOnlyProjectsInTheCallersVisibilityScope() {
+        project("own", "user-1", "private", "active", "A own");
+        project("shared", "user-2", "team", "active", "B shared");
+        project("other-team", "user-2", "team", "active", "C other team");
+        jdbc.update("UPDATE projects SET team_id='team-2' WHERE project_id='other-team'");
+        project("hidden", "user-2", "private", "active", "D hidden");
+        project("public", "user-2", "public", "archived", "Public");
+        ProjectMapper mapper = sqlSession.getMapper(ProjectMapper.class);
+
+        assertEquals(List.of("own", "shared", "public"),
+                mapper.findVisibleProjectCandidates("user-1", "team-1", false).stream()
+                        .map(Project::getProjectId).toList());
+        assertEquals(List.of("own", "public"),
+                mapper.findVisibleProjectCandidates("user-1", null, false).stream()
+                        .map(Project::getProjectId).toList());
+        assertEquals(List.of("own", "shared", "other-team", "hidden", "public"),
+                mapper.findVisibleProjectCandidates("admin", null, true).stream()
+                        .map(Project::getProjectId).toList());
+    }
+
+    @Test
     void countsOnlyRequestedProjectsEvenWhenOtherProjectsHaveHosts() {
         project("visible", "user-1", "private", "active", "Visible");
         project("hidden", "user-2", "private", "active", "Hidden");

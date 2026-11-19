@@ -53,7 +53,10 @@ public class ProjectService {
     }
 
     public List<Project> listVisible(User user) {
-        List<Project> projects = projectMapper.findAllProjects();
+        if (user == null) return List.of();
+        String teamId = user.getTeamId();
+        List<Project> projects = projectMapper.findVisibleProjectCandidates(user.getUserId(),
+                teamId == null || teamId.isBlank() ? null : teamId, AccessPolicy.isAdmin(user));
         if (projects == null) return List.of();
         return projects.stream().filter(project -> canView(project, user)).toList();
     }
