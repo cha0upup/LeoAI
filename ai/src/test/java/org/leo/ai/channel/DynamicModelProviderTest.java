@@ -8,14 +8,17 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.ai.channel.AiModelCapabilityProbeService.Outcome;
 import org.leo.ai.concurrent.AiBackgroundExecutor;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelConfig;
@@ -35,7 +38,9 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -415,6 +420,67 @@ class DynamicModelProviderTest {
         var probe = probeService(configs).probeStreaming(model, Duration.ofSeconds(5));
         assertEquals(AiModelCapabilityProbeService.Outcome.INCONCLUSIVE, probe.outcome());
         assertEquals("模型服务暂时不可用，请稍后重试或切换通道", probe.message());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"before_request,0", "streaming,1", "blocking,2"})
+    void interruptedProbeSkipsRemainingRequestsAndDoesNotApplyResults(String interruptedAt, int expectedBlockingCalls) {
+        AiModelConfig config = config("http://provider.invalid/v1", "chat_completions");
+        var configs = mock(AiModelConfigService.class);
+        var provider = mock(DynamicModelProvider.class);
+        var runtime = mock(DynamicModelProvider.ModelRuntime.class);
+        var model = mock(StreamingChatModel.class);
+        var executor = mock(AiBackgroundExecutor.class);
+        var subscription = mock(Flow.Subscription.class);
+        var blockingCalls = new AtomicInteger();
+        var pendingResponse = new CompletableFuture<ChatResponse>();
+        var textResponse = ChatResponse.builder().aiMessage(AiMessage.from("OK")).build();
+        when(provider.buildProbeRuntime(config, false)).thenReturn(runtime);
+        when(runtime.streamingModel()).thenReturn(model);
+        when(executor.<ChatResponse>submitProbe(any())).thenAnswer(call -> {
+            if (blockingCalls.incrementAndGet() == 2 && interruptedAt.equals("blocking")) {
+                Thread.currentThread().interrupt();
+                return pendingResponse;
+            }
+            return CompletableFuture.completedFuture(textResponse);
+        });
+        when(model.chat(any(ChatRequest.class))).thenReturn(subscriber -> {
+            subscriber.onSubscribe(subscription);
+            if (interruptedAt.equals("streaming")) {
+                Thread.currentThread().interrupt();
+            } else {
+                subscriber.onNext(new PartialResponse("OK"));
+                subscriber.onComplete();
+            }
+        });
+        var service = new AiModelCapabilityProbeService(provider, configs, new AiErrorClassifier(), executor);
+
+        AiModelCapabilityProbeService.ProbeReport report;
+        try {
+            if (interruptedAt.equals("before_request")) Thread.currentThread().interrupt();
+            report = service.probe(config);
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertEquals(expectedBlockingCalls, blockingCalls.get());
+        verify(model, times(expectedBlockingCalls == 0 ? 0 : 1)).chat(any(ChatRequest.class));
+        verify(subscription, times(interruptedAt.equals("streaming") ? 1 : 0)).cancel();
+        assertEquals(interruptedAt.equals("blocking"), pendingResponse.isCancelled());
+        verify(provider, times(expectedBlockingCalls == 0 ? 0 : 1)).buildProbeRuntime(config, false);
+        verify(provider, never()).buildProbeRuntime(config, true);
+        verify(configs, never()).applyProbeResult(any(), anyMap());
+        assertFalse(report.applied());
+        assertNull(report.capability());
+        assertEquals(List.of("textGeneration", "streaming", "functionCalling", "structuredOutput", "reasoning"),
+                report.items().stream().map(AiModelCapabilityProbeService.ProbeItem::feature).toList());
+        var expected = switch (interruptedAt) {
+            case "before_request" -> List.of(Outcome.SKIPPED, Outcome.SKIPPED, Outcome.SKIPPED, Outcome.SKIPPED, Outcome.SKIPPED);
+            case "streaming" -> List.of(Outcome.SUPPORTED, Outcome.INCONCLUSIVE, Outcome.SKIPPED, Outcome.SKIPPED, Outcome.SKIPPED);
+            default -> List.of(Outcome.SUPPORTED, Outcome.SUPPORTED, Outcome.INCONCLUSIVE, Outcome.SKIPPED, Outcome.SKIPPED);
+        };
+        assertEquals(expected, report.items().stream().map(AiModelCapabilityProbeService.ProbeItem::outcome).toList());
     }
 
     private static void assertCustomHeaders(Headers headers) {

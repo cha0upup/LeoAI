@@ -22,7 +22,6 @@ import org.leo.core.entity.AiModelConfig;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +32,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * 跨 OpenAI-compatible / Responses 协议的无副作用能力探测。
@@ -45,6 +45,8 @@ public class AiModelCapabilityProbeService {
 
     private static final long BLOCKING_TIMEOUT_SECONDS = 35L;
     private static final Duration STREAMING_TIMEOUT = Duration.ofSeconds(35);
+    private static final String PROBE_INTERRUPTED = "探测被中断";
+    private static final String SKIPPED_AFTER_INTERRUPT = PROBE_INTERRUPTED + "，未继续探测";
     private final DynamicModelProvider dynamicModelProvider;
     private final AiModelConfigService configService;
     private final AiErrorClassifier errorClassifier;
@@ -63,40 +65,46 @@ public class AiModelCapabilityProbeService {
     public ProbeReport probe(AiModelConfig config) {
         if (config == null) throw new IllegalArgumentException("模型配置不能为空");
         long startedAt = System.currentTimeMillis();
-        List<ProbeItem> items = new ArrayList<>();
+        if (Thread.currentThread().isInterrupted()) {
+            return unappliedAfterTextProbe(config, startedAt, ProbeItem.skipped("textGeneration", SKIPPED_AFTER_INTERRUPT));
+        }
         DynamicModelProvider.ModelRuntime runtime;
         try {
             runtime = dynamicModelProvider.buildProbeRuntime(config, false);
         } catch (Exception error) {
-            items.add(failure("textGeneration", error, false));
-            items.add(ProbeItem.skipped("streaming", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("functionCalling", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("structuredOutput", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("reasoning", "基础文本调用未通过，未继续探测"));
-            return new ProbeReport(config.getId(), config.getName(), config.getModel(), startedAt,
-                    System.currentTimeMillis() - startedAt, false, null, items);
+            return unappliedAfterTextProbe(config, startedAt, failure("textGeneration", error, false));
         }
 
         ProbeItem text = probeText(runtime);
-        items.add(text);
         if (text.outcome() != Outcome.SUPPORTED) {
-            items.add(ProbeItem.skipped("streaming", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("functionCalling", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("structuredOutput", "基础文本调用未通过，未继续探测"));
-            items.add(ProbeItem.skipped("reasoning", "基础文本调用未通过，未继续探测"));
-            return new ProbeReport(config.getId(), config.getName(), config.getModel(), startedAt,
-                    System.currentTimeMillis() - startedAt, false, null, items);
+            return unappliedAfterTextProbe(config, startedAt, text);
         }
 
-        items.add(probeStreaming(runtime.streamingModel(), STREAMING_TIMEOUT));
-        items.add(probeToolCalling(runtime));
-        items.add(probeStructuredOutput(runtime));
-        items.add(probeReasoning(config));
+        List<ProbeItem> items = List.of(text,
+                probeUnlessInterrupted("streaming", () -> probeStreaming(runtime.streamingModel(), STREAMING_TIMEOUT)),
+                probeUnlessInterrupted("functionCalling", () -> probeToolCalling(runtime)),
+                probeUnlessInterrupted("structuredOutput", () -> probeStructuredOutput(runtime)),
+                probeUnlessInterrupted("reasoning", () -> probeReasoning(config)));
 
-        Map<String, Boolean> verifiedFeatures = verifiedFeatures(items);
-        AiModelCapability capability = configService.applyProbeResult(config, verifiedFeatures);
+        boolean applied = !Thread.currentThread().isInterrupted();
+        AiModelCapability capability = applied ? configService.applyProbeResult(config, verifiedFeatures(items)) : null;
         return new ProbeReport(config.getId(), config.getName(), config.getModel(), startedAt,
-                System.currentTimeMillis() - startedAt, true, capability, items);
+                System.currentTimeMillis() - startedAt, applied, capability, items);
+    }
+
+    private static ProbeReport unappliedAfterTextProbe(AiModelConfig config, long startedAt, ProbeItem text) {
+        String skipReason = Thread.currentThread().isInterrupted()
+                ? SKIPPED_AFTER_INTERRUPT : "基础文本调用未通过，未继续探测";
+        return new ProbeReport(config.getId(), config.getName(), config.getModel(), startedAt,
+                System.currentTimeMillis() - startedAt, false, null, List.of(text,
+                ProbeItem.skipped("streaming", skipReason),
+                ProbeItem.skipped("functionCalling", skipReason),
+                ProbeItem.skipped("structuredOutput", skipReason),
+                ProbeItem.skipped("reasoning", skipReason)));
+    }
+
+    private static ProbeItem probeUnlessInterrupted(String feature, Supplier<ProbeItem> probe) {
+        return Thread.currentThread().isInterrupted() ? ProbeItem.skipped(feature, SKIPPED_AFTER_INTERRUPT) : probe.get();
     }
 
     private ProbeItem probeText(DynamicModelProvider.ModelRuntime runtime) {
@@ -151,7 +159,7 @@ public class AiModelCapabilityProbeService {
                     System.currentTimeMillis() - startedAt);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            return ProbeItem.inconclusive("streaming", "探测被中断", System.currentTimeMillis() - startedAt);
+            return ProbeItem.inconclusive("streaming", PROBE_INTERRUPTED, System.currentTimeMillis() - startedAt);
         } catch (ExecutionException error) {
             return failure("streaming", error.getCause(), true, startedAt);
         } catch (Exception error) {
@@ -178,7 +186,7 @@ public class AiModelCapabilityProbeService {
         // 但能在 AUTO 模式下正常返回工具调用；因此不能只用 REQUIRED 作为唯一判据。
         ProbeItem auto = requestToolCall(runtime, tool, ToolChoice.AUTO,
                 "请调用 capability_probe 工具，并把 value 参数固定设置为 probe。不要输出普通文本。", "AUTO");
-        if (auto.outcome() == Outcome.SUPPORTED) return auto;
+        if (auto.outcome() == Outcome.SUPPORTED || Thread.currentThread().isInterrupted()) return auto;
 
         ProbeItem required = requestToolCall(runtime, tool, ToolChoice.REQUIRED,
                 "必须调用 capability_probe 工具，并把 value 参数固定设置为 probe。不要输出普通文本。", "REQUIRED");
@@ -257,12 +265,15 @@ public class AiModelCapabilityProbeService {
         try {
             ChatResponse response = callBlocking(runtime, request);
             return judge.judge(response).withLatency(System.currentTimeMillis() - startedAt);
+        } catch (InterruptedException error) {
+            return ProbeItem.inconclusive(feature, PROBE_INTERRUPTED, System.currentTimeMillis() - startedAt);
         } catch (Exception error) {
             return failure(feature, error, unsupportedIsConclusive, startedAt);
         }
     }
 
     private ChatResponse callBlocking(DynamicModelProvider.ModelRuntime runtime, ChatRequest request) throws Exception {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException(PROBE_INTERRUPTED);
         Future<ChatResponse> future = backgroundExecutor.submitProbe(
                 () -> runtime.chatModel().chat(request));
         try {
