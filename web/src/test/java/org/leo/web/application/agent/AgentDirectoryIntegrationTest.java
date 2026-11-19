@@ -8,6 +8,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.AgentMapper;
 import org.leo.dao.mapper.ProjectMapper;
@@ -119,17 +121,18 @@ class AgentDirectoryIntegrationTest {
         assertFalse(leaves.get(0).hasChildren());
     }
 
-    @Test
-    void preservesProjectAndUnassignedWorkspaceBoundaries() {
-        List<AgentDirectoryEntry> assigned = entries(projects.listRootAgents(request, "project"));
+    @ParameterizedTest
+    @ValueSource(strings = {"project", " project "})
+    void preservesProjectAndUnassignedWorkspaceBoundaries(String projectId) {
+        List<AgentDirectoryEntry> assigned = entries(projects.listRootAgents(request, projectId));
         assertEquals(List.of("parent"), ids(assigned));
         assertTrue(assigned.get(0).hasChildren());
         List<AgentDirectoryEntry> unassigned = entries(projects.listUnassignedAgents(request));
         assertEquals(List.of("leaf"), ids(unassigned));
         assertFalse(unassigned.get(0).hasChildren());
         assertEquals(List.of("child"), ids(entries(projects.listChildren(
-                request, "project", new ProjectChildrenRequest("parent")))));
-        assertTrue(entries(projects.listChildren(request, "project", new ProjectChildrenRequest("leaf"))).isEmpty());
+                request, projectId, new ProjectChildrenRequest("parent")))));
+        assertTrue(entries(projects.listChildren(request, projectId, new ProjectChildrenRequest("leaf"))).isEmpty());
     }
 
     @Test

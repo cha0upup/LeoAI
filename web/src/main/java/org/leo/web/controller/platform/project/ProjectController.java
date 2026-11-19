@@ -132,8 +132,8 @@ public class ProjectController {
     public Map<String, Object> listRootAgents(HttpServletRequest request,
                                                @PathVariable String projectId) {
         User user = permissionService.requireLogin(request);
-        requireVisible(projectId, user);
-        return ApiResponse.success(filterAccessible(projectService.listRootAgents(projectId), user));
+        Project project = requireVisible(projectId, user);
+        return ApiResponse.success(filterAccessible(projectService.listRootAgents(project.getProjectId()), user));
     }
 
     @GetMapping("/unassigned/agents")
@@ -147,11 +147,11 @@ public class ProjectController {
                                             @PathVariable String projectId,
                                             @RequestBody ProjectChildrenRequest body) {
         User user = permissionService.requireLogin(request);
-        requireVisible(projectId, user);
+        Project project = requireVisible(projectId, user);
         String parentId = PermissionService.requireText(
                 body != null ? body.parentAgentId() : null, "parentAgentId不能为空");
         return ApiResponse.success(filterAccessible(
-                projectService.listAgentsByParent(projectId, parentId), user));
+                projectService.listAgentsByParent(project.getProjectId(), parentId), user));
     }
 
     @PostMapping("/hosts/attach")
