@@ -41,9 +41,10 @@ public class AiModelDiscoveryService {
             for (var entry : headers.entrySet()) connection.setRequestProperty(entry.getKey(), entry.getValue());
             int status = connection.getResponseCode();
             if (status != 200) throw new IllegalArgumentException("服务商返回 HTTP " + status + "，请检查地址和认证配置");
+            requireWithinResponseLimit(connection.getContentLengthLong());
             try (InputStream stream = connection.getInputStream()) {
                 byte[] response = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
-                if (response.length > MAX_RESPONSE_BYTES) throw new IllegalArgumentException("模型列表响应超过 2 MiB");
+                requireWithinResponseLimit(response.length);
                 return parse(new String(response, StandardCharsets.UTF_8));
             }
         } catch (IllegalArgumentException error) {
@@ -53,6 +54,10 @@ public class AiModelDiscoveryService {
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    private static void requireWithinResponseLimit(long bytes) {
+        if (bytes > MAX_RESPONSE_BYTES) throw new IllegalArgumentException("模型列表响应超过 2 MiB");
     }
 
     private static List<String> parse(String json) {

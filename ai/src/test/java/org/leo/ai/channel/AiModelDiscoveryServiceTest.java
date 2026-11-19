@@ -9,6 +9,9 @@ import org.leo.core.entity.AiProvider;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -49,6 +52,53 @@ class AiModelDiscoveryServiceTest {
             AiProvider provider = provider(server);
             assertEquals(List.of("a", "z"), new AiModelDiscoveryService().fetch(provider));
             assertEquals("test-secret", auth.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsDeclaredOversizedListWithoutWaitingForTheBody() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        CountDownLatch headersSent = new CountDownLatch(1);
+        CountDownLatch releaseBody = new CountDownLatch(1);
+        server.createContext("/gateway/v2/models", exchange -> {
+            try (exchange) {
+                exchange.sendResponseHeaders(200, 2L * 1024 * 1024 + 1);
+                headersSent.countDown();
+                releaseBody.await();
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        var caller = Executors.newSingleThreadExecutor();
+        server.start();
+        try {
+            var fetch = caller.submit(() -> assertThrows(IllegalArgumentException.class,
+                    () -> new AiModelDiscoveryService().fetch(provider(server))));
+            assertTrue(headersSent.await(5, TimeUnit.SECONDS));
+            assertEquals("模型列表响应超过 2 MiB", fetch.get(2, TimeUnit.SECONDS).getMessage());
+        } finally {
+            releaseBody.countDown();
+            server.stop(0);
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    void stillRejectsOversizedChunkedListsWithoutContentLength() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/gateway/v2/models", exchange -> {
+            try (exchange) {
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().write(new byte[2 * 1024 * 1024 + 1]);
+            }
+        });
+        server.start();
+        try {
+            var error = assertThrows(IllegalArgumentException.class,
+                    () -> new AiModelDiscoveryService().fetch(provider(server)));
+            assertEquals("模型列表响应超过 2 MiB", error.getMessage());
         } finally {
             server.stop(0);
         }
