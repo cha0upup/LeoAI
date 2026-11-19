@@ -130,6 +130,45 @@ class AuditLogControllerTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"user, userId, user-a", "agent, agentId, agent-a"})
+    void userAndAgentStatisticsUseOneQueryAndKeepTheirResponse(String subject, String idField, String id,
+                                                               @TempDir Path temp) throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
+        var jdbc = new JdbcTemplate(source);
+        jdbc.update("""
+                INSERT INTO audit_logs (log_id, user_id, agent_id, operation_type, operation_name, create_time)
+                VALUES ('old', 'user-a', 'agent-a', 'TEST', 'Test', '2000-01-02 03:04:05'),
+                       ('recent', 'user-a', 'agent-a', 'TEST', 'Test', datetime('now', '-1 day')),
+                       ('other', 'user-b', 'agent-b', 'TEST', 'Test', CURRENT_TIMESTAMP)
+                """);
+        String latest = jdbc.queryForObject("SELECT create_time FROM audit_logs WHERE log_id='recent'", String.class);
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(AuditLogMapper.class);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+            var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
+            MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
+                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
+            String path = "/platform/admin/audit-logs/statistics/" + subject;
+
+            var populated = storedMvc.perform(get(path).param(idField, " " + id + " "))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data." + idField).value(id))
+                    .andExpect(jsonPath("$.data.totalOperations").value(2))
+                    .andExpect(jsonPath("$.data.recentOperations").value(1))
+                    .andExpect(jsonPath("$.data.lastOperation").value(latest));
+            if ("agent".equals(subject)) populated.andExpect(jsonPath("$.data.hostId").value(id));
+            assertEquals(1, mockingDetails(mapper).getInvocations().size());
+            storedMvc.perform(get(path).param(idField, "missing"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalOperations").value(0))
+                    .andExpect(jsonPath("$.data.recentOperations").value(0))
+                    .andExpect(jsonPath("$.data.lastOperation").hasJsonPath())
+                    .andExpect(jsonPath("$.data.lastOperation").isEmpty());
+            assertEquals(2, mockingDetails(mapper).getInvocations().size());
+        }
+    }
+
     private static void insertAudit(AuditLogService service, String userId, String timestamp) {
         AuditLog row = new AuditLog();
         row.setUserId(userId);

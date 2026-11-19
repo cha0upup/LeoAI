@@ -66,6 +66,13 @@ public interface AuditLogMapper {
             </where>
             """;
 
+    String AUDIT_STATISTICS_SELECT = """
+            SELECT COUNT(*) AS total_operations,
+                   COUNT(CASE WHEN create_time >= datetime('now', '-' || #{days} || ' days') THEN 1 END) AS recent_operations,
+                   CAST(MAX(create_time) AS TEXT) AS last_operation
+            FROM audit_logs
+            """;
+
     @Insert("""
             INSERT INTO audit_logs (
                 log_id, user_id, user_name, actor_team_id, agent_id,
@@ -108,14 +115,8 @@ public interface AuditLogMapper {
     })
     Integer countAuditLogs(@Param("query") AuditLogQuery query);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE user_id = #{userId}")
-    Integer countAuditLogsByUserId(@Param("userId") String userId);
-
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE user_id = #{userId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
-    Integer countRecentAuditLogsByUserId(@Param("userId") String userId, @Param("days") Integer days);
-
-    @Select("SELECT * FROM audit_logs WHERE user_id = #{userId} ORDER BY create_time DESC LIMIT 1")
-    AuditLog findLatestAuditLogByUserId(@Param("userId") String userId);
+    @Select(AUDIT_STATISTICS_SELECT + "WHERE user_id = #{userId}")
+    Map<String, Object> summarizeUserAuditLogs(@Param("userId") String userId, @Param("days") int days);
 
     @Select("SELECT * FROM audit_logs WHERE session_id = #{sessionId} ORDER BY create_time ASC LIMIT #{limit} OFFSET #{offset}")
     List<AuditLog> findAuditLogsBySessionId(@Param("sessionId") String sessionId, @Param("limit") Integer limit, @Param("offset") Integer offset);
@@ -123,21 +124,10 @@ public interface AuditLogMapper {
     @Select("SELECT COUNT(*) FROM audit_logs WHERE session_id = #{sessionId}")
     Integer countAuditLogsBySessionId(@Param("sessionId") String sessionId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE agent_id = #{agentId}")
-    Integer countAuditLogsByAgentId(@Param("agentId") String agentId);
+    @Select(AUDIT_STATISTICS_SELECT + "WHERE agent_id = #{agentId}")
+    Map<String, Object> summarizeAgentAuditLogs(@Param("agentId") String agentId, @Param("days") int days);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE agent_id = #{agentId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
-    Integer countRecentAuditLogsByAgentId(@Param("agentId") String agentId, @Param("days") Integer days);
-
-    @Select("SELECT * FROM audit_logs WHERE agent_id = #{agentId} ORDER BY create_time DESC LIMIT 1")
-    AuditLog findLatestAuditLogByAgentId(@Param("agentId") String agentId);
-
-    @Select("""
-            SELECT COUNT(*) AS total_operations,
-                   COUNT(CASE WHEN create_time >= datetime('now', '-' || #{days} || ' days') THEN 1 END) AS recent_operations,
-                   CAST(MAX(create_time) AS TEXT) AS last_operation
-            FROM audit_logs WHERE actor_team_id = #{teamId}
-            """)
+    @Select(AUDIT_STATISTICS_SELECT + "WHERE actor_team_id = #{teamId}")
     Map<String, Object> summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("days") int days);
 
     @Select("SELECT COUNT(*) FROM audit_logs")

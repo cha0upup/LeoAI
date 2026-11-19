@@ -109,39 +109,15 @@ public class AuditLogService {
         return defaultCount(auditLogMapper.countAuditLogs(normalizeQuery(query)));
     }
 
-    /**
-     * 统计用户的操作日志数量
-     */
-    public Integer countAuditLogsByUserId(String userId) {
-        if (!hasText(userId)) {
-            return 0;
-        }
-        return defaultCount(auditLogMapper.countAuditLogsByUserId(userId));
-    }
-
     public Map<String, Object> getUserStatistics(String userId) {
         if (!hasText(userId)) {
             return new HashMap<>();
         }
         String normalizedUserId = userId.trim();
-        AuditLog latest = auditLogMapper.findLatestAuditLogByUserId(normalizedUserId);
-
-        Map<String, Object> statistics = new HashMap<>();
+        Map<String, Object> statistics = toStatisticsResponse(
+                auditLogMapper.summarizeUserAuditLogs(normalizedUserId, RECENT_DAYS));
         statistics.put("userId", normalizedUserId);
-        statistics.put("totalOperations", countAuditLogsByUserId(normalizedUserId));
-        statistics.put("recentOperations", defaultCount(auditLogMapper.countRecentAuditLogsByUserId(normalizedUserId, RECENT_DAYS)));
-        statistics.put("lastOperation", latest != null ? latest.getCreateTime() : null);
         return statistics;
-    }
-
-    /**
-     * 统计主机的操作日志数量
-     */
-    public Integer countAuditLogsByAgentId(String agentId) {
-        if (!hasText(agentId)) {
-            return 0;
-        }
-        return defaultCount(auditLogMapper.countAuditLogsByAgentId(agentId));
     }
 
     public Map<String, Object> getAgentStatistics(String agentId) {
@@ -149,14 +125,10 @@ public class AuditLogService {
             return new HashMap<>();
         }
         String normalizedAgentId = agentId.trim();
-        AuditLog latest = auditLogMapper.findLatestAuditLogByAgentId(normalizedAgentId);
-
-        Map<String, Object> statistics = new HashMap<>();
+        Map<String, Object> statistics = toStatisticsResponse(
+                auditLogMapper.summarizeAgentAuditLogs(normalizedAgentId, RECENT_DAYS));
         statistics.put("hostId", normalizedAgentId);
         statistics.put("agentId", normalizedAgentId);
-        statistics.put("totalOperations", countAuditLogsByAgentId(normalizedAgentId));
-        statistics.put("recentOperations", defaultCount(auditLogMapper.countRecentAuditLogsByAgentId(normalizedAgentId, RECENT_DAYS)));
-        statistics.put("lastOperation", latest != null ? latest.getCreateTime() : null);
         return statistics;
     }
 
@@ -165,10 +137,14 @@ public class AuditLogService {
             return new HashMap<>();
         }
         String normalizedTeamId = teamId.trim();
-        Map<String, Object> summary = auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, RECENT_DAYS);
-
-        Map<String, Object> statistics = new HashMap<>();
+        Map<String, Object> statistics = toStatisticsResponse(
+                auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, RECENT_DAYS));
         statistics.put("teamId", normalizedTeamId);
+        return statistics;
+    }
+
+    private Map<String, Object> toStatisticsResponse(Map<String, Object> summary) {
+        Map<String, Object> statistics = new HashMap<>();
         statistics.put("totalOperations", toInt(summary.get("total_operations")));
         statistics.put("recentOperations", toInt(summary.get("recent_operations")));
         statistics.put("lastOperation", summary.get("last_operation"));
