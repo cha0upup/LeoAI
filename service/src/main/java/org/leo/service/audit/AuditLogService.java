@@ -165,13 +165,13 @@ public class AuditLogService {
             return new HashMap<>();
         }
         String normalizedTeamId = teamId.trim();
-        AuditLog latest = auditLogMapper.findLatestAuditLogByTeamId(normalizedTeamId);
+        Map<String, Object> summary = auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, RECENT_DAYS);
 
         Map<String, Object> statistics = new HashMap<>();
         statistics.put("teamId", normalizedTeamId);
-        statistics.put("totalOperations", defaultCount(auditLogMapper.countAuditLogsByTeamId(normalizedTeamId)));
-        statistics.put("recentOperations", defaultCount(auditLogMapper.countRecentAuditLogsByTeamId(normalizedTeamId, RECENT_DAYS)));
-        statistics.put("lastOperation", latest != null ? latest.getCreateTime() : null);
+        statistics.put("totalOperations", toInt(summary.get("total_operations")));
+        statistics.put("recentOperations", toInt(summary.get("recent_operations")));
+        statistics.put("lastOperation", summary.get("last_operation"));
         return statistics;
     }
 

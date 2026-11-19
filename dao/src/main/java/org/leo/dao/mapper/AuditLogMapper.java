@@ -132,14 +132,13 @@ public interface AuditLogMapper {
     @Select("SELECT * FROM audit_logs WHERE agent_id = #{agentId} ORDER BY create_time DESC LIMIT 1")
     AuditLog findLatestAuditLogByAgentId(@Param("agentId") String agentId);
 
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE actor_team_id = #{teamId}")
-    Integer countAuditLogsByTeamId(@Param("teamId") String teamId);
-
-    @Select("SELECT COUNT(*) FROM audit_logs WHERE actor_team_id = #{teamId} AND create_time >= datetime('now', '-' || #{days} || ' days')")
-    Integer countRecentAuditLogsByTeamId(@Param("teamId") String teamId, @Param("days") Integer days);
-
-    @Select("SELECT * FROM audit_logs WHERE actor_team_id = #{teamId} ORDER BY create_time DESC LIMIT 1")
-    AuditLog findLatestAuditLogByTeamId(@Param("teamId") String teamId);
+    @Select("""
+            SELECT COUNT(*) AS total_operations,
+                   COUNT(CASE WHEN create_time >= datetime('now', '-' || #{days} || ' days') THEN 1 END) AS recent_operations,
+                   CAST(MAX(create_time) AS TEXT) AS last_operation
+            FROM audit_logs WHERE actor_team_id = #{teamId}
+            """)
+    Map<String, Object> summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("days") int days);
 
     @Select("SELECT COUNT(*) FROM audit_logs")
     Integer countAllAuditLogs();

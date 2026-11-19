@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -89,11 +90,13 @@ class AuditLogControllerTest {
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(AuditLogMapper.class);
         try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
-            var stored = new AuditLogService(session.getMapper(AuditLogMapper.class));
+            var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
+            var stored = new AuditLogService(mapper);
             String older = "2000-01-02 03:04:05";
             String now = jdbc.queryForObject("SELECT datetime('now')", String.class);
             insertAudit(stored, "member", older);
             jdbc.update("UPDATE users SET team_id='team-b' WHERE user_id='member'");
+            insertAudit(stored, "member", older);
             insertAudit(stored, "member", now);
             jdbc.update("DELETE FROM users WHERE user_id='member'");
             insertAudit(stored, "member", now);
@@ -104,16 +107,24 @@ class AuditLogControllerTest {
 
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
                     new AuditLogController(stored, mock(AuditPolicyService.class), permissions)).build();
+            clearInvocations(mapper);
             storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-a"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.totalOperations").value(1))
                     .andExpect(jsonPath("$.data.recentOperations").value(0))
                     .andExpect(jsonPath("$.data.lastOperation").value(older));
+            assertEquals(1, mockingDetails(mapper).getInvocations().size());
             storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-b"))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.totalOperations").value(1))
+                    .andExpect(jsonPath("$.data.totalOperations").value(2))
                     .andExpect(jsonPath("$.data.recentOperations").value(1))
                     .andExpect(jsonPath("$.data.lastOperation").value(now));
+            storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-empty"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalOperations").value(0))
+                    .andExpect(jsonPath("$.data.recentOperations").value(0))
+                    .andExpect(jsonPath("$.data.lastOperation").hasJsonPath())
+                    .andExpect(jsonPath("$.data.lastOperation").isEmpty());
             assertEquals(1, jdbc.queryForObject(
                     "SELECT COUNT(*) FROM audit_logs WHERE actor_team_id IS NULL", Integer.class));
         }
