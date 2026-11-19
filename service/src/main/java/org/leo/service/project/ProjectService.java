@@ -5,6 +5,7 @@ import org.leo.core.entity.ProjectAgent;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.entity.ProjectAgentCount;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
@@ -207,9 +208,10 @@ public class ProjectService {
         return false;
     }
 
-    public Map<String, Integer> countAgentsByProject() {
+    public Map<String, Integer> countAgentsByProject(Collection<String> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) return Map.of();
         Map<String, Integer> counts = new HashMap<>();
-        for (ProjectAgentCount count : projectMapper.countAgentsByProject()) {
+        for (ProjectAgentCount count : projectMapper.countAgentsByProject(JsonUtil.toJsonString(projectIds))) {
             counts.put(count.projectId(), count.agentCount());
         }
         return counts;

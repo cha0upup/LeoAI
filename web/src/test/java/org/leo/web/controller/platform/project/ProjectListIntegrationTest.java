@@ -283,6 +283,18 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void countsOnlyRequestedProjectsEvenWhenOtherProjectsHaveHosts() {
+        project("visible", "user-1", "private", "active", "Visible");
+        project("hidden", "user-2", "private", "active", "Hidden");
+        host("shared");
+        attach("visible", "shared");
+        attach("hidden", "shared");
+
+        assertEquals(Map.of("visible", 1), projectService.countAgentsByProject(List.of("visible")));
+        assertEquals(1, queries.sql.size());
+    }
+
+    @Test
     void adminCountsEveryAssignedSessionAndSeesPrivateProjects() throws Exception {
         project("hidden", "user-2", "private", "active", "Hidden");
         session("first", "hidden", "user-2");

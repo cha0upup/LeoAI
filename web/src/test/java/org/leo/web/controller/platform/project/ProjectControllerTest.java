@@ -20,6 +20,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -73,8 +74,9 @@ class ProjectControllerTest {
         user.setUserId("user-1");
         Project first = project("project-2");
         Project second = project("project-1");
+        List<String> visibleProjectIds = List.of("project-2", "project-1");
         when(projectService.listVisible(user)).thenReturn(List.of(first, second));
-        when(projectService.countAgentsByProject()).thenReturn(Map.of("project-1", 3));
+        when(projectService.countAgentsByProject(visibleProjectIds)).thenReturn(Map.of("project-1", 3));
         when(sessionLifecycle.countByProject(user)).thenReturn(Map.of("project-1", 2));
         when(projectService.canManage(first, user)).thenReturn(true);
         when(projectService.canEditContent(first, user)).thenReturn(true);
@@ -84,7 +86,7 @@ class ProjectControllerTest {
         assertEquals(List.of(
                 new ProjectSummary(first, 0, 0, true, true),
                 new ProjectSummary(second, 3, 2, false, false)), result);
-        verify(projectService).countAgentsByProject();
+        verify(projectService).countAgentsByProject(visibleProjectIds);
         verify(sessionLifecycle).countByProject(user);
     }
 
@@ -93,7 +95,7 @@ class ProjectControllerTest {
         when(projectService.listVisible(user)).thenReturn(List.of());
 
         assertEquals(List.of(), controller.listProjects(request).get("data"));
-        verify(projectService, never()).countAgentsByProject();
+        verify(projectService, never()).countAgentsByProject(anyList());
         verifyNoInteractions(sessionLifecycle);
     }
 

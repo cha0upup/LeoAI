@@ -76,12 +76,17 @@ public interface ProjectMapper {
     boolean detachAgent(@Param("projectId") String projectId,
                          @Param("agentId") String agentId);
 
-    @Select("SELECT project_id, COUNT(*) AS agent_count FROM project_agents GROUP BY project_id")
+    @Select("""
+            SELECT project_id, COUNT(*) AS agent_count
+            FROM project_agents
+            WHERE project_id IN (SELECT value FROM json_each(#{projectIdsJson}))
+            GROUP BY project_id
+            """)
     @ConstructorArgs({
             @Arg(column = "project_id", javaType = String.class),
             @Arg(column = "agent_count", javaType = int.class)
     })
-    List<ProjectAgentCount> countAgentsByProject();
+    List<ProjectAgentCount> countAgentsByProject(@Param("projectIdsJson") String projectIdsJson);
 
     @Select("SELECT COUNT(*) FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
     int containsAgent(@Param("projectId") String projectId,

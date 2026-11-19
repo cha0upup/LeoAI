@@ -53,7 +53,8 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         List<Project> visibleProjects = projectService.listVisible(user);
         if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
-        Map<String, Integer> hostCounts = projectService.countAgentsByProject();
+        List<String> visibleProjectIds = visibleProjects.stream().map(Project::getProjectId).toList();
+        Map<String, Integer> hostCounts = projectService.countAgentsByProject(visibleProjectIds);
         Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user);
         List<ProjectSummary> projects = visibleProjects.stream()
                 .map(project -> new ProjectSummary(

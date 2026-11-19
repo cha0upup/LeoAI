@@ -84,20 +84,28 @@ class ProjectServiceTest {
     }
 
     @Test
-    void groupsAllHostCountsWithOneMapperCall() {
-        when(mapper.countAgentsByProject()).thenReturn(List.of(
+    void groupsRequestedHostCountsWithOneMapperCall() {
+        List<String> projectIds = List.of("project-1", "project-2");
+        String projectIdsJson = "[\"project-1\",\"project-2\"]";
+        when(mapper.countAgentsByProject(projectIdsJson)).thenReturn(List.of(
                 new ProjectAgentCount("project-1", 3),
                 new ProjectAgentCount("project-2", 1)));
 
-        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countAgentsByProject());
-        verify(mapper).countAgentsByProject();
+        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countAgentsByProject(projectIds));
+        verify(mapper).countAgentsByProject(projectIdsJson);
     }
 
     @Test
     void returnsEmptyCountsWhenNoHostRelationsExist() {
-        when(mapper.countAgentsByProject()).thenReturn(List.of());
+        when(mapper.countAgentsByProject("[\"project-1\"]")).thenReturn(List.of());
 
-        assertTrue(service.countAgentsByProject().isEmpty());
+        assertTrue(service.countAgentsByProject(List.of("project-1")).isEmpty());
+    }
+
+    @Test
+    void skipsHostAggregationWhenNoProjectsAreRequested() {
+        assertTrue(service.countAgentsByProject(List.of()).isEmpty());
+        verifyNoInteractions(mapper);
     }
 
     @Test
