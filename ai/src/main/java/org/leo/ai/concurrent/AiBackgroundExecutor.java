@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /** Bounded execution domains for best-effort warmup and model capability probes. */
@@ -38,7 +39,14 @@ public final class AiBackgroundExecutor implements AutoCloseable {
     }
 
     public <T> Future<T> submitProbe(Callable<T> task) {
-        return probeExecutor.submit(task);
+        FutureTask<T> future = new FutureTask<>(task) {
+            @Override
+            protected void done() {
+                if (isCancelled()) probeExecutor.remove(this);
+            }
+        };
+        probeExecutor.execute(future);
+        return future;
     }
 
     @Override

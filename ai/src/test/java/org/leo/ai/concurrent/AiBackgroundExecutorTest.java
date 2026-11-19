@@ -56,6 +56,27 @@ class AiBackgroundExecutorTest {
     }
 
     @Test
+    void cancelledQueuedProbeImmediatelyFreesCapacity() throws Exception {
+        try (AiBackgroundExecutor executor = new AiBackgroundExecutor(1, 1, 1, 1)) {
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            Future<Boolean> running = executor.submitProbe(() -> {
+                await(started, release);
+                return true;
+            });
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            Future<Boolean> queued = executor.submitProbe(() -> true);
+
+            assertTrue(queued.cancel(true));
+            Future<Boolean> replacement = executor.submitProbe(() -> true);
+
+            release.countDown();
+            assertTrue(running.get(5, TimeUnit.SECONDS));
+            assertTrue(replacement.get(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void closeCancelsQueuedWarmupAndProbeWork() throws Exception {
         AiBackgroundExecutor executor = new AiBackgroundExecutor(1, 1, 1, 1);
         try {
