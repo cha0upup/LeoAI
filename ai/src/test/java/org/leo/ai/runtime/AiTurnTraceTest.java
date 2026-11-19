@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,9 +23,8 @@ class AiTurnTraceTest {
 
     @Test
     void bindsPersistenceIdentityAndBuildsOrderedPhaseDurations() {
-        AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "platform", "thread-1",
-                System.currentTimeMillis());
+        long startedAt = System.currentTimeMillis();
+        AiTurnTrace trace = AiTurnTrace.start("platform", "thread-1", startedAt);
 
         trace.checkpoint(AiTurnTrace.Checkpoint.TRANSPORT_READY);
         trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
@@ -34,7 +34,9 @@ class AiTurnTraceTest {
         trace.finish(AiTurnOutcome.COMPLETED, null, null);
 
         Map<String, Object> snapshot = trace.snapshot();
-        assertEquals("trace-1", snapshot.get("traceId"));
+        assertEquals(UUID.fromString(trace.traceId()).toString(), snapshot.get("traceId"));
+        assertEquals("platform", snapshot.get("source"));
+        assertEquals(startedAt, snapshot.get("startedAt"));
         assertEquals("turn-1", snapshot.get("turnId"));
         assertEquals("run-1", snapshot.get("runId"));
         assertEquals("completed", snapshot.get("outcome"));
@@ -52,8 +54,7 @@ class AiTurnTraceTest {
         Locale previous = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag(languageTag));
-            AiTurnTrace trace = AiTurnTrace.testTrace(
-                    "trace-1", "agent", "thread-1", System.currentTimeMillis());
+            AiTurnTrace trace = AiTurnTrace.start("agent", "thread-1", System.currentTimeMillis());
             trace.finish(outcome, "tool_calling", "tool calls unsupported");
             AiTurnTelemetryRegistry registry = new AiTurnTelemetryRegistry();
 
@@ -76,9 +77,7 @@ class AiTurnTraceTest {
 
     @Test
     void persistsModelUsageAndAggregatedToolProtectionMetrics() {
-        AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-2", "platform", "thread-2",
-                System.currentTimeMillis());
+        AiTurnTrace trace = AiTurnTrace.start("platform", "thread-2", System.currentTimeMillis());
         trace.recordModelResponse(ChatResponse.builder()
                 .id("response-2")
                 .aiMessage(AiMessage.from("done"))

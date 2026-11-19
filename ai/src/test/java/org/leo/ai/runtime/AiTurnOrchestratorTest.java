@@ -235,9 +235,7 @@ class AiTurnOrchestratorTest {
 
     private AiTurnTrace boundTrace(
             PersistedTurn persistedTurn) {
-        AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "test", persistedTurn.threadId(),
-                persistedTurn.startedAt());
+        AiTurnTrace trace = AiTurnTrace.start("test", persistedTurn.threadId(), persistedTurn.startedAt());
         trace.bind(persistedTurn.turnId(), persistedTurn.runId());
         return trace;
     }

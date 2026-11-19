@@ -237,8 +237,7 @@ class AiTurnTransactionTest {
                         "persistence", "AI 回复提交失败", "commit unavailable", List.of()));
         AiTurnTransaction transaction = new AiTurnTransaction(
                 terminal, failover, classifier, new AiTurnArtifacts(), memory);
-        AiTurnTrace trace = AiTurnTrace.testTrace(
-                "trace-1", "test", persistedTurn.threadId(), persistedTurn.startedAt());
+        AiTurnTrace trace = AiTurnTrace.start("test", persistedTurn.threadId(), persistedTurn.startedAt());
         trace.bind(persistedTurn.turnId(), persistedTurn.runId());
         return transaction.open(new AiTurnTransaction.Context(
                 persistedTurn, 7, agent, "session:thread-1",

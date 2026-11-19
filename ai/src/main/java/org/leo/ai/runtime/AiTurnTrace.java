@@ -35,9 +35,8 @@ public final class AiTurnTrace {
     private String errorCategory;
     private String errorMessage;
 
-    private AiTurnTrace(String traceId, String source,
-                        String conversationId, long startedAt) {
-        this.traceId = requireText(traceId, "traceId");
+    private AiTurnTrace(String source, String conversationId, long startedAt) {
+        this.traceId = UUID.randomUUID().toString();
         this.source = requireText(source, "source");
         this.conversationId = requireText(conversationId, "conversationId");
         this.startedAt = startedAt > 0 ? startedAt : System.currentTimeMillis();
@@ -46,13 +45,7 @@ public final class AiTurnTrace {
 
     public static AiTurnTrace start(String source, String conversationId,
                                     long startedAt) {
-        return new AiTurnTrace(
-                UUID.randomUUID().toString(), source, conversationId, startedAt);
-    }
-
-    static AiTurnTrace testTrace(String traceId, String source,
-                                 String conversationId, long startedAt) {
-        return new AiTurnTrace(traceId, source, conversationId, startedAt);
+        return new AiTurnTrace(source, conversationId, startedAt);
     }
 
     public synchronized void bind(String turnId, String runId) {
@@ -129,20 +122,8 @@ public final class AiTurnTrace {
         return traceId;
     }
 
-    public String source() {
-        return source;
-    }
-
     public String conversationId() {
         return conversationId;
-    }
-
-    public long startedAt() {
-        return startedAt;
-    }
-
-    public synchronized String turnId() {
-        return turnId;
     }
 
     public synchronized String runId() {
