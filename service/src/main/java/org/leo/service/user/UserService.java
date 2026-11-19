@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.IntStream;
 
 /**
  * 用户管理服务。
@@ -28,6 +29,12 @@ public class UserService {
     public static final String PRIVILEGE_NORMAL = "normal";
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    // Match String.isBlank() rather than SQLite's default, space-only trim.
+    private static final String TEAM_ID_WHITESPACE = IntStream.rangeClosed(Character.MIN_CODE_POINT, Character.MAX_CODE_POINT)
+            .filter(Character::isWhitespace)
+            .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+            .toString();
 
     private final UserMapper userMapper;
 
@@ -63,9 +70,8 @@ public class UserService {
     }
 
     public List<User> getUsersWithoutTeam() {
-        return getAllUsers().stream().filter(Objects::nonNull)
-                .filter(user -> user.getTeamId() == null || user.getTeamId().isBlank())
-                .toList();
+        List<User> users = userMapper.findUsersWithoutTeam(TEAM_ID_WHITESPACE);
+        return users == null ? List.of() : users.stream().filter(Objects::nonNull).map(this::normalize).toList();
     }
 
     // ── 写操作（不含权限校验，由调用方负责） ────────────────────────────────────

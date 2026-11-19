@@ -32,6 +32,13 @@ public interface UserMapper {
     @Select("SELECT " + USER_LIST_COLUMNS + "FROM users")
     List<User> getAllUsers();
 
+    @Select("SELECT " + USER_LIST_COLUMNS + """
+            FROM users
+            WHERE team_id IS NULL OR trim(team_id, #{whitespace}) = ''
+            ORDER BY rowid
+            """)
+    List<User> findUsersWithoutTeam(@Param("whitespace") String whitespace);
+
     @Insert("""
             INSERT INTO users (
                 user_id, user_name, password,

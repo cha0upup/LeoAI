@@ -247,6 +247,20 @@ class TeamManagementIntegrationTest {
     }
 
     @Test
+    void unassignedUserListingPreservesBlankTeamIdSemantics() {
+        seedMembership();
+        seedUser("unassigned", "normal", null);
+        seedTeam("", "Empty ID", "empty-id");
+        seedTeam(" \t\u3000 ", "Blank ID", "blank-id");
+        seedTeam("\u00a0", "Non-breaking space ID", "nonbreaking-id");
+
+        List<User> result = users.getUsersWithoutTeam();
+
+        assertEquals(List.of("unassigned", "empty-id", "blank-id"), result.stream().map(User::getUserId).toList());
+        for (User user : result) assertNull(user.getPassword(), user.getUserId());
+    }
+
+    @Test
     void anUnsuccessfulMemberWriteRollsBackThePreviousLeaderDemotion() {
         seedMembership();
         seedUser("replacement", "normal", null);
