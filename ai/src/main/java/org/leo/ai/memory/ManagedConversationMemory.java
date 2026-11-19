@@ -50,18 +50,9 @@ public class ManagedConversationMemory {
         return true;
     }
 
-    /**
-     * LangChain4j 1.16 的 {@link ChatMemory#set(List)} 不接受空列表。
-     * 全新会话或失败 Turn 清理后没有 committed 历史时，空历史应表达为 clear。
-     */
     private void loadHistory(ChatMemory memory, Object memoryId) {
         String threadId = threadIdFromMemoryId(String.valueOf(memoryId));
-        List<ChatMessage> history = toChatMessages(messages.contextMessages(threadId, 200));
-        if (history.isEmpty()) {
-            memory.clear();
-        } else {
-            memory.set(history);
-        }
+        memory.set(toChatMessages(messages.contextMessages(threadId, 200)));
     }
 
     /** 平台记忆直接使用线程 ID，节点记忆使用 Session 前缀区分运行实例。 */

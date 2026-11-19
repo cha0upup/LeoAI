@@ -3,13 +3,16 @@ package org.leo.ai.memory;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.service.memory.ChatMemoryAccess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.ai.thread.ConversationMessage;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.leo.ai.agent.CharBasedTokenEstimator;
 import org.leo.ai.thread.AiMessageRepository;
+import org.leo.ai.thread.ConversationMessage;
 
 import java.util.List;
 
@@ -26,15 +29,15 @@ class ManagedConversationMemoryTest {
     private final AiMessageRepository messages = mock(AiMessageRepository.class);
     private final ManagedConversationMemory managedMemory = new ManagedConversationMemory(messages);
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void clearsTransientMessagesWhenPersistedHistoryIsEmpty(boolean rebuild) {
+    @ParameterizedTest(name = "{0} window, rebuild={1}")
+    @CsvSource({"message,false", "message,true", "token,false", "token,true"})
+    void clearsTransientMessagesWhenPersistedHistoryIsEmpty(String window, boolean rebuild) {
         String memoryId = rebuild ? "session-1:fresh-thread" : "fresh-thread";
-        var memory = MessageWindowChatMemory.builder()
-                .id(memoryId)
-                .maxMessages(20)
-                .build();
+        ChatMemory memory = window.equals("token")
+                ? TokenWindowChatMemory.builder().id(memoryId).maxTokens(256, new CharBasedTokenEstimator()).build()
+                : MessageWindowChatMemory.builder().id(memoryId).maxMessages(20).build();
         memory.add(UserMessage.from("失败请求"));
+        assertFalse(memory.messages().isEmpty());
         when(messages.contextMessages("fresh-thread", 200)).thenReturn(List.of());
 
         if (rebuild) {
