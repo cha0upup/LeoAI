@@ -138,7 +138,7 @@ public class ProjectService {
             teamId = owner == null ? null : trimToNull(owner.getTeamId());
             if (teamId == null) throw new IllegalArgumentException("团队协作需要项目负责人先加入团队");
         }
-        if (teams.getTeamById(teamId) == null) {
+        if (!teams.existsTeamById(teamId)) {
             throw new IllegalArgumentException("项目所属团队不存在，请检查团队归属或调整共享范围");
         }
         return teamId;

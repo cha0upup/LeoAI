@@ -186,6 +186,20 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void rejectsTeamSharingWhenTheOwnersTeamDoesNotExist() {
+        Project input = new Project();
+        input.setProjectName("Shared");
+        input.setPermission("team");
+        var request = requestAs("normal", "user-1", "missing-team");
+
+        ApiException error = assertThrows(ApiException.class, () -> controller.createProject(request, input));
+
+        assertEquals(400, error.getCode());
+        assertEquals("项目所属团队不存在，请检查团队归属或调整共享范围", error.getMessage());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM projects", Integer.class));
+    }
+
+    @Test
     void archivePreservesProjectDetailsUpdatedAfterTheOriginalRead() {
         project("owned", "user-1", "private", "active", "Original");
         Project previous = projectService.findById("owned");

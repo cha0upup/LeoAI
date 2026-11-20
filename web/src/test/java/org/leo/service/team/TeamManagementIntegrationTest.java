@@ -221,6 +221,22 @@ class TeamManagementIntegrationTest {
     }
 
     @Test
+    void explicitTeamIdsAreTrimmedAndRemainCaseSensitive() {
+        seedTeam("team", "Research", "leader");
+        seedUser("available", "normal", null);
+
+        TeamOperationException duplicate = assertThrows(TeamOperationException.class,
+                () -> teams.createWithLeader(team(" team ", "Operations", "available")));
+        assertEquals(TeamOperationException.Kind.VALIDATION, duplicate.getKind());
+        assertEquals("teamId已存在", duplicate.getMessage());
+        assertAccount("available", "normal", null);
+
+        assertEquals("TEAM", teams.createWithLeader(team(" TEAM ", "Operations", "available")).getTeamId());
+        assertEquals("Research", teams.getTeamById("team").getTeamName());
+        assertAccount("available", "leader", "TEAM");
+    }
+
+    @Test
     void failedLeaderReplacementRollsBackBothRolesAndMemberships() {
         seedMembership();
         seedUser("replacement", "normal", null);

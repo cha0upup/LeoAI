@@ -62,6 +62,10 @@ public class TeamService {
         return teamMapper.findTeamById(teamId.trim());
     }
 
+    public boolean existsTeamById(String teamId) {
+        return teamId != null && !teamId.isBlank() && teamMapper.existsTeamById(teamId.trim());
+    }
+
     public Team getTeamByName(String teamName) {
         if (teamName == null || teamName.isBlank()) return null;
         return teamMapper.findTeamByName(teamName.trim());
@@ -103,7 +107,7 @@ public class TeamService {
             team.setTeamId(team.getTeamId().trim());
             if (team.getTeamId().length() > MAX_ID_LENGTH) throw failure(VALIDATION, "teamId长度超出限制");
         }
-        if (getTeamById(team.getTeamId()) != null) throw failure(VALIDATION, "teamId已存在");
+        if (existsTeamById(team.getTeamId())) throw failure(VALIDATION, "teamId已存在");
 
         leader.setTeamId(team.getTeamId());
         if (!UserService.PRIVILEGE_ADMIN.equals(leader.getPrivilege())) leader.setPrivilege(UserService.PRIVILEGE_LEADER);

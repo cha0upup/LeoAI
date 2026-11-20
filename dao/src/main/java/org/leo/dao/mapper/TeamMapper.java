@@ -19,10 +19,14 @@ import java.util.List;
 @Mapper
 public interface TeamMapper {
 
+    String TEAM_ID_MATCH = " WHERE team_id = #{teamId}";
     String TEAM_NAME_MATCH = " WHERE team_name = #{teamName} COLLATE NOCASE";
 
-    @Select("SELECT * FROM teams WHERE team_id = #{teamId}")
+    @Select("SELECT * FROM teams" + TEAM_ID_MATCH)
     Team findTeamById(@Param("teamId") String teamId);
+
+    @Select("SELECT EXISTS (SELECT 1 FROM teams" + TEAM_ID_MATCH + ")")
+    boolean existsTeamById(@Param("teamId") String teamId);
 
     @Select("SELECT * FROM teams WHERE leader_id = #{leaderId}")
     List<Team> findTeamsByLeaderId(@Param("leaderId") String leaderId);
