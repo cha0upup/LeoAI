@@ -133,7 +133,7 @@ public class UserController {
             return ApiResponse.forbidden(e.getMessage());
         }
 
-        if (userService.getUserByName(targetName) != null) {
+        if (userService.isUserNameTaken(targetName)) {
             return ApiResponse.badRequest("用户名已存在");
         }
 
@@ -194,7 +194,7 @@ public class UserController {
             if (newName.length() > MAX_USERNAME_LENGTH) {
                 return ApiResponse.badRequest("用户名不能超过 " + MAX_USERNAME_LENGTH + " 个字符");
             }
-            if (userService.getUserByName(newName) != null) return ApiResponse.badRequest("用户名已存在");
+            if (userService.isUserNameTaken(newName)) return ApiResponse.badRequest("用户名已存在");
             target.setUserName(newName);
         }
 

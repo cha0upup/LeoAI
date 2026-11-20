@@ -14,14 +14,19 @@ import java.util.List;
 @Mapper
 public interface UserMapper {
 
+    String USERNAME_MATCH = " WHERE user_name = #{userName} COLLATE NOCASE";
+
     /** Directory reads omit credentials; single-account lookups still support login and updates. */
     String USER_LIST_COLUMNS = """
             user_id, user_name, privilege, email, phone, status, last_login_time, login_count,
             password_change_required, account_revision, create_time, update_time, team_id, remark
             """;
 
-    @Select("SELECT * FROM users WHERE user_name = #{userName} COLLATE NOCASE")
+    @Select("SELECT * FROM users" + USERNAME_MATCH)
     User findUserByUsername(@Param("userName") String userName);
+
+    @Select("SELECT EXISTS (SELECT 1 FROM users" + USERNAME_MATCH + ")")
+    boolean existsUserByUsername(@Param("userName") String userName);
 
     @Select("SELECT * FROM users WHERE user_id = #{userId}")
     User findUserById(@Param("userId") String userId);

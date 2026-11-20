@@ -31,6 +31,20 @@ class UserServiceTest {
     }
 
     @Test
+    void checksNameAvailabilityWithoutLoadingAnAccount() {
+        when(mapper.existsUserByUsername("MiXeD")).thenReturn(true);
+
+        assertTrue(service.isUserNameTaken(" MiXeD "));
+        assertFalse(service.isUserNameTaken("missing"));
+        assertFalse(service.isUserNameTaken(null));
+        assertFalse(service.isUserNameTaken(" \t\u3000 "));
+
+        verify(mapper).existsUserByUsername("MiXeD");
+        verify(mapper).existsUserByUsername("missing");
+        verifyNoMoreInteractions(mapper);
+    }
+
+    @Test
     void missingUsersProduceAnEmptyResult() {
         when(mapper.findUsersWithoutTeam(anyString())).thenReturn(null);
         assertTrue(service.getUsersWithoutTeam().isEmpty());

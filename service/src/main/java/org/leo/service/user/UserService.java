@@ -54,6 +54,10 @@ public class UserService {
         return normalize(userMapper.findUserByUsername(userName.trim()));
     }
 
+    public boolean isUserNameTaken(String userName) {
+        return userName != null && !userName.isBlank() && userMapper.existsUserByUsername(userName.trim());
+    }
+
     public List<User> getAllUsers() {
         List<User> users = userMapper.getAllUsers();
         if (users == null) return new ArrayList<>();

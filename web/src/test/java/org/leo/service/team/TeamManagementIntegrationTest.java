@@ -8,15 +8,18 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.tools.platform.TeamTools;
+import org.leo.ai.tools.platform.UserTools;
 import org.leo.core.entity.Team;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.TeamMapper;
 import org.leo.dao.mapper.UserMapper;
 import org.leo.service.agentnode.AgentService;
+import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
 import org.leo.web.config.GlobalExceptionHandler;
 import org.leo.web.controller.platform.admin.TeamController;
+import org.leo.web.controller.platform.admin.UserController;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -26,12 +29,14 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -258,6 +263,36 @@ class TeamManagementIntegrationTest {
 
         assertEquals(List.of("unassigned", "empty-id", "blank-id"), result.stream().map(User::getUserId).toList());
         for (User user : result) assertNull(user.getPassword(), user.getUserId());
+    }
+
+    @Test
+    void accountCreationAndRenameRejectPaddedCaseInsensitiveDuplicateNames() {
+        seedUser("original", "normal", null);
+        seedUser("member", "normal", null);
+        var policy = mock(PasswordPolicy.class);
+        var controller = new UserController(users, policy);
+        var userTools = new UserTools(users, policy);
+        var request = new MockHttpServletRequest();
+        User admin = new User();
+        admin.setUserId("fixture-admin");
+        admin.setPrivilege("admin");
+        request.getSession().setAttribute("user", admin);
+        User input = new User();
+        input.setUserName(" ORIGINAL ");
+        input.setPassword("fixture-password");
+
+        var creation = controller.addUser(request, input);
+        var rename = controller.updateUser(request, new HashMap<>(Map.of("userId", "member", "userName", " ORIGINAL ")));
+        assertEquals(400, creation.get("code"));
+        assertEquals("用户名已存在", creation.get("msg"));
+        assertEquals(400, rename.get("code"));
+        assertEquals("用户名已存在", rename.get("msg"));
+        assertEquals("用户名已存在", assertThrows(IllegalArgumentException.class, () -> userTools.addUser(
+                " ORIGINAL ", "fixture-password", null, null, null, null, null, null, null)).getMessage());
+        assertEquals("用户名已存在", assertThrows(IllegalArgumentException.class, () -> userTools.updateUser(
+                "member", " ORIGINAL ", null, null, null, null, null, null, null)).getMessage());
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class));
+        assertEquals("member", users.getUserById("member").getUserName());
     }
 
     @Test

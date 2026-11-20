@@ -83,7 +83,7 @@ public class UserTools {
         String name = requireNonBlank(userName, "userName不能为空");
         passwordPolicy.validate(password);
 
-        if (userService.getUserByName(name) != null) {
+        if (userService.isUserNameTaken(name)) {
             throw new IllegalArgumentException("用户名已存在");
         }
 
@@ -125,7 +125,7 @@ public class UserTools {
         if (changePassword) passwordPolicy.validate(password);
 
         if (!isBlank(userName) && !userName.equals(existing.getUserName())) {
-            if (userService.getUserByName(userName) != null) {
+            if (userService.isUserNameTaken(userName)) {
                 throw new IllegalArgumentException("用户名已存在");
             }
             existing.setUserName(userName.trim());
