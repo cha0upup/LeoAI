@@ -173,6 +173,24 @@ class PasswordRoundTripIntegrationTest {
     }
 
     @Test
+    void creationReportsFailureWhenTheDatabaseInsertsNoUser() throws Exception {
+        try (var statement = sqlSession.getConnection().createStatement()) {
+            statement.execute("""
+                    CREATE TRIGGER skip_fixture_user BEFORE INSERT ON users
+                    WHEN NEW.user_name = 'skipped-fixture'
+                    BEGIN SELECT RAISE(IGNORE); END
+                    """);
+        }
+
+        mvc.perform(body("/platform/admin/users", Map.of("userName", "skipped-fixture",
+                        "password", "fixture-password", "privilege", "normal")).session(adminSession))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value(500))
+                .andExpect(jsonPath("$.msg").value("创建用户失败"));
+        assertNull(users.getUserByName("skipped-fixture"));
+    }
+
+    @Test
     void staleProfileWriteDoesNotUndoAnAccountChange() throws Exception {
         createUser("current-fixture-password", false);
         String userId = users.getUserByName("member").getUserId();

@@ -144,8 +144,7 @@ public class UserController {
         user.setLoginCount(0);
         user.setPasswordChangeRequired(1);
 
-        userService.addUser(user);
-        return ApiResponse.success();
+        return userService.addUser(user) ? ApiResponse.success() : ApiResponse.error("创建用户失败");
     }
 
     // ── 用户更新 ─────────────────────────────────────────────────────────────────
