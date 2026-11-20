@@ -18,15 +18,20 @@ import java.util.List;
  */
 @Mapper
 public interface TeamMapper {
-    
+
+    String TEAM_NAME_MATCH = " WHERE team_name = #{teamName} COLLATE NOCASE";
+
     @Select("SELECT * FROM teams WHERE team_id = #{teamId}")
     Team findTeamById(@Param("teamId") String teamId);
 
     @Select("SELECT * FROM teams WHERE leader_id = #{leaderId}")
     List<Team> findTeamsByLeaderId(@Param("leaderId") String leaderId);
 
-    @Select("SELECT * FROM teams WHERE team_name = #{teamName} COLLATE NOCASE")
+    @Select("SELECT * FROM teams" + TEAM_NAME_MATCH)
     Team findTeamByName(@Param("teamName") String teamName);
+
+    @Select("SELECT EXISTS (SELECT 1 FROM teams" + TEAM_NAME_MATCH + " AND team_id IS NOT #{excludedTeamId})")
+    boolean existsTeamByName(@Param("teamName") String teamName, @Param("excludedTeamId") String excludedTeamId);
 
     @Select("SELECT * FROM teams")
     List<Team> getAllTeams();

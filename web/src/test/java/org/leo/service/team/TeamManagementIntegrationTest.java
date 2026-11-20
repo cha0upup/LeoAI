@@ -195,6 +195,32 @@ class TeamManagementIntegrationTest {
     }
 
     @Test
+    void teamNamesRejectOtherTeamsCaseInsensitivelyButAllowCaseOnlyRenames() {
+        seedTeam("team", "Research", "leader");
+        seedTeam("other", "Operations", "other-leader");
+        seedUser("available", "normal", null);
+
+        TeamOperationException duplicateCreate = assertThrows(TeamOperationException.class,
+                () -> teams.createWithLeader(team("new", " RESEARCH ", "available")));
+        assertEquals(TeamOperationException.Kind.VALIDATION, duplicateCreate.getKind());
+        assertEquals("团队名已存在", duplicateCreate.getMessage());
+        assertNull(teams.getTeamById("new"));
+        assertAccount("available", "normal", null);
+
+        TeamOperationException duplicateRename = assertThrows(TeamOperationException.class,
+                () -> teams.updateTeam(team("team", " OPERATIONS ", null)));
+        assertEquals(TeamOperationException.Kind.VALIDATION, duplicateRename.getKind());
+        assertEquals("团队名已存在", duplicateRename.getMessage());
+        assertEquals("Research", teams.getTeamById("team").getTeamName());
+
+        assertEquals("RESEARCH", teams.updateTeam(team("team", " RESEARCH ", null)).getTeamName());
+        Team renamed = teams.getTeamByName(" research ");
+        assertEquals("team", renamed.getTeamId());
+        assertEquals("RESEARCH", renamed.getTeamName());
+        assertEquals("Operations", teams.getTeamById("other").getTeamName());
+    }
+
+    @Test
     void failedLeaderReplacementRollsBackBothRolesAndMemberships() {
         seedMembership();
         seedUser("replacement", "normal", null);

@@ -96,7 +96,7 @@ public class TeamService {
         if (leader.getTeamId() != null && !leader.getTeamId().isBlank()) {
             throw failure(VALIDATION, "该用户已属于某个团队");
         }
-        if (getTeamByName(teamName) != null) throw failure(VALIDATION, "团队名已存在");
+        if (teamMapper.existsTeamByName(teamName, null)) throw failure(VALIDATION, "团队名已存在");
         if (team.getTeamId() == null || team.getTeamId().isBlank()) {
             team.setTeamId(UUID.randomUUID().toString());
         } else {
@@ -129,8 +129,7 @@ public class TeamService {
         if (patch.getTeamName() != null && !patch.getTeamName().isBlank()) {
             String name = patch.getTeamName().trim();
             if (name.length() > MAX_TEAM_NAME_LENGTH) throw failure(VALIDATION, "teamName长度超出限制");
-            Team duplicate = getTeamByName(name);
-            if (duplicate != null && !team.getTeamId().equals(duplicate.getTeamId())) {
+            if (teamMapper.existsTeamByName(name, team.getTeamId())) {
                 throw failure(VALIDATION, "团队名已存在");
             }
             team.setTeamName(name);
