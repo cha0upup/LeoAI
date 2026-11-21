@@ -10,11 +10,15 @@ import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.AuditLogMapper;
+import org.leo.dao.mapper.SystemConfigMapper;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
+import org.leo.service.config.SystemConfigService;
+import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AuditLogControllerTest {
@@ -102,6 +107,33 @@ class AuditLogControllerTest {
             if (firstLogId != null) response.andExpect(jsonPath("$.data.logs[0].logId").value(firstLogId));
             verify(mapper).searchAuditLogs(any());
             verify(mapper, times(countQueries)).countAuditLogs(any());
+        }
+    }
+
+    @Test
+    void failedAuditConfigurationWriteKeepsThePersistedAndCachedMode(@TempDir Path temp) throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit-config.db"));
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(SystemConfigMapper.class);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+            var config = new SystemConfigService(session.getMapper(SystemConfigMapper.class));
+            config.setString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, AuditPolicyService.MODE_ON, "fixture");
+            config.setString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, AuditPolicyService.MODE_WRITE, "fixture");
+            new JdbcTemplate(source).execute("""
+                    CREATE TRIGGER skip_fixture_config BEFORE UPDATE ON system_configs
+                    BEGIN SELECT RAISE(IGNORE); END
+                    """);
+            var policy = new AuditPolicyService(config);
+            MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(logs, policy, permissions))
+                    .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+
+            storedMvc.perform(post("/platform/admin/audit-logs/mode")
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"on\"}"))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value(500));
+
+            assertEquals(AuditPolicyService.MODE_WRITE, config.getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, null));
+            assertEquals(AuditPolicyService.MODE_WRITE, policy.getMode());
         }
     }
 

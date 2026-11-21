@@ -37,11 +37,14 @@ public class SystemConfigService {
         if (key == null || key.isBlank()) {
             throw new IllegalArgumentException("配置键不能为空");
         }
-        systemConfigMapper.upsert(
+        int written = systemConfigMapper.upsert(
                 key.trim(),
                 value == null ? "" : value.trim(),
                 "string",
                 description
         );
+        if (written != 1) {
+            throw new IllegalStateException("配置写入失败");
+        }
     }
 }
