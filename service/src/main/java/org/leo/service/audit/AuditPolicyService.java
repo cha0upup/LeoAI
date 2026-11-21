@@ -276,23 +276,32 @@ public class AuditPolicyService {
 
     private final SystemConfigService systemConfigService;
     private final AtomicReference<ModeSnapshot> cachedMode = new AtomicReference<>();
+    private final Object modeRefreshLock = new Object();
 
-    private record ModeSnapshot(String mode, long checkedAtMillis) {}
+    private record ModeSnapshot(String mode, long checkedAtMillis) {
+        boolean isFresh() {
+            return System.currentTimeMillis() - checkedAtMillis <= MODE_CACHE_TTL_MS;
+        }
+    }
 
     public AuditPolicyService(SystemConfigService systemConfigService) {
         this.systemConfigService = systemConfigService;
     }
 
     public String getMode() {
-        long now = System.currentTimeMillis();
         ModeSnapshot previous = cachedMode.get();
-        if (previous != null && now - previous.checkedAtMillis() <= MODE_CACHE_TTL_MS) {
-            return previous.mode();
+        if (previous != null && previous.isFresh()) return previous.mode();
+
+        synchronized (modeRefreshLock) {
+            previous = cachedMode.get();
+            if (previous != null && previous.isFresh()) return previous.mode();
+
+            String loadedMode = normalizeMode(systemConfigService.getString(CONFIG_KEY_AUDIT_MODE, MODE_ON));
+            // Publishing a saved mode uses a separate lock, so a refresh must not replace it.
+            ModeSnapshot observed = cachedMode.compareAndExchange(previous,
+                    new ModeSnapshot(loadedMode, System.currentTimeMillis()));
+            return observed == previous ? loadedMode : observed.mode();
         }
-        String loadedMode = normalizeMode(systemConfigService.getString(CONFIG_KEY_AUDIT_MODE, MODE_ON));
-        // A read started earlier must not replace a mode saved while it was loading.
-        ModeSnapshot observed = cachedMode.compareAndExchange(previous, new ModeSnapshot(loadedMode, now));
-        return observed == previous ? loadedMode : observed.mode();
     }
 
     public synchronized String updateMode(String mode) {

@@ -25,12 +25,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -164,6 +166,46 @@ class AuditLogControllerTest {
         } finally {
             releaseRead.countDown();
             executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentAuditCacheMissesShareOneConfigurationRead() throws Exception {
+        var config = mock(SystemConfigService.class);
+        var policy = new AuditPolicyService(config);
+        var readStarted = new CountDownLatch(1);
+        var releaseRead = new CountDownLatch(1);
+        when(config.getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, AuditPolicyService.MODE_ON)).thenAnswer(call -> {
+            if (readStarted.getCount() > 0) {
+                readStarted.countDown();
+                assertTrue(releaseRead.await(5, TimeUnit.SECONDS));
+            }
+            return AuditPolicyService.MODE_ON;
+        });
+
+        var firstRead = new FutureTask<>(policy::getMode);
+        var secondRead = new FutureTask<>(policy::getMode);
+        var loader = new Thread(firstRead, "audit-cache-loader-test");
+        var follower = new Thread(secondRead, "audit-cache-follower-test");
+        loader.start();
+        try {
+            assertTrue(readStarted.await(5, TimeUnit.SECONDS));
+            follower.start();
+            var threads = ManagementFactory.getThreadMXBean();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            // Release the load only after the follower has either waited for it or read the store independently.
+            while (!secondRead.isDone() && System.nanoTime() - deadline < 0) {
+                var info = threads.getThreadInfo(follower.getId());
+                if (info != null && info.getLockOwnerId() == loader.getId()) break;
+                Thread.sleep(1);
+            }
+            releaseRead.countDown();
+
+            assertEquals(AuditPolicyService.MODE_ON, firstRead.get(5, TimeUnit.SECONDS));
+            assertEquals(AuditPolicyService.MODE_ON, secondRead.get(5, TimeUnit.SECONDS));
+            verify(config).getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, AuditPolicyService.MODE_ON);
+        } finally {
+            releaseRead.countDown();
         }
     }
 
