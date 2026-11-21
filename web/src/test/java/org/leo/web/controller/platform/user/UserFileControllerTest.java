@@ -199,6 +199,30 @@ class UserFileControllerTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void overviewAndFirstPageSelectTheSameRecentFilesWhenTimestampsTie() throws Exception {
+        var request = authenticatedRequest();
+        Path workspace = artifacts.root(userId);
+        for (int i = 8; i >= 0; i--) {
+            String path = "notes/tied-" + i + ".txt";
+            assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
+            Files.setLastModifiedTime(workspace.resolve(path), FileTime.fromMillis(10_000));
+        }
+        String newest = "notes/newest.txt";
+        assertEquals(200, controller.createFile(request, newest, "fixture", false).get("code"));
+        Files.setLastModifiedTime(workspace.resolve(newest), FileTime.fromMillis(20_000));
+
+        var overview = artifacts.overview(userId);
+        var recent = (List<Map<String, Object>>) overview.get("recentFiles");
+        var firstPage = (List<Map<String, Object>>) artifacts.list(userId, null, null, null, 1, 8).get("fileList");
+
+        assertEquals(10L, overview.get("totalFiles"));
+        assertEquals(List.of(newest, "notes/tied-0.txt", "notes/tied-1.txt", "notes/tied-2.txt", "notes/tied-3.txt",
+                "notes/tied-4.txt", "notes/tied-5.txt", "notes/tied-6.txt"), recent.stream().map(file -> file.get("path")).toList());
+        assertEquals(firstPage, recent);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void recursivePagingKeepsTheCountOrderingAndMetadataAcrossPageWindows() throws Exception {
         var request = authenticatedRequest();
         var files = Map.of("ai-reports/0-old-keep.txt", 10_000L, "ai-reports/a-keep.txt", 30_000L,

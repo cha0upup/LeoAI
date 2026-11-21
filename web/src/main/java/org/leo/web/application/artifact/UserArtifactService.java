@@ -25,6 +25,10 @@ public class UserArtifactService {
     private static final long MAX_ARCHIVE_BYTES = 100L * 1024 * 1024;
     private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
+    private static final int RECENT_FILES_LIMIT = 8;
+    private static final Comparator<ArtifactMatch> ARTIFACT_ORDER = Comparator
+            .comparingLong((ArtifactMatch file) -> file.attributes().lastModifiedTime().toMillis()).reversed()
+            .thenComparing(ArtifactMatch::relativePath).thenComparingLong(ArtifactMatch::sequence);
     private final ObjectMapper mapper;
     private final SystemConfigService config;
 
@@ -125,21 +129,20 @@ public class UserArtifactService {
         Map<String, long[]> categories = new LinkedHashMap<>();
         CATEGORIES.forEach(key -> categories.put(key, new long[2]));
         long[] totals = new long[4]; // files, directories, bytes, last modified
-        PriorityQueue<Map.Entry<Path, BasicFileAttributes>> recent = new PriorityQueue<>(
-                Comparator.comparingLong(entry -> entry.getValue().lastModifiedTime().toMillis()));
+        PriorityQueue<ArtifactMatch> recent = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
         walk(base, null, (path, attrs) -> {
             totals[3] = Math.max(totals[3], attrs.lastModifiedTime().toMillis());
             if (attrs.isDirectory()) { totals[1]++; return; }
             totals[0]++; totals[2] += attrs.size();
-            long[] counts = categories.get(category(relative(base, path)));
+            String relative = relative(base, path);
+            long[] counts = categories.get(category(relative));
             counts[0]++; counts[1] += attrs.size();
-            recent.add(Map.entry(path, attrs));
-            if (recent.size() > 8) recent.poll();
+            retainMatch(recent, RECENT_FILES_LIMIT, new ArtifactMatch(path, relative, attrs, null, totals[0]));
         });
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
-                        .sorted(Comparator.comparingLong((Map.Entry<Path, BasicFileAttributes> entry) -> entry.getValue().lastModifiedTime().toMillis()).reversed())
-                        .map(entry -> item(base, entry.getKey(), entry.getValue(), true)).toList(),
+                        .sorted(ARTIFACT_ORDER)
+                        .map(match -> item(base, match.path(), match.attributes(), true)).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
     }
@@ -191,7 +194,17 @@ public class UserArtifactService {
     }
 
     private record ArtifactMatch(Path path, String relativePath, BasicFileAttributes attributes,
-                                 Map<String, Object> metadata, int sequence) {}
+                                 Map<String, Object> metadata, long sequence) {}
+
+    /** Retains the best matches up to the requested limit, with the worst retained match at the head. */
+    private static void retainMatch(PriorityQueue<ArtifactMatch> window, long limit, ArtifactMatch match) {
+        if (window.size() < limit) {
+            window.add(match);
+        } else if (ARTIFACT_ORDER.compare(match, window.peek()) < 0) {
+            window.poll();
+            window.add(match);
+        }
+    }
 
     public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize) throws IOException {
         String categoryFilter = category == null || category.isBlank() ? null : category;
@@ -203,11 +216,7 @@ public class UserArtifactService {
         boolean filterMetadata = filterSource || !keyword.isEmpty();
         long offset = (long) (current - 1) * size;
         long windowSize = offset + size;
-        Comparator<ArtifactMatch> order = Comparator
-                .comparingLong((ArtifactMatch file) -> file.attributes().lastModifiedTime().toMillis()).reversed()
-                .thenComparing(ArtifactMatch::relativePath).thenComparingInt(ArtifactMatch::sequence);
-        // Keep the worst retained match at the head so the heap covers only the requested prefix.
-        PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(order.reversed());
+        PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
         int[] matched = {0};
         Path base = root(userId);
         walk(base, categoryFilter, (path, attrs) -> {
@@ -219,17 +228,11 @@ public class UserArtifactService {
                 if (filterSource && !source.equals(Objects.toString(details.get("sourceModule"), "unrecorded"))) return;
                 if (!keyword.isEmpty() && !(relative + " " + details.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
             }
-            ArtifactMatch match = new ArtifactMatch(path, relative, attrs, details, matched[0]++);
-            if (window.size() < windowSize) {
-                window.add(match);
-            } else if (order.compare(match, window.peek()) < 0) {
-                window.poll();
-                window.add(match);
-            }
+            retainMatch(window, windowSize, new ArtifactMatch(path, relative, attrs, details, matched[0]++));
         });
         List<Map<String, Object>> pageFiles = new ArrayList<>();
         if (matched[0] > offset) {
-            window.stream().sorted(order).skip(offset).forEachOrdered(match -> {
+            window.stream().sorted(ARTIFACT_ORDER).skip(offset).forEachOrdered(match -> {
                 Map<String, Object> file = item(base, match.path(), match.attributes(), !filterMetadata);
                 if (filterMetadata) file.put("metadata", match.metadata());
                 pageFiles.add(file);
