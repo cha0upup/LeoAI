@@ -197,6 +197,39 @@ class UserFileControllerTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void recursivePagingKeepsTheCountOrderingAndMetadataAcrossPageWindows() throws Exception {
+        var request = authenticatedRequest();
+        var files = Map.of("ai-reports/0-old-keep.txt", 10_000L, "ai-reports/a-keep.txt", 30_000L,
+                "ai-reports/z-keep.txt", 30_000L, "ai-reports/middle-keep.txt", 20_000L,
+                "ai-reports/other.txt", 40_000L, "notes/outside-keep.txt", 50_000L);
+        Path workspace = artifacts.root(userId);
+        for (var entry : files.entrySet()) {
+            assertEquals(200, controller.createFile(request, entry.getKey(), "fixture", false).get("code"));
+            Files.setLastModifiedTime(workspace.resolve(entry.getKey()), FileTime.fromMillis(entry.getValue()));
+        }
+
+        var metadataReader = spy(new ObjectMapper());
+        var listing = new UserArtifactService(metadataReader, systemConfigService);
+        var first = listing.list(userId, "ai-reports", " KEEP ", "manual", 1, 2);
+        var firstRows = (List<Map<String, Object>>) first.get("fileList");
+        assertEquals(List.of("a-keep.txt", "z-keep.txt"), firstRows.stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of("manual", "manual"),
+                firstRows.stream().map(row -> ((Map<?, ?>) row.get("metadata")).get("sourceModule")).toList());
+        assertEquals(4, first.get("count"));
+        assertEquals(true, first.get("hasMore"));
+        verify(metadataReader, times(5)).readValue(anyString(), eq(Map.class));
+
+        var second = listing.list(userId, "ai-reports", " KEEP ", "manual", 2, 2);
+        var secondRows = (List<Map<String, Object>>) second.get("fileList");
+        assertEquals(List.of("middle-keep.txt", "0-old-keep.txt"), secondRows.stream().map(row -> row.get("name")).toList());
+        assertEquals(4, second.get("count"));
+        assertEquals(false, second.get("hasMore"));
+        var beyond = listing.list(userId, "ai-reports", " KEEP ", "manual", Integer.MAX_VALUE, Integer.MAX_VALUE);
+        assertEquals(Map.of("fileList", List.of(), "count", 4, "page", Integer.MAX_VALUE, "pageSize", 200, "hasMore", false), beyond);
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @SuppressWarnings("unchecked")

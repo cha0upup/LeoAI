@@ -190,6 +190,9 @@ public class UserArtifactService {
         return result;
     }
 
+    private record ArtifactMatch(Path path, String relativePath, BasicFileAttributes attributes,
+                                 Map<String, Object> metadata, int sequence) {}
+
     public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize) throws IOException {
         String categoryFilter = category == null || category.isBlank() ? null : category;
         if (categoryFilter != null && !CATEGORIES.contains(categoryFilter)) throw new IllegalArgumentException("未知成果分类");
@@ -198,30 +201,42 @@ public class UserArtifactService {
         String keyword = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
         boolean filterSource = source != null && !source.isBlank();
         boolean filterMetadata = filterSource || !keyword.isEmpty();
-        List<Map<String, Object>> files = new ArrayList<>();
+        long offset = (long) (current - 1) * size;
+        long windowSize = offset + size;
+        Comparator<ArtifactMatch> order = Comparator
+                .comparingLong((ArtifactMatch file) -> file.attributes().lastModifiedTime().toMillis()).reversed()
+                .thenComparing(ArtifactMatch::relativePath).thenComparingInt(ArtifactMatch::sequence);
+        // Keep the worst retained match at the head so the heap covers only the requested prefix.
+        PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(order.reversed());
+        int[] matched = {0};
         Path base = root(userId);
         walk(base, categoryFilter, (path, attrs) -> {
             if (!attrs.isRegularFile()) return;
             String relative = relative(base, path);
             if (categoryFilter != null && !categoryFilter.equals(category(relative))) return;
-            Map<String, Object> item = item(base, path, attrs, filterMetadata);
+            Map<String, Object> details = filterMetadata ? metadata(base, relative) : null;
             if (filterMetadata) {
-                Map<?, ?> metadata = (Map<?, ?>) item.get("metadata");
-                if (filterSource && !source.equals(Objects.toString(metadata.get("sourceModule"), "unrecorded"))) return;
-                if (!keyword.isEmpty() && !(relative + " " + metadata.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
+                if (filterSource && !source.equals(Objects.toString(details.get("sourceModule"), "unrecorded"))) return;
+                if (!keyword.isEmpty() && !(relative + " " + details.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
             }
-            files.add(item);
+            ArtifactMatch match = new ArtifactMatch(path, relative, attrs, details, matched[0]++);
+            if (window.size() < windowSize) {
+                window.add(match);
+            } else if (order.compare(match, window.peek()) < 0) {
+                window.poll();
+                window.add(match);
+            }
         });
-        files.sort(Comparator.comparingLong((Map<String, Object> file) -> ((Number) file.get("lastModified")).longValue())
-                .reversed().thenComparing(file -> String.valueOf(file.get("path"))));
-        int start = (int) Math.min(files.size(), (long) (current - 1) * size);
-        int end = Math.min(files.size(), start + size);
-        List<Map<String, Object>> pageFiles = new ArrayList<>(files.subList(start, end));
-        if (!filterMetadata) {
-            pageFiles.forEach(file -> file.put("metadata", metadata(base, (String) file.get("path"))));
+        List<Map<String, Object>> pageFiles = new ArrayList<>();
+        if (matched[0] > offset) {
+            window.stream().sorted(order).skip(offset).forEachOrdered(match -> {
+                Map<String, Object> file = item(base, match.path(), match.attributes(), !filterMetadata);
+                if (filterMetadata) file.put("metadata", match.metadata());
+                pageFiles.add(file);
+            });
         }
-        return Map.of("fileList", pageFiles, "count", files.size(),
-                "page", current, "pageSize", size, "hasMore", end < files.size());
+        return Map.of("fileList", pageFiles, "count", matched[0],
+                "page", current, "pageSize", size, "hasMore", matched[0] > windowSize);
     }
 
     private Path metadataPath(Path base, String path) {
