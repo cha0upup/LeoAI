@@ -16,6 +16,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -168,6 +169,32 @@ class UserFileControllerTest {
         verify(metadataReader, times(2)).readValue(anyString(), eq(Map.class));
         assertEquals(1, ((List<?>) artifacts.list(userId, "", "", "", 2, 2).get("fileList")).size());
         assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50).get("count"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void categoryListingSkipsUnrelatedDescendantsAndKeepsImportedFiles() throws Exception {
+        var request = authenticatedRequest();
+        for (String path : List.of("script-builds/nested/build.txt", "ai-reports/nested/report.md",
+                "imports/dedicated.txt", "notes/readme.txt", "loose.txt", "task-results")) {
+            assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
+        }
+        Path unrelatedDescendant = artifacts.root(userId).resolve("ai-reports/nested");
+        var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (openDirectory.equals(invocation.getMethod()) && unrelatedDescendant.equals(invocation.getArgument(0))) {
+                throw new IOException("unrelated directory should not be entered");
+            }
+            return invocation.callRealMethod();
+        })) {
+            var builds = artifacts.list(userId, "script-builds", null, null, 1, 50);
+            assertEquals(1, builds.get("count"));
+            var imported = (List<Map<String, Object>>) artifacts.list(userId, "imports", null, null, 1, 50).get("fileList");
+            assertEquals(List.of("imports/dedicated.txt", "loose.txt", "notes/readme.txt"),
+                    imported.stream().map(file -> (String) file.get("path")).sorted().toList());
+            var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50);
+            assertEquals(1, taskResults.get("count"));
+        }
     }
 
     @ParameterizedTest

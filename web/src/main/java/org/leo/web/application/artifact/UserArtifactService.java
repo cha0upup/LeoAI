@@ -73,13 +73,16 @@ public class UserArtifactService {
         return Files.exists(target) && Files.isRegularFile(target) ? target : null;
     }
 
-    private void walk(Path base, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
+    private void walk(Path base, String categoryFilter, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
         if (!Files.exists(base)) return;
         Files.walkFileTree(base, new SimpleFileVisitor<>() {
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                if (!dir.equals(base) && (dir.getFileName().toString().startsWith(".")
-                        || "ai-tasks".equals(dir.getFileName().toString()))) return FileVisitResult.SKIP_SUBTREE;
-                if (!dir.equals(base)) consumer.accept(dir, attrs);
+                if (dir.equals(base)) return FileVisitResult.CONTINUE;
+                String name = dir.getFileName().toString();
+                if (name.startsWith(".") || "ai-tasks".equals(name)) return FileVisitResult.SKIP_SUBTREE;
+                if (categoryFilter != null && base.equals(dir.getParent())
+                        && !categoryFilter.equals(category(relative(base, dir)))) return FileVisitResult.SKIP_SUBTREE;
+                consumer.accept(dir, attrs);
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
@@ -124,7 +127,7 @@ public class UserArtifactService {
         long[] totals = new long[4]; // files, directories, bytes, last modified
         PriorityQueue<Map.Entry<Path, BasicFileAttributes>> recent = new PriorityQueue<>(
                 Comparator.comparingLong(entry -> entry.getValue().lastModifiedTime().toMillis()));
-        walk(base, (path, attrs) -> {
+        walk(base, null, (path, attrs) -> {
             totals[3] = Math.max(totals[3], attrs.lastModifiedTime().toMillis());
             if (attrs.isDirectory()) { totals[1]++; return; }
             totals[0]++; totals[2] += attrs.size();
@@ -188,7 +191,8 @@ public class UserArtifactService {
     }
 
     public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize) throws IOException {
-        if (category != null && !category.isBlank() && !CATEGORIES.contains(category)) throw new IllegalArgumentException("未知成果分类");
+        String categoryFilter = category == null || category.isBlank() ? null : category;
+        if (categoryFilter != null && !CATEGORIES.contains(categoryFilter)) throw new IllegalArgumentException("未知成果分类");
         int size = Math.max(1, Math.min(200, pageSize));
         int current = Math.max(1, page);
         String keyword = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
@@ -196,10 +200,10 @@ public class UserArtifactService {
         boolean filterMetadata = filterSource || !keyword.isEmpty();
         List<Map<String, Object>> files = new ArrayList<>();
         Path base = root(userId);
-        walk(base, (path, attrs) -> {
+        walk(base, categoryFilter, (path, attrs) -> {
             if (!attrs.isRegularFile()) return;
             String relative = relative(base, path);
-            if (category != null && !category.isBlank() && !category.equals(category(relative))) return;
+            if (categoryFilter != null && !categoryFilter.equals(category(relative))) return;
             Map<String, Object> item = item(base, path, attrs, filterMetadata);
             if (filterMetadata) {
                 Map<?, ?> metadata = (Map<?, ?>) item.get("metadata");
