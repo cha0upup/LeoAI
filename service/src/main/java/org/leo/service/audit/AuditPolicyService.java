@@ -1,6 +1,7 @@
 package org.leo.service.audit;
 
 import org.leo.service.config.SystemConfigService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -11,7 +12,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 @Service
 public class AuditPolicyService {
@@ -26,7 +29,7 @@ public class AuditPolicyService {
 
     private static final String MODE_DESCRIPTION =
             "审计日志模式：on=开启，write=关闭低风险读操作，off=完全关闭";
-    private static final long MODE_CACHE_TTL_MS = 3000L;
+    private static final long MODE_CACHE_TTL_NANOS = TimeUnit.SECONDS.toNanos(3);
 
     private static final Set<String> LOW_RISK_READ_TYPES = new LinkedHashSet<>(Arrays.asList(
             "FILE_LIST",
@@ -275,31 +278,38 @@ public class AuditPolicyService {
     ));
 
     private final SystemConfigService systemConfigService;
+    private final LongSupplier nanoTime;
     private final AtomicReference<ModeSnapshot> cachedMode = new AtomicReference<>();
     private final Object modeRefreshLock = new Object();
 
-    private record ModeSnapshot(String mode, long checkedAtMillis) {
-        boolean isFresh() {
-            return System.currentTimeMillis() - checkedAtMillis <= MODE_CACHE_TTL_MS;
+    private record ModeSnapshot(String mode, long checkedAtNanos) {
+        boolean isFresh(long nowNanos) {
+            return nowNanos - checkedAtNanos <= MODE_CACHE_TTL_NANOS;
         }
     }
 
+    @Autowired
     public AuditPolicyService(SystemConfigService systemConfigService) {
+        this(systemConfigService, System::nanoTime);
+    }
+
+    AuditPolicyService(SystemConfigService systemConfigService, LongSupplier nanoTime) {
         this.systemConfigService = systemConfigService;
+        this.nanoTime = nanoTime;
     }
 
     public String getMode() {
         ModeSnapshot previous = cachedMode.get();
-        if (previous != null && previous.isFresh()) return previous.mode();
+        if (previous != null && previous.isFresh(nanoTime.getAsLong())) return previous.mode();
 
         synchronized (modeRefreshLock) {
             previous = cachedMode.get();
-            if (previous != null && previous.isFresh()) return previous.mode();
+            if (previous != null && previous.isFresh(nanoTime.getAsLong())) return previous.mode();
 
             String loadedMode = normalizeMode(systemConfigService.getString(CONFIG_KEY_AUDIT_MODE, MODE_ON));
             // Publishing a saved mode uses a separate lock, so a refresh must not replace it.
             ModeSnapshot observed = cachedMode.compareAndExchange(previous,
-                    new ModeSnapshot(loadedMode, System.currentTimeMillis()));
+                    new ModeSnapshot(loadedMode, nanoTime.getAsLong()));
             return observed == previous ? loadedMode : observed.mode();
         }
     }
@@ -307,7 +317,7 @@ public class AuditPolicyService {
     public synchronized String updateMode(String mode) {
         String normalizedMode = requireValidMode(mode);
         systemConfigService.setString(CONFIG_KEY_AUDIT_MODE, normalizedMode, MODE_DESCRIPTION);
-        cachedMode.set(new ModeSnapshot(normalizedMode, System.currentTimeMillis()));
+        cachedMode.set(new ModeSnapshot(normalizedMode, nanoTime.getAsLong()));
         return normalizedMode;
     }
 
