@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class AuditPolicyService {
@@ -274,8 +275,9 @@ public class AuditPolicyService {
     ));
 
     private final SystemConfigService systemConfigService;
-    private volatile String cachedMode;
-    private volatile long cachedModeAtMillis;
+    private final AtomicReference<ModeSnapshot> cachedMode = new AtomicReference<>();
+
+    private record ModeSnapshot(String mode, long checkedAtMillis) {}
 
     public AuditPolicyService(SystemConfigService systemConfigService) {
         this.systemConfigService = systemConfigService;
@@ -283,21 +285,20 @@ public class AuditPolicyService {
 
     public String getMode() {
         long now = System.currentTimeMillis();
-        String mode = cachedMode;
-        if (mode != null && now - cachedModeAtMillis <= MODE_CACHE_TTL_MS) {
-            return mode;
+        ModeSnapshot previous = cachedMode.get();
+        if (previous != null && now - previous.checkedAtMillis() <= MODE_CACHE_TTL_MS) {
+            return previous.mode();
         }
         String loadedMode = normalizeMode(systemConfigService.getString(CONFIG_KEY_AUDIT_MODE, MODE_ON));
-        cachedMode = loadedMode;
-        cachedModeAtMillis = now;
-        return loadedMode;
+        // A read started earlier must not replace a mode saved while it was loading.
+        ModeSnapshot observed = cachedMode.compareAndExchange(previous, new ModeSnapshot(loadedMode, now));
+        return observed == previous ? loadedMode : observed.mode();
     }
 
-    public String updateMode(String mode) {
+    public synchronized String updateMode(String mode) {
         String normalizedMode = requireValidMode(mode);
         systemConfigService.setString(CONFIG_KEY_AUDIT_MODE, normalizedMode, MODE_DESCRIPTION);
-        cachedMode = normalizedMode;
-        cachedModeAtMillis = System.currentTimeMillis();
+        cachedMode.set(new ModeSnapshot(normalizedMode, System.currentTimeMillis()));
         return normalizedMode;
     }
 

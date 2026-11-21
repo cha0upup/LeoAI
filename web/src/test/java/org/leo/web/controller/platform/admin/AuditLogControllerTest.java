@@ -29,6 +29,9 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.AdditionalAnswers.delegatesTo;
@@ -134,6 +137,33 @@ class AuditLogControllerTest {
 
             assertEquals(AuditPolicyService.MODE_WRITE, config.getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, null));
             assertEquals(AuditPolicyService.MODE_WRITE, policy.getMode());
+        }
+    }
+
+    @Test
+    void olderAuditConfigurationReadDoesNotOverwriteACompletedUpdate() throws Exception {
+        var config = mock(SystemConfigService.class);
+        var policy = new AuditPolicyService(config);
+        var readingOldMode = new CountDownLatch(1);
+        var releaseRead = new CountDownLatch(1);
+        when(config.getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, AuditPolicyService.MODE_ON)).thenAnswer(call -> {
+            readingOldMode.countDown();
+            assertTrue(releaseRead.await(5, TimeUnit.SECONDS));
+            return AuditPolicyService.MODE_WRITE;
+        });
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var pendingRead = executor.submit(policy::getMode);
+            assertTrue(readingOldMode.await(5, TimeUnit.SECONDS));
+            assertEquals(AuditPolicyService.MODE_ON, policy.updateMode(AuditPolicyService.MODE_ON));
+            releaseRead.countDown();
+
+            assertEquals(AuditPolicyService.MODE_ON, pendingRead.get(5, TimeUnit.SECONDS));
+            assertEquals(AuditPolicyService.MODE_ON, policy.getMode());
+        } finally {
+            releaseRead.countDown();
+            executor.shutdownNow();
         }
     }
 
