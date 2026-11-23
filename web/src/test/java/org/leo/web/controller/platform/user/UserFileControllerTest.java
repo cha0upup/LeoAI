@@ -23,6 +23,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
@@ -36,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
@@ -122,6 +125,21 @@ class UserFileControllerTest {
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 0L, "lastModified", 0L)), fallback.get("fileList"));
         }
+    }
+
+    @Test
+    void successfulOverwriteKeepsExistingPosixPermissions() throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/report.txt", "first", false).get("code"));
+        Path target = artifacts.root(userId).resolve("notes/report.txt");
+        assumeTrue(Files.getFileStore(target).supportsFileAttributeView(PosixFileAttributeView.class));
+        var originalPermissions = PosixFilePermissions.fromString("rwxr-----");
+        Files.setPosixFilePermissions(target, originalPermissions);
+
+        assertEquals(200, controller.createFile(request, "notes/report.txt", "replacement", true).get("code"));
+
+        assertEquals("replacement", Files.readString(target));
+        assertEquals(originalPermissions, Files.getPosixFilePermissions(target));
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
@@ -313,13 +314,14 @@ public class UserArtifactService {
                                            InputStreamSource content) throws IOException {
         if (Files.exists(target) && !overwrite) throw new FileAlreadyExistsException(target.toString());
         if (overwrite) {
-            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    && (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target))) {
+            boolean replacingFile = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+            if (replacingFile && (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target))) {
                 throw new IOException("目标文件不可覆盖");
             }
             Path temporary = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
             try {
                 transferContent(temporary, content, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS);
+                if (replacingFile) preservePosixPermissions(target, temporary);
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } finally { Files.deleteIfExists(temporary); }
         } else {
@@ -330,6 +332,14 @@ public class UserArtifactService {
         result.put("path", relative(base, target));
         result.put("size", Files.size(target));
         return result;
+    }
+
+    private static void preservePosixPermissions(Path existing, Path replacement) throws IOException {
+        var view = Files.getFileAttributeView(existing, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (view == null) return;
+        var attributes = view.readAttributes();
+        if (!attributes.isRegularFile()) throw new IOException("目标文件不可覆盖");
+        Files.setPosixFilePermissions(replacement, attributes.permissions());
     }
 
     private static void transferContent(Path target, InputStreamSource content, OpenOption... options) throws IOException {
