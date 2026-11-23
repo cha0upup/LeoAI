@@ -209,11 +209,12 @@ class DownloadTaskTest {
     @Test
     void rejectsRestoringAnotherSessionBeforeChangingTheCheckpointOrPartialContent() throws Exception {
         createTask();
-        byte[] meta = Files.readAllBytes(store.getMetaFile().toPath());
+        Path checkpoint = root.resolve("users/owner/downloads/.tasks/task/meta.json");
+        byte[] meta = Files.readAllBytes(checkpoint);
         byte[] partial = Files.readAllBytes(store.getTempFile().toPath());
         assertThrows(IllegalArgumentException.class, () -> DownloadTask.loadFromDisk(
                 node, "owner", "other-session", "task", store, executor));
-        assertArrayEquals(meta, Files.readAllBytes(store.getMetaFile().toPath()));
+        assertArrayEquals(meta, Files.readAllBytes(checkpoint));
         assertArrayEquals(partial, Files.readAllBytes(store.getTempFile().toPath()));
         verifyNoInteractions(node, executor);
     }

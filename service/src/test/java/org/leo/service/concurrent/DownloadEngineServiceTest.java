@@ -43,9 +43,10 @@ class DownloadEngineServiceTest {
     @ParameterizedTest
     @CsvSource({"RUNNING,PAUSED", "PAUSED,PAUSED", "NEW,NEW", "COMPLETED,COMPLETED", "FAILED,FAILED", "CANCELLED,CANCELLED"})
     void persistedTasksUseTheSameFlatPublicSnapshotWithoutRewritingMetadata(String storedState, String displayedState) throws Exception {
-        DownloadStore store = persist("owner", "task-one", "session-one", storedState);
-        byte[] before = Files.readAllBytes(store.getMetaFile().toPath());
-        var modified = Files.getLastModifiedTime(store.getMetaFile().toPath());
+        persist("owner", "task-one", "session-one", storedState);
+        Path checkpoint = checkpoint("owner", "task-one");
+        byte[] before = Files.readAllBytes(checkpoint);
+        var modified = Files.getLastModifiedTime(checkpoint);
 
         Map<String, Object> snapshot = service.progress("owner", "task-one");
 
@@ -62,8 +63,8 @@ class DownloadEngineServiceTest {
         }
         assertFalse(snapshot.toString().contains(temp.toString()));
         assertEquals(List.of(snapshot), service.listBySessionId("owner", "session-one").get("tasks"));
-        assertArrayEquals(before, Files.readAllBytes(store.getMetaFile().toPath()));
-        assertEquals(modified, Files.getLastModifiedTime(store.getMetaFile().toPath()));
+        assertArrayEquals(before, Files.readAllBytes(checkpoint));
+        assertEquals(modified, Files.getLastModifiedTime(checkpoint));
     }
 
     @Test
@@ -129,13 +130,18 @@ class DownloadEngineServiceTest {
     @ValueSource(strings = {"{", "{\"state\":\"UNKNOWN\",\"sessionId\":\"session-one\"}"})
     void listingSkipsDamagedCheckpointsWhileDirectQueriesReportTheirFailure(String damaged) throws Exception {
         persist("owner", "valid", "session-one", "COMPLETED");
-        DownloadStore broken = persist("owner", "broken", "session-one", "PAUSED");
-        Files.writeString(broken.getMetaFile().toPath(), damaged);
+        persist("owner", "broken", "session-one", "PAUSED");
+        Path checkpoint = checkpoint("owner", "broken");
+        Files.writeString(checkpoint, damaged);
         var tasks = (List<?>) service.listBySessionId("owner", "session-one").get("tasks");
         assertEquals(1, tasks.size());
         assertEquals("valid", ((Map<?, ?>) tasks.get(0)).get("taskId"));
         assertThrows(IllegalStateException.class, () -> service.progress("owner", "broken"));
-        assertEquals(damaged, Files.readString(broken.getMetaFile().toPath()));
+        assertEquals(damaged, Files.readString(checkpoint));
+    }
+
+    private Path checkpoint(String user, String taskId) {
+        return temp.resolve("users").resolve(user).resolve("downloads/.tasks").resolve(taskId).resolve("meta.json");
     }
 
     private DownloadStore persist(String user, String taskId, String session, String state) throws Exception {

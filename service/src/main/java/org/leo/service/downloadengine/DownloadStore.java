@@ -52,7 +52,7 @@ public class DownloadStore {
         return tempFile;
     }
 
-    public File getMetaFile() {
+    private File getMetaFile() {
         return new File(taskDir, META_JSON);
     }
 
