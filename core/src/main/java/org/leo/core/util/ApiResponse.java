@@ -20,7 +20,6 @@ public final class ApiResponse {
     public static final int CODE_FORBIDDEN = 403;
     public static final int CODE_NOT_FOUND = 404;
     public static final int CODE_CONFLICT = 409;
-    public static final int CODE_TOO_MANY_REQUESTS = 429;
     public static final int CODE_ERROR = 500;
     
     // 响应字段常量

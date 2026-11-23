@@ -53,7 +53,7 @@ class ApiResponseTest {
                 Arguments.of(ApiResponse.forbidden("denied"), 403, "denied"),
                 Arguments.of(ApiResponse.notFound("missing"), 404, "missing"),
                 Arguments.of(ApiResponse.conflict("exists"), 409, "exists"),
-                Arguments.of(ApiResponse.error(ApiResponse.CODE_TOO_MANY_REQUESTS, "busy"), 429, "busy"),
+                Arguments.of(ApiResponse.error(429, "busy"), 429, "busy"),
                 Arguments.of(ApiResponse.error(400, null), 400, "error"));
     }
 
