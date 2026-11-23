@@ -166,13 +166,14 @@ public class UserArtifactService {
         List<Map<String, Object>> files = new ArrayList<>();
         try (var stream = Files.list(target)) {
             stream.filter(path -> !path.getFileName().toString().startsWith(".")
-                            && !"ai-tasks".equals(path.getFileName().toString()) && !Files.isSymbolicLink(path))
+                            && !"ai-tasks".equals(path.getFileName().toString()))
                     .sorted(Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
                     .forEach(path -> {
                         BasicFileAttributes attrs;
-                        try { attrs = Files.readAttributes(path, BasicFileAttributes.class); }
+                        try { attrs = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS); }
                         catch (NoSuchFileException ignored) { return; }
                         catch (Exception ignored) { attrs = null; }
+                        if (attrs != null ? attrs.isSymbolicLink() : Files.isSymbolicLink(path)) return;
                         files.add(fileInfo(base, path, attrs));
                     });
         } catch (NoSuchFileException ignored) {

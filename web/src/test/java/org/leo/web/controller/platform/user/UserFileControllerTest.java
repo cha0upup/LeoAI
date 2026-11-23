@@ -47,6 +47,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -121,8 +122,9 @@ class UserFileControllerTest {
             var items = (List<?>) listing.get("fileList");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 6L, "lastModified", modified)), items);
-            reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class));
-            reads.when(() -> Files.readAttributes(file, BasicFileAttributes.class))
+            reads.verify(() -> Files.isSymbolicLink(file), never());
+            reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS));
+            reads.when(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS))
                     .thenThrow(new java.io.IOException("fixture attributes unavailable"));
             var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
