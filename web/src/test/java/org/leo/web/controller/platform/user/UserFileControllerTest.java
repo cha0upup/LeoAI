@@ -78,10 +78,13 @@ class UserFileControllerTest {
         assertEquals(401, controller.overview(request).get("code"));
     }
 
+    private Path workspace() {
+        return AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath().toAbsolutePath().normalize();
+    }
+
     @AfterEach
     void cleanWorkspace() throws Exception {
-        Path userDir = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
-                .toPath().toAbsolutePath().normalize().getParent();
+        Path userDir = workspace().getParent();
         if (userDir == null || !Files.exists(userDir)) return;
         try (var paths = Files.walk(userDir)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {
@@ -100,7 +103,7 @@ class UserFileControllerTest {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/fixture.txt", "fixture", false).get("code"));
         String source = "ai-tasks/job/files/output.txt";
-        Path taskOutput = artifacts.root(userId).resolve(source);
+        Path taskOutput = workspace().resolve(source);
         Files.createDirectories(taskOutput.getParent());
         Files.writeString(taskOutput, "task result");
 
@@ -141,8 +144,7 @@ class UserFileControllerTest {
         assertEquals(Map.of("path", "notes/report.md", "size", 6L), overwritten.get("data"));
         assertEquals(409, controller.createDir(request, "notes/report.md").get("code"));
         assertEquals(Map.of("path", "notes"), controller.createDir(request, "notes").get("data"));
-        Path file = AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
-                .toPath().toAbsolutePath().normalize().resolve("notes/report.md");
+        Path file = workspace().resolve("notes/report.md");
         assertEquals("second", Files.readString(file));
         when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
         String oversized = "x".repeat(1024 * 1024 + 1);
@@ -169,7 +171,7 @@ class UserFileControllerTest {
     void successfulOverwriteKeepsExistingPosixPermissions() throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/report.txt", "first", false).get("code"));
-        Path target = artifacts.root(userId).resolve("notes/report.txt");
+        Path target = workspace().resolve("notes/report.txt");
         assumeTrue(Files.getFileStore(target).supportsFileAttributeView(PosixFileAttributeView.class));
         var originalPermissions = PosixFilePermissions.fromString("rwxr-----");
         Files.setPosixFilePermissions(target, originalPermissions);
@@ -184,7 +186,7 @@ class UserFileControllerTest {
     void interruptedOverwriteKeepsTheExistingFileAndMetadata() throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/report.md", "original fixture", false).get("code"));
-        Path target = artifacts.root(userId).resolve("notes/report.md");
+        Path target = workspace().resolve("notes/report.md");
         var before = artifacts.list(userId, null, null, null, 1, 50);
         MultipartFile upload = mock(MultipartFile.class);
         when(upload.getOriginalFilename()).thenReturn("report.md");
@@ -218,7 +220,7 @@ class UserFileControllerTest {
         controller.createFile(request, buildPath, "build", false);
         controller.createFile(request, "ai-reports/report.md", "report", false);
         controller.createFile(request, "Imports/note.txt", "note", false);
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         for (String path : List.of(buildPath, "ai-reports/report.md", "Imports/note.txt")) {
             Files.setLastModifiedTime(workspace.resolve(path), FileTime.fromMillis(1000));
         }
@@ -242,9 +244,12 @@ class UserFileControllerTest {
             Locale.setDefault(previous);
         }
         var metadataReader = spy(new ObjectMapper());
-        var listing = spy(new UserArtifactService(metadataReader, systemConfigService));
-        var page = listing.list(userId, "", "", "", 1, 2);
-        verify(listing).root(userId);
+        var listing = new UserArtifactService(metadataReader, systemConfigService);
+        Map<String, Object> page;
+        try (var directoryLookup = mockStatic(AgentNodeSessionWorkDirUtil.class, CALLS_REAL_METHODS)) {
+            page = listing.list(userId, "", "", "", 1, 2);
+            directoryLookup.verify(() -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
+        }
         assertEquals(3, page.get("count"));
         var pageFiles = (List<Map<String, Object>>) page.get("fileList");
         assertEquals(List.of("Imports/note.txt", "ai-reports/report.md"),
@@ -266,7 +271,7 @@ class UserFileControllerTest {
                 "imports/dedicated.txt", "notes/readme.txt", "loose.txt", "task-results")) {
             assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
         }
-        Path blocked = artifacts.root(userId).resolve(topLevel ? "ai-reports" : "ai-reports/nested");
+        Path blocked = workspace().resolve(topLevel ? "ai-reports" : "ai-reports/nested");
         var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
         try (var filesystem = mockStatic(Files.class, invocation -> {
             if (openDirectory.equals(invocation.getMethod()) && blocked.equals(invocation.getArgument(0))) {
@@ -292,7 +297,7 @@ class UserFileControllerTest {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/kept.txt", "fixture", false).get("code"));
         assertEquals(200, controller.createFile(request, "notes/removed.txt", "fixture", false).get("code"));
-        Path directory = artifacts.root(userId).resolve("notes");
+        Path directory = workspace().resolve("notes");
         Path removed = directory.resolve("removed.txt");
         var listDirectory = Files.class.getMethod("list", Path.class);
         var readAttributes = Files.class.getMethod("readAttributes", Path.class, Class.class, LinkOption[].class);
@@ -325,7 +330,7 @@ class UserFileControllerTest {
             String path, boolean accessDenied, int expectedStatus) throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/kept.txt", "fixture", false).get("code"));
-        Path changed = artifacts.root(userId).resolve(path);
+        Path changed = workspace().resolve(path);
         Files.createDirectories(changed);
         Files.writeString(changed.resolve("entry.txt"), "fixture");
         var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
@@ -356,7 +361,7 @@ class UserFileControllerTest {
     @SuppressWarnings("unchecked")
     void overviewAndFirstPageSelectTheSameRecentFilesWhenTimestampsTie() throws Exception {
         var request = authenticatedRequest();
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         for (int i = 8; i >= 0; i--) {
             String path = "notes/tied-" + i + ".txt";
             assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
@@ -383,7 +388,7 @@ class UserFileControllerTest {
         var files = Map.of("ai-reports/0-old-keep.txt", 10_000L, "ai-reports/a-keep.txt", 30_000L,
                 "ai-reports/z-keep.txt", 30_000L, "ai-reports/middle-keep.txt", 20_000L,
                 "ai-reports/other.txt", 40_000L, "notes/outside-keep.txt", 50_000L);
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         for (var entry : files.entrySet()) {
             assertEquals(200, controller.createFile(request, entry.getKey(), "fixture", false).get("code"));
             Files.setLastModifiedTime(workspace.resolve(entry.getKey()), FileTime.fromMillis(entry.getValue()));
@@ -428,7 +433,7 @@ class UserFileControllerTest {
         controller.createFile(authenticatedRequest(), String.valueOf(saved.get("path")), "manual revision", true);
         assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50).get("count"));
         assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50).get("count"));
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         Path survivor = workspace.resolve("retained/fixture.txt");
         if (recursive) {
             controller.createFile(authenticatedRequest(), "ai-reports/nested/extra.txt", "extra", false);
@@ -455,7 +460,7 @@ class UserFileControllerTest {
     void metadataLimitAppliesToActualBytesEvenIfTheReportedSizeIsStale() throws Exception {
         assertEquals(200, controller.createFile(authenticatedRequest(), "notes/report.txt", "fixture", false).get("code"));
         Path metadata;
-        try (var entries = Files.list(artifacts.root(userId).resolve(".artifacts"))) {
+        try (var entries = Files.list(workspace().resolve(".artifacts"))) {
             metadata = entries.findFirst().orElseThrow();
         }
         var mapper = spy(new ObjectMapper());
@@ -486,12 +491,12 @@ class UserFileControllerTest {
     @Test
     void archivesTaskOutputAsAnIndependentCopyAndKeepsTheOriginal() throws Exception {
         String source = "ai-tasks/job/files/output.txt";
-        Path original = artifacts.root(userId).resolve(source);
+        Path original = workspace().resolve(source);
         Files.createDirectories(original.getParent());
         Files.writeString(original, "task result");
         var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source,
                 Map.of("sourceModule", "invalid", "sourceId", "caller-value")));
-        assertEquals("task result", Files.readString(artifacts.root(userId).resolve(String.valueOf(saved.get("path")))));
+        assertEquals("task result", Files.readString(workspace().resolve(String.valueOf(saved.get("path")))));
         assertEquals("task result", Files.readString(original));
         var metadata = (Map<?, ?>) saved.get("metadata");
         assertEquals("task-output", metadata.get("sourceModule"));
@@ -506,7 +511,7 @@ class UserFileControllerTest {
     void taskArchiveChecksCopiedBytesAndCleansUpAnOversizedResult() throws Exception {
         when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
         String source = "ai-tasks/job/files/output.txt";
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         Path original = workspace.resolve(source);
         Files.createDirectories(original.getParent());
         int limit = 1024 * 1024;
@@ -547,9 +552,9 @@ class UserFileControllerTest {
         assertEquals(400, controller.delete(request, "", true).get("code"));
         assertEquals(401, controller.delete(new MockHttpServletRequest(), "original.txt", false).get("code"));
         assertEquals(400, controller.list(request, "ai-tasks", false, 1, 50, "", "").get("code"));
-        Path actual = artifacts.root(userId).resolve("original.txt");
+        Path actual = workspace().resolve("original.txt");
         Files.writeString(actual, "content");
-        Files.createSymbolicLink(artifacts.root(userId).resolve("link.txt"), actual);
+        Files.createSymbolicLink(workspace().resolve("link.txt"), actual);
         assertThrows(IllegalArgumentException.class, () -> artifacts.findFile(userId, "link.txt"));
         assertEquals(1, artifacts.list(userId, "", "", "", 1, 50).get("count"));
         var directory = (Map<?, ?>) controller.list(request, "", false, 1, 50, "", "").get("data");
@@ -565,7 +570,7 @@ class UserFileControllerTest {
     @Test
     void rejectsInvalidArchivesBeforeCreatingFilesOrCategoryDirectories() throws Exception {
         var request = authenticatedRequest();
-        Path workspace = artifacts.root(userId);
+        Path workspace = workspace();
         var invalidMetadata = controller.archive(request,
                 new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "report", null, Map.of("sourceModule", "invalid")));
         assertEquals(Map.of("code", 400, "msg", "未知成果来源"), invalidMetadata);
@@ -612,7 +617,7 @@ class UserFileControllerTest {
 
     @Test
     void workspaceDownloadsDoNotReachSiblingTaskStorage() throws Exception {
-        Path downloads = artifacts.root(userId).getParent().resolve("downloads");
+        Path downloads = workspace().getParent().resolve("downloads");
         Files.createDirectories(downloads);
         Files.writeString(downloads.resolve("fixture.txt"), "private task data");
         var response = new org.springframework.mock.web.MockHttpServletResponse();
@@ -633,7 +638,7 @@ class UserFileControllerTest {
     void workspaceReadsDistinguishAFileVanishingAtOpenFromAccessFailure(boolean accessDenied) throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/report.txt", "fixture", false).get("code"));
-        Path target = artifacts.root(userId).resolve("notes/report.txt");
+        Path target = workspace().resolve("notes/report.txt");
         var openChannel = Files.class.getMethod("newByteChannel", Path.class, OpenOption[].class);
         var download = new org.springframework.mock.web.MockHttpServletResponse();
         try (var filesystem = mockStatic(Files.class, invocation -> {
@@ -659,7 +664,7 @@ class UserFileControllerTest {
     void previewReadsSizeAndContentFromTheSameFileDuringReplacement() throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/preview.txt", "old", false).get("code"));
-        Path target = artifacts.root(userId).resolve("notes/preview.txt");
+        Path target = workspace().resolve("notes/preview.txt");
         Path replacement = target.resolveSibling(".replacement");
         Files.writeString(replacement, "replacement");
         var sizeLookup = Files.class.getMethod("size", Path.class);
@@ -706,7 +711,7 @@ class UserFileControllerTest {
 
         byte[] binary = new byte[1024 * 1024 + 17];
         Arrays.fill(binary, (byte) 0xff);
-        Files.write(artifacts.root(userId).resolve("notes/binary.bin"), binary);
+        Files.write(workspace().resolve("notes/binary.bin"), binary);
         var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE).get("data");
         assertEquals((long) binary.length, maximum.get("size"));
         assertEquals(1024 * 1024, maximum.get("previewSize"));

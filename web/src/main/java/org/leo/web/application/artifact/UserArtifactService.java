@@ -51,7 +51,7 @@ public class UserArtifactService {
         } catch (NumberFormatException ignored) { return MAX_ARCHIVE_BYTES; }
     }
 
-    public Path root(String userId) {
+    private static Path root(String userId) {
         return AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath().toAbsolutePath().normalize();
     }
 
