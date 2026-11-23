@@ -389,16 +389,25 @@ class UserFileControllerTest {
         controller.createFile(authenticatedRequest(), String.valueOf(saved.get("path")), "manual revision", true);
         assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50).get("count"));
         assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50).get("count"));
+        Path workspace = artifacts.root(userId);
+        Path survivor = workspace.resolve("retained/fixture.txt");
         if (recursive) {
             controller.createFile(authenticatedRequest(), "ai-reports/nested/extra.txt", "extra", false);
             assertEquals(400, controller.delete(authenticatedRequest(), "ai-reports", false).get("code"));
+            Files.createDirectories(survivor.getParent());
+            Files.writeString(survivor, "retained");
+            Files.createSymbolicLink(workspace.resolve("ai-reports/nested/link"), survivor.getParent());
         }
         String target = recursive ? "ai-reports" : String.valueOf(saved.get("path"));
-        assertEquals(Map.of("code", 200, "msg", "删除成功",
-                        "data", Map.of("path", target, "deleted", true, "recursive", recursive)),
-                controller.delete(authenticatedRequest(), target, recursive));
-        assertTrue(Files.notExists(artifacts.root(userId).resolve(target)));
-        try (var files = Files.list(artifacts.root(userId).resolve(".artifacts"))) { assertEquals(0, files.count()); }
+        try (var filesystem = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            assertEquals(Map.of("code", 200, "msg", "删除成功",
+                            "data", Map.of("path", target, "deleted", true, "recursive", recursive)),
+                    controller.delete(authenticatedRequest(), target, recursive));
+            filesystem.verify(() -> Files.walk(workspace.resolve(target)), never());
+        }
+        assertTrue(Files.notExists(workspace.resolve(target)));
+        if (recursive) assertEquals("retained", Files.readString(survivor));
+        try (var files = Files.list(workspace.resolve(".artifacts"))) { assertEquals(0, files.count()); }
         assertEquals(Map.of("code", 404, "msg", "文件或目录不存在"),
                 controller.delete(authenticatedRequest(), target, recursive));
     }

@@ -390,12 +390,18 @@ public class UserArtifactService {
         if (!Files.exists(target)) return null;
         if (Files.isDirectory(target)) {
             if (!recursive) throw new IllegalArgumentException("目录删除需要设置recursive=true");
-            try (var walk = Files.walk(target)) {
-                walk.sorted(Comparator.reverseOrder()).forEach(path -> {
-                    try { deletePath(base, path); }
-                    catch (Exception error) { throw new RuntimeException(error); }
-                });
-            }
+            Files.walkFileTree(target, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    deletePath(base, file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override public FileVisitResult postVisitDirectory(Path dir, IOException error) throws IOException {
+                    if (error != null) throw error;
+                    deletePath(base, dir);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
         } else {
             deletePath(base, target);
         }
