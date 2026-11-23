@@ -212,14 +212,12 @@ public class ProjectService {
     }
 
     public List<Agent> listRootAgents(String projectId) {
-        return listAgentsByParent(projectId, "root");
+        List<Agent> roots = projectMapper.findProjectRootAgents(projectId);
+        return roots != null ? roots : List.of();
     }
 
     public List<Agent> listAgentsByParent(String projectId, String parentAgentId) {
-        if ("root".equals(parentAgentId)) {
-            List<Agent> roots = projectMapper.findAgentsByProjectAndParent(projectId, parentAgentId);
-            return roots != null ? roots : List.of();
-        }
+        if ("root".equals(parentAgentId)) return listRootAgents(projectId);
         if (!containsAgent(projectId, parentAgentId)) return List.of();
         return agentService.findAgentsByParentAgentId(parentAgentId);
     }

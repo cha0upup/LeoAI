@@ -124,9 +124,15 @@ class AgentDirectoryIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"project", " project "})
     void preservesProjectAndUnassignedWorkspaceBoundaries(String projectId) {
+        jdbc.update("""
+                INSERT INTO project_agents (project_id, agent_id, added_by_user_id, create_time)
+                VALUES ('project', 'child', 'owner', '2026-10-04')
+                """);
         List<AgentDirectoryEntry> assigned = entries(projects.listRootAgents(request, projectId));
         assertEquals(List.of("parent"), ids(assigned));
         assertTrue(assigned.get(0).hasChildren());
+        assertEquals(ids(assigned), ids(entries(projects.listChildren(
+                request, projectId, new ProjectChildrenRequest("root")))));
         List<AgentDirectoryEntry> unassigned = entries(projects.listUnassignedAgents(request));
         assertEquals(List.of("leaf"), ids(unassigned));
         assertFalse(unassigned.get(0).hasChildren());

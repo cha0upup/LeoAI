@@ -146,10 +146,9 @@ public interface ProjectMapper {
     record MembershipRow(String entryAgentId, String projectId, Project project) {}
 
     @Select("SELECT p.* FROM agents p INNER JOIN project_agents pp ON pp.agent_id=p.agent_id " +
-            "WHERE pp.project_id=#{projectId} AND p.parent_agent_id=#{parentAgentId} " +
+            "WHERE pp.project_id=#{projectId} AND p.parent_agent_id='root' " +
             "ORDER BY pp.sort_order ASC, p.update_time DESC, p.agent_name COLLATE NOCASE ASC")
-    List<Agent> findAgentsByProjectAndParent(@Param("projectId") String projectId,
-                                               @Param("parentAgentId") String parentAgentId);
+    List<Agent> findProjectRootAgents(@Param("projectId") String projectId);
 
     @Select("SELECT p.* FROM agents p WHERE p.parent_agent_id='root' " +
             "AND NOT EXISTS (SELECT 1 FROM project_agents pp WHERE pp.agent_id=p.agent_id) " +
