@@ -58,14 +58,6 @@ public final class AiExecutionExecutor implements AutoCloseable {
         turnSlots.release();
     }
 
-    int activeChatTasks() {
-        return chatExecutor.getActiveCount();
-    }
-
-    int queuedChatTasks() {
-        return chatExecutor.getQueue().size();
-    }
-
     private static int defaultChatThreads() {
         return clamp(Runtime.getRuntime().availableProcessors() * 2,
                 MIN_CHAT_THREADS, MAX_CHAT_THREADS);

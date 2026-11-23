@@ -9,7 +9,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,13 +35,13 @@ class AiExecutionExecutorTest {
             executor.submitChat(() -> await(started, release));
             assertTrue(started.await(1, TimeUnit.SECONDS));
 
-            executor.submitChat(() -> { });
+            Future<?> queued = executor.submitChat(() -> { });
 
-            assertEquals(1, executor.activeChatTasks());
-            assertEquals(1, executor.queuedChatTasks());
             assertThrows(RejectedExecutionException.class,
                     () -> executor.submitChat(() -> { }));
+            assertFalse(queued.isDone());
             release.countDown();
+            queued.get(5, TimeUnit.SECONDS);
         }
     }
 
