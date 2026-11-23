@@ -19,6 +19,7 @@ class StaticResourceCacheFilterTest {
         assertHtmlIsNotCached("/index.html");
         assertHtmlIsNotCached("/change-password");
         assertHtmlIsNotCached("/main/agent/HOME");
+        assertHtmlIsNotCached("/main/team.v2/settings");
     }
 
     @Test
@@ -34,6 +35,11 @@ class StaticResourceCacheFilterTest {
         MockHttpServletResponse response = filter("/platform/user/status");
 
         assertNull(response.getHeader(HttpHeaders.CACHE_CONTROL));
+    }
+
+    @Test
+    void leavesFilesOutsideTheAssetsDirectoryToTheirOwnCachePolicy() throws Exception {
+        assertNull(filter("/main/team.v2/settings.json").getHeader(HttpHeaders.CACHE_CONTROL));
     }
 
     private void assertHtmlIsNotCached(String path) throws Exception {

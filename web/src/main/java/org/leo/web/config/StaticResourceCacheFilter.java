@@ -51,13 +51,12 @@ public class StaticResourceCacheFilter extends OncePerRequestFilter {
     }
 
     private boolean isSpaEntryRequest(String requestPath) {
-        if ("/".equals(requestPath) || "/index.html".equals(requestPath)) {
+        if ("/index.html".equals(requestPath)) {
             return true;
         }
         if (requestPath.startsWith("/platform/") || requestPath.startsWith("/agent-node/")) {
             return false;
         }
-        int lastSlash = requestPath.lastIndexOf('/');
-        return !requestPath.substring(lastSlash + 1).contains(".");
+        return requestPath.indexOf('.', requestPath.lastIndexOf('/') + 1) < 0;
     }
 }
