@@ -458,10 +458,18 @@ public class UserArtifactService {
             if (!"task-results".equals(request.category())) throw new IllegalArgumentException("任务文件应归档到任务输出");
             input = resolve(base, request.sourcePath(), false);
             Path relative = base.relativize(input);
-            if (relative.getNameCount() < 4 || !"ai-tasks".equals(relative.getName(0).toString())
-                    || !"files".equals(relative.getName(2).toString()) || !Files.isRegularFile(input, LinkOption.NOFOLLOW_LINKS))
+            BasicFileAttributes attributes = null;
+            if (relative.getNameCount() >= 4 && "ai-tasks".equals(relative.getName(0).toString())
+                    && "files".equals(relative.getName(2).toString())) {
+                try {
+                    attributes = Files.readAttributes(input, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                } catch (IOException ignored) {
+                    // A source whose type cannot be determined is not eligible for archive.
+                }
+            }
+            if (attributes == null || !attributes.isRegularFile())
                 throw new IllegalArgumentException("请选择任务公开输出文件");
-            if (Files.size(input) > maxBytes) throw new IllegalArgumentException("成果文件超过归档上限");
+            if (attributes.size() > maxBytes) throw new IllegalArgumentException("成果文件超过归档上限");
             source.put("sourceModule", "task-output");
             source.put("sourceId", relative.getName(1).toString());
         } else {

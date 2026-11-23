@@ -511,6 +511,12 @@ class UserFileControllerTest {
         assertEquals(200, controller.preview(authenticatedRequest(), source, null).get("code"));
         assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
                 new UserArtifactService.ArchiveRequest("task-results", "private.txt", null, "ai-tasks/job/.internal/private.txt", Map.of())));
+        Files.createDirectory(original.resolveSibling("folder"));
+        for (String name : List.of("folder", "missing.txt")) {
+            var rejected = controller.archive(authenticatedRequest(), new UserArtifactService.ArchiveRequest(
+                    "task-results", "output.txt", null, "ai-tasks/job/files/" + name, Map.of()));
+            assertEquals(Map.of("code", 400, "msg", "请选择任务公开输出文件"), rejected);
+        }
     }
 
     @Test
@@ -531,15 +537,20 @@ class UserFileControllerTest {
         Path saved = workspace.resolve(accepted.get("path").toString());
         if (posix) assertEquals(permissions, Files.getPosixFilePermissions(saved));
 
+        var originalAttributes = Files.readAttributes(original, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         Files.writeString(original, "x".repeat(limit + 1));
-        var sizeLookup = Files.class.getMethod("size", Path.class);
+        var readAttributes = Files.class.getMethod("readAttributes", Path.class, Class.class, LinkOption[].class);
         try (var filesystem = mockStatic(Files.class, invocation -> {
-            if (sizeLookup.equals(invocation.getMethod()) && original.equals(invocation.getArgument(0))) return (long) limit;
+            if (readAttributes.equals(invocation.getMethod()) && original.equals(invocation.getArgument(0))) {
+                return originalAttributes;
+            }
             return invocation.callRealMethod();
         })) {
             var response = controller.archive(authenticatedRequest(), request);
             assertEquals(400, response.get("code"));
             assertEquals("成果文件超过归档上限", response.get("msg"));
+            filesystem.verify(() -> Files.size(original), never());
+            filesystem.verify(() -> Files.newInputStream(original, LinkOption.NOFOLLOW_LINKS));
         }
 
         assertEquals(limit + 1L, Files.size(original));
