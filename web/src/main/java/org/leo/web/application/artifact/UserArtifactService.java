@@ -9,12 +9,15 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
@@ -436,15 +439,40 @@ public class UserArtifactService {
             content = request.content().getBytes(StandardCharsets.UTF_8);
             if (content.length > maxBytes) throw new IllegalArgumentException("成果内容超过归档上限");
         }
-        Files.createFile(target);
+        boolean created = false;
         try {
-            if (input != null) Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
-            else Files.write(target, content, StandardOpenOption.TRUNCATE_EXISTING);
+            try (var channel = Files.newByteChannel(target, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
+                    archiveFileAttributes(input))) {
+                created = true;
+                OutputStream output = Channels.newOutputStream(channel);
+                if (input != null) copyArchiveSource(input, output, maxBytes);
+                else output.write(content);
+            }
             record(base, target, source);
             return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), true);
         } catch (Exception error) {
-            deletePath(base, target);
+            if (created) deletePath(base, target);
             throw error;
+        }
+    }
+
+    private static FileAttribute<?>[] archiveFileAttributes(Path source) throws IOException {
+        var view = source == null ? null : Files.getFileAttributeView(source, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        return view == null ? new FileAttribute<?>[0]
+                : new FileAttribute<?>[]{PosixFilePermissions.asFileAttribute(view.readAttributes().permissions())};
+    }
+
+    private static void copyArchiveSource(Path source, OutputStream output, long maxBytes) throws IOException {
+        try (var input = Files.newInputStream(source, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] buffer = new byte[8192];
+            long remaining = maxBytes;
+            while (remaining > 0) {
+                int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                if (read == -1) return;
+                output.write(buffer, 0, read);
+                remaining -= read;
+            }
+            if (input.read() != -1) throw new IllegalArgumentException("成果文件超过归档上限");
         }
     }
 

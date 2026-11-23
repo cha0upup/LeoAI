@@ -451,6 +451,43 @@ class UserFileControllerTest {
     }
 
     @Test
+    void taskArchiveChecksCopiedBytesAndCleansUpAnOversizedResult() throws Exception {
+        when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
+        String source = "ai-tasks/job/files/output.txt";
+        Path workspace = artifacts.root(userId);
+        Path original = workspace.resolve(source);
+        Files.createDirectories(original.getParent());
+        int limit = 1024 * 1024;
+        Files.writeString(original, "x".repeat(limit));
+        boolean posix = Files.getFileStore(original).supportsFileAttributeView(PosixFileAttributeView.class);
+        var permissions = PosixFilePermissions.fromString("rw-------");
+        if (posix) Files.setPosixFilePermissions(original, permissions);
+        var request = new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of());
+        var accepted = artifacts.archive(userId, request);
+        assertEquals((long) limit, accepted.get("size"));
+        Path saved = workspace.resolve(accepted.get("path").toString());
+        if (posix) assertEquals(permissions, Files.getPosixFilePermissions(saved));
+
+        Files.writeString(original, "x".repeat(limit + 1));
+        var sizeLookup = Files.class.getMethod("size", Path.class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (sizeLookup.equals(invocation.getMethod()) && original.equals(invocation.getArgument(0))) return (long) limit;
+            return invocation.callRealMethod();
+        })) {
+            var response = controller.archive(authenticatedRequest(), request);
+            assertEquals(400, response.get("code"));
+            assertEquals("成果文件超过归档上限", response.get("msg"));
+        }
+
+        assertEquals(limit + 1L, Files.size(original));
+        try (var results = Files.list(workspace.resolve("task-results"));
+             var metadata = Files.list(workspace.resolve(".artifacts"))) {
+            assertEquals(List.of(saved), results.toList());
+            assertEquals(1, metadata.count());
+        }
+    }
+
+    @Test
     void blocksRuntimeWritesRootDeletionAndLinkedPaths() throws Exception {
         var request = authenticatedRequest();
         assertEquals(400, controller.createFile(request, "ai-tasks/job/files/a.txt", "changed", true).get("code"));
