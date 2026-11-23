@@ -31,6 +31,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.Base64;
@@ -494,14 +495,26 @@ class UserFileControllerTest {
         verify(mapper, never()).readValue(eq(exact + " "), eq(Map.class));
     }
 
-    @Test
-    void archivesTaskOutputAsAnIndependentCopyAndKeepsTheOriginal() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void archivesTaskOutputAsAnIndependentCopyAndKeepsTheOriginal(boolean withoutPosix) throws Exception {
         String source = "ai-tasks/job/files/output.txt";
         Path original = workspace().resolve(source);
         Files.createDirectories(original.getParent());
         Files.writeString(original, "task result");
-        var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source,
-                Map.of("sourceModule", "invalid", "sourceId", "caller-value")));
+        var archiveRequest = new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source,
+                Map.of("sourceModule", "invalid", "sourceId", "caller-value"));
+        Map<String, Object> saved;
+        try (var filesystem = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            if (withoutPosix) {
+                filesystem.when(() -> Files.getFileAttributeView(original, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(null);
+            }
+            saved = artifacts.archive(userId, archiveRequest);
+            if (withoutPosix) {
+                filesystem.verify(() -> Files.readAttributes(original, PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS), never());
+            }
+        }
         assertEquals("task result", Files.readString(workspace().resolve(String.valueOf(saved.get("path")))));
         assertEquals("task result", Files.readString(original));
         var metadata = (Map<?, ?>) saved.get("metadata");
@@ -537,11 +550,13 @@ class UserFileControllerTest {
         Path saved = workspace.resolve(accepted.get("path").toString());
         if (posix) assertEquals(permissions, Files.getPosixFilePermissions(saved));
 
-        var originalAttributes = Files.readAttributes(original, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        var attributeType = posix ? PosixFileAttributes.class : BasicFileAttributes.class;
+        var originalAttributes = Files.readAttributes(original, attributeType, LinkOption.NOFOLLOW_LINKS);
         Files.writeString(original, "x".repeat(limit + 1));
         var readAttributes = Files.class.getMethod("readAttributes", Path.class, Class.class, LinkOption[].class);
         try (var filesystem = mockStatic(Files.class, invocation -> {
-            if (readAttributes.equals(invocation.getMethod()) && original.equals(invocation.getArgument(0))) {
+            if (readAttributes.equals(invocation.getMethod()) && original.equals(invocation.getArgument(0))
+                    && attributeType.equals(invocation.getArgument(1))) {
                 return originalAttributes;
             }
             return invocation.callRealMethod();
@@ -549,6 +564,9 @@ class UserFileControllerTest {
             var response = controller.archive(authenticatedRequest(), request);
             assertEquals(400, response.get("code"));
             assertEquals("成果文件超过归档上限", response.get("msg"));
+            if (posix) {
+                filesystem.verify(() -> Files.readAttributes(original, PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS));
+            }
             filesystem.verify(() -> Files.size(original), never());
             filesystem.verify(() -> Files.newInputStream(original, LinkOption.NOFOLLOW_LINKS));
         }

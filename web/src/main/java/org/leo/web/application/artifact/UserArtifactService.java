@@ -17,6 +17,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -454,6 +455,7 @@ public class UserArtifactService {
         long maxBytes = maxUploadBytes();
         Path input = null;
         byte[] content = null;
+        FileAttribute<?>[] creationAttributes = {};
         if (request.sourcePath() != null && !request.sourcePath().isBlank()) {
             if (!"task-results".equals(request.category())) throw new IllegalArgumentException("任务文件应归档到任务输出");
             input = resolve(base, request.sourcePath(), false);
@@ -462,7 +464,9 @@ public class UserArtifactService {
             if (relative.getNameCount() >= 4 && "ai-tasks".equals(relative.getName(0).toString())
                     && "files".equals(relative.getName(2).toString())) {
                 try {
-                    attributes = Files.readAttributes(input, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                    var attributeType = Files.getFileAttributeView(input, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS) != null
+                            ? PosixFileAttributes.class : BasicFileAttributes.class;
+                    attributes = Files.readAttributes(input, attributeType, LinkOption.NOFOLLOW_LINKS);
                 } catch (IOException ignored) {
                     // A source whose type cannot be determined is not eligible for archive.
                 }
@@ -470,6 +474,9 @@ public class UserArtifactService {
             if (attributes == null || !attributes.isRegularFile())
                 throw new IllegalArgumentException("请选择任务公开输出文件");
             if (attributes.size() > maxBytes) throw new IllegalArgumentException("成果文件超过归档上限");
+            if (attributes instanceof PosixFileAttributes posix) {
+                creationAttributes = new FileAttribute<?>[]{PosixFilePermissions.asFileAttribute(posix.permissions())};
+            }
             source.put("sourceModule", "task-output");
             source.put("sourceId", relative.getName(1).toString());
         } else {
@@ -482,7 +489,7 @@ public class UserArtifactService {
         boolean created = false;
         try {
             try (var channel = Files.newByteChannel(target, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
-                    archiveFileAttributes(input))) {
+                    creationAttributes)) {
                 created = true;
                 OutputStream output = Channels.newOutputStream(channel);
                 if (input != null) copyArchiveSource(input, output, maxBytes);
@@ -494,12 +501,6 @@ public class UserArtifactService {
             if (created) deletePath(base, target);
             throw error;
         }
-    }
-
-    private static FileAttribute<?>[] archiveFileAttributes(Path source) throws IOException {
-        var view = source == null ? null : Files.getFileAttributeView(source, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
-        return view == null ? new FileAttribute<?>[0]
-                : new FileAttribute<?>[]{PosixFilePermissions.asFileAttribute(view.readAttributes().permissions())};
     }
 
     private static void copyArchiveSource(Path source, OutputStream output, long maxBytes) throws IOException {
