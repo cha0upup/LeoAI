@@ -67,10 +67,10 @@ public class DatabaseInitializer implements CommandLineRunner {
     private void validateSchema() {
         try (Connection connection = dataSource.getConnection()) {
             requireColumns(connection, "users", Set.of("account_revision"));
-            requireForeignKey(connection, "users", "teams", Map.of("team_id", "team_id"));
-            requireForeignKey(connection, "teams", "users", Map.of("team_id", "team_id", "leader_id", "user_id"));
-            requireForeignKey(connection, "projects", "users", Map.of("owner_user_id", "user_id"));
-            requireForeignKey(connection, "projects", "teams", Map.of("team_id", "team_id"));
+            requireForeignKeys(connection, "users", Map.entry("teams", Map.of("team_id", "team_id")));
+            requireForeignKeys(connection, "teams", Map.entry("users", Map.of("team_id", "team_id", "leader_id", "user_id")));
+            requireForeignKeys(connection, "projects", Map.entry("users", Map.of("owner_user_id", "user_id")),
+                    Map.entry("teams", Map.of("team_id", "team_id")));
             requireExactColumns(connection, "project_agents",
                     Set.of("project_id", "agent_id", "alias", "tags", "sort_order", "added_by_user_id", "create_time"));
             requireColumns(connection, "audit_logs", Set.of("actor_team_id"));
@@ -126,21 +126,24 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    private void requireForeignKey(Connection connection, String table, String target,
-                                   Map<String, String> columns) throws SQLException {
-        Map<Integer, Map<String, String>> foreignKeys = new HashMap<>();
+    @SafeVarargs
+    private void requireForeignKeys(Connection connection, String table,
+                                    Map.Entry<String, Map<String, String>>... expectedKeys) throws SQLException {
+        Map<String, Map<Integer, Map<String, String>>> foreignKeys = new HashMap<>();
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("PRAGMA foreign_key_list('" + table + "')")) {
             while (result.next()) {
-                if (target.equals(result.getString("table"))) {
-                    foreignKeys.computeIfAbsent(result.getInt("id"), id -> new HashMap<>())
-                            .put(result.getString("from"), result.getString("to"));
-                }
+                foreignKeys.computeIfAbsent(result.getString("table"), target -> new HashMap<>())
+                        .computeIfAbsent(result.getInt("id"), id -> new HashMap<>())
+                        .put(result.getString("from"), result.getString("to"));
             }
         }
-        if (!foreignKeys.containsValue(columns)) {
-            throw new IllegalStateException("数据库结构不完整，缺少 " + table + " → " + target
-                    + " 的外键，请使用新的 SQLite 文件");
+        for (var expected : expectedKeys) {
+            String target = expected.getKey();
+            if (!foreignKeys.getOrDefault(target, Map.of()).containsValue(expected.getValue())) {
+                throw new IllegalStateException("数据库结构不完整，缺少 " + table + " → " + target
+                        + " 的外键，请使用新的 SQLite 文件");
+            }
         }
     }
 

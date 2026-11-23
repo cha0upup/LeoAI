@@ -185,6 +185,24 @@ class SchemaInitializationTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"false,true,users", "true,false,teams", "false,false,users"})
+    void rejectsProjectsMissingForeignKeysBeforeSeeding(boolean hasOwnerKey, boolean hasTeamKey, String missingTarget) {
+        var source = initializedSource();
+        var jdbc = new JdbcTemplate(source);
+        jdbc.execute("DROP TABLE projects");
+        jdbc.execute("""
+                CREATE TABLE projects (
+                    project_id TEXT PRIMARY KEY, owner_user_id TEXT%s, team_id TEXT%s
+                )
+                """.formatted(hasOwnerKey ? " REFERENCES users(user_id)" : "",
+                hasTeamKey ? " REFERENCES teams(team_id)" : ""));
+
+        var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
+        assertTrue(error.getMessage().contains("projects → " + missingTarget));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"project_agents", "ai_model_configs"})
     void rejectsUnexpectedColumnsWithoutAlteringExactSchemaTables(String table) {
         var source = initializedSource();
