@@ -6,15 +6,18 @@ import org.leo.core.entity.Team;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
-import org.leo.web.dto.platform.user.LoginRequest;
-import org.leo.web.dto.platform.user.ChangePasswordRequest;
-import org.leo.web.dto.platform.user.UpdateProfileRequest;
+import org.leo.web.controller.platform.LoginController.ChangePasswordRequest;
+import org.leo.web.controller.platform.LoginController.LoginRequest;
+import org.leo.web.controller.platform.LoginController.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
 import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.SystemInitializationService;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.Map;
 import java.util.Set;
@@ -29,6 +32,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class LoginControllerTest {
 
@@ -187,7 +193,7 @@ class LoginControllerTest {
     }
 
     @Test
-    void updatesOnlyEditableProfileFieldsAndLeavesSessionCredentialsAlone() {
+    void updatesOnlyEditableProfileFieldsAndLeavesSessionCredentialsAlone() throws Exception {
         User sessionUser = new User();
         sessionUser.setUserId("user-1");
         User storedUser = new User();
@@ -200,19 +206,20 @@ class LoginControllerTest {
                 .thenReturn(sessionUser);
         when(userService.getUserById("user-1")).thenReturn(storedUser);
         when(userService.updateUser(storedUser)).thenReturn(true);
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.getSession(true).setAttribute("user", sessionUser);
-
-        var response = controller.updateProfile(request,
-                new UpdateProfileRequest(" alice@example.com ", " 13800138000 ", "  "));
-
-        assertEquals(200, response.get("code"));
+        var session = new MockHttpSession();
+        session.setAttribute("user", sessionUser);
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/user/profile").session(session).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":" alice@example.com ","phone":" 13800138000 ","remark":"  "}
+                                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200));
         assertEquals("alice@example.com", storedUser.getEmail());
         assertEquals("13800138000", storedUser.getPhone());
         assertNull(storedUser.getRemark());
         assertEquals("alice", storedUser.getUserName());
         assertEquals("team-1", storedUser.getTeamId());
-        assertSame(sessionUser, request.getSession(false).getAttribute("user"));
+        assertSame(sessionUser, session.getAttribute("user"));
         verify(userService).updateUser(storedUser);
     }
 

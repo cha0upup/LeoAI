@@ -11,9 +11,6 @@ import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.SystemInitializationService;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
-import org.leo.web.dto.platform.user.ChangePasswordRequest;
-import org.leo.web.dto.platform.user.LoginRequest;
-import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
@@ -251,4 +248,11 @@ public class LoginController {
             throw ApiException.badRequest(label + "不能超过 " + maxLength + " 个字符");
         }
     }
+
+    record LoginRequest(String username, String password) {}
+
+    record ChangePasswordRequest(String oldPassword, String newPassword) {}
+
+    /** 当前用户可自行维护的个人资料字段。 */
+    record UpdateProfileRequest(String email, String phone, String remark) {}
 }
