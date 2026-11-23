@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="docs/images/logo.png" alt="LeoAI Logo" width="120" />
+<img src="web/src/main/resources/static/leo-logo.png" alt="LeoAI Logo" width="120" />
 
 # LeoAI
 
