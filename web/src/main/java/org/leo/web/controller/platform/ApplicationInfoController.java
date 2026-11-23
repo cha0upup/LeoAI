@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.Objects;
 
 /** Build metadata for the running server, without exposing environment details. */
 @RestController
@@ -24,8 +25,9 @@ public class ApplicationInfoController {
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info() {
         BuildProperties build = buildProperties.getIfAvailable();
-        var info = new ApplicationInfo(build == null ? null : build.getVersion(),
-                build == null || build.getTime() == null ? null : build.getTime().toString());
+        var info = build == null
+                ? new ApplicationInfo(null, null)
+                : new ApplicationInfo(build.getVersion(), Objects.toString(build.getTime(), null));
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApiResponse.success(info));
     }
 

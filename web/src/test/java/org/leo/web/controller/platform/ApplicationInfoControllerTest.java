@@ -51,6 +51,16 @@ class ApplicationInfoControllerTest {
     }
 
     @Test
+    void keepsTheVersionWhenTheBuildTimeIsInvalid() throws Exception {
+        var metadata = new Properties();
+        metadata.setProperty("version", "4.2.1");
+        metadata.setProperty("time", "invalid");
+        mvc(metadata, true).perform(get("/platform/application/info"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value("4.2.1"))
+                .andExpect(jsonPath("$.data.buildTime").isEmpty());
+    }
+
+    @Test
     void requiresLogin() throws Exception {
         mvc(null, false).perform(get("/platform/application/info"))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(401));
