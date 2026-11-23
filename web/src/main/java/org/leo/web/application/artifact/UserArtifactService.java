@@ -155,8 +155,13 @@ public class UserArtifactService {
     /** Returns a visible directory listing, or null when the requested directory is missing. */
     public Map<String, Object> listDirectory(String userId, String relativePath) throws IOException {
         Path target = resolve(userId, relativePath, true);
-        if (!Files.exists(target)) return null;
-        if (!Files.isDirectory(target)) throw new IllegalArgumentException("path不是目录");
+        try {
+            if (!Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory()) {
+                throw new IllegalArgumentException("path不是目录");
+            }
+        } catch (NoSuchFileException ignored) {
+            return null;
+        }
         Path base = root(userId);
         List<Map<String, Object>> files = new ArrayList<>();
         try (var stream = Files.list(target)) {
@@ -166,9 +171,12 @@ public class UserArtifactService {
                     .forEach(path -> {
                         BasicFileAttributes attrs;
                         try { attrs = Files.readAttributes(path, BasicFileAttributes.class); }
+                        catch (NoSuchFileException ignored) { return; }
                         catch (Exception ignored) { attrs = null; }
                         files.add(fileInfo(base, path, attrs));
                     });
+        } catch (NoSuchFileException ignored) {
+            return null;
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(base, target));

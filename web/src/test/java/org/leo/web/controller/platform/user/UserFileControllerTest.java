@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -244,6 +245,36 @@ class UserFileControllerTest {
                     imported.stream().map(file -> (String) file.get("path")).sorted().toList());
             var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50);
             assertEquals(1, taskResults.get("count"));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void directoryListingOmitsVanishedChildrenAndReportsVanishedTarget(boolean targetVanished) throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/kept.txt", "fixture", false).get("code"));
+        assertEquals(200, controller.createFile(request, "notes/removed.txt", "fixture", false).get("code"));
+        Path directory = artifacts.root(userId).resolve("notes");
+        Path removed = directory.resolve("removed.txt");
+        var listDirectory = Files.class.getMethod("list", Path.class);
+        var readAttributes = Files.class.getMethod("readAttributes", Path.class, Class.class, LinkOption[].class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (targetVanished && listDirectory.equals(invocation.getMethod()) && directory.equals(invocation.getArgument(0))) {
+                throw new NoSuchFileException(directory.toString());
+            }
+            if (!targetVanished && readAttributes.equals(invocation.getMethod()) && removed.equals(invocation.getArgument(0))) {
+                throw new NoSuchFileException(removed.toString());
+            }
+            return invocation.callRealMethod();
+        })) {
+            var response = controller.list(request, "notes", false, 1, 50, null, null);
+            assertEquals(targetVanished ? 404 : 200, response.get("code"));
+            if (!targetVanished) {
+                var data = (Map<?, ?>) response.get("data");
+                assertEquals(1, data.get("count"));
+                var files = (List<?>) data.get("fileList");
+                assertEquals("notes/kept.txt", ((Map<?, ?>) files.get(0)).get("path"));
+            }
         }
     }
 
