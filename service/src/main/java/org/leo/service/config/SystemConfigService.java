@@ -26,7 +26,9 @@ public class SystemConfigService {
             throw new IllegalArgumentException("默认值必须在配置范围内");
         }
         try {
-            int value = Integer.parseInt(getString(key, String.valueOf(defaultValue)));
+            String configured = getString(key, null);
+            if (configured == null) return defaultValue;
+            int value = Integer.parseInt(configured);
             return Math.max(min, Math.min(max, value));
         } catch (RuntimeException ignored) {
             return defaultValue;

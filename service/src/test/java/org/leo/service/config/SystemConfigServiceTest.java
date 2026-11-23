@@ -29,6 +29,7 @@ class SystemConfigServiceTest {
     void usesDefaultForMissingOrMalformedConfiguration(String value) {
         when(mapper.findValueByKey("key")).thenReturn(value);
         assertEquals(8, service.getInt("key", 8, 6, 64));
+        verify(mapper).findValueByKey("key");
     }
 
     @Test
