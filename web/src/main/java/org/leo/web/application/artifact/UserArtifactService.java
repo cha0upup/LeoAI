@@ -88,7 +88,7 @@ public class UserArtifactService {
 
     private static Path findFile(Path base, String relativePath) {
         Path target = resolve(base, relativePath, false);
-        return Files.exists(target) && Files.isRegularFile(target) ? target : null;
+        return Files.isRegularFile(target) ? target : null;
     }
 
     private void walk(Path base, String categoryFilter, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {

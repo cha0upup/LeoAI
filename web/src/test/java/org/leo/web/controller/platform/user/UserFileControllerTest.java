@@ -601,6 +601,13 @@ class UserFileControllerTest {
         assertEquals("hello 世界", new String(response.getContentAsByteArray(), java.nio.charset.StandardCharsets.UTF_8));
         assertEquals("中文 报告.txt", org.springframework.http.ContentDisposition
                 .parse(response.getHeader("Content-Disposition")).getFilename());
+
+        for (String path : List.of("notes", "notes/missing.txt")) {
+            var missing = new org.springframework.mock.web.MockHttpServletResponse();
+            controller.download(authenticatedRequest(), path, null, missing);
+            assertEquals(404, missing.getStatus(), path);
+            assertNull(missing.getHeader("Content-Disposition"));
+        }
     }
 
     @Test
@@ -641,6 +648,8 @@ class UserFileControllerTest {
             int expected = accessDenied ? 500 : 404;
             assertEquals(expected, preview.get("code"));
             assertEquals(expected, download.getStatus());
+            filesystem.verify(() -> Files.isRegularFile(target), times(2));
+            filesystem.verify(() -> Files.exists(target), never());
         }
         assertNull(download.getHeader("Content-Disposition"));
         assertEquals(0, download.getContentAsByteArray().length);
@@ -711,6 +720,7 @@ class UserFileControllerTest {
         assertEquals(0, empty.get("previewSize"));
         assertEquals("", empty.get("contentBase64"));
         assertEquals(404, controller.preview(request, "notes", null).get("code"));
+        assertEquals(404, controller.preview(request, "notes/missing.txt", null).get("code"));
         assertEquals(400, controller.preview(request, "../private.txt", null).get("code"));
         assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null).get("code"));
 
