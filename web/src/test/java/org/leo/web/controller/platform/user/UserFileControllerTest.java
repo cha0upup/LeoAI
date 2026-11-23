@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -400,6 +401,38 @@ class UserFileControllerTest {
         try (var files = Files.list(artifacts.root(userId).resolve(".artifacts"))) { assertEquals(0, files.count()); }
         assertEquals(Map.of("code", 404, "msg", "文件或目录不存在"),
                 controller.delete(authenticatedRequest(), target, recursive));
+    }
+
+    @Test
+    void metadataLimitAppliesToActualBytesEvenIfTheReportedSizeIsStale() throws Exception {
+        assertEquals(200, controller.createFile(authenticatedRequest(), "notes/report.txt", "fixture", false).get("code"));
+        Path metadata;
+        try (var entries = Files.list(artifacts.root(userId).resolve(".artifacts"))) {
+            metadata = entries.findFirst().orElseThrow();
+        }
+        var mapper = spy(new ObjectMapper());
+        var listing = new UserArtifactService(mapper, systemConfigService);
+        int limit = 16 * 1024;
+        String json = "{\"title\":\"报告\"}";
+        String exact = json + " ".repeat(limit - json.getBytes(StandardCharsets.UTF_8).length);
+        Files.writeString(metadata, exact);
+        var page = listing.list(userId, null, null, null, 1, 50);
+        var row = (Map<?, ?>) ((List<?>) page.get("fileList")).get(0);
+        assertEquals(Map.of("title", "报告"), row.get("metadata"));
+
+        Files.writeString(metadata, exact + " ");
+        var sizeLookup = Files.class.getMethod("size", Path.class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (sizeLookup.equals(invocation.getMethod()) && metadata.equals(invocation.getArgument(0))) return (long) limit;
+            return invocation.callRealMethod();
+        })) {
+            var oversizedPage = listing.list(userId, null, null, null, 1, 50);
+            assertEquals(1, oversizedPage.get("count"));
+            var oversizedRow = (Map<?, ?>) ((List<?>) oversizedPage.get("fileList")).get(0);
+            assertEquals(Map.of(), oversizedRow.get("metadata"));
+        }
+        verify(mapper).readValue(eq(exact), eq(Map.class));
+        verify(mapper, never()).readValue(eq(exact + " "), eq(Map.class));
     }
 
     @Test

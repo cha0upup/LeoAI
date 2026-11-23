@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -27,6 +28,7 @@ public class UserArtifactService {
     private static final long MAX_ARCHIVE_BYTES = 100L * 1024 * 1024;
     private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
+    private static final int MAX_METADATA_BYTES = 16 * 1024;
     private static final int RECENT_FILES_LIMIT = 8;
     private static final Comparator<ArtifactMatch> ARTIFACT_ORDER = Comparator
             .comparingLong((ArtifactMatch file) -> file.attributes().lastModifiedTime().toMillis()).reversed()
@@ -270,8 +272,14 @@ public class UserArtifactService {
     private Map<String, Object> metadata(Path base, String path) {
         try {
             Path file = metadataPath(base, path);
-            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 16 * 1024) return Map.of();
-            Map<String, Object> result = mapper.readValue(Files.readString(file), Map.class);
+            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return Map.of();
+            byte[] bytes;
+            try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                bytes = input.readNBytes(MAX_METADATA_BYTES + 1);
+            }
+            if (bytes.length > MAX_METADATA_BYTES) return Map.of();
+            String json = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+            Map<String, Object> result = mapper.readValue(json, Map.class);
             return result == null ? Map.of() : result;
         } catch (Exception ignored) { return Map.of(); }
     }
