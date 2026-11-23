@@ -4,7 +4,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Team;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.team.TeamService;
-import org.leo.web.dto.platform.admin.TeamDtos.DeleteTeamRequest;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.RoleAwareAdminEndpoint;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -72,5 +71,8 @@ public class TeamController {
 
     private void requireAdmin(HttpServletRequest request) {
         permissionService.requireAdmin(permissionService.requireLogin(request));
+    }
+
+    private record DeleteTeamRequest(String id) {
     }
 }
