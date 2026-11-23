@@ -79,7 +79,6 @@ public class UserArtifactService {
     }
 
     private void walk(Path base, String categoryFilter, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
-        if (!Files.exists(base)) return;
         Files.walkFileTree(base, new SimpleFileVisitor<>() {
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (dir.equals(base)) return FileVisitResult.CONTINUE;
@@ -93,6 +92,11 @@ public class UserArtifactService {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 if (attrs.isRegularFile() && !file.getFileName().toString().startsWith(".")) consumer.accept(file, attrs);
                 return FileVisitResult.CONTINUE;
+            }
+            @Override public FileVisitResult visitFileFailed(Path path, IOException error) throws IOException {
+                // Workspace entries may disappear between enumeration and opening.
+                if (error instanceof NoSuchFileException) return FileVisitResult.CONTINUE;
+                throw error;
             }
         });
     }

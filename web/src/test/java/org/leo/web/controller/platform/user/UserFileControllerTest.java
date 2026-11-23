@@ -19,7 +19,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
@@ -242,6 +244,35 @@ class UserFileControllerTest {
                     imported.stream().map(file -> (String) file.get("path")).sorted().toList());
             var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50);
             assertEquals(1, taskResults.get("count"));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void workspaceScanSkipsVanishedEntriesButReportsAccessFailures(boolean accessDenied) throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/kept.txt", "fixture", false).get("code"));
+        assertEquals(200, controller.createFile(request, "notes/changed/entry.txt", "fixture", false).get("code"));
+        Path changed = artifacts.root(userId).resolve("notes/changed");
+        var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (openDirectory.equals(invocation.getMethod()) && changed.equals(invocation.getArgument(0))) {
+                if (accessDenied) throw new AccessDeniedException(changed.toString());
+                throw new NoSuchFileException(changed.toString());
+            }
+            return invocation.callRealMethod();
+        })) {
+            var overview = controller.overview(request);
+            var listing = controller.list(request, "imports", true, 1, 50, null, null);
+            assertEquals(accessDenied ? 500 : 200, overview.get("code"));
+            assertEquals(accessDenied ? 500 : 200, listing.get("code"));
+            if (!accessDenied) {
+                assertEquals(1L, ((Map<?, ?>) overview.get("data")).get("totalFiles"));
+                var page = (Map<?, ?>) listing.get("data");
+                assertEquals(1, page.get("count"));
+                var files = (List<?>) page.get("fileList");
+                assertEquals("notes/kept.txt", ((Map<?, ?>) files.get(0)).get("path"));
+            }
         }
     }
 
