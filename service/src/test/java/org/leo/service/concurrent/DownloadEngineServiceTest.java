@@ -140,6 +140,27 @@ class DownloadEngineServiceTest {
         assertEquals(damaged, Files.readString(checkpoint));
     }
 
+    @Test
+    void expiryRemovesOnlyTerminalCheckpointsPastTheCutoff() throws Exception {
+        persist("owner", "expired", "session-one", "COMPLETED");
+        var recent = persist("owner", "recent", "session-one", "FAILED");
+        var metadata = recent.readMeta();
+        metadata.put("updatedAtMs", 101L);
+        recent.writeMeta(metadata);
+        persist("owner", "running", "session-one", "RUNNING");
+        persist("owner", "blank", "session-one", "COMPLETED");
+        Files.writeString(checkpoint("owner", "blank"), " \n");
+        persist("owner", "broken", "session-one", "COMPLETED");
+        Files.writeString(checkpoint("owner", "broken"), "{");
+
+        assertEquals(1, DownloadStore.evictExpiredTaskArtifacts(101));
+
+        assertTrue(Files.notExists(checkpoint("owner", "expired").getParent()));
+        for (String id : List.of("recent", "running", "blank", "broken")) {
+            assertTrue(Files.isRegularFile(checkpoint("owner", id)), id);
+        }
+    }
+
     private Path checkpoint(String user, String taskId) {
         return temp.resolve("users").resolve(user).resolve("downloads/.tasks").resolve(taskId).resolve("meta.json");
     }

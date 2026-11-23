@@ -6,6 +6,7 @@ import org.leo.service.transfer.TransferTaskState;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -65,18 +66,16 @@ public class DownloadStore {
         return new File(userDownloadsDir, ".tasks");
     }
 
-    @SuppressWarnings("unchecked")
     public Map<String, Object> readMeta() throws Exception {
         validateTaskPath();
         File meta = getMetaFile();
-        if (!meta.exists()) {
-            return null;
-        }
-        String json = new String(Files.readAllBytes(meta.toPath()), StandardCharsets.UTF_8);
-        if (json.isBlank()) {
-            return null;
-        }
-        return (Map<String, Object>) JsonUtil.fromJsonString(json, HashMap.class);
+        return meta.exists() ? readMetaFile(meta.toPath()) : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> readMetaFile(Path file) throws IOException {
+        String json = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+        return json.isBlank() ? null : (Map<String, Object>) JsonUtil.fromJsonString(json, HashMap.class);
     }
 
     public void writeMeta(Map<String, Object> meta) throws Exception {
@@ -283,7 +282,6 @@ public class DownloadStore {
     }
 
     /** Cleans terminal task directories left on disk, including records from an earlier process. */
-    @SuppressWarnings("unchecked")
     public static int evictExpiredTaskArtifacts(long expireBeforeMs) {
         String vfsPath = LeoConfig.getVfsPath();
         if (vfsPath == null || vfsPath.isBlank()) {
@@ -307,10 +305,8 @@ public class DownloadStore {
                     if (!metaFile.isFile()) {
                         continue;
                     }
-                    String json = new String(
-                            Files.readAllBytes(metaFile.toPath()), StandardCharsets.UTF_8);
-                    Map<String, Object> meta =
-                            (Map<String, Object>) JsonUtil.fromJsonString(json, HashMap.class);
+                    Map<String, Object> meta = readMetaFile(metaFile.toPath());
+                    if (meta == null) continue;
                     TransferTaskState state = TransferTaskState.valueOf(
                             String.valueOf(meta.get("state")));
                     long endAt = numberValue(meta.get("endAtMs"));
