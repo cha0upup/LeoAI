@@ -12,7 +12,6 @@ import org.leo.core.util.json.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -33,7 +32,6 @@ public class AuditLogUtil {
     
     private static AuditLogService auditLogService;
     private static AuditPolicyService auditPolicyService;
-    private static ApplicationContext applicationContext;
     
     @Autowired
     public void setAuditLogService(AuditLogService auditLogService) {
@@ -43,39 +41,6 @@ public class AuditLogUtil {
     @Autowired
     public void setAuditPolicyService(AuditPolicyService auditPolicyService) {
         AuditLogUtil.auditPolicyService = auditPolicyService;
-    }
-    
-    @Autowired
-    public void setApplicationContext(ApplicationContext applicationContext) {
-        AuditLogUtil.applicationContext = applicationContext;
-    }
-    
-    /**
-     * 获取AuditLogService实例
-     */
-    private static AuditLogService getAuditLogService() {
-        if (auditLogService == null && applicationContext != null) {
-            try {
-                auditLogService = applicationContext.getBean(AuditLogService.class);
-            } catch (Exception e) {
-                logger.warn("无法获取AuditLogService实例: {}", e.getMessage());
-            }
-        }
-        return auditLogService;
-    }
-
-    /**
-     * 获取AuditPolicyService实例
-     */
-    private static AuditPolicyService getAuditPolicyService() {
-        if (auditPolicyService == null && applicationContext != null) {
-            try {
-                auditPolicyService = applicationContext.getBean(AuditPolicyService.class);
-            } catch (Exception e) {
-                logger.warn("无法获取AuditPolicyService实例: {}", e.getMessage());
-            }
-        }
-        return auditPolicyService;
     }
     
     /**
@@ -205,7 +170,7 @@ public class AuditLogUtil {
     }
 
     private static boolean shouldRecord(String operationType, boolean forceRecord) {
-        AuditPolicyService service = getAuditPolicyService();
+        AuditPolicyService service = auditPolicyService;
         if (service == null) {
             return true;
         }
@@ -222,7 +187,7 @@ public class AuditLogUtil {
                                       String status,
                                       String errorMessage,
                                       String clientIp) {
-        AuditLogService service = getAuditLogService();
+        AuditLogService service = auditLogService;
         if (service == null) {
             logger.warn("AuditLogService未初始化，无法记录审计日志");
             return;

@@ -27,12 +27,15 @@ class AuditLogUtilTest {
     void clearStaticDependencies() {
         audit.setAuditLogService(null);
         audit.setAuditPolicyService(null);
-        audit.setApplicationContext(null);
     }
 
     @Test
     void webAuditUsesTheSameRedactionForUrlAndNestedSecrets() {
         AuditLogService logs = recordingLogs();
+        AuditLogUtil.logSystemOperation(null, "IGNORED", "test", "/test", null,
+                200, "ok", null, null, "127.0.0.1", false);
+        verifyNoInteractions(logs);
+
         AuditLogUtil.logSystemOperation(null, "TEST", "test", "/test",
                 Map.of("url", "https://user:url-secret@example.test?token=query-secret",
                         "nested", Map.of("api_key", "key-secret")),
