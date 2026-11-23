@@ -90,8 +90,7 @@ public class UserArtifactService {
                 if (dir.equals(base)) return FileVisitResult.CONTINUE;
                 String name = dir.getFileName().toString();
                 if (name.startsWith(".") || "ai-tasks".equals(name)) return FileVisitResult.SKIP_SUBTREE;
-                if (categoryFilter != null && base.equals(dir.getParent())
-                        && !categoryFilter.equals(category(relative(base, dir)))) return FileVisitResult.SKIP_SUBTREE;
+                if (outsideCategoryAtRoot(base, dir, categoryFilter)) return FileVisitResult.SKIP_SUBTREE;
                 consumer.accept(dir, attrs);
                 return FileVisitResult.CONTINUE;
             }
@@ -102,9 +101,16 @@ public class UserArtifactService {
             @Override public FileVisitResult visitFileFailed(Path path, IOException error) throws IOException {
                 // Workspace entries may disappear between enumeration and opening.
                 if (error instanceof NoSuchFileException) return FileVisitResult.CONTINUE;
+                // The walker opens a directory before calling preVisitDirectory.
+                if (outsideCategoryAtRoot(base, path, categoryFilter)) return FileVisitResult.CONTINUE;
                 throw error;
             }
         });
+    }
+
+    private boolean outsideCategoryAtRoot(Path base, Path path, String categoryFilter) {
+        return categoryFilter != null && base.equals(path.getParent())
+                && !categoryFilter.equals(category(relative(base, path)));
     }
 
     private String relative(Path base, Path path) { return base.relativize(path).toString().replace('\\', '/'); }

@@ -228,19 +228,20 @@ class UserFileControllerTest {
         assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50).get("count"));
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     @SuppressWarnings("unchecked")
-    void categoryListingSkipsUnrelatedDescendantsAndKeepsImportedFiles() throws Exception {
+    void categoryListingIgnoresUnrelatedDirectoryFailuresAndKeepsImportedFiles(boolean topLevel) throws Exception {
         var request = authenticatedRequest();
         for (String path : List.of("script-builds/nested/build.txt", "ai-reports/nested/report.md",
                 "imports/dedicated.txt", "notes/readme.txt", "loose.txt", "task-results")) {
             assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
         }
-        Path unrelatedDescendant = artifacts.root(userId).resolve("ai-reports/nested");
+        Path blocked = artifacts.root(userId).resolve(topLevel ? "ai-reports" : "ai-reports/nested");
         var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
         try (var filesystem = mockStatic(Files.class, invocation -> {
-            if (openDirectory.equals(invocation.getMethod()) && unrelatedDescendant.equals(invocation.getArgument(0))) {
-                throw new IOException("unrelated directory should not be entered");
+            if (openDirectory.equals(invocation.getMethod()) && blocked.equals(invocation.getArgument(0))) {
+                throw new AccessDeniedException(blocked.toString());
             }
             return invocation.callRealMethod();
         })) {
@@ -251,6 +252,8 @@ class UserFileControllerTest {
                     imported.stream().map(file -> (String) file.get("path")).sorted().toList());
             var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50);
             assertEquals(1, taskResults.get("count"));
+            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, "ai-reports", null, null, 1, 50));
+            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, null, null, null, 1, 50));
         }
     }
 
