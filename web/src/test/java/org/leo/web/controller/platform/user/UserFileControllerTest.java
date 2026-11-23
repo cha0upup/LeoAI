@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
@@ -288,12 +289,17 @@ class UserFileControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void workspaceScanSkipsVanishedEntriesButReportsAccessFailures(boolean accessDenied) throws Exception {
+    @CsvSource({
+            "notes/changed, false, 200", "notes/changed, true, 500",
+            "notes/.changed, true, 200", ".artifacts, true, 200"
+    })
+    void workspaceScanSkipsVanishedAndHiddenEntriesButReportsVisibleFailures(
+            String path, boolean accessDenied, int expectedStatus) throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/kept.txt", "fixture", false).get("code"));
-        assertEquals(200, controller.createFile(request, "notes/changed/entry.txt", "fixture", false).get("code"));
-        Path changed = artifacts.root(userId).resolve("notes/changed");
+        Path changed = artifacts.root(userId).resolve(path);
+        Files.createDirectories(changed);
+        Files.writeString(changed.resolve("entry.txt"), "fixture");
         var openDirectory = Files.class.getMethod("newDirectoryStream", Path.class);
         try (var filesystem = mockStatic(Files.class, invocation -> {
             if (openDirectory.equals(invocation.getMethod()) && changed.equals(invocation.getArgument(0))) {
@@ -304,10 +310,12 @@ class UserFileControllerTest {
         })) {
             var overview = controller.overview(request);
             var listing = controller.list(request, "imports", true, 1, 50, null, null);
-            assertEquals(accessDenied ? 500 : 200, overview.get("code"));
-            assertEquals(accessDenied ? 500 : 200, listing.get("code"));
-            if (!accessDenied) {
-                assertEquals(1L, ((Map<?, ?>) overview.get("data")).get("totalFiles"));
+            assertEquals(expectedStatus, overview.get("code"));
+            assertEquals(expectedStatus, listing.get("code"));
+            if (expectedStatus == 200) {
+                var totals = (Map<?, ?>) overview.get("data");
+                assertEquals(1L, totals.get("totalFiles"));
+                assertEquals(1L, totals.get("totalDirectories"));
                 var page = (Map<?, ?>) listing.get("data");
                 assertEquals(1, page.get("count"));
                 var files = (List<?>) page.get("fileList");

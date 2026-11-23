@@ -88,25 +88,27 @@ public class UserArtifactService {
         Files.walkFileTree(base, new SimpleFileVisitor<>() {
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (dir.equals(base)) return FileVisitResult.CONTINUE;
-                String name = dir.getFileName().toString();
-                if (name.startsWith(".") || "ai-tasks".equals(name)) return FileVisitResult.SKIP_SUBTREE;
+                if (hasDotPrefix(dir) || "ai-tasks".equals(dir.getFileName().toString())) return FileVisitResult.SKIP_SUBTREE;
                 if (outsideCategoryAtRoot(base, dir, categoryFilter)) return FileVisitResult.SKIP_SUBTREE;
                 consumer.accept(dir, attrs);
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (attrs.isRegularFile() && !file.getFileName().toString().startsWith(".")) consumer.accept(file, attrs);
+                if (attrs.isRegularFile() && !hasDotPrefix(file)) consumer.accept(file, attrs);
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult visitFileFailed(Path path, IOException error) throws IOException {
                 // Workspace entries may disappear between enumeration and opening.
                 if (error instanceof NoSuchFileException) return FileVisitResult.CONTINUE;
                 // The walker opens a directory before calling preVisitDirectory.
+                if (!path.equals(base) && hasDotPrefix(path)) return FileVisitResult.CONTINUE;
                 if (outsideCategoryAtRoot(base, path, categoryFilter)) return FileVisitResult.CONTINUE;
                 throw error;
             }
         });
     }
+
+    private static boolean hasDotPrefix(Path path) { return path.getFileName().toString().startsWith("."); }
 
     private boolean outsideCategoryAtRoot(Path base, Path path, String categoryFilter) {
         return categoryFilter != null && base.equals(path.getParent())
