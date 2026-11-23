@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -191,11 +192,11 @@ public class UserArtifactService {
         Path target = findFile(userId, relativePath);
         if (target == null) return null;
         long previewSize = size == null ? DEFAULT_PREVIEW_SIZE : Math.min(Math.max(size, 1L), MAX_PREVIEW_SIZE);
-        long fileSize = Files.size(target);
-        int readSize = (int) Math.min(previewSize, fileSize);
+        long fileSize;
         byte[] actual;
-        try (InputStream input = Files.newInputStream(target)) {
-            actual = input.readNBytes(readSize);
+        try (var channel = Files.newByteChannel(target, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            fileSize = channel.size();
+            actual = Channels.newInputStream(channel).readNBytes((int) Math.min(previewSize, fileSize));
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(root(userId), target));

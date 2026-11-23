@@ -23,7 +23,9 @@ import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFileAttributeView;
@@ -489,6 +491,34 @@ class UserFileControllerTest {
         var response = new org.springframework.mock.web.MockHttpServletResponse();
         controller.download(new MockHttpServletRequest(), "notes/file.txt", null, response);
         assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    void previewReadsSizeAndContentFromTheSameFileDuringReplacement() throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/preview.txt", "old", false).get("code"));
+        Path target = artifacts.root(userId).resolve("notes/preview.txt");
+        Path replacement = target.resolveSibling(".replacement");
+        Files.writeString(replacement, "replacement");
+        var sizeLookup = Files.class.getMethod("size", Path.class);
+        var channelOpen = Files.class.getMethod("newByteChannel", Path.class, OpenOption[].class);
+
+        Map<String, Object> response;
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            Object result = invocation.callRealMethod();
+            if ((sizeLookup.equals(invocation.getMethod()) || channelOpen.equals(invocation.getMethod()))
+                    && target.equals(invocation.getArgument(0)) && Files.exists(replacement)) {
+                Files.move(replacement, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return result;
+        })) {
+            response = controller.preview(request, "notes/preview.txt", 5L);
+        }
+
+        assertEquals(200, response.get("code"), response::toString);
+        assertEquals(Map.of("path", "notes/preview.txt", "size", 3L, "previewSize", 3, "truncated", false,
+                "content", "old", "contentBase64", "b2xk"), response.get("data"));
+        assertEquals("replacement", Files.readString(target));
     }
 
     @Test
