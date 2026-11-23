@@ -453,9 +453,13 @@ class UserFileControllerTest {
         Path original = artifacts.root(userId).resolve(source);
         Files.createDirectories(original.getParent());
         Files.writeString(original, "task result");
-        var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
+        var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source,
+                Map.of("sourceModule", "invalid", "sourceId", "caller-value")));
         assertEquals("task result", Files.readString(artifacts.root(userId).resolve(String.valueOf(saved.get("path")))));
         assertEquals("task result", Files.readString(original));
+        var metadata = (Map<?, ?>) saved.get("metadata");
+        assertEquals("task-output", metadata.get("sourceModule"));
+        assertEquals("job", metadata.get("sourceId"));
         assertEquals(1, artifacts.list(userId, "task-results", "", "task-output", 1, 50).get("count"));
         assertEquals(200, controller.preview(authenticatedRequest(), source, null).get("code"));
         assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
@@ -523,14 +527,19 @@ class UserFileControllerTest {
     }
 
     @Test
-    void rollsBackAnArchiveIfItsMetadataIsInvalid() throws Exception {
-        assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
-                new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "report", null, Map.of("sourceModule", "invalid"))));
-        assertEquals(0, artifacts.list(userId, "", "", "", 1, 50).get("count"));
+    void rejectsInvalidArchivesBeforeCreatingFilesOrCategoryDirectories() throws Exception {
+        var request = authenticatedRequest();
+        Path workspace = artifacts.root(userId);
+        var invalidMetadata = controller.archive(request,
+                new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "report", null, Map.of("sourceModule", "invalid")));
+        assertEquals(Map.of("code", 400, "msg", "未知成果来源"), invalidMetadata);
         when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
-        assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
-                new UserArtifactService.ArchiveRequest("imports", "large.txt", "x".repeat(1024 * 1024 + 1), null, Map.of())));
-        assertEquals(0, artifacts.list(userId, "", "", "", 1, 50).get("count"));
+        var oversized = controller.archive(request,
+                new UserArtifactService.ArchiveRequest("imports", "large.txt", "x".repeat(1024 * 1024 + 1), null, Map.of()));
+        assertEquals(Map.of("code", 400, "msg", "成果内容超过归档上限"), oversized);
+        try (var entries = Files.list(workspace)) {
+            assertEquals(List.of(), entries.toList());
+        }
     }
 
     @Test

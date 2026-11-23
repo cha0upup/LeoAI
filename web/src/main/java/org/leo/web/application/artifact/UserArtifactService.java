@@ -293,22 +293,28 @@ public class UserArtifactService {
         } catch (Exception ignored) { return Map.of(); }
     }
 
-    private void record(Path base, Path target, Map<String, String> source) throws IOException {
+    private static Map<String, String> validateSource(Map<String, String> source) {
+        Map<String, String> validated = new LinkedHashMap<>();
+        for (String key : List.of("title", "sourceModule", "sourceId", "sessionId", "hostName")) {
+            String value = source.get(key);
+            if (value != null && !value.isBlank()) {
+                if (value.length() > 512) throw new IllegalArgumentException("成果来源信息过长");
+                validated.put(key, value.trim());
+            }
+        }
+        String module = validated.getOrDefault("sourceModule", "manual");
+        if (!SOURCES.contains(module)) throw new IllegalArgumentException("未知成果来源");
+        validated.put("sourceModule", module);
+        return validated;
+    }
+
+    private void record(Path base, Path target, Map<String, String> validatedSource) throws IOException {
         String relative = relative(base, target);
         Map<String, Object> record = new LinkedHashMap<>();
         record.put("id", UUID.randomUUID().toString());
         record.put("createdAt", Instant.now().toString());
         record.put("category", category(relative));
-        for (String key : List.of("title", "sourceModule", "sourceId", "sessionId", "hostName")) {
-            String value = source.get(key);
-            if (value != null && !value.isBlank()) {
-                if (value.length() > 512) throw new IllegalArgumentException("成果来源信息过长");
-                record.put(key, value.trim());
-            }
-        }
-        String module = String.valueOf(record.getOrDefault("sourceModule", "manual"));
-        if (!SOURCES.contains(module)) throw new IllegalArgumentException("未知成果来源");
-        record.put("sourceModule", module);
+        record.putAll(validatedSource);
         Path metadata = metadataPath(base, relative);
         Files.createDirectories(metadata.getParent());
         Path temporary = Files.createTempFile(metadata.getParent(), ".pending-", ".json");
@@ -358,7 +364,7 @@ public class UserArtifactService {
         } else {
             transferContent(target, content, StandardOpenOption.CREATE_NEW);
         }
-        record(base, target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
+        record(base, target, validateSource(Map.of("title", target.getFileName().toString(), "sourceModule", "manual")));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(base, target));
         result.put("size", Files.size(target));
@@ -430,7 +436,6 @@ public class UserArtifactService {
                 || name.contains("/") || name.contains("\\")) throw new IllegalArgumentException("无效成果文件名");
         Path base = root(userId);
         Path directory = resolve(userId, request.category(), true);
-        Files.createDirectories(directory);
         Path target = directory.resolve(UUID.randomUUID().toString().substring(0, 8) + "-" + name);
         Map<String, String> source = new LinkedHashMap<>(request.metadata() == null ? Map.of() : request.metadata());
         long maxBytes = maxUploadBytes();
@@ -451,6 +456,8 @@ public class UserArtifactService {
             content = request.content().getBytes(StandardCharsets.UTF_8);
             if (content.length > maxBytes) throw new IllegalArgumentException("成果内容超过归档上限");
         }
+        var validatedSource = validateSource(source);
+        Files.createDirectories(directory);
         boolean created = false;
         try {
             try (var channel = Files.newByteChannel(target, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
@@ -460,7 +467,7 @@ public class UserArtifactService {
                 if (input != null) copyArchiveSource(input, output, maxBytes);
                 else output.write(content);
             }
-            record(base, target, source);
+            record(base, target, validatedSource);
             return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), true);
         } catch (Exception error) {
             if (created) deletePath(base, target);
