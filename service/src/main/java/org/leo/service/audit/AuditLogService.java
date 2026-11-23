@@ -63,13 +63,14 @@ public class AuditLogService {
         return auditLogMapper.findAuditLogById(logId);
     }
 
+    /** 无查询结果时返回空列表。 */
     public List<AuditLog> searchAuditLogs(AuditLogQuery query) {
         AuditLogQuery normalizedQuery = normalizeQuery(query);
         List<AuditLog> logs = auditLogMapper.searchAuditLogs(normalizedQuery);
         return logs != null ? logs : new ArrayList<>();
     }
 
-    public Integer countAuditLogs(AuditLogQuery query) {
+    public int countAuditLogs(AuditLogQuery query) {
         return defaultCount(auditLogMapper.countAuditLogs(normalizeQuery(query)));
     }
 

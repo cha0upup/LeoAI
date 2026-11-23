@@ -142,9 +142,9 @@ public class AuditLogController {
             AuditLogQuery query = buildQuery(params, true);
             List<AuditLog> logs = auditLogService.searchAuditLogs(query);
             int offset = query.getOffset();
-            Integer total;
+            int total;
             // A short page establishes the end unless an empty page may have skipped past it.
-            if (logs != null && logs.size() < query.getLimit() && (offset == 0 || !logs.isEmpty())
+            if (logs.size() < query.getLimit() && (offset == 0 || !logs.isEmpty())
                     && offset <= Integer.MAX_VALUE - logs.size()) {
                 total = offset + logs.size();
             } else {
@@ -152,8 +152,8 @@ public class AuditLogController {
             }
             
             HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put("logs", logs != null ? logs : new ArrayList<AuditLog>());
-            data.put("total", total != null ? total : 0);
+            data.put("logs", logs);
+            data.put("total", total);
             data.put("limit", query.getLimit());
             data.put("offset", offset);
             
