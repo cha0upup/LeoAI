@@ -15,8 +15,10 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -119,6 +121,34 @@ class UserFileControllerTest {
             var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 0L, "lastModified", 0L)), fallback.get("fileList"));
+        }
+    }
+
+    @Test
+    void interruptedOverwriteKeepsTheExistingFileAndMetadata() throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/report.md", "original fixture", false).get("code"));
+        Path target = artifacts.root(userId).resolve("notes/report.md");
+        var before = artifacts.list(userId, null, null, null, 1, 50);
+        MultipartFile upload = mock(MultipartFile.class);
+        when(upload.getOriginalFilename()).thenReturn("report.md");
+        when(upload.getSize()).thenReturn(16L);
+        when(upload.getInputStream()).thenReturn(new InputStream() {
+            private boolean sent;
+
+            @Override public int read() throws IOException {
+                if (sent) throw new IOException("fixture upload interrupted");
+                sent = true;
+                return 'X';
+            }
+        });
+
+        assertEquals(500, controller.upload(request, upload, "notes", null, true).get("code"));
+
+        assertEquals("original fixture", Files.readString(target));
+        assertEquals(before, artifacts.list(userId, null, null, null, 1, 50));
+        try (var entries = Files.list(target.getParent())) {
+            assertEquals(List.of(target), entries.toList());
         }
     }
 

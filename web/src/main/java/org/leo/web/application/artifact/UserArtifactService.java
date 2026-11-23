@@ -308,21 +308,34 @@ public class UserArtifactService {
         });
     }
 
-    /** Checks conflicts before opening the source or truncating the destination. */
+    /** Checks conflicts before opening the source and publishes overwrites only after transfer completes. */
     private Map<String, Object> writeFile(Path base, Path target, boolean overwrite,
                                            InputStreamSource content) throws IOException {
         if (Files.exists(target) && !overwrite) throw new FileAlreadyExistsException(target.toString());
-        StandardOpenOption[] options = overwrite
-                ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING}
-                : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW};
-        try (InputStream input = content.getInputStream(); var output = Files.newOutputStream(target, options)) {
-            input.transferTo(output);
+        if (overwrite) {
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                    && (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target))) {
+                throw new IOException("目标文件不可覆盖");
+            }
+            Path temporary = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
+            try {
+                transferContent(temporary, content, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS);
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } finally { Files.deleteIfExists(temporary); }
+        } else {
+            transferContent(target, content, StandardOpenOption.CREATE_NEW);
         }
         record(base, target, Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(base, target));
         result.put("size", Files.size(target));
         return result;
+    }
+
+    private static void transferContent(Path target, InputStreamSource content, OpenOption... options) throws IOException {
+        try (InputStream input = content.getInputStream(); var output = Files.newOutputStream(target, options)) {
+            input.transferTo(output);
+        }
     }
 
     public Map<String, Object> createDirectory(String userId, String relativePath) throws IOException {
