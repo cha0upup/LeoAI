@@ -38,8 +38,12 @@ public class DownloadStore {
     private final Object writeLock = new Object();
 
     public DownloadStore(String userId, String taskId) {
-        this.userRootDir = computeUserRootDir(userId);
-        this.taskDir = computeTaskDir(this.userRootDir, taskId);
+        this(computeUserRootDir(userId), taskId);
+    }
+
+    private DownloadStore(File userDownloadsDir, String taskId) {
+        this.userRootDir = userDownloadsDir;
+        this.taskDir = computeTaskDir(userDownloadsDir, taskId);
         this.taskId = taskId;
         this.tempFile = new File(taskDir, TEMP_FILE);
     }
@@ -59,11 +63,6 @@ public class DownloadStore {
 
     private File getChunksFile() {
         return new File(taskDir, CHUNKS_BITMAP);
-    }
-
-    private static File getTasksRootDir(String userId) {
-        File userDownloadsDir = computeUserRootDir(userId);
-        return new File(userDownloadsDir, ".tasks");
     }
 
     public Map<String, Object> readMeta() throws Exception {
@@ -178,7 +177,8 @@ public class DownloadStore {
     public static List<Map<String, Object>> listSnapshots(String userId, String sessionId,
                                                          Set<String> excludedTaskIds) {
         List<Map<String, Object>> snapshots = new ArrayList<>();
-        File tasksRoot = getTasksRootDir(userId);
+        File userDownloadsDir = computeUserRootDir(userId);
+        File tasksRoot = new File(userDownloadsDir, ".tasks");
         File[] taskDirs = tasksRoot.listFiles(File::isDirectory);
         if (taskDirs != null) {
             for (File taskDir : taskDirs) {
@@ -187,7 +187,7 @@ public class DownloadStore {
                     continue;
                 }
                 try {
-                    DownloadStore store = new DownloadStore(userId, taskId);
+                    DownloadStore store = new DownloadStore(userDownloadsDir, taskId);
                     Map<String, Object> item = store.readSnapshot();
                     if (item != null && sessionId.equals(item.get("sessionId"))) {
                         snapshots.add(item);

@@ -72,7 +72,11 @@ class DownloadEngineServiceTest {
         persist("owner", "task-one", "session-one", "COMPLETED");
         persist("owner", "task-two", "session-two", "PAUSED");
         persist("other", "other-task", "session-one", "COMPLETED");
-        assertEquals(1, service.listBySessionId("owner", "session-one").get("count"));
+        config.clearInvocations();
+        var firstSession = service.listBySessionId("owner", "session-one");
+        assertEquals(1, firstSession.get("count"));
+        assertEquals("task-one", ((Map<?, ?>) ((List<?>) firstSession.get("tasks")).get(0)).get("taskId"));
+        config.verify(LeoConfig::getVfsPath);
         assertEquals(1, service.listBySessionId("owner", "session-two").get("count"));
         assertThrows(IllegalArgumentException.class, () -> service.progress("other", "task-one"));
         assertThrows(IllegalArgumentException.class, () -> service.progress("owner", "missing"));
