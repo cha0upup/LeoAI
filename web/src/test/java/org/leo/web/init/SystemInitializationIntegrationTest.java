@@ -134,7 +134,6 @@ class SystemInitializationIntegrationTest {
 
     @Test
     void freshStartupWaitsForTheWizardThenStoresTheExactPasswordAndClosesSetup() {
-        new DataInitializer(setup).init();
         assertTrue(setup.isInitializationRequired());
         assertEquals(0, count("users"));
         assertEquals(0, count("teams"));
@@ -195,11 +194,11 @@ class SystemInitializationIntegrationTest {
     }
 
     @Test
-    void startupDoesNotAdoptOrRepairAccountsOutsideTheSetupWorkflow() {
+    void startupDoesNotAdoptOrRepairAccountsOutsideTheSetupWorkflow() throws Exception {
         User account = new User("fixture-account", "fixture-account", PasswordUtil.hash("fixture-password"),
                 "admin", "2026-10-29");
         users.addUser(account);
-        new DataInitializer(setup).init();
+        initializeDatabase();
         assertFalse(setup.isInitializationRequired());
         assertThrows(SystemInitializationService.AlreadyInitializedException.class,
                 () -> setup.initializeAdmin("replacement-password", "replacement-password"));
@@ -221,7 +220,6 @@ class SystemInitializationIntegrationTest {
         initializeDatabase();
         try (var next = application()) {
             var restarted = next.getBean(SystemInitializationService.class);
-            new DataInitializer(restarted).init();
             User stored = next.getBean(UserService.class).getUserById("admin");
             assertEquals(admin.getPassword(), stored.getPassword());
             assertEquals(0, stored.getStatus());
@@ -242,7 +240,6 @@ class SystemInitializationIntegrationTest {
         });
         try (var next = application()) {
             var restarted = next.getBean(SystemInitializationService.class);
-            new DataInitializer(restarted).init();
             assertFalse(restarted.isInitializationRequired());
         }
     }
