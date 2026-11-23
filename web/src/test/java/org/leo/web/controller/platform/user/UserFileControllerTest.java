@@ -255,6 +255,8 @@ class UserFileControllerTest {
         var pageFiles = (List<Map<String, Object>>) page.get("fileList");
         assertEquals(List.of("Imports/note.txt", "ai-reports/report.md"),
                 pageFiles.stream().map(file -> file.get("path")).toList());
+        assertEquals(List.of("Imports", "ai-reports"), pageFiles.stream().map(file -> file.get("parentPath")).toList());
+        assertEquals(List.of("imports", "ai-reports"), pageFiles.stream().map(file -> file.get("category")).toList());
         assertEquals(List.of("note.txt", "report.md"),
                 pageFiles.stream().map(file -> ((Map<?, ?>) file.get("metadata")).get("title")).toList());
         assertEquals(true, page.get("hasMore"));

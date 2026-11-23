@@ -130,8 +130,7 @@ public class UserArtifactService {
         return CATEGORIES.contains(first) ? first : "imports";
     }
 
-    private Map<String, Object> fileInfo(Path base, Path path, BasicFileAttributes attrs) {
-        String relative = relative(base, path);
+    private Map<String, Object> fileInfo(Path base, Path path, String relative, BasicFileAttributes attrs) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("name", path.getFileName().toString());
         result.put("path", relative);
@@ -143,9 +142,9 @@ public class UserArtifactService {
         return result;
     }
 
-    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs, Map<String, Object> loadedMetadata) {
-        Map<String, Object> result = fileInfo(base, path, attrs);
-        String relative = (String) result.get("path");
+    private Map<String, Object> item(Path base, Path path, String relative, BasicFileAttributes attrs,
+                                     Map<String, Object> loadedMetadata) {
+        Map<String, Object> result = fileInfo(base, path, relative, attrs);
         result.put("category", category(relative));
         if (attrs.isRegularFile()) {
             result.put("metadata", loadedMetadata != null ? loadedMetadata : metadata(base, relative));
@@ -171,7 +170,7 @@ public class UserArtifactService {
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
                         .sorted(ARTIFACT_ORDER)
-                        .map(match -> item(base, match.path(), match.attributes(), match.metadata())).toList(),
+                        .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata())).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
     }
@@ -198,7 +197,7 @@ public class UserArtifactService {
                         catch (NoSuchFileException ignored) { return; }
                         catch (Exception ignored) { attrs = null; }
                         if (attrs != null ? attrs.isSymbolicLink() : Files.isSymbolicLink(path)) return;
-                        files.add(fileInfo(base, path, attrs));
+                        files.add(fileInfo(base, path, relative(base, path), attrs));
                     });
         } catch (NoSuchFileException ignored) {
             return null;
@@ -272,7 +271,7 @@ public class UserArtifactService {
         List<Map<String, Object>> pageFiles = new ArrayList<>();
         if (matched[0] > offset) {
             window.stream().sorted(ARTIFACT_ORDER).skip(offset)
-                    .map(match -> item(base, match.path(), match.attributes(), match.metadata()))
+                    .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata()))
                     .forEachOrdered(pageFiles::add);
         }
         return Map.of("fileList", pageFiles, "count", matched[0],
@@ -496,7 +495,7 @@ public class UserArtifactService {
                 else output.write(content);
             }
             var metadata = writeMetadata(base, target, validatedSource);
-            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), metadata);
+            return item(base, target, relative(base, target), Files.readAttributes(target, BasicFileAttributes.class), metadata);
         } catch (Exception error) {
             if (created) deletePath(base, target);
             throw error;
