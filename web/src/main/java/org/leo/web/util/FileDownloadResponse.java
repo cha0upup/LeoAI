@@ -7,6 +7,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
+import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,13 +24,16 @@ public final class FileDownloadResponse {
     }
 
     public static void write(Path file, String filename, HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_OK);
-        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
-        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, attachmentValue(filename));
-        response.setContentLengthLong(Files.size(file));
-        try (var input = Files.newInputStream(file); var output = response.getOutputStream()) {
-            input.transferTo(output);
-            output.flush();
+        try (var channel = Files.newByteChannel(file)) {
+            long length = channel.size();
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+            response.setHeader(HttpHeaders.CONTENT_DISPOSITION, attachmentValue(filename));
+            response.setContentLengthLong(length);
+            try (var output = response.getOutputStream()) {
+                Channels.newInputStream(channel).transferTo(output);
+                output.flush();
+            }
         }
     }
 

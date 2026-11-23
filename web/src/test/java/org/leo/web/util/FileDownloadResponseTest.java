@@ -10,6 +10,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,8 +53,33 @@ class FileDownloadResponseTest {
     }
 
     @Test
+    void keepsLengthAndBodyConsistentWhenTheFileIsReplaced() throws Exception {
+        byte[] content = {1, 2, 3};
+        Path file = Files.write(temp.resolve("fixture.bin"), content);
+        Path replacement = Files.write(temp.resolve("replacement.bin"), new byte[]{4, 5, 6, 7, 8});
+        var response = new MockHttpServletResponse() {
+            @Override
+            public void setContentLengthLong(long contentLength) {
+                super.setContentLengthLong(contentLength);
+                assertDoesNotThrow(() -> Files.move(replacement, file,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING));
+            }
+        };
+
+        FileDownloadResponse.write(file, "fixture.bin", response);
+
+        assertEquals(content.length, response.getContentLengthLong());
+        assertArrayEquals(content, response.getContentAsByteArray());
+        assertArrayEquals(new byte[]{4, 5, 6, 7, 8}, Files.readAllBytes(file));
+    }
+
+    @Test
     void propagatesFileFailuresToTheOwningController() {
+        var response = new MockHttpServletResponse();
+        response.setStatus(404);
         assertThrows(IOException.class, () -> FileDownloadResponse.write(temp.resolve("missing.bin"),
-                "missing.bin", new MockHttpServletResponse()));
+                "missing.bin", response));
+        assertEquals(404, response.getStatus());
+        assertNull(response.getHeader("Content-Disposition"));
     }
 }
