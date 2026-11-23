@@ -13,7 +13,6 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.Agent;
-import org.leo.dao.entity.ProjectAgentCount;
 
 import java.util.List;
 
@@ -117,6 +116,8 @@ public interface ProjectMapper {
             @Arg(column = "agent_count", javaType = int.class)
     })
     List<ProjectAgentCount> countAgentsByProject(@Param("projectIdsJson") String projectIdsJson);
+
+    record ProjectAgentCount(String projectId, int agentCount) {}
 
     @Select("SELECT COUNT(*) FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
     int containsAgent(@Param("projectId") String projectId,
