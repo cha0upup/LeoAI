@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,15 +29,14 @@ class ServiceTaskExecutorTest {
                 await(started, release);
             });
             assertTrue(started.await(1, TimeUnit.SECONDS));
-            executor.submitSqlExport(() -> { });
+            Future<?> queued = executor.submitSqlExport(() -> { });
 
-            assertEquals(1, executor.activeSqlTasks());
-            assertEquals(1, executor.queuedSqlTasks());
             assertThrows(RejectedExecutionException.class,
                     () -> executor.submitSqlExport(() -> { }));
             assertTrue(daemon.get());
             assertTrue(threadName.get().startsWith("sql-export-"));
             release.countDown();
+            queued.get(5, TimeUnit.SECONDS);
         }
     }
 
@@ -50,13 +49,13 @@ class ServiceTaskExecutorTest {
             assertTrue(started.await(1, TimeUnit.SECONDS));
             Future<?> queued = executor.submitUpload(() -> { });
 
-            assertEquals(1, executor.activeUploadTasks());
-            assertEquals(1, executor.queuedUploadTasks());
             assertThrows(RejectedExecutionException.class,
                     () -> executor.submitUpload(() -> { }));
             executor.cancelUpload(queued);
-            assertEquals(0, executor.queuedUploadTasks());
+            assertTrue(queued.isCancelled());
+            Future<?> replacement = executor.submitUpload(() -> { });
             release.countDown();
+            replacement.get(5, TimeUnit.SECONDS);
         }
     }
 
@@ -65,15 +64,17 @@ class ServiceTaskExecutorTest {
         try (ServiceTaskExecutor executor = executor()) {
             CountDownLatch started = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
+            AtomicBoolean rejectedWorkerRan = new AtomicBoolean(false);
             executor.submitDownloadWorkers(1, () -> await(started, release));
             assertTrue(started.await(1, TimeUnit.SECONDS));
 
             assertThrows(RejectedExecutionException.class,
-                    () -> executor.submitDownloadWorkers(2, () -> { }));
+                    () -> executor.submitDownloadWorkers(2, () -> rejectedWorkerRan.set(true)));
 
-            assertEquals(1, executor.activeDownloadWorkers());
-            assertEquals(0, executor.queuedDownloadWorkers());
+            Future<?> replacement = executor.submitDownloadWorkers(1, () -> { }).get(0);
             release.countDown();
+            replacement.get(5, TimeUnit.SECONDS);
+            assertFalse(rejectedWorkerRan.get());
         }
     }
 

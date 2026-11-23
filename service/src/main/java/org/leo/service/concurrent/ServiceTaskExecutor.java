@@ -81,30 +81,6 @@ public final class ServiceTaskExecutor implements AutoCloseable {
         downloadExecutor.purge();
     }
 
-    int activeSqlTasks() {
-        return sqlExecutor.getActiveCount();
-    }
-
-    int queuedSqlTasks() {
-        return sqlExecutor.getQueue().size();
-    }
-
-    int activeUploadTasks() {
-        return uploadExecutor.getActiveCount();
-    }
-
-    int queuedUploadTasks() {
-        return uploadExecutor.getQueue().size();
-    }
-
-    int activeDownloadWorkers() {
-        return downloadExecutor.getActiveCount();
-    }
-
-    int queuedDownloadWorkers() {
-        return downloadExecutor.getQueue().size();
-    }
-
     private static int defaultUploadThreads() {
         return Math.max(4, Math.min(8, Runtime.getRuntime().availableProcessors()));
     }
