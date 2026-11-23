@@ -484,10 +484,11 @@ class UserFileControllerTest {
             if (sizeLookup.equals(invocation.getMethod()) && metadata.equals(invocation.getArgument(0))) return (long) limit;
             return invocation.callRealMethod();
         })) {
-            var oversizedPage = listing.list(userId, null, null, null, 1, 50);
+            var oversizedPage = listing.list(userId, null, "REPORT", "unrecorded", 1, 50);
             assertEquals(1, oversizedPage.get("count"));
             var oversizedRow = (Map<?, ?>) ((List<?>) oversizedPage.get("fileList")).get(0);
             assertEquals(Map.of(), oversizedRow.get("metadata"));
+            filesystem.verify(() -> Files.newInputStream(metadata, LinkOption.NOFOLLOW_LINKS));
         }
         verify(mapper).readValue(eq(exact), eq(Map.class));
         verify(mapper, never()).readValue(eq(exact + " "), eq(Map.class));

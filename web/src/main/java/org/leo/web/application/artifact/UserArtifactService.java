@@ -142,11 +142,13 @@ public class UserArtifactService {
         return result;
     }
 
-    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs, boolean includeMetadata) {
+    private Map<String, Object> item(Path base, Path path, BasicFileAttributes attrs, Map<String, Object> loadedMetadata) {
         Map<String, Object> result = fileInfo(base, path, attrs);
         String relative = (String) result.get("path");
         result.put("category", category(relative));
-        if (includeMetadata && attrs.isRegularFile()) result.put("metadata", metadata(base, relative));
+        if (attrs.isRegularFile()) {
+            result.put("metadata", loadedMetadata != null ? loadedMetadata : metadata(base, relative));
+        }
         return result;
     }
 
@@ -168,7 +170,7 @@ public class UserArtifactService {
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
                         .sorted(ARTIFACT_ORDER)
-                        .map(match -> item(base, match.path(), match.attributes(), true)).toList(),
+                        .map(match -> item(base, match.path(), match.attributes(), match.metadata())).toList(),
                 "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
                         "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
     }
@@ -268,11 +270,9 @@ public class UserArtifactService {
         });
         List<Map<String, Object>> pageFiles = new ArrayList<>();
         if (matched[0] > offset) {
-            window.stream().sorted(ARTIFACT_ORDER).skip(offset).forEachOrdered(match -> {
-                Map<String, Object> file = item(base, match.path(), match.attributes(), !filterMetadata);
-                if (filterMetadata) file.put("metadata", match.metadata());
-                pageFiles.add(file);
-            });
+            window.stream().sorted(ARTIFACT_ORDER).skip(offset)
+                    .map(match -> item(base, match.path(), match.attributes(), match.metadata()))
+                    .forEachOrdered(pageFiles::add);
         }
         return Map.of("fileList", pageFiles, "count", matched[0],
                 "page", current, "pageSize", size, "hasMore", matched[0] > windowSize);
@@ -481,10 +481,7 @@ public class UserArtifactService {
                 else output.write(content);
             }
             var metadata = writeMetadata(base, target, validatedSource);
-            var attributes = Files.readAttributes(target, BasicFileAttributes.class);
-            var result = item(base, target, attributes, false);
-            if (attributes.isRegularFile()) result.put("metadata", metadata);
-            return result;
+            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), metadata);
         } catch (Exception error) {
             if (created) deletePath(base, target);
             throw error;
