@@ -119,9 +119,8 @@ public interface ProjectMapper {
 
     record ProjectAgentCount(String projectId, int agentCount) {}
 
-    @Select("SELECT COUNT(*) FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId}")
-    int containsAgent(@Param("projectId") String projectId,
-                       @Param("agentId") String agentId);
+    @Select("SELECT EXISTS (SELECT 1 FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId})")
+    boolean existsAgentRelation(@Param("projectId") String projectId, @Param("agentId") String agentId);
 
     @Select("""
             <script>

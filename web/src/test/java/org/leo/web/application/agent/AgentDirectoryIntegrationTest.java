@@ -124,6 +124,10 @@ class AgentDirectoryIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"project", " project "})
     void preservesProjectAndUnassignedWorkspaceBoundaries(String projectId) {
+        var mapper = session.getMapper(ProjectMapper.class);
+        assertTrue(mapper.existsAgentRelation("project", "parent"));
+        assertFalse(mapper.existsAgentRelation("project", "child"));
+        assertFalse(mapper.existsAgentRelation("other-project", "parent"));
         jdbc.update("""
                 INSERT INTO project_agents (project_id, agent_id, added_by_user_id, create_time)
                 VALUES ('project', 'child', 'owner', '2026-10-04')

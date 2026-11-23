@@ -131,8 +131,7 @@ class ProjectServiceTest {
         Agent child = new Agent();
         child.setAgentId("child");
         child.setParentAgentId("gateway");
-        when(mapper.containsAgent("project-1", "child")).thenReturn(0);
-        when(mapper.containsAgent("project-1", "gateway")).thenReturn(1);
+        when(mapper.existsAgentRelation("project-1", "gateway")).thenReturn(true);
         when(agentService.findAgentById("child")).thenReturn(child);
 
         assertTrue(service.containsAgent("project-1", "child"));
@@ -225,8 +224,8 @@ class ProjectServiceTest {
 
         verify(agentService, times(2)).findAgentById("child");
         verify(agentService, times(2)).findAgentById("parent");
-        verify(mapper).containsAgent("project-1", "child");
-        verify(mapper).containsAgent("project-1", "parent");
+        verify(mapper).existsAgentRelation("project-1", "child");
+        verify(mapper).existsAgentRelation("project-1", "parent");
         verifyNoMoreInteractions(mapper);
     }
 

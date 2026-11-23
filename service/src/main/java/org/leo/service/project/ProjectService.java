@@ -193,7 +193,7 @@ public class ProjectService {
         Set<String> visited = new HashSet<>();
         for (int depth = 0; depth < MAX_PARENT_DEPTH && currentId != null
                 && !currentId.isBlank() && visited.add(currentId); depth++) {
-            if (projectMapper.containsAgent(projectId, currentId) > 0) return true;
+            if (projectMapper.existsAgentRelation(projectId, currentId)) return true;
             Agent current = agentService.findAgentById(currentId);
             if (current == null || current.getParentAgentId() == null
                     || "root".equals(current.getParentAgentId())) return false;
