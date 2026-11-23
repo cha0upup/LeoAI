@@ -41,6 +41,7 @@ import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -491,6 +492,31 @@ class UserFileControllerTest {
         var response = new org.springframework.mock.web.MockHttpServletResponse();
         controller.download(new MockHttpServletRequest(), "notes/file.txt", null, response);
         assertEquals(401, response.getStatus());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void workspaceReadsDistinguishAFileVanishingAtOpenFromAccessFailure(boolean accessDenied) throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/report.txt", "fixture", false).get("code"));
+        Path target = artifacts.root(userId).resolve("notes/report.txt");
+        var openChannel = Files.class.getMethod("newByteChannel", Path.class, OpenOption[].class);
+        var download = new org.springframework.mock.web.MockHttpServletResponse();
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (openChannel.equals(invocation.getMethod()) && target.equals(invocation.getArgument(0))) {
+                if (accessDenied) throw new AccessDeniedException(target.toString());
+                throw new NoSuchFileException(target.toString());
+            }
+            return invocation.callRealMethod();
+        })) {
+            var preview = controller.preview(request, "notes/report.txt", null);
+            controller.download(request, "notes/report.txt", null, download);
+            int expected = accessDenied ? 500 : 404;
+            assertEquals(expected, preview.get("code"));
+            assertEquals(expected, download.getStatus());
+        }
+        assertNull(download.getHeader("Content-Disposition"));
+        assertEquals(0, download.getContentAsByteArray().length);
     }
 
     @Test

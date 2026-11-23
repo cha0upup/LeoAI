@@ -17,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.HashMap;
 
@@ -137,6 +138,8 @@ public class UserFileController {
                 downloadName = target.getFileName().toString();
             }
             FileDownloadResponse.write(target, downloadName, response);
+        } catch (NoSuchFileException e) {
+            response.setStatus(404);
         } catch (IllegalArgumentException e) {
             response.setStatus(400);
         } catch (Exception e) {
@@ -194,6 +197,8 @@ public class UserFileController {
             }
             var preview = artifacts.preview(user.getUserId(), relativePath, size);
             return preview == null ? ApiResponse.notFound("文件不存在") : ApiResponse.success(preview);
+        } catch (NoSuchFileException e) {
+            return ApiResponse.notFound("文件不存在");
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
