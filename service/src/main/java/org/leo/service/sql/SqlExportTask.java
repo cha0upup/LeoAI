@@ -296,7 +296,7 @@ final class SqlExportTask {
         return copy(data);
     }
 
-    static List<Map<String, Object>> toRefMaps(List<SqlObjectRef> refs) {
+    private static List<Map<String, Object>> toRefMaps(List<SqlObjectRef> refs) {
         if (refs == null || refs.isEmpty()) return Collections.emptyList();
         return refs.stream().filter(Objects::nonNull).map(SqlObjectRef::toMap).toList();
     }
@@ -306,7 +306,7 @@ final class SqlExportTask {
         return SqlObjectRef.fromMap(map);
     }
 
-    static List<SqlObjectRef> refListValue(Object value) {
+    private static List<SqlObjectRef> refListValue(Object value) {
         if (!(value instanceof List<?> list)) return Collections.emptyList();
         List<SqlObjectRef> refs = new ArrayList<SqlObjectRef>();
         for (Object item : list) {

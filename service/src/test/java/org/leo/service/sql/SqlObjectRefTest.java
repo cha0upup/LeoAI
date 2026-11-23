@@ -24,14 +24,12 @@ class SqlObjectRefTest {
     }
 
     @Test
-    void restoresRefsFromPersistedTaskMetadata() {
+    void restoresCoordinatesFromMetadataMaps() {
         SqlObjectRef ref = SqlObjectRef.fromMap(Map.of(
                 "catalog", "app", "schema", "sales", "name", "orders", "kind", "table"));
 
         assertEquals(SqlObjectRef.table("app", "sales", "orders"), ref);
         assertNull(SqlObjectRef.fromMap(Map.of()));
-        List<SqlObjectRef> refs = List.of(ref, SqlObjectRef.table("app", "crm", "customers"));
-        assertEquals(refs, SqlExportTask.refListValue(SqlExportTask.toRefMaps(refs)));
     }
 
     @Test

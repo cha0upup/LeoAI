@@ -20,7 +20,7 @@ class SqlExportTaskTest {
 
     @Test
     void replacingAnAttemptFencesEveryLateMutationAndOldRetirement() {
-        SqlExportTask task = database();
+        SqlExportTask task = database(orders);
         var old = task.beginAttempt();
         task.running(old, 30);
         task.pause();
@@ -96,16 +96,22 @@ class SqlExportTaskTest {
     @Test
     @SuppressWarnings("unchecked")
     void publicViewsAndRepositoryPayloadsDoNotExposeMutableTaskMetadata() throws Exception {
-        SqlExportTask task = database();
+        var customers = SqlObjectRef.table("app", "crm", "customers");
+        var refs = List.of(orders, customers);
+        SqlExportTask task = database(orders, customers);
         task.persist();
         ArgumentCaptor<Map<String, Object>> saved = ArgumentCaptor.forClass(Map.class);
         verify(repository).save(eq(key), saved.capture());
+        assertEquals(refs.stream().map(SqlObjectRef::toMap).toList(), saved.getValue().get("tableRefs"));
+        when(repository.load(key)).thenReturn(saved.getValue());
+        assertEquals(refs, SqlExportTask.restore(repository, key).selectedTables());
+
         var view = task.snapshot();
         ((Map<String, Object>) view.get("objectRef")).put("catalog", "changed");
         ((Map<String, Object>) ((List<?>) view.get("tableRefs")).get(0)).put("name", "changed");
         saved.getValue().put("userId", "other");
         ((List<?>) saved.getValue().get("tableRefs")).clear();
-        assertEquals(List.of(orders), task.selectedTables());
+        assertEquals(refs, task.selectedTables());
         assertEquals("app", task.objectRef().catalog());
         assertSame(task, task.requireOwner(key));
         assertFalse(task.snapshot().containsKey("userId"));
@@ -162,9 +168,9 @@ class SqlExportTaskTest {
                 "downloads/export.csv", orders, "csv");
     }
 
-    private SqlExportTask database() {
+    private SqlExportTask database(SqlObjectRef... tables) {
         return SqlExportTask.database(repository, "task", "owner", "session", Path.of("export.zip"),
-                "downloads/export.zip", new SqlObjectRef("app", "sales", null, "schema"), List.of(orders), true, true, "zip");
+                "downloads/export.zip", new SqlObjectRef("app", "sales", null, "schema"), List.of(tables), true, true, "zip");
     }
 
     private Map<String, Object> metadata(String type, String status) {
