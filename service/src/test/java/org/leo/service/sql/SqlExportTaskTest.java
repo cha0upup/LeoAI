@@ -107,6 +107,12 @@ class SqlExportTaskTest {
         assertEquals(refs, SqlExportTask.restore(repository, key).selectedTables());
 
         var view = task.snapshot();
+        assertEquals(List.of("taskId", "taskType", "status", "progress", "fileName", "database", "currentTable",
+                "processedTables", "tableCount", "rowCount", "fileSize", "error", "createdTime", "startTime",
+                "endTime", "downloadPath", "downloadUrl", "format", "includeStructure", "includeData",
+                "objectRef", "currentObjectRef", "tableRefs"), List.copyOf(view.keySet()));
+        assertNull(view.get("fileSize"));
+        assertNull(view.get("currentObjectRef"));
         ((Map<String, Object>) view.get("objectRef")).put("catalog", "changed");
         ((Map<String, Object>) ((List<?>) view.get("tableRefs")).get(0)).put("name", "changed");
         saved.getValue().put("userId", "other");

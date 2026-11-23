@@ -9,6 +9,12 @@ import java.util.*;
  * Mutable state and attempt checks share this object's monitor, so replacement fences late callbacks.
  */
 final class SqlExportTask {
+    private static final List<String> SNAPSHOT_FIELDS = List.of(
+            "taskId", "taskType", "status", "progress", "fileName", "database", "currentTable",
+            "processedTables", "tableCount", "rowCount", "fileSize", "error", "createdTime", "startTime",
+            "endTime", "downloadPath", "downloadUrl", "format", "includeStructure", "includeData",
+            "objectRef", "currentObjectRef", "tableRefs");
+
     private final Map<String, Object> data;
     private final SqlExportTaskRepository repository;
     private Attempt attempt;
@@ -269,31 +275,9 @@ final class SqlExportTask {
     }
 
     synchronized Map<String, Object> snapshot() {
-        Map<String, Object> data = new LinkedHashMap<String, Object>();
-        data.put("taskId", this.data.get("taskId"));
-        data.put("taskType", this.data.get("taskType"));
-        data.put("status", this.data.get("status"));
-        data.put("progress", this.data.get("progress"));
-        data.put("fileName", this.data.get("fileName"));
-        data.put("database", this.data.get("database"));
-        data.put("currentTable", this.data.get("currentTable"));
-        data.put("processedTables", this.data.get("processedTables"));
-        data.put("tableCount", this.data.get("tableCount"));
-        data.put("rowCount", this.data.get("rowCount"));
-        data.put("fileSize", this.data.get("fileSize"));
-        data.put("error", this.data.get("error"));
-        data.put("createdTime", this.data.get("createdTime"));
-        data.put("startTime", this.data.get("startTime"));
-        data.put("endTime", this.data.get("endTime"));
-        data.put("downloadPath", this.data.get("downloadPath"));
-        data.put("downloadUrl", this.data.get("downloadUrl"));
-        data.put("format", this.data.get("format"));
-        data.put("includeStructure", this.data.get("includeStructure"));
-        data.put("includeData", this.data.get("includeData"));
-        data.put("objectRef", this.data.get("objectRef"));
-        data.put("currentObjectRef", this.data.get("currentObjectRef"));
-        data.put("tableRefs", this.data.get("tableRefs"));
-        return copy(data);
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        for (String field : SNAPSHOT_FIELDS) snapshot.put(field, copyValue(data.get(field)));
+        return snapshot;
     }
 
     private static List<Map<String, Object>> toRefMaps(List<SqlObjectRef> refs) {
