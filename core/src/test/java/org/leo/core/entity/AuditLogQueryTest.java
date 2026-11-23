@@ -11,24 +11,18 @@ class AuditLogQueryTest {
     @CsvSource({",,50,0", "0,-1,50,0", "-2147483648,0,50,0", "1,7,1,7",
             "1000,0,1000,0", "1001,9,1000,9", "2147483647,2147483647,1000,2147483647"})
     void retainsTheExistingPagingBounds(Integer limit, Integer offset, int expectedLimit, int expectedOffset) {
-        AuditLogQuery source = new AuditLogQuery();
-        source.setLimit(limit);
-        source.setOffset(offset);
-
-        AuditLogQuery normalized = source.normalized();
         AuditLogQuery page = AuditLogQuery.page(limit, offset);
+        AuditLogQuery normalized = page.normalized();
 
         assertEquals(expectedLimit, normalized.getLimit());
         assertEquals(expectedOffset, normalized.getOffset());
         assertEquals(expectedLimit, page.getLimit());
         assertEquals(expectedOffset, page.getOffset());
-        assertEquals(limit, source.getLimit());
-        assertEquals(offset, source.getOffset());
     }
 
     @Test
     void normalizesAnIndependentCopyAndLeavesBlankFiltersAbsent() {
-        AuditLogQuery source = new AuditLogQuery();
+        AuditLogQuery source = AuditLogQuery.page(null, null);
         source.setUserId(" user ");
         source.setKeyword("  search  ");
         source.setStatus("\t");

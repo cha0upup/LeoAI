@@ -21,12 +21,10 @@ class AuditLogServiceTest {
 
     @Test
     void readingPagesAndCountsDoesNotRewriteTheCallersQuery() {
-        AuditLogQuery query = new AuditLogQuery();
+        AuditLogQuery query = AuditLogQuery.page(2001, 7);
         query.setUserId(" user ");
         query.setKeyword(" search ");
         query.setStatus(" ");
-        query.setLimit(2001);
-        query.setOffset(-5);
         var row = new AuditLog();
         when(mapper.searchAuditLogs(any())).thenReturn(List.of(row));
         when(mapper.countAuditLogs(any())).thenReturn(3);
@@ -37,8 +35,8 @@ class AuditLogServiceTest {
         assertEquals(" user ", query.getUserId());
         assertEquals(" search ", query.getKeyword());
         assertEquals(" ", query.getStatus());
-        assertEquals(2001, query.getLimit());
-        assertEquals(-5, query.getOffset());
+        assertEquals(1000, query.getLimit());
+        assertEquals(7, query.getOffset());
         var normalized = ArgumentCaptor.forClass(AuditLogQuery.class);
         verify(mapper).searchAuditLogs(normalized.capture());
         assertNotSame(query, normalized.getValue());
@@ -46,7 +44,7 @@ class AuditLogServiceTest {
         assertEquals("search", normalized.getValue().getKeyword());
         assertNull(normalized.getValue().getStatus());
         assertEquals(1000, normalized.getValue().getLimit());
-        assertEquals(0, normalized.getValue().getOffset());
+        assertEquals(7, normalized.getValue().getOffset());
     }
 
     @ParameterizedTest
@@ -70,7 +68,7 @@ class AuditLogServiceTest {
 
     @Test
     void blankFiltersRemainIneligibleForFilteredDeletion() {
-        AuditLogQuery query = new AuditLogQuery();
+        AuditLogQuery query = AuditLogQuery.page(null, null);
         query.setKeyword(" ");
 
         assertThrows(IllegalArgumentException.class, () -> logs.deleteAuditLogsByFilter(query));

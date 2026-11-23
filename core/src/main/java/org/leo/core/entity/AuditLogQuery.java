@@ -16,19 +16,22 @@ public class AuditLogQuery {
     private String remark;
     private String startTime;
     private String endTime;
-    private Integer limit;
-    private Integer offset;
+    private final int limit;
+    private final int offset;
+
+    private AuditLogQuery(int limit, int offset) {
+        this.limit = limit;
+        this.offset = offset;
+    }
 
     public static AuditLogQuery page(Integer limit, Integer offset) {
-        AuditLogQuery query = new AuditLogQuery();
-        query.limit = limit == null || limit <= 0 ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
-        query.offset = offset == null || offset < 0 ? 0 : offset;
-        return query;
+        return new AuditLogQuery(limit == null || limit <= 0 ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT),
+                offset == null || offset < 0 ? 0 : offset);
     }
 
     /** Returns normalized filters and pagination without changing the caller's query. */
     public AuditLogQuery normalized() {
-        AuditLogQuery query = page(limit, offset);
+        AuditLogQuery query = new AuditLogQuery(limit, offset);
         query.userId = trimToNull(userId);
         query.userName = trimToNull(userName);
         query.agentId = trimToNull(agentId);
@@ -148,15 +151,7 @@ public class AuditLogQuery {
         return limit;
     }
 
-    public void setLimit(Integer limit) {
-        this.limit = limit;
-    }
-
     public Integer getOffset() {
         return offset;
-    }
-
-    public void setOffset(Integer offset) {
-        this.offset = offset;
     }
 }
