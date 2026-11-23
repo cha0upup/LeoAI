@@ -55,8 +55,7 @@ public class UserArtifactService {
         return AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId).toPath().toAbsolutePath().normalize();
     }
 
-    public Path resolve(String userId, String relativePath, boolean artifactOnly) {
-        Path base = root(userId);
+    private static Path resolve(Path base, String relativePath, boolean artifactOnly) {
         String relative = relativePath == null ? "" : relativePath.trim().replace('\\', '/');
         if (relative.startsWith("/")) relative = relative.substring(1);
         Path target = base.resolve(relative).normalize();
@@ -79,8 +78,16 @@ public class UserArtifactService {
 
     /** Finds a workspace or public task output file; missing paths and directories return null. */
     public Path findFile(String userId, String relativePath) {
+        return findFile(readRoot(userId), relativePath);
+    }
+
+    private Path readRoot(String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("用户信息无效");
-        Path target = resolve(userId, relativePath, false);
+        return root(userId);
+    }
+
+    private static Path findFile(Path base, String relativePath) {
+        Path target = resolve(base, relativePath, false);
         return Files.exists(target) && Files.isRegularFile(target) ? target : null;
     }
 
@@ -168,7 +175,8 @@ public class UserArtifactService {
 
     /** Returns a visible directory listing, or null when the requested directory is missing. */
     public Map<String, Object> listDirectory(String userId, String relativePath) throws IOException {
-        Path target = resolve(userId, relativePath, true);
+        Path base = root(userId);
+        Path target = resolve(base, relativePath, true);
         try {
             if (!Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory()) {
                 throw new IllegalArgumentException("path不是目录");
@@ -176,7 +184,6 @@ public class UserArtifactService {
         } catch (NoSuchFileException ignored) {
             return null;
         }
-        Path base = root(userId);
         List<Map<String, Object>> files = new ArrayList<>();
         try (var stream = Files.list(target)) {
             stream.filter(path -> !path.getFileName().toString().startsWith(".")
@@ -202,7 +209,8 @@ public class UserArtifactService {
 
     /** Returns a bounded preview, or null when the requested path is not a file. */
     public Map<String, Object> preview(String userId, String relativePath, Long size) throws IOException {
-        Path target = findFile(userId, relativePath);
+        Path base = readRoot(userId);
+        Path target = findFile(base, relativePath);
         if (target == null) return null;
         long previewSize = size == null ? DEFAULT_PREVIEW_SIZE : Math.min(Math.max(size, 1L), MAX_PREVIEW_SIZE);
         long fileSize;
@@ -212,7 +220,7 @@ public class UserArtifactService {
             actual = Channels.newInputStream(channel).readNBytes((int) Math.min(previewSize, fileSize));
         }
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("path", relative(root(userId), target));
+        result.put("path", relative(base, target));
         result.put("size", fileSize);
         result.put("previewSize", actual.length);
         result.put("truncated", fileSize > actual.length);
@@ -329,19 +337,20 @@ public class UserArtifactService {
 
     public Map<String, Object> upload(String userId, String relativeDir, String filename,
                                       boolean overwrite, InputStreamSource content) throws IOException {
-        Path directory = resolve(userId, relativeDir, true);
-        Files.createDirectories(directory);
         Path base = root(userId);
-        Path target = resolve(userId, relative(base, directory.resolve(filename)), true);
+        Path directory = resolve(base, relativeDir, true);
+        Files.createDirectories(directory);
+        Path target = resolve(base, relative(base, directory.resolve(filename)), true);
         return writeFile(base, target, overwrite, content);
     }
 
     public Map<String, Object> createFile(String userId, String relativePath,
                                           String content, boolean overwrite) throws IOException {
-        Path target = resolve(userId, relativePath, true);
+        Path base = root(userId);
+        Path target = resolve(base, relativePath, true);
         Path parent = target.getParent();
         if (parent != null) Files.createDirectories(parent);
-        return writeFile(root(userId), target, overwrite, () -> {
+        return writeFile(base, target, overwrite, () -> {
             byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
             if (data.length > maxUploadBytes()) throw new IllegalArgumentException("成果内容超过归档上限");
             return new ByteArrayInputStream(data);
@@ -388,18 +397,19 @@ public class UserArtifactService {
     }
 
     public Map<String, Object> createDirectory(String userId, String relativePath) throws IOException {
-        Path target = resolve(userId, relativePath, true);
+        Path base = root(userId);
+        Path target = resolve(base, relativePath, true);
         if (Files.exists(target) && !Files.isDirectory(target)) throw new FileAlreadyExistsException(target.toString());
         Files.createDirectories(target);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("path", relative(root(userId), target));
+        result.put("path", relative(base, target));
         return result;
     }
 
     /** Deletes an artifact and its metadata; missing paths return null. */
     public Map<String, Object> delete(String userId, String relativePath, boolean recursive) throws IOException {
-        Path target = resolve(userId, relativePath, true);
         Path base = root(userId);
+        Path target = resolve(base, relativePath, true);
         if (target.equals(base)) throw new IllegalArgumentException("请选择具体成果");
         if (!Files.exists(target)) return null;
         if (Files.isDirectory(target)) {
@@ -437,7 +447,7 @@ public class UserArtifactService {
         if (name == null || name.isBlank() || name.length() > 200 || name.startsWith(".")
                 || name.contains("/") || name.contains("\\")) throw new IllegalArgumentException("无效成果文件名");
         Path base = root(userId);
-        Path directory = resolve(userId, request.category(), true);
+        Path directory = resolve(base, request.category(), true);
         Path target = directory.resolve(UUID.randomUUID().toString().substring(0, 8) + "-" + name);
         Map<String, String> source = new LinkedHashMap<>(request.metadata() == null ? Map.of() : request.metadata());
         long maxBytes = maxUploadBytes();
@@ -445,7 +455,7 @@ public class UserArtifactService {
         byte[] content = null;
         if (request.sourcePath() != null && !request.sourcePath().isBlank()) {
             if (!"task-results".equals(request.category())) throw new IllegalArgumentException("任务文件应归档到任务输出");
-            input = resolve(userId, request.sourcePath(), false);
+            input = resolve(base, request.sourcePath(), false);
             Path relative = base.relativize(input);
             if (relative.getNameCount() < 4 || !"ai-tasks".equals(relative.getName(0).toString())
                     || !"files".equals(relative.getName(2).toString()) || !Files.isRegularFile(input, LinkOption.NOFOLLOW_LINKS))

@@ -95,6 +95,34 @@ class UserFileControllerTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"upload", "create-file", "create-dir", "list", "preview", "archive", "delete"})
+    void resolvesWorkspaceOnlyOncePerFileOperation(String operation) throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "notes/fixture.txt", "fixture", false).get("code"));
+        String source = "ai-tasks/job/files/output.txt";
+        Path taskOutput = artifacts.root(userId).resolve(source);
+        Files.createDirectories(taskOutput.getParent());
+        Files.writeString(taskOutput, "task result");
+
+        try (var workspace = mockStatic(AgentNodeSessionWorkDirUtil.class, CALLS_REAL_METHODS)) {
+            var response = switch (operation) {
+                case "upload" -> controller.upload(request,
+                        new MockMultipartFile("file", "uploaded.txt", "text/plain", new byte[]{1}), "notes", null, false);
+                case "create-file" -> controller.createFile(request, "notes/new.txt", "fixture", false);
+                case "create-dir" -> controller.createDir(request, "notes/new-folder");
+                case "list" -> controller.list(request, "notes", false, 1, 50, null, null);
+                case "preview" -> controller.preview(request, "notes/fixture.txt", null);
+                case "archive" -> controller.archive(request,
+                        new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
+                case "delete" -> controller.delete(request, "notes/fixture.txt", false);
+                default -> throw new AssertionError(operation);
+            };
+            assertEquals(200, response.get("code"), response::toString);
+            workspace.verify(() -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
+        }
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void requiresExplicitOverwriteAndListsTheReplacementMetadata(boolean upload) throws Exception {
         MockHttpServletRequest request = authenticatedRequest();
@@ -396,7 +424,7 @@ class UserFileControllerTest {
         assertTrue(metadata.containsKey("createdAt"));
         assertTrue(metadata.containsKey("id"));
         assertEquals(0, reopened.list(userId, "", "", "platform-ai", 1, 50).get("count"));
-        assertThrows(IllegalArgumentException.class, () -> reopened.resolve(userId, "../../other-user/workspace/" + saved.get("path"), false));
+        assertThrows(IllegalArgumentException.class, () -> reopened.findFile(userId, "../../other-user/workspace/" + saved.get("path")));
         controller.createFile(authenticatedRequest(), String.valueOf(saved.get("path")), "manual revision", true);
         assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50).get("count"));
         assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50).get("count"));
@@ -522,7 +550,7 @@ class UserFileControllerTest {
         Path actual = artifacts.root(userId).resolve("original.txt");
         Files.writeString(actual, "content");
         Files.createSymbolicLink(artifacts.root(userId).resolve("link.txt"), actual);
-        assertThrows(IllegalArgumentException.class, () -> artifacts.resolve(userId, "link.txt", false));
+        assertThrows(IllegalArgumentException.class, () -> artifacts.findFile(userId, "link.txt"));
         assertEquals(1, artifacts.list(userId, "", "", "", 1, 50).get("count"));
         var directory = (Map<?, ?>) controller.list(request, "", false, 1, 50, "", "").get("data");
         assertEquals(1, directory.get("count"));
