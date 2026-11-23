@@ -418,13 +418,18 @@ class UserFileControllerTest {
     @ValueSource(booleans = {false, true})
     @SuppressWarnings("unchecked")
     void persistsProvenanceAndCleansMetadataOnDeletion(boolean recursive) throws Exception {
-        var saved = artifacts.archive(userId, new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "# Report", null,
-                Map.of("title", "Database review", "sourceModule", "node-ai", "sourceId", "thread-a", "hostName", "db-host")));
+        var mapper = spy(new ObjectMapper());
+        var archiver = new UserArtifactService(mapper, systemConfigService);
+        var saved = archiver.archive(userId, new UserArtifactService.ArchiveRequest("ai-reports", "report.md", "# Report", null,
+                Map.of("title", " 数据库审查 ", "sourceModule", "node-ai", "sourceId", "thread-a", "hostName", "db-host")));
+        verify(mapper, never()).readValue(anyString(), eq(Map.class));
         var reopened = new UserArtifactService(new ObjectMapper(), systemConfigService);
         var page = reopened.list(userId, "ai-reports", " DB-HOST ", "node-ai", 1, 50);
         var file = ((List<Map<String, Object>>) page.get("fileList")).get(0);
         var metadata = (Map<String, Object>) file.get("metadata");
         assertEquals(saved.get("path"), file.get("path"));
+        assertEquals(saved.get("metadata"), metadata);
+        assertEquals("数据库审查", metadata.get("title"));
         assertEquals("thread-a", metadata.get("sourceId"));
         assertTrue(metadata.containsKey("createdAt"));
         assertTrue(metadata.containsKey("id"));

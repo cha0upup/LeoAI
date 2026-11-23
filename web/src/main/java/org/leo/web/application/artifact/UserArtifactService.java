@@ -318,7 +318,7 @@ public class UserArtifactService {
         return validated;
     }
 
-    private void record(Path base, Path target, Map<String, String> validatedSource) throws IOException {
+    private Map<String, Object> writeMetadata(Path base, Path target, Map<String, String> validatedSource) throws IOException {
         String relative = relative(base, target);
         Map<String, Object> record = new LinkedHashMap<>();
         record.put("id", UUID.randomUUID().toString());
@@ -333,6 +333,7 @@ public class UserArtifactService {
             try { Files.move(temporary, metadata, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (AtomicMoveNotSupportedException ignored) { Files.move(temporary, metadata, StandardCopyOption.REPLACE_EXISTING); }
         } finally { Files.deleteIfExists(temporary); }
+        return record;
     }
 
     public Map<String, Object> upload(String userId, String relativeDir, String filename,
@@ -375,7 +376,7 @@ public class UserArtifactService {
         } else {
             transferContent(target, content, StandardOpenOption.CREATE_NEW);
         }
-        record(base, target, validateSource(Map.of("title", target.getFileName().toString(), "sourceModule", "manual")));
+        writeMetadata(base, target, validateSource(Map.of("title", target.getFileName().toString(), "sourceModule", "manual")));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(base, target));
         result.put("size", Files.size(target));
@@ -479,8 +480,11 @@ public class UserArtifactService {
                 if (input != null) copyArchiveSource(input, output, maxBytes);
                 else output.write(content);
             }
-            record(base, target, validatedSource);
-            return item(base, target, Files.readAttributes(target, BasicFileAttributes.class), true);
+            var metadata = writeMetadata(base, target, validatedSource);
+            var attributes = Files.readAttributes(target, BasicFileAttributes.class);
+            var result = item(base, target, attributes, false);
+            if (attributes.isRegularFile()) result.put("metadata", metadata);
+            return result;
         } catch (Exception error) {
             if (created) deletePath(base, target);
             throw error;
