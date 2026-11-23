@@ -99,8 +99,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "trace_id", "trace_json", "lease_token"));
             requireColumns(connection, "ai_messages",
                     Set.of("message_id", "thread_id", "turn_id", "run_id",
-                            "message_seq", "status", "role", "recovery_context"));
-            requireNullableColumn(connection, "ai_messages", "run_id");
+                            "message_seq", "status", "role", "recovery_context"), "run_id");
             requireColumns(connection, "ai_events",
                     Set.of("event_id", "thread_id", "run_id", "turn_id", "item_id",
                             "subagent_invocation_id", "event_seq", "timestamp",
@@ -146,48 +145,39 @@ public class DatabaseInitializer implements CommandLineRunner {
     }
 
     private void requireColumns(Connection connection, String table,
-                                Set<String> requiredColumns) throws SQLException {
-        Set<String> actual = tableColumns(connection, table);
-        if (!actual.containsAll(requiredColumns)) {
+                                Set<String> requiredColumns, String... nullableColumns) throws SQLException {
+        Map<String, Boolean> notNullByColumn = tableColumns(connection, table);
+        if (!notNullByColumn.keySet().containsAll(requiredColumns)) {
             Set<String> missing = new HashSet<>(requiredColumns);
-            missing.removeAll(actual);
+            missing.removeAll(notNullByColumn.keySet());
             throw new IllegalStateException(
                     "数据库结构不完整，缺少 " + table + "." + missing);
         }
-    }
-
-    private void requireExactColumns(Connection connection, String table,
-                                     Set<String> expectedColumns) throws SQLException {
-        if (!tableColumns(connection, table).equals(expectedColumns)) {
-            throw new IllegalStateException("数据库结构与当前版本不匹配：" + table + "，请使用新的 SQLite 文件");
-        }
-    }
-
-    private void requireNullableColumn(Connection connection,
-                                       String table,
-                                       String column) throws SQLException {
-        try (Statement statement = connection.createStatement();
-             ResultSet result = statement.executeQuery(
-                     "PRAGMA table_info('" + table + "')")) {
-            while (result.next()) {
-                if (!column.equals(result.getString("name"))) continue;
-                if (result.getInt("notnull") == 0) return;
+        for (String column : nullableColumns) {
+            if (Boolean.TRUE.equals(notNullByColumn.get(column))) {
                 throw new IllegalStateException(
                         "AI 数据库结构不符合约束，" + table + "." + column + " 必须允许 NULL");
             }
         }
     }
 
-    private Set<String> tableColumns(Connection connection, String table)
+    private void requireExactColumns(Connection connection, String table,
+                                     Set<String> expectedColumns) throws SQLException {
+        if (!tableColumns(connection, table).keySet().equals(expectedColumns)) {
+            throw new IllegalStateException("数据库结构与当前版本不匹配：" + table + "，请使用新的 SQLite 文件");
+        }
+    }
+
+    private Map<String, Boolean> tableColumns(Connection connection, String table)
             throws SQLException {
-        Set<String> actual = new HashSet<>();
+        Map<String, Boolean> notNullByColumn = new HashMap<>();
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("PRAGMA table_info('" + table + "')")) {
             while (result.next()) {
-                actual.add(result.getString("name"));
+                notNullByColumn.put(result.getString("name"), result.getInt("notnull") != 0);
             }
         }
-        return actual;
+        return notNullByColumn;
     }
 
 }

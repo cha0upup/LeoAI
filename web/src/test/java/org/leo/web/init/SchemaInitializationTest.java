@@ -144,6 +144,25 @@ class SchemaInitializationTest {
     }
 
     @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void rejectsMissingOrNonNullableMessageRunIdBeforeSeeding(boolean present) {
+        var source = initializedSource();
+        var jdbc = new JdbcTemplate(source);
+        jdbc.execute("DROP TABLE ai_messages");
+        jdbc.execute("""
+                CREATE TABLE ai_messages (
+                    message_id TEXT PRIMARY KEY, thread_id TEXT, turn_id TEXT, message_seq INTEGER,
+                    status TEXT, role TEXT, recovery_context TEXT%s
+                )
+                """.formatted(present ? ", run_id TEXT NOT NULL" : ""));
+
+        var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
+        assertEquals(present ? "AI 数据库结构不符合约束，ai_messages.run_id 必须允许 NULL"
+                : "数据库结构不完整，缺少 ai_messages.[run_id]", error.getMessage());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"ai_runs", "ai_events"})
     void rejectsIncompleteDatabasesWithoutSeeding(String table) {
         var source = initializedSource();
