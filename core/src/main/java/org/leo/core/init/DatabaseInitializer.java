@@ -33,21 +33,21 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enableWalMode();
-        validateSchema();
-        executeScript("sql/data.sql");
+        try (Connection connection = dataSource.getConnection()) {
+            validateSchema(connection);
+            seedData(connection);
+        }
     }
 
-    private void executeScript(String resource) throws SQLException {
-        try (Connection connection = dataSource.getConnection()) {
-            connection.setAutoCommit(false);
-            try {
-                ScriptUtils.executeSqlScript(connection, new ClassPathResource(resource));
-                connection.commit();
-            } catch (SQLException | RuntimeException error) {
-                try { connection.rollback(); }
-                catch (SQLException rollback) { error.addSuppressed(rollback); }
-                throw error;
-            }
+    private void seedData(Connection connection) throws SQLException {
+        connection.setAutoCommit(false);
+        try {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/data.sql"));
+            connection.commit();
+        } catch (SQLException | RuntimeException error) {
+            try { connection.rollback(); }
+            catch (SQLException rollback) { error.addSuppressed(rollback); }
+            throw error;
         }
     }
 
@@ -64,8 +64,8 @@ public class DatabaseInitializer implements CommandLineRunner {
     }
 
     /** 校验当前数据库基线，不迁移历史结构或数据。 */
-    private void validateSchema() {
-        try (Connection connection = dataSource.getConnection()) {
+    private void validateSchema(Connection connection) {
+        try {
             requireColumns(connection, "users", Set.of("account_revision"));
             requireForeignKeys(connection, "users", Map.entry("teams", Map.of("team_id", "team_id")));
             requireForeignKeys(connection, "teams", Map.entry("users", Map.of("team_id", "team_id", "leader_id", "user_id")));

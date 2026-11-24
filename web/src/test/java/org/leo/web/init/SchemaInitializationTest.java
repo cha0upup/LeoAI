@@ -22,6 +22,10 @@ import java.nio.file.Path;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /** Covers schema creation, baseline validation and non-destructive restart in one place. */
 class SchemaInitializationTest {
@@ -30,7 +34,9 @@ class SchemaInitializationTest {
     @Test
     void freshSchemaMatchesTheCurrentBaseline() throws Exception {
         var source = initializedSource();
-        new DatabaseInitializer(source).run();
+        var startupSource = mock(DataSource.class, delegatesTo(source));
+        new DatabaseInitializer(startupSource).run();
+        verify(startupSource, times(2)).getConnection(); // WAL and validation/seed each use one connection.
         var jdbc = new JdbcTemplate(source);
         assertEquals(Set.of(
                         "agent_database_connections", "agent_ssh_connections", "agents",
