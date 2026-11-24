@@ -129,7 +129,8 @@ public class LoginController {
         User user = permissionService.getCurrentUser(request);
         HashMap<String, Object> data = new HashMap<>();
         data.put("isLoggedIn", user != null);
-        data.put("initializationRequired", initialization.isInitializationRequired());
+        // A verified session already confirms that this installation contains an active account.
+        data.put("initializationRequired", user == null && initialization.isInitializationRequired());
         data.put("passwordMinLength", passwordPolicy.getMinimumLength());
         data.put("passwordMaxLength", PasswordPolicy.MAX_LENGTH);
         if (user != null) {

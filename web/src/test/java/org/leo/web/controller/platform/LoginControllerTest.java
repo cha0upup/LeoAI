@@ -63,9 +63,11 @@ class LoginControllerTest {
         assertEquals(Set.of("isLoggedIn", "initializationRequired", "passwordMinLength", "passwordMaxLength",
                 "userId", "userName", "privilege", "teamId", "passwordChangeRequired"), data.keySet());
         assertEquals(true, data.get("isLoggedIn"));
+        assertEquals(false, data.get("initializationRequired"));
         assertEquals(true, data.get("passwordChangeRequired"));
         assertFalse(data.containsKey("password"));
         assertEquals("stored-hash", user.getPassword());
+        verify(initialization).isInitializationRequired();
     }
 
     @Test
