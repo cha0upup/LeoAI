@@ -54,27 +54,36 @@ public class AtomicFileStore {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> readJsonMap(File file) {
-        String content = readText(file);
+        Path path = requireReadPath(file);
+        String content = readUtf8(path);
         if (content == null) return null;
         try {
             Object parsed = JsonUtil.fromJsonString(content, Object.class);
             if (!(parsed instanceof Map<?, ?>)) throw new IllegalArgumentException("JSON 根节点应为对象");
             return new LinkedHashMap<>((Map<String, Object>) parsed);
         } catch (RuntimeException error) {
-            throw new FileStoreException(FileStoreException.Reason.INVALID_CONTENT, file.toPath(), error);
+            throw new FileStoreException(FileStoreException.Reason.INVALID_CONTENT, path, error);
         }
     }
 
     public String readText(File file) {
+        return readUtf8(requireReadPath(file));
+    }
+
+    private static Path requireReadPath(File file) {
         if (file == null) throw new IllegalArgumentException("目标文件为空");
+        return file.toPath();
+    }
+
+    private static String readUtf8(Path path) {
         try {
-            return Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            return Files.readString(path, StandardCharsets.UTF_8);
         } catch (NoSuchFileException missing) {
             return null;
         } catch (CharacterCodingException error) {
-            throw new FileStoreException(FileStoreException.Reason.INVALID_CONTENT, file.toPath(), error);
+            throw new FileStoreException(FileStoreException.Reason.INVALID_CONTENT, path, error);
         } catch (IOException | SecurityException error) {
-            throw new FileStoreException(FileStoreException.Reason.READ_FAILED, file.toPath(), error);
+            throw new FileStoreException(FileStoreException.Reason.READ_FAILED, path, error);
         }
     }
 }

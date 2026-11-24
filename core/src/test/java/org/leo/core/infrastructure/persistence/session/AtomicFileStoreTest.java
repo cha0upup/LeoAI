@@ -65,6 +65,7 @@ class AtomicFileStoreTest {
             files.when(() -> Files.readString(eq(target), any(java.nio.charset.Charset.class))).thenThrow(denied);
             FileStoreException error = assertThrows(FileStoreException.class, () -> store.readJsonMap(target.toFile()));
             assertEquals(FileStoreException.Reason.READ_FAILED, error.getReason());
+            assertEquals(target, error.getPath());
             assertSame(denied, error.getCause());
         }
         assertEquals(FileStoreException.Reason.READ_FAILED,
