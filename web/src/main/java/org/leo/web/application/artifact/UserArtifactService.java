@@ -126,7 +126,8 @@ public class UserArtifactService {
     private String relative(Path base, Path path) { return base.relativize(path).toString().replace('\\', '/'); }
 
     private String category(String path) {
-        String first = path.split("/", 2)[0];
+        int separator = path.indexOf('/');
+        String first = separator < 0 ? path : path.substring(0, separator);
         return CATEGORIES.contains(first) ? first : "imports";
     }
 
