@@ -76,7 +76,7 @@ class UserFileControllerTest {
     void rejectsMissingOrMalformedSessionIdentity(String cachedUser) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", cachedUser);
-        assertEquals(401, controller.overview(request).get("code"));
+        assertEquals(401, controller.overview(request, true).get("code"));
     }
 
     private Path workspace() {
@@ -115,7 +115,7 @@ class UserFileControllerTest {
                 case "create-file" -> controller.createFile(request, "notes/new.txt", "fixture", false);
                 case "create-dir" -> controller.createDir(request, "notes/new-folder");
                 case "list" -> controller.list(request, "notes", false, 1, 50, null, null);
-                case "preview" -> controller.preview(request, "notes/fixture.txt", null);
+                case "preview" -> controller.preview(request, "notes/fixture.txt", null, true);
                 case "archive" -> controller.archive(request,
                         new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
                 case "delete" -> controller.delete(request, "notes/fixture.txt", false);
@@ -228,7 +228,7 @@ class UserFileControllerTest {
         Path runtime = workspace.resolve("ai-tasks/job/.internal/versions/cache.txt");
         Files.createDirectories(runtime.getParent());
         Files.writeString(runtime, "runtime cache");
-        var overview = (Map<String, Object>) controller.overview(request).get("data");
+        var overview = (Map<String, Object>) controller.overview(request, true).get("data");
         assertEquals(3L, overview.get("totalFiles"));
         assertEquals(15L, overview.get("totalBytes"));
         var categories = (List<Map<String, Object>>) overview.get("categories");
@@ -344,7 +344,7 @@ class UserFileControllerTest {
             }
             return invocation.callRealMethod();
         })) {
-            var overview = controller.overview(request);
+            var overview = controller.overview(request, true);
             var listing = controller.list(request, "imports", true, 1, 50, null, null);
             assertEquals(expectedStatus, overview.get("code"));
             assertEquals(expectedStatus, listing.get("code"));
@@ -374,7 +374,7 @@ class UserFileControllerTest {
         assertEquals(200, controller.createFile(request, newest, "fixture", false).get("code"));
         Files.setLastModifiedTime(workspace.resolve(newest), FileTime.fromMillis(20_000));
 
-        var overview = artifacts.overview(userId);
+        var overview = artifacts.overview(userId, true);
         var recent = (List<Map<String, Object>>) overview.get("recentFiles");
         var firstPage = (List<Map<String, Object>>) artifacts.list(userId, null, null, null, 1, 8).get("fileList");
 
@@ -523,7 +523,7 @@ class UserFileControllerTest {
         assertEquals("task-output", metadata.get("sourceModule"));
         assertEquals("job", metadata.get("sourceId"));
         assertEquals(1, artifacts.list(userId, "task-results", "", "task-output", 1, 50).get("count"));
-        assertEquals(200, controller.preview(authenticatedRequest(), source, null).get("code"));
+        assertEquals(200, controller.preview(authenticatedRequest(), source, null, true).get("code"));
         assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
                 new UserArtifactService.ArchiveRequest("task-results", "private.txt", null, "ai-tasks/job/.internal/private.txt", Map.of())));
         Files.createDirectory(original.resolveSibling("folder"));
@@ -685,7 +685,7 @@ class UserFileControllerTest {
             }
             return invocation.callRealMethod();
         })) {
-            var preview = controller.preview(request, "notes/report.txt", null);
+            var preview = controller.preview(request, "notes/report.txt", null, true);
             controller.download(request, "notes/report.txt", null, download);
             int expected = accessDenied ? 500 : 404;
             assertEquals(expected, preview.get("code"));
@@ -716,7 +716,7 @@ class UserFileControllerTest {
             }
             return result;
         })) {
-            response = controller.preview(request, "notes/preview.txt", 5L);
+            response = controller.preview(request, "notes/preview.txt", 5L, true);
         }
 
         assertEquals(200, response.get("code"), response::toString);
@@ -726,50 +726,73 @@ class UserFileControllerTest {
     }
 
     @Test
+    void catalogCanOmitRecentEntriesAndDuplicateBase64WithoutChangingLegacyResponses() throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "imports/note.txt", "hello", false).get("code"));
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        var session = (org.springframework.mock.web.MockHttpSession) request.getSession();
+        String base = "/platform/user/file";
+
+        mvc.perform(get(base + "/overview").session(session))
+                .andExpect(jsonPath("$.data.recentFiles[0].path").value("imports/note.txt"));
+        mvc.perform(get(base + "/overview").session(session).param("includeRecent", "false"))
+                .andExpect(jsonPath("$.data.totalFiles").value(1))
+                .andExpect(jsonPath("$.data.totalBytes").value(5))
+                .andExpect(jsonPath("$.data.recentFiles").isEmpty());
+        mvc.perform(get(base + "/preview").session(session).param("path", "imports/note.txt"))
+                .andExpect(jsonPath("$.data.contentBase64").value("aGVsbG8="));
+        mvc.perform(get(base + "/preview").session(session).param("path", "imports/note.txt")
+                        .param("size", "3").param("includeBase64", "false"))
+                .andExpect(jsonPath("$.data.content").value("hel"))
+                .andExpect(jsonPath("$.data.truncated").value(true))
+                .andExpect(jsonPath("$.data.contentBase64").doesNotHaveJsonPath());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void previewKeepsFileLimitsAndPathAccessChecks() throws Exception {
         var request = authenticatedRequest();
         controller.createFile(request, "notes/preview.txt", "hello fixture", false);
 
-        var result = controller.preview(request, "notes/preview.txt", 5L);
+        var result = controller.preview(request, "notes/preview.txt", 5L, true);
         assertEquals(200, result.get("code"));
         var preview = (Map<String, Object>) result.get("data");
         assertEquals("hello", preview.get("content"));
         assertEquals(5, preview.get("previewSize"));
         assertEquals(true, preview.get("truncated"));
         assertEquals("notes/preview.txt", preview.get("path"));
-        var complete = (Map<String, Object>) controller.preview(request, "notes/preview.txt", null).get("data");
+        var complete = (Map<String, Object>) controller.preview(request, "notes/preview.txt", null, true).get("data");
         assertEquals("hello fixture", complete.get("content"));
         assertEquals(13, complete.get("previewSize"));
         assertEquals(false, complete.get("truncated"));
-        var minimum = (Map<String, Object>) controller.preview(request, "notes/preview.txt", 0L).get("data");
+        var minimum = (Map<String, Object>) controller.preview(request, "notes/preview.txt", 0L, true).get("data");
         assertEquals(1, minimum.get("previewSize"));
         assertEquals("h", minimum.get("content"));
 
         byte[] binary = new byte[1024 * 1024 + 17];
         Arrays.fill(binary, (byte) 0xff);
         Files.write(workspace().resolve("notes/binary.bin"), binary);
-        var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE).get("data");
+        var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE, true).get("data");
         assertEquals((long) binary.length, maximum.get("size"));
         assertEquals(1024 * 1024, maximum.get("previewSize"));
         assertEquals(true, maximum.get("truncated"));
         assertArrayEquals(Arrays.copyOf(binary, 1024 * 1024), Base64.getDecoder().decode((String) maximum.get("contentBase64")));
-        var defaultSize = (Map<String, Object>) controller.preview(request, "notes/binary.bin", null).get("data");
+        var defaultSize = (Map<String, Object>) controller.preview(request, "notes/binary.bin", null, true).get("data");
         assertEquals(64 * 1024, defaultSize.get("previewSize"));
 
         controller.createFile(request, "notes/empty.txt", "", false);
-        var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null).get("data");
+        var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null, true).get("data");
         assertEquals(0, empty.get("previewSize"));
         assertEquals("", empty.get("contentBase64"));
-        assertEquals(404, controller.preview(request, "notes", null).get("code"));
-        assertEquals(404, controller.preview(request, "notes/missing.txt", null).get("code"));
-        assertEquals(400, controller.preview(request, "../private.txt", null).get("code"));
-        assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null).get("code"));
+        assertEquals(404, controller.preview(request, "notes", null, true).get("code"));
+        assertEquals(404, controller.preview(request, "notes/missing.txt", null, true).get("code"));
+        assertEquals(400, controller.preview(request, "../private.txt", null, true).get("code"));
+        assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null, true).get("code"));
 
         var userWithoutId = new MockHttpServletRequest();
         userWithoutId.getSession().setAttribute("user", new User());
         assertEquals(Map.of("code", 400, "msg", "用户信息无效"),
-                controller.preview(userWithoutId, "notes/preview.txt", null));
+                controller.preview(userWithoutId, "notes/preview.txt", null, true));
     }
 
     private MockHttpServletRequest authenticatedRequest() {

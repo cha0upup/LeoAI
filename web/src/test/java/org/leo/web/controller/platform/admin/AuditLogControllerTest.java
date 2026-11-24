@@ -116,6 +116,25 @@ class AuditLogControllerTest {
     }
 
     @Test
+    void cleanupDeletesOnlyRowsBeforeTheSuppliedLocalTimestamp(@TempDir Path temp) throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit-retention.db"));
+        var jdbc = new JdbcTemplate(source);
+        jdbc.update("""
+                INSERT INTO audit_logs (log_id, operation_type, operation_name, create_time)
+                VALUES ('old', 'TEST', 'Test', '2026-10-01 11:59:59'),
+                       ('boundary', 'TEST', 'Test', '2026-10-01 12:00:00'),
+                       ('new', 'TEST', 'Test', '2026-10-01 12:00:01')
+                """);
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(AuditLogMapper.class);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+            assertEquals(1, session.getMapper(AuditLogMapper.class).deleteOldAuditLogs("2026-10-01 12:00:00"));
+        }
+        assertEquals(List.of("boundary", "new"),
+                jdbc.queryForList("SELECT log_id FROM audit_logs ORDER BY create_time", String.class));
+    }
+
+    @Test
     void failedAuditConfigurationWriteKeepsThePersistedAndCachedMode(@TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit-config.db"));
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);

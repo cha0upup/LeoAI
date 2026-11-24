@@ -267,14 +267,20 @@ class TeamManagementIntegrationTest {
     void teamListingKeepsRoleAndMembershipBoundaries(String role) {
         seedTeam("team", "research", "leader");
         seedTeam("other", "other", "someone-else");
+        jdbc.update("UPDATE users SET user_name = 'Current leader name' WHERE user_id = 'leader'");
         User caller = new User();
-        caller.setUserId("leader");
+        caller.setUserId(role.equals("leader") ? "leader" : "caller");
         caller.setPrivilege(role.equals("unassigned") ? "normal" : role);
         caller.setTeamId(role.equals("unassigned") ? null : "team");
 
         List<String> expected = role.equals("admin") ? List.of("other", "team")
                 : role.equals("unassigned") ? List.of() : List.of("team");
-        assertEquals(expected, teams.getTeamsForUser(caller).stream().map(Team::getTeamId).sorted().toList());
+        List<Team> visible = teams.getTeamsForUser(caller);
+        assertEquals(expected, visible.stream().map(Team::getTeamId).sorted().toList());
+        visible.forEach(team -> assertEquals(switch (role) {
+            case "admin", "leader" -> team.getTeamId().equals("team") ? "Current leader name" : "someone-else";
+            default -> null;
+        }, team.getLeaderName()));
     }
 
     @Test

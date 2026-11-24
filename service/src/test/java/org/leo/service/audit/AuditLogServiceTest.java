@@ -2,6 +2,7 @@ package org.leo.service.audit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
@@ -9,6 +10,9 @@ import org.leo.dao.mapper.AuditLogMapper;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 
@@ -64,6 +68,23 @@ class AuditLogServiceTest {
             assertEquals(start.plusDays(i).toString(), trend.get(i).get("day"));
             assertEquals(i == 0 ? 2 : 0, trend.get(i).get("count"));
         }
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(ints = {0, -1, 7})
+    void cleanupUsesTheSameLocalTimeAsAuditWrites(Integer days) {
+        int retention = days != null && days > 0 ? days : 30;
+        LocalDateTime earliest = LocalDateTime.now().minusDays(retention).truncatedTo(ChronoUnit.SECONDS);
+        when(mapper.deleteOldAuditLogs(anyString())).thenReturn(2);
+
+        assertEquals(2, logs.deleteOldAuditLogs(days));
+
+        var cutoff = ArgumentCaptor.forClass(String.class);
+        verify(mapper).deleteOldAuditLogs(cutoff.capture());
+        var localTime = LocalDateTime.parse(cutoff.getValue(), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        assertFalse(localTime.isBefore(earliest));
+        assertFalse(localTime.isAfter(LocalDateTime.now().minusDays(retention)));
     }
 
     @Test

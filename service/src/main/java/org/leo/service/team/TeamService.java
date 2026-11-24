@@ -46,10 +46,10 @@ public class TeamService {
     // ── 查询 ─────────────────────────────────────────────────────────────────────
 
     public List<Team> getTeamsForUser(User user) {
-        if (UserService.PRIVILEGE_ADMIN.equals(user.getPrivilege())) return getAllTeams();
-        if (UserService.PRIVILEGE_LEADER.equals(user.getPrivilege())) return getTeamsByLeader(user.getUserId());
-        Team team = getTeamById(user.getTeamId());
-        return team == null ? List.of() : List.of(team);
+        // 与团队页原先可查询的用户范围一致：管理员可查看所有队长名称，其他账号只匹配自己。
+        return teamMapper.findTeamsForUser(UserService.PRIVILEGE_ADMIN.equals(user.getPrivilege()),
+                UserService.PRIVILEGE_LEADER.equals(user.getPrivilege()),
+                nullableText(user.getUserId()), nullableText(user.getTeamId()));
     }
 
     public List<Team> getAllTeams() {

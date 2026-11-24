@@ -133,8 +133,8 @@ public interface AuditLogMapper {
     List<Map<String, Object>> countAuditLogsByDay(@Param("startTime") String startTime,
                                                   @Param("endExclusive") String endExclusive);
 
-    @Delete("DELETE FROM audit_logs WHERE create_time < datetime('now', '-' || #{days} || ' days')")
-    Integer deleteOldAuditLogs(@Param("days") Integer days);
+    @Delete("DELETE FROM audit_logs WHERE create_time < #{cutoff}")
+    Integer deleteOldAuditLogs(@Param("cutoff") String cutoff);
 
     @Delete({
             "<script>",

@@ -153,7 +153,7 @@ public class UserArtifactService {
         return result;
     }
 
-    public Map<String, Object> overview(String userId) throws IOException {
+    public Map<String, Object> overview(String userId, boolean includeRecent) throws IOException {
         Path base = root(userId);
         Map<String, long[]> categories = new LinkedHashMap<>();
         CATEGORIES.forEach(key -> categories.put(key, new long[2]));
@@ -166,7 +166,9 @@ public class UserArtifactService {
             String relative = relative(base, path);
             long[] counts = categories.get(category(relative));
             counts[0]++; counts[1] += attrs.size();
-            retainMatch(recent, RECENT_FILES_LIMIT, new ArtifactMatch(path, relative, attrs, null, totals[0]));
+            if (includeRecent) {
+                retainMatch(recent, RECENT_FILES_LIMIT, new ArtifactMatch(path, relative, attrs, null, totals[0]));
+            }
         });
         return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
                 "updatedAt", totals[3], "recentFiles", recent.stream()
@@ -211,7 +213,7 @@ public class UserArtifactService {
     }
 
     /** Returns a bounded preview, or null when the requested path is not a file. */
-    public Map<String, Object> preview(String userId, String relativePath, Long size) throws IOException {
+    public Map<String, Object> preview(String userId, String relativePath, Long size, boolean includeBase64) throws IOException {
         Path base = readRoot(userId);
         Path target = findFile(base, relativePath);
         if (target == null) return null;
@@ -228,7 +230,7 @@ public class UserArtifactService {
         result.put("previewSize", actual.length);
         result.put("truncated", fileSize > actual.length);
         result.put("content", new String(actual, StandardCharsets.UTF_8));
-        result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
+        if (includeBase64) result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
         return result;
     }
 

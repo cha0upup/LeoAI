@@ -61,6 +61,17 @@
 - 集合查询使用复数；控制台视图使用 `AgentConsoleView`；父节点使用 `parentAgentId` / `parentAgentConfig`；连接测试使用 `AgentConnectionService` / `ConnectionTestService`。变量保留领域与单位，按职责命名，不机械替换词片段。
 - 内部命名调整保留 HTTP 路由、JSON/数据库字段、RPC Component ID 和配置绑定键；生成产物从源码重建，不直接修改压缩 JS 或已编译字节码。
 
+## 团队列表与审计清理
+
+`GET /platform/admin/teams` 在原有团队条目中按用户可见范围补充只读 `leaderName`。团队页优先显示姓名，缺失时显示队长 ID。
+
+清理旧审计日志继续按指定天数执行，截止时间与日志写入都使用应用本地时间。等于截止时间的记录保留。
+
+## 成果库读取契约
+
+- `GET /platform/user/file/overview?includeRecent=false` 跳过最近文件和元数据读取，`recentFiles` 返回空数组，分类和总计不变。
+- `GET /platform/user/file/preview?includeBase64=false` 仅省略 `contentBase64`，文本、大小和截断标记不变。两个参数均默认 `true`，旧请求无需调整。
+
 ## 注意事项
 
 - 发布入口会安装 lockfile 依赖，执行前端 lint/测试/构建、静态目录逐文件比对、组件 Java 6 API 与运行字节码检查、工具测试以及后端 `clean verify`。本地已准备依赖时可使用 `--skip-install`，CI 使用完整入口。

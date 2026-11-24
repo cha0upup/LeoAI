@@ -31,14 +31,15 @@ public class UserFileController {
     }
 
     @RequestMapping(value = "/overview", method = RequestMethod.GET)
-    public HashMap<String, Object> overview(HttpServletRequest request) {
+    public HashMap<String, Object> overview(HttpServletRequest request,
+                                            @RequestParam(defaultValue = "true") boolean includeRecent) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
 
-            HashMap<String, Object> data = new HashMap<>(artifacts.overview(user.getUserId()));
+            HashMap<String, Object> data = new HashMap<>(artifacts.overview(user.getUserId(), includeRecent));
             data.put("rootPath", "");
             data.put("maxUploadBytes", artifacts.maxUploadBytes());
             return ApiResponse.success(data);
@@ -189,13 +190,14 @@ public class UserFileController {
     @RequestMapping(value = "/preview", method = RequestMethod.GET)
     public HashMap<String, Object> preview(HttpServletRequest request,
                                            @RequestParam("path") String relativePath,
-                                           @RequestParam(value = "size", required = false) Long size) {
+                                           @RequestParam(value = "size", required = false) Long size,
+                                           @RequestParam(defaultValue = "true") boolean includeBase64) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            var preview = artifacts.preview(user.getUserId(), relativePath, size);
+            var preview = artifacts.preview(user.getUserId(), relativePath, size, includeBase64);
             return preview == null ? ApiResponse.notFound("文件不存在") : ApiResponse.success(preview);
         } catch (NoSuchFileException e) {
             return ApiResponse.notFound("文件不存在");

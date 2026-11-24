@@ -191,7 +191,7 @@ Shell, and Injector class artifacts with byte sizes and server-generated SHA-256
 
 ### Artifact Library
 
-- The default view is a paginated file list with category/source filters and search across titles, filenames, hosts, and source identifiers.
+- The default view is a paginated file list with category/source filters and search across titles, filenames, hosts, and source identifiers. Previews open immediately with a loading state and can be retried in the dialog.
 - Script builds and AI reports are archived explicitly with an artifact ID, creation time, and provenance. Public task outputs can be copied into Task Results from their task cards; originals remain untouched.
 - Live `ai-tasks` workspaces, internal directories, and symbolic links are excluded from library listings and category totals. Task cards can still download public outputs.
 - Provenance is stored in the hidden `.artifacts` directory inside each user's workspace; include it in backups. Existing files remain intact and are marked as having unrecorded provenance where applicable.
@@ -228,7 +228,7 @@ ZIP imports for fingerprints, plugins, and disguises share decompression limits:
 
 Before deleting an account, transfer any teams and projects it leads or owns, including archived projects. Administrators can call `POST /platform/projects/transfer` with `projectId` and `newOwnerUserId`. The new owner must be enabled. Transfers preserve the project's sharing scope and archived state.
 
-Team audit statistics use the team recorded when each log entry was written. Moving a member or deleting an account or team leaves historical attribution intact.
+Team audit statistics use the team recorded when each log entry was written. Moving a member or deleting an account or team leaves historical attribution intact. Retention uses the application's local time, matching the stored timestamps.
 
 ---
 

@@ -1,5 +1,8 @@
 package org.leo.core.entity;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * 团队模型
  * 
@@ -10,6 +13,7 @@ public class Team {
     private String teamId;
     private String teamName;
     private String leaderId;
+    private String leaderName;
     private String description;
     private Integer status;
     private String createTime;
@@ -50,6 +54,16 @@ public class Team {
 
     public void setLeaderId(String leaderId) {
         this.leaderId = leaderId;
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    public String getLeaderName() {
+        return leaderName;
+    }
+
+    public void setLeaderName(String leaderName) {
+        this.leaderName = leaderName;
     }
 
     public String getDescription() {

@@ -40,6 +40,25 @@ public interface TeamMapper {
     @Select("SELECT * FROM teams")
     List<Team> getAllTeams();
 
+    @Select("""
+            <script>
+            SELECT t.*, CASE WHEN #{administrator} OR u.user_id = #{userId}
+                             THEN u.user_name END AS leader_name
+            FROM teams t
+            LEFT JOIN users u ON u.user_id = t.leader_id AND u.team_id = t.team_id
+            <where>
+              <if test="!administrator">
+                <choose>
+                  <when test="leader">t.leader_id = #{userId}</when>
+                  <otherwise>t.team_id = #{teamId}</otherwise>
+                </choose>
+              </if>
+            </where>
+            </script>
+            """)
+    List<Team> findTeamsForUser(@Param("administrator") boolean administrator, @Param("leader") boolean leader,
+                                 @Param("userId") String userId, @Param("teamId") String teamId);
+
     @Insert("""
             INSERT INTO teams (
                 team_id, team_name, leader_id,

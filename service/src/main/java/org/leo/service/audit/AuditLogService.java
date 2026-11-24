@@ -109,8 +109,12 @@ public class AuditLogService {
     }
 
     private static String recentCutoff() {
+        return cutoffDaysAgo(RECENT_DAYS);
+    }
+
+    private static String cutoffDaysAgo(int days) {
         // Audit timestamps are written in the application's local time, not SQLite's UTC time.
-        return DATE_TIME_FORMAT.format(LocalDateTime.now().minusDays(RECENT_DAYS));
+        return DATE_TIME_FORMAT.format(LocalDateTime.now().minusDays(days));
     }
 
     private Map<String, Object> toStatisticsResponse(Map<String, Object> summary) {
@@ -161,10 +165,8 @@ public class AuditLogService {
      * 删除指定天数之前的旧日志
      */
     public Integer deleteOldAuditLogs(Integer days) {
-        if (days == null || days <= 0) {
-            days = 30; // 默认30天
-        }
-        return defaultCount(auditLogMapper.deleteOldAuditLogs(days));
+        int retentionDays = days == null || days <= 0 ? 30 : days;
+        return defaultCount(auditLogMapper.deleteOldAuditLogs(cutoffDaysAgo(retentionDays)));
     }
 
     public Integer deleteAuditLogsByIds(List<String> logIds) {
