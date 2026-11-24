@@ -24,20 +24,21 @@ public class SeedResourceStore {
         if (relative.isAbsolute() || !target.startsWith(base) || target.equals(base)) {
             throw new IOException("内置资源路径超出目录边界: " + relativePath);
         }
+        Path parent = target.getParent();
         Files.createDirectories(base);
-        Path ancestor = target.getParent();
+        Path ancestor = parent;
         while (!Files.exists(ancestor, LinkOption.NOFOLLOW_LINKS)) ancestor = ancestor.getParent();
         if (!ancestor.toRealPath().startsWith(base.toRealPath())) {
             throw new IOException("内置资源目录链接超出边界: " + relativePath);
         }
-        Files.createDirectories(target.getParent());
-        if (!target.getParent().toRealPath().startsWith(base.toRealPath())) {
+        Files.createDirectories(parent);
+        if (!parent.toRealPath().startsWith(base.toRealPath())) {
             throw new IOException("内置资源目录链接超出边界: " + relativePath);
         }
         boolean exists = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
         if (exists && !managed) return Result.PRESERVED;
         if (Files.isSymbolicLink(target)) throw new IOException("内置受管文件是符号链接: " + relativePath);
-        Path temp = Files.createTempFile(target.getParent(), ".leo-seed-", ".tmp");
+        Path temp = Files.createTempFile(parent, ".leo-seed-", ".tmp");
         try {
             long expectedLength = resource.contentLength();
             try (var input = resource.getInputStream()) {
