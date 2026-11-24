@@ -254,7 +254,6 @@ public class UserArtifactService {
         int current = Math.max(1, page);
         String keyword = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
         boolean filterSource = source != null && !source.isBlank();
-        boolean filterMetadata = filterSource || !keyword.isEmpty();
         long offset = (long) (current - 1) * size;
         long windowSize = offset + size;
         PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
@@ -264,10 +263,12 @@ public class UserArtifactService {
             if (!attrs.isRegularFile()) return;
             String relative = relative(base, path);
             if (categoryFilter != null && !categoryFilter.equals(category(relative))) return;
-            Map<String, Object> details = filterMetadata ? metadata(base, relative) : null;
-            if (filterMetadata) {
+            boolean searchMetadata = !keyword.isEmpty() && !relative.toLowerCase(Locale.ROOT).contains(keyword);
+            Map<String, Object> details = null;
+            if (filterSource || searchMetadata) {
+                details = metadata(base, relative);
                 if (filterSource && !source.equals(Objects.toString(details.get("sourceModule"), "unrecorded"))) return;
-                if (!keyword.isEmpty() && !(relative + " " + details.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
+                if (searchMetadata && !(relative + " " + details.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
             }
             retainMatch(window, windowSize, new ArtifactMatch(path, relative, attrs, details, matched[0]++));
         });

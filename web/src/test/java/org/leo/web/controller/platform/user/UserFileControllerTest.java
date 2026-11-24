@@ -408,6 +408,12 @@ class UserFileControllerTest {
         assertEquals(true, first.get("hasMore"));
         verify(metadataReader, times(5)).readValue(anyString(), eq(Map.class));
 
+        var filenameSearchReader = spy(new ObjectMapper());
+        var filenameSearch = new UserArtifactService(filenameSearchReader, systemConfigService);
+        assertEquals(first, filenameSearch.list(userId, "ai-reports", " KEEP ", null, 1, 2));
+        // 两条分页结果和一条路径未匹配的记录需要元数据，其余两条仅凭文件名即可计数。
+        verify(filenameSearchReader, times(3)).readValue(anyString(), eq(Map.class));
+
         var second = listing.list(userId, "ai-reports", " KEEP ", "manual", 2, 2);
         var secondRows = (List<Map<String, Object>>) second.get("fileList");
         assertEquals(List.of("middle-keep.txt", "0-old-keep.txt"), secondRows.stream().map(row -> row.get("name")).toList());
