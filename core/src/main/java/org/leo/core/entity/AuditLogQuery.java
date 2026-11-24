@@ -147,11 +147,11 @@ public class AuditLogQuery {
         this.endTime = endTime;
     }
 
-    public Integer getLimit() {
+    public int getLimit() {
         return limit;
     }
 
-    public Integer getOffset() {
+    public int getOffset() {
         return offset;
     }
 }
