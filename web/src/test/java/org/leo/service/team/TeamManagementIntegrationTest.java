@@ -194,6 +194,19 @@ class TeamManagementIntegrationTest {
         assertAccount("replacement", privilege.equals("admin") ? "admin" : "leader", "team");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {" \t\u3000 ", " leader "})
+    void blankNameAndUnchangedLeaderKeepExistingValues(String leaderId) {
+        seedMembership();
+        long revision = users.getUserById("leader").getAccountRevision();
+
+        Team updated = teams.updateTeam(team("team", " \t\u3000 ", leaderId));
+
+        assertEquals("research", updated.getTeamName());
+        assertEquals("leader", updated.getLeaderId());
+        assertEquals(revision, users.getUserById("leader").getAccountRevision());
+    }
+
     @Test
     void teamNamesRejectOtherTeamsCaseInsensitivelyButAllowCaseOnlyRenames() {
         seedTeam("team", "Research", "leader");

@@ -130,17 +130,16 @@ public class TeamService {
         }
         Team team = getTeamById(patch.getTeamId());
         if (team == null) throw failure(NOT_FOUND, "团队不存在");
-        if (patch.getTeamName() != null && !patch.getTeamName().isBlank()) {
-            String name = patch.getTeamName().trim();
+        String name = nullableText(patch.getTeamName());
+        if (name != null) {
             if (name.length() > MAX_TEAM_NAME_LENGTH) throw failure(VALIDATION, "teamName长度超出限制");
             if (teamMapper.existsTeamByName(name, team.getTeamId())) {
                 throw failure(VALIDATION, "团队名已存在");
             }
             team.setTeamName(name);
         }
-        if (patch.getLeaderId() != null && !patch.getLeaderId().isBlank()
-                && !patch.getLeaderId().trim().equals(team.getLeaderId())) {
-            String leaderId = patch.getLeaderId().trim();
+        String leaderId = nullableText(patch.getLeaderId());
+        if (leaderId != null && !leaderId.equals(team.getLeaderId())) {
             if (leaderId.length() > MAX_ID_LENGTH) throw failure(VALIDATION, "leaderId长度超出限制");
             User newLeader = userService.getUserById(leaderId);
             if (newLeader == null) throw failure(NOT_FOUND, "新 leader 用户不存在");
@@ -189,6 +188,6 @@ public class TeamService {
     }
 
     private static String nullableText(String value) {
-        return value.isBlank() ? null : value.trim();
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }
