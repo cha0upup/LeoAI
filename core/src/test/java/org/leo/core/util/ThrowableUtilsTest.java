@@ -55,6 +55,7 @@ class ThrowableUtilsTest {
         assertEquals(2, causes.size());
         assertSame(outer, causes.get(0));
         assertSame(inner, causes.get(1));
+        assertSame(inner, ThrowableUtils.rootCause(outer));
     }
 
     @Test

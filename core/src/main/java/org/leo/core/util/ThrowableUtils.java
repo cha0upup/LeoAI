@@ -25,17 +25,20 @@ public final class ThrowableUtils {
 
     /** Returns the deepest distinct cause, or null when no error was supplied. */
     public static Throwable rootCause(Throwable error) {
-        List<Throwable> causes = causes(error);
-        return causes.isEmpty() ? null : causes.get(causes.size() - 1);
+        return lastCause(error, false);
     }
 
     /** Removes Java asynchronous wrappers while preserving the first domain exception. */
     public static Throwable unwrapCompletion(Throwable error) {
+        return lastCause(error, true);
+    }
+
+    private static Throwable lastCause(Throwable error, boolean asyncWrappersOnly) {
         Throwable result = error;
         Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Throwable current = error; current != null && visited.add(current); current = current.getCause()) {
             result = current;
-            if (!(current instanceof CompletionException || current instanceof ExecutionException)) break;
+            if (asyncWrappersOnly && !(current instanceof CompletionException || current instanceof ExecutionException)) break;
         }
         return result;
     }
