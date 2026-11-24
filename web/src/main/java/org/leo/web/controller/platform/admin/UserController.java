@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.leo.service.user.UserAccountPolicy.isBuiltInAdmin;
 import static org.leo.service.user.UserAccountPolicy.normalizePrivilege;
@@ -83,15 +84,22 @@ public class UserController {
     @RequestMapping(value = "/users/no-team", method = RequestMethod.GET)
     public HashMap<String, Object> getNoTeamUsers(HttpServletRequest request,
                                                  @RequestParam(name = "view", required = false) String view) {
+        return readForAdministrator(request, () -> "options".equals(view)
+                ? userService.getUserOptionsWithoutTeam() : sanitize(userService.getUsersWithoutTeam()));
+    }
+
+    @RequestMapping(value = "/users/enabled-options", method = RequestMethod.GET)
+    public HashMap<String, Object> getEnabledUserOptions(HttpServletRequest request) {
+        return readForAdministrator(request, userService::getEnabledUserOptions);
+    }
+
+    private HashMap<String, Object> readForAdministrator(HttpServletRequest request, Supplier<?> lookup) {
         User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权访问");
         }
-        if ("options".equals(view)) {
-            return ApiResponse.success(userService.getUserOptionsWithoutTeam());
-        }
-        return ApiResponse.success(sanitize(userService.getUsersWithoutTeam()));
+        return ApiResponse.success(lookup.get());
     }
 
     // ── 用户创建 ─────────────────────────────────────────────────────────────────

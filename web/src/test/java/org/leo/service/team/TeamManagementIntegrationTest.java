@@ -11,6 +11,7 @@ import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.core.entity.Team;
 import org.leo.core.entity.User;
+import org.leo.core.entity.UserOption;
 import org.leo.dao.mapper.TeamMapper;
 import org.leo.dao.mapper.UserMapper;
 import org.leo.service.agentnode.AgentService;
@@ -325,8 +326,23 @@ class TeamManagementIntegrationTest {
         assertEquals(List.of("unassigned", "empty-id", "blank-id"), result.stream().map(User::getUserId).toList());
         for (User user : result) assertNull(user.getPassword(), user.getUserId());
         assertEquals(result.stream().map(user ->
-                new org.leo.core.entity.UserOption(user.getUserId(), user.getUserName())).toList(),
+                new UserOption(user.getUserId(), user.getUserName())).toList(),
                 users.getUserOptionsWithoutTeam());
+    }
+
+    @Test
+    void enabledUserOptionsMatchTransferEligibilityAndSortByName() {
+        seedTeam("team", "Research", "current-owner");
+        seedUser("next-owner", "normal", null);
+        seedUser("disabled", "normal", null);
+        seedUser("unknown-status", "normal", null);
+        jdbc.update("UPDATE users SET user_name = 'zeta' WHERE user_id = 'current-owner'");
+        jdbc.update("UPDATE users SET user_name = 'Alpha' WHERE user_id = 'next-owner'");
+        jdbc.update("UPDATE users SET status = 0 WHERE user_id = 'disabled'");
+        jdbc.update("UPDATE users SET status = NULL WHERE user_id = 'unknown-status'");
+
+        assertEquals(List.of(new UserOption("next-owner", "Alpha"), new UserOption("current-owner", "zeta")),
+                users.getEnabledUserOptions());
     }
 
     @Test

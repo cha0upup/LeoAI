@@ -77,6 +77,10 @@ public class UserService {
         return userMapper.findUserOptionsWithoutTeam(TEAM_ID_WHITESPACE);
     }
 
+    public List<UserOption> getEnabledUserOptions() {
+        return userMapper.findEnabledUserOptions();
+    }
+
     // ── 写操作（不含权限校验，由调用方负责） ────────────────────────────────────
 
     public boolean addUser(User user) {

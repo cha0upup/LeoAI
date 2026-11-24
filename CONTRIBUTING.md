@@ -69,6 +69,8 @@
 
 团队管理的队长候选使用 `GET /platform/admin/users/no-team?view=options`，仅返回 `userId` 和 `userName`。旧视图、管理员限制和未入队判定保持原样。
 
+项目交接使用 `GET /platform/admin/users/enabled-options` 读取已启用账号，同样只返回 `userId` 和 `userName`。该接口仅向管理员开放；交接提交时仍在后端重新校验接任账号状态。
+
 `GET /platform/admin/teams` 在原有团队条目中按用户可见范围补充只读 `leaderName`。团队页优先显示姓名，缺失时显示队长 ID；打开新增团队弹窗时才单独查询候选。
 
 清理旧审计日志继续按指定天数执行，截止时间与日志写入都使用应用本地时间。等于截止时间的记录保留。

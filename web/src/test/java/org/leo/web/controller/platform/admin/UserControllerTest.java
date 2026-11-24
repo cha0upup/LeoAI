@@ -130,6 +130,31 @@ class UserControllerTest {
         verify(service, never()).getUsersWithoutTeam();
     }
 
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"leader", "normal"})
+    void onlyAdministratorsCanReadEnabledAccountOptions(String role) {
+        if (role != null) request.getSession().setAttribute("user", account("caller", role, "team"));
+
+        assertEquals(role == null ? 401 : 403, controller.getEnabledUserOptions(request).get("code"));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void enabledOptionsReturnOnlyIdentityFieldsWithoutReadingUserProfiles() throws Exception {
+        when(service.getEnabledUserOptions()).thenReturn(List.of(new UserOption("member", "Alice")));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(get("/platform/admin/users/enabled-options")
+                        .sessionAttr("user", account("admin", "admin", null)))
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].userId").value("member"))
+                .andExpect(jsonPath("$.data[0].userName").value("Alice"))
+                .andExpect(jsonPath("$.data[0].email").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data[0].status").doesNotHaveJsonPath());
+        verify(service).getEnabledUserOptions();
+        verify(service, never()).getAllUsers();
+    }
+
     @Test
     void userListingKeepsLeaderAndNormalUserVisibilityBoundaries() {
         User caller = new User();

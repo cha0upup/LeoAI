@@ -50,6 +50,9 @@ public interface UserMapper {
     @Select("SELECT user_id, user_name " + WITHOUT_TEAM)
     List<UserOption> findUserOptionsWithoutTeam(@Param("whitespace") String whitespace);
 
+    @Select("SELECT user_id, user_name FROM users WHERE status = 1 ORDER BY user_name COLLATE NOCASE, user_id")
+    List<UserOption> findEnabledUserOptions();
+
     @Insert("""
             INSERT INTO users (
                 user_id, user_name, password,
