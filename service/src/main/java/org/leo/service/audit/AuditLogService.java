@@ -144,13 +144,14 @@ public class AuditLogService {
             }
         }
 
-        List<Map<String, Object>> trend = new ArrayList<>();
+        List<Map<String, Object>> trend = new ArrayList<>(normalizedDays);
         for (int i = 0; i < normalizedDays; i++) {
             LocalDate day = start.plusDays(i);
+            String dayKey = DAY_KEY_FORMAT.format(day);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("date", DAY_LABEL_FORMAT.format(day));
-            item.put("day", DAY_KEY_FORMAT.format(day));
-            item.put("count", countsByDay.getOrDefault(DAY_KEY_FORMAT.format(day), 0));
+            item.put("day", dayKey);
+            item.put("count", countsByDay.getOrDefault(dayKey, 0));
             trend.add(item);
         }
         return trend;
