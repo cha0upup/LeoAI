@@ -116,8 +116,10 @@ class BoundedTtlCacheTest {
             for (int i = 0; i < 200; i++) {
                 int value = i;
                 writes.add(executor.submit(() -> {
-                    cache.put("key-" + value, value);
-                    Integer read = cache.get("key-" + value);
+                    String key = "key-" + value;
+                    if (value % 2 == 0) cache.put(key, value);
+                    else cache.put(key, value, 1, TimeUnit.MINUTES);
+                    Integer read = cache.get(key);
                     if (read != null) assertEquals(value, read.intValue());
                     assertTrue(cache.size() <= 16);
                 }));

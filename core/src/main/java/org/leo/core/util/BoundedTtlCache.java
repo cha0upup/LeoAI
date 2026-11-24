@@ -54,21 +54,12 @@ public final class BoundedTtlCache<T> {
     }
 
     public synchronized void put(String key, T value) {
-        put(key, value, ttlMillis, TimeUnit.MILLISECONDS);
+        putMillis(key, value, ttlMillis);
     }
 
     /** 单条记录可覆盖默认保留时间，读取不会延长其有效期。 */
     public synchronized void put(String key, T value, long ttl, TimeUnit unit) {
-        evictExpiredSample();
-        long duration = unit.toMillis(ttl);
-        long now = clock.getAsLong();
-        long expiresAt;
-        try {
-            expiresAt = Math.addExact(now, duration);
-        } catch (ArithmeticException overflow) {
-            expiresAt = duration >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
-        }
-        store.put(key, new CacheEntry<>(value, expiresAt));
+        putMillis(key, value, unit.toMillis(ttl));
     }
 
     public synchronized void clear() { store.clear(); }
@@ -82,6 +73,18 @@ public final class BoundedTtlCache<T> {
     }
 
     // ── 私有 ─────────────────────────────────────────────────────────────────
+
+    private void putMillis(String key, T value, long duration) {
+        evictExpiredSample();
+        long now = clock.getAsLong();
+        long expiresAt;
+        try {
+            expiresAt = Math.addExact(now, duration);
+        } catch (ArithmeticException overflow) {
+            expiresAt = duration >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+        }
+        store.put(key, new CacheEntry<>(value, expiresAt));
+    }
 
     private void evictExpiredSample() {
         if (store.isEmpty()) return;
