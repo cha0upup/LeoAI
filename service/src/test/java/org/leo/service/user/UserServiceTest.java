@@ -47,7 +47,12 @@ class UserServiceTest {
     @Test
     void missingUsersProduceAnEmptyResult() {
         when(mapper.findUsersWithoutTeam(anyString())).thenReturn(null);
+        when(mapper.getAllUsers()).thenReturn(null);
+        when(mapper.findUsersByTeamId("team")).thenReturn(null);
         assertTrue(service.getUsersWithoutTeam().isEmpty());
+        assertTrue(service.getAllUsers().isEmpty());
+        assertTrue(service.getUsersByTeamId(" team ").isEmpty());
+        verify(mapper).findUsersByTeamId("team");
     }
 
     private User user(String teamId) {

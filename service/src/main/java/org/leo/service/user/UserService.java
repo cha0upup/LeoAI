@@ -59,18 +59,12 @@ public class UserService {
     }
 
     public List<User> getAllUsers() {
-        List<User> users = userMapper.getAllUsers();
-        if (users == null) return new ArrayList<>();
-        for (User user : users) normalize(user);
-        return users;
+        return normalizeUserList(userMapper.getAllUsers());
     }
 
     public List<User> getUsersByTeamId(String teamId) {
         if (teamId == null || teamId.isBlank()) return new ArrayList<>();
-        List<User> users = userMapper.findUsersByTeamId(teamId.trim());
-        if (users == null) return new ArrayList<>();
-        for (User user : users) normalize(user);
-        return users;
+        return normalizeUserList(userMapper.findUsersByTeamId(teamId.trim()));
     }
 
     public List<User> getUsersWithoutTeam() {
@@ -164,6 +158,12 @@ public class UserService {
     }
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────────
+
+    private List<User> normalizeUserList(List<User> users) {
+        if (users == null) return new ArrayList<>();
+        for (User user : users) normalize(user);
+        return users;
+    }
 
     private User normalize(User user) {
         if (user == null) return null;
