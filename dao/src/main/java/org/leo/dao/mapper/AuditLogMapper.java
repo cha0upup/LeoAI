@@ -6,6 +6,8 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.leo.core.entity.AuditLog;
+import org.leo.core.entity.AuditLogCounts;
+import org.leo.core.entity.AuditLogListItem;
 import org.leo.core.entity.AuditLogQuery;
 
 import java.util.List;
@@ -66,6 +68,8 @@ public interface AuditLogMapper {
             </where>
             """;
 
+    String AUDIT_LOG_PAGE = "ORDER BY create_time DESC, log_id DESC LIMIT #{query.limit} OFFSET #{query.offset}";
+
     String AUDIT_STATISTICS_SELECT = """
             SELECT COUNT(*) AS total_operations,
                    COUNT(CASE WHEN create_time >= #{recentSince} THEN 1 END) AS recent_operations,
@@ -98,11 +102,36 @@ public interface AuditLogMapper {
             "<script>",
             "SELECT * FROM audit_logs",
             AUDIT_LOG_FILTER_WHERE,
-            "ORDER BY create_time DESC, log_id DESC",
-            "LIMIT #{query.limit} OFFSET #{query.offset}",
+            AUDIT_LOG_PAGE,
             "</script>"
     })
     List<AuditLog> searchAuditLogs(@Param("query") AuditLogQuery query);
+
+    @Select({
+            "<script>",
+            """
+            SELECT log_id, user_id, user_name, agent_id, agent_name, operation_type, operation_name,
+                   operation_path, status, client_ip, create_time
+            FROM audit_logs
+            """,
+            AUDIT_LOG_FILTER_WHERE,
+            AUDIT_LOG_PAGE,
+            "</script>"
+    })
+    List<AuditLogListItem> findAuditLogListItems(@Param("query") AuditLogQuery query);
+
+    @Select({
+            "<script>",
+            """
+            SELECT COUNT(*) AS total,
+                   COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) AS success_count,
+                   COUNT(CASE WHEN status IN ('FAILED', 'ERROR') THEN 1 END) AS failed_count
+            FROM audit_logs
+            """,
+            AUDIT_LOG_FILTER_WHERE,
+            "</script>"
+    })
+    AuditLogCounts countAuditLogsByStatus(@Param("query") AuditLogQuery query);
 
     @Select({
             "<script>",

@@ -12,6 +12,7 @@ import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -77,14 +78,18 @@ public class UserController {
     }
 
     /**
-     * 获取未加入任何团队的用户列表（admin only，用于分配 leader）。
+     * 获取未加入任何团队的用户；队长选择器使用 view=options，仅返回标识和名称。
      */
     @RequestMapping(value = "/users/no-team", method = RequestMethod.GET)
-    public HashMap<String, Object> getNoTeamUsers(HttpServletRequest request) {
+    public HashMap<String, Object> getNoTeamUsers(HttpServletRequest request,
+                                                 @RequestParam(name = "view", required = false) String view) {
         User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权访问");
+        }
+        if ("options".equals(view)) {
+            return ApiResponse.success(userService.getUserOptionsWithoutTeam());
         }
         return ApiResponse.success(sanitize(userService.getUsersWithoutTeam()));
     }

@@ -61,9 +61,15 @@
 - 集合查询使用复数；控制台视图使用 `AgentConsoleView`；父节点使用 `parentAgentId` / `parentAgentConfig`；连接测试使用 `AgentConnectionService` / `ConnectionTestService`。变量保留领域与单位，按职责命名，不机械替换词片段。
 - 内部命名调整保留 HTTP 路由、JSON/数据库字段、RPC Component ID 和配置绑定键；生成产物从源码重建，不直接修改压缩 JS 或已编译字节码。
 
-## 团队列表与审计清理
+## 管理后台审计查询契约
 
-`GET /platform/admin/teams` 在原有团队条目中按用户可见范围补充只读 `leaderName`。团队页优先显示姓名，缺失时显示队长 ID。
+- 管理员使用 `GET /platform/admin/audit-logs?view=summary` 查询摘要页。筛选和分页参数沿用原列表；`data` 返回 `logs`、`total`、`successCount`、`failedCount`、`limit`、`offset`。
+- 数量对应**同一筛选条件命中的全部记录**，与当前页条数无关。失败合计包括 `FAILED` 和 `ERROR`；其他状态只计入总数。列表不会返回请求参数、响应消息等详情字段，但关键字搜索仍覆盖原有字段。
+- 详情继续用 `GET /platform/admin/audit-logs/detail?logId=...`。不传 `view` 的列表、独立计数及写入接口保持原契约。部署新版管理后台时，先更新后端或随同一制品发布。
+
+团队管理的队长候选使用 `GET /platform/admin/users/no-team?view=options`，仅返回 `userId` 和 `userName`。旧视图、管理员限制和未入队判定保持原样。
+
+`GET /platform/admin/teams` 在原有团队条目中按用户可见范围补充只读 `leaderName`。团队页优先显示姓名，缺失时显示队长 ID；打开新增团队弹窗时才单独查询候选。
 
 清理旧审计日志继续按指定天数执行，截止时间与日志写入都使用应用本地时间。等于截止时间的记录保留。
 

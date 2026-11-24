@@ -134,16 +134,19 @@ public class AuditLogController {
     }
     
     /**
-     * 获取所有审计日志（分页）
+     * 审计日志分页；view=summary 时仅返回列表列，并附带同一筛选范围的成功和失败数。
      */
     @RequestMapping(value = "", method = RequestMethod.GET)
     public HashMap<String, Object> getAllAuditLogs(@RequestParam Map<String, String> params) {
         return readResponse("获取审计日志列表失败", () -> {
             AuditLogQuery query = buildQuery(params, true);
+            if ("summary".equals(params.get("view"))) {
+                return ApiResponse.success(auditLogService.getSummaryPage(query));
+            }
             List<AuditLog> logs = auditLogService.searchAuditLogs(query);
             int offset = query.getOffset();
             int total;
-            // A short page establishes the end unless an empty page may have skipped past it.
+            // 未满的一页可确定总数，除非非首空页可能已超出数据范围。
             if (logs.size() < query.getLimit() && (offset == 0 || !logs.isEmpty())
                     && offset <= Integer.MAX_VALUE - logs.size()) {
                 total = offset + logs.size();
@@ -400,7 +403,7 @@ public class AuditLogController {
             return request.get();
         } catch (Exception e) {
             logger.error(errorMessage + ": {}", e.getMessage(), e);
-            return ApiResponse.error(errorMessage + ": " + e.getMessage());
+            return ApiResponse.error(errorMessage);
         }
     }
 

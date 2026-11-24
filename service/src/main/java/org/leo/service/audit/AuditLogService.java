@@ -1,8 +1,11 @@
 package org.leo.service.audit;
 
 import org.leo.core.entity.AuditLog;
+import org.leo.core.entity.AuditLogCounts;
+import org.leo.core.entity.AuditLogListItem;
 import org.leo.core.entity.AuditLogQuery;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import org.leo.dao.mapper.AuditLogMapper;
 import java.time.LocalDate;
@@ -72,6 +75,20 @@ public class AuditLogService {
 
     public int countAuditLogs(AuditLogQuery query) {
         return defaultCount(auditLogMapper.countAuditLogs(normalizeQuery(query)));
+    }
+
+    /** 同一次读取中返回分页和筛选后的全量计数，避免并发写入让两者使用不同快照。 */
+    @Transactional(readOnly = true)
+    public AuditLogSummaryPage getSummaryPage(AuditLogQuery query) {
+        AuditLogQuery normalized = normalizeQuery(query);
+        List<AuditLogListItem> rows = auditLogMapper.findAuditLogListItems(normalized);
+        AuditLogCounts counts = auditLogMapper.countAuditLogsByStatus(normalized);
+        return new AuditLogSummaryPage(rows, counts.total(), counts.successCount(), counts.failedCount(),
+                normalized.getLimit(), normalized.getOffset());
+    }
+
+    public record AuditLogSummaryPage(List<AuditLogListItem> logs, long total, long successCount, long failedCount,
+                                      int limit, int offset) {
     }
 
     public Map<String, Object> getUserStatistics(String userId) {

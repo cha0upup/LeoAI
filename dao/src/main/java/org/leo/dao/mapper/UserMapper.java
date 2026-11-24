@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.User;
+import org.leo.core.entity.UserOption;
 
 import java.util.List;
 
@@ -20,6 +21,12 @@ public interface UserMapper {
     String USER_LIST_COLUMNS = """
             user_id, user_name, privilege, email, phone, status, last_login_time, login_count,
             password_change_required, account_revision, create_time, update_time, team_id, remark
+            """;
+
+    String WITHOUT_TEAM = """
+            FROM users
+            WHERE team_id IS NULL OR trim(team_id, #{whitespace}) = ''
+            ORDER BY rowid
             """;
 
     @Select("SELECT * FROM users" + USERNAME_MATCH)
@@ -37,12 +44,11 @@ public interface UserMapper {
     @Select("SELECT " + USER_LIST_COLUMNS + "FROM users")
     List<User> getAllUsers();
 
-    @Select("SELECT " + USER_LIST_COLUMNS + """
-            FROM users
-            WHERE team_id IS NULL OR trim(team_id, #{whitespace}) = ''
-            ORDER BY rowid
-            """)
+    @Select("SELECT " + USER_LIST_COLUMNS + WITHOUT_TEAM)
     List<User> findUsersWithoutTeam(@Param("whitespace") String whitespace);
+
+    @Select("SELECT user_id, user_name " + WITHOUT_TEAM)
+    List<UserOption> findUserOptionsWithoutTeam(@Param("whitespace") String whitespace);
 
     @Insert("""
             INSERT INTO users (

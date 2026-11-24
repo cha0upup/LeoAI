@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.ReadinessState;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -20,9 +21,9 @@ public class BootstrapReadinessInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) return true;
-        response.setHeader("Cache-Control", "no-store");
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         if (availability.getReadinessState() != ReadinessState.ACCEPTING_TRAFFIC) {
-            response.setHeader("Retry-After", "2");
+            response.setHeader(HttpHeaders.RETRY_AFTER, "2");
             throw ApiException.serviceUnavailable("系统正在准备或停止服务，请稍后重试");
         }
         return true;

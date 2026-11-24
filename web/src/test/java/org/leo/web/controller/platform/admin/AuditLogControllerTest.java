@@ -1,6 +1,9 @@
 package org.leo.web.controller.platform.admin;
 
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+import org.apache.ibatis.mapping.Environment;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,11 +21,15 @@ import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.management.ManagementFactory;
@@ -116,6 +123,74 @@ class AuditLogControllerTest {
     }
 
     @Test
+    void summaryPageProjectsListFieldsAndAggregatesTheSameFilteredRows(@TempDir Path temp) throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit-summary.db"));
+        new JdbcTemplate(source).update("""
+                INSERT INTO audit_logs (log_id, user_id, user_name, agent_id, agent_name, operation_type,
+                                        operation_name, operation_path, status, client_ip, session_id,
+                                        request_params, response_message, create_time)
+                VALUES ('a', 'user-a', 'Alice', 'node', 'Node', 'TEST', 'Test', 'path', 'SUCCESS',
+                        '192.0.2.1', 'session-a', 'fixture-marker', 'fixture-message', '2026-10-01 00:00:00'),
+                       ('b', 'user-a', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'FAILED',
+                        NULL, NULL, NULL, 'fixture-marker', '2026-10-01 00:00:00'),
+                       ('c', 'user-a', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'ERROR',
+                        NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00'),
+                       ('d', 'user-a', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'PENDING',
+                        NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00'),
+                       ('e', 'user-b', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'SUCCESS',
+                        NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00')
+                """);
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(AuditLogMapper.class);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+            var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
+            var storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
+                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
+            String path = "/platform/admin/audit-logs";
+
+            storedMvc.perform(get(path).param("view", "summary").param("limit", "1").param("offset", "3")
+                            .param("userId", " user-a ").param("keyword", "fixture-marker"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.total").value(4))
+                    .andExpect(jsonPath("$.data.successCount").value(1))
+                    .andExpect(jsonPath("$.data.failedCount").value(2))
+                    .andExpect(jsonPath("$.data.limit").value(1))
+                    .andExpect(jsonPath("$.data.offset").value(3))
+                    .andExpect(jsonPath("$.data.logs.length()").value(1))
+                    .andExpect(jsonPath("$.data.logs[0].logId").value("a"))
+                    .andExpect(jsonPath("$.data.logs[0].userName").value("Alice"))
+                    .andExpect(jsonPath("$.data.logs[0].agentName").value("Node"))
+                    .andExpect(jsonPath("$.data.logs[0].clientIp").value("192.0.2.1"))
+                    .andExpect(jsonPath("$.data.logs[0].sessionId").doesNotHaveJsonPath())
+                    .andExpect(jsonPath("$.data.logs[0].requestParams").doesNotHaveJsonPath())
+                    .andExpect(jsonPath("$.data.logs[0].responseMessage").doesNotHaveJsonPath());
+            verify(mapper).findAuditLogListItems(any());
+            verify(mapper).countAuditLogsByStatus(any());
+            verifyNoMoreInteractions(mapper);
+            verify(permissions).requireAdmin(any(User.class));
+
+            storedMvc.perform(get(path).param("view", "summary").param("status", "ERROR").param("offset", "20"))
+                    .andExpect(jsonPath("$.data.logs").isEmpty())
+                    .andExpect(jsonPath("$.data.total").value(1))
+                    .andExpect(jsonPath("$.data.successCount").value(0))
+                    .andExpect(jsonPath("$.data.failedCount").value(1));
+            storedMvc.perform(get(path).param("view", "summary").param("userId", "missing"))
+                    .andExpect(jsonPath("$.data.logs").isEmpty())
+                    .andExpect(jsonPath("$.data.total").value(0))
+                    .andExpect(jsonPath("$.data.successCount").value(0))
+                    .andExpect(jsonPath("$.data.failedCount").value(0));
+
+            storedMvc.perform(get(path).param("sessionId", "session-a"))
+                    .andExpect(jsonPath("$.data.logs[0].requestParams").value("fixture-marker"))
+                    .andExpect(jsonPath("$.data.successCount").doesNotHaveJsonPath());
+            storedMvc.perform(get(path + "/detail").param("logId", "a"))
+                    .andExpect(jsonPath("$.data.responseMessage").value("fixture-message"));
+            storedMvc.perform(get(path + "/count").param("userId", "user-a"))
+                    .andExpect(jsonPath("$.data.count").value(4));
+        }
+    }
+
+    @Test
     void cleanupDeletesOnlyRowsBeforeTheSuppliedLocalTimestamp(@TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit-retention.db"));
         var jdbc = new JdbcTemplate(source);
@@ -132,6 +207,64 @@ class AuditLogControllerTest {
         }
         assertEquals(List.of("boundary", "new"),
                 jdbc.queryForList("SELECT log_id FROM audit_logs ORDER BY create_time", String.class));
+    }
+
+    @Test
+    void auditReadFailuresDoNotExposeStorageDetails() throws Exception {
+        when(logs.getSummaryPage(any())).thenThrow(new IllegalStateException("internal storage details"));
+        MockMvc errorMvc = MockMvcBuilders.standaloneSetup(
+                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
+                .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+        errorMvc.perform(get("/platform/admin/audit-logs").param("view", "summary"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.msg").value("获取审计日志列表失败"));
+    }
+
+    @Test
+    void summaryRowsAndCountsShareOneSnapshotDuringConcurrentInsert(@TempDir Path temp) {
+        var source = SqliteTestDatabase.create(temp.resolve("audit-snapshot.db"));
+        var jdbc = new JdbcTemplate(source);
+        assertEquals("wal", jdbc.queryForObject("PRAGMA journal_mode=WAL", String.class));
+        String insert = """
+                INSERT INTO audit_logs (log_id, operation_type, operation_name, create_time)
+                VALUES (?, 'TEST', 'Test', '2026-10-01 00:00:00')
+                """;
+        jdbc.update(insert, "first");
+        var configuration = new org.apache.ibatis.session.Configuration(
+                new Environment("audit-snapshot", new SpringManagedTransactionFactory(), source));
+        configuration.setMapUnderscoreToCamelCase(true);
+        configuration.addMapper(AuditLogMapper.class);
+        var template = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration));
+        var delegate = template.getMapper(AuditLogMapper.class);
+        var mapper = mock(AuditLogMapper.class, delegatesTo(delegate));
+        doAnswer(call -> {
+            var rows = delegate.findAuditLogListItems(call.getArgument(0));
+            // 绕开当前 Spring 事务，以另一个连接在两次读取之间提交。
+            try (var connection = source.getConnection(); var statement = connection.prepareStatement(insert)) {
+                statement.setString(1, "second");
+                assertEquals(1, statement.executeUpdate());
+            }
+            return rows;
+        }).when(mapper).findAuditLogListItems(any());
+
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.register(AuditReadTransactions.class);
+            context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(source));
+            context.registerBean(AuditLogMapper.class, () -> mapper);
+            context.registerBean(AuditLogService.class);
+            context.refresh();
+
+            var page = context.getBean(AuditLogService.class).getSummaryPage(AuditLogQuery.page(20, 0));
+            assertEquals(List.of("first"), page.logs().stream().map(row -> row.logId()).toList());
+            assertEquals(1, page.total());
+            assertEquals(1, page.successCount());
+        }
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM audit_logs", Integer.class));
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class AuditReadTransactions {
     }
 
     @Test

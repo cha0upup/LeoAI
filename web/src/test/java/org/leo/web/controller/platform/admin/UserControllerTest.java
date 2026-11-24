@@ -6,9 +6,11 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
+import org.leo.core.entity.UserOption;
 import org.leo.service.user.UserService;
 import org.leo.service.user.PasswordPolicy;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 class UserControllerTest {
     private final UserService service = mock(UserService.class);
@@ -102,12 +106,28 @@ class UserControllerTest {
         caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
         request.getSession(true).setAttribute("user", caller);
 
-        assertEquals(403, controller.getNoTeamUsers(request).get("code"));
+        assertEquals(403, controller.getNoTeamUsers(request, null).get("code"));
+        assertEquals(403, controller.getNoTeamUsers(request, "options").get("code"));
         verifyNoInteractions(service);
         caller.setPrivilege(UserService.PRIVILEGE_ADMIN);
         when(service.getUsersWithoutTeam()).thenReturn(List.of());
-        assertEquals(200, controller.getNoTeamUsers(request).get("code"));
+        assertEquals(200, controller.getNoTeamUsers(request, null).get("code"));
         verify(service).getUsersWithoutTeam();
+    }
+
+    @Test
+    void unassignedOptionsReturnOnlyIdentityFields() throws Exception {
+        when(service.getUserOptionsWithoutTeam()).thenReturn(List.of(new UserOption("member", "Alice")));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(get("/platform/admin/users/no-team").param("view", "options")
+                        .sessionAttr("user", account("admin", "admin", null)))
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].userId").value("member"))
+                .andExpect(jsonPath("$.data[0].userName").value("Alice"))
+                .andExpect(jsonPath("$.data[0].email").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data[0].status").doesNotHaveJsonPath());
+        verify(service).getUserOptionsWithoutTeam();
+        verify(service, never()).getUsersWithoutTeam();
     }
 
     @Test

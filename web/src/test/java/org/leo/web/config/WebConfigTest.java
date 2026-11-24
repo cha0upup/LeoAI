@@ -14,12 +14,17 @@ import org.leo.web.adapter.ai.PlatformNodeAiBridgeTools;
 import org.leo.web.adapter.ai.ShellGeneratorTools;
 import org.leo.web.interceptor.BootstrapReadinessInterceptor;
 import org.leo.web.interceptor.LoginInterceptor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.handler.MappedInterceptor;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -58,6 +63,22 @@ class WebConfigTest {
     void rejectsCredentialedWildcardOrigin() {
         assertThrows(IllegalArgumentException.class,
                 () -> WebConfig.parseAllowedOrigins("*"));
+    }
+
+    @Test
+    void exposesOnlyTheRetryHintAcrossConfiguredOrigins() {
+        class Registry extends CorsRegistry {
+            CorsConfiguration configuration() { return getCorsConfigurations().get("/**"); }
+        }
+        var registry = new Registry();
+        var origin = "http://localhost:3000";
+        new WebConfig(mock(LoginInterceptor.class), mock(BootstrapReadinessInterceptor.class), origin)
+                .addCorsMappings(registry);
+        var config = registry.configuration();
+        assertEquals(origin, config.checkOrigin(origin));
+        assertNull(config.checkOrigin("https://unlisted.example.test"));
+        assertEquals(Boolean.TRUE, config.getAllowCredentials());
+        assertEquals(List.of(HttpHeaders.RETRY_AFTER), config.getExposedHeaders());
     }
 
     @ParameterizedTest

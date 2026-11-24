@@ -324,6 +324,9 @@ class TeamManagementIntegrationTest {
 
         assertEquals(List.of("unassigned", "empty-id", "blank-id"), result.stream().map(User::getUserId).toList());
         for (User user : result) assertNull(user.getPassword(), user.getUserId());
+        assertEquals(result.stream().map(user ->
+                new org.leo.core.entity.UserOption(user.getUserId(), user.getUserName())).toList(),
+                users.getUserOptionsWithoutTeam());
     }
 
     @Test

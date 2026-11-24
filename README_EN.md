@@ -311,7 +311,7 @@ On first launch, the system automatically:
 
 Startup resolves one absolute VFS path (blank configuration uses `root` under the working directory), creates it and probes actual reads/writes. Fingerprints only fill missing files. Managed bundled Skill paths synchronize by content, retain timestamps when unchanged, and leave custom Skill directories untouched. Complete resources are published from same-directory temporary files; storage must support atomic replacement and hard links. Required resource failures stop startup instead of marking the service ready.
 
-APIs return HTTP 503 until database initialization, resource synchronization and startup listeners finish. Failed browser status checks display a retry page rather than assuming setup is complete.
+APIs return HTTP 503 with `Retry-After` until database initialization, resource synchronization and startup listeners finish. The browser retries at most three times when the server supplies a valid retry hint. Manual retry remains available, and other connection failures never imply that setup has finished. If the status check fails after setup was submitted successfully, recovery checks status without resubmitting setup.
 
 ---
 

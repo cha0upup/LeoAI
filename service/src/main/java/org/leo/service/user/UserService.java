@@ -1,6 +1,7 @@
 package org.leo.service.user;
 
 import org.leo.core.entity.User;
+import org.leo.core.entity.UserOption;
 import org.leo.dao.mapper.UserMapper;
 import org.springframework.stereotype.Service;
 
@@ -70,6 +71,10 @@ public class UserService {
     public List<User> getUsersWithoutTeam() {
         List<User> users = userMapper.findUsersWithoutTeam(TEAM_ID_WHITESPACE);
         return users == null ? List.of() : users.stream().filter(Objects::nonNull).map(this::normalize).toList();
+    }
+
+    public List<UserOption> getUserOptionsWithoutTeam() {
+        return userMapper.findUserOptionsWithoutTeam(TEAM_ID_WHITESPACE);
     }
 
     // ── 写操作（不含权限校验，由调用方负责） ────────────────────────────────────
