@@ -26,6 +26,7 @@ class UserAccountPolicyTest {
         assertEquals(0, UserAccountPolicy.normalizeStatus(null, 0));
         assertEquals(0, UserAccountPolicy.normalizeStatus("  ", 0));
         assertEquals(1, UserAccountPolicy.normalizeStatus(null, null));
+        assertEquals(1, UserAccountPolicy.normalizeStatus(" \t", null));
     }
 
     @Test

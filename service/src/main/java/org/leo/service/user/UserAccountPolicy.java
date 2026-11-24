@@ -24,13 +24,12 @@ public final class UserAccountPolicy {
         return PRIVILEGE_NORMAL;
     }
 
-    public static Integer normalizeStatus(Object status, Integer fallback) {
-        if (status == null) return fallback != null ? fallback : 1;
+    public static int normalizeStatus(Object status, Integer fallback) {
         if (status instanceof Number number) return number.intValue() == 0 ? 0 : 1;
         if (status instanceof Boolean bool) return bool ? 1 : 0;
-        String value = status.toString().trim().toLowerCase(Locale.ROOT);
+        String value = status == null ? "" : status.toString().trim();
         if (value.isEmpty()) return fallback != null ? fallback : 1;
-        return DISABLED_STATUSES.contains(value) ? 0 : 1;
+        return DISABLED_STATUSES.contains(value.toLowerCase(Locale.ROOT)) ? 0 : 1;
     }
 
     public static boolean isBuiltInAdmin(User user) {
