@@ -35,6 +35,10 @@ public class UserArtifactService {
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
     private static final int MAX_METADATA_BYTES = 16 * 1024;
     private static final int RECENT_FILES_LIMIT = 8;
+    private static final Object[] WRITE_LOCKS = new Object[64];
+    static {
+        for (int index = 0; index < WRITE_LOCKS.length; index++) WRITE_LOCKS[index] = new Object();
+    }
     private static final Comparator<ArtifactMatch> ARTIFACT_ORDER = Comparator
             .comparingLong((ArtifactMatch file) -> file.attributes().lastModifiedTime().toMillis()).reversed()
             .thenComparing(ArtifactMatch::relativePath).thenComparingLong(ArtifactMatch::sequence);
@@ -460,26 +464,71 @@ public class UserArtifactService {
     /** Checks conflicts before opening the source and publishes overwrites only after transfer completes. */
     private Map<String, Object> writeFile(Path base, Path target, boolean overwrite,
                                            InputStreamSource content) throws IOException {
-        if (Files.exists(target) && !overwrite) throw new FileAlreadyExistsException(target.toString());
-        if (overwrite) {
+        long size;
+        synchronized (writeLock(target)) {
             boolean replacingFile = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
-            if (replacingFile && (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target))) {
-                throw new IOException("目标文件不可覆盖");
+            if (replacingFile && !overwrite) throw new FileAlreadyExistsException(target.toString());
+            var source = validateSource(Map.of("title", target.getFileName().toString(), "sourceModule", "manual"));
+            if (overwrite) {
+                size = overwriteFile(base, target, content, source, replacingFile);
+            } else {
+                size = writeNewFile(base, target, content, source);
             }
-            Path temporary = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
-            try {
-                transferContent(temporary, content, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS);
-                if (replacingFile) preservePosixPermissions(target, temporary);
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } finally { Files.deleteIfExists(temporary); }
-        } else {
-            transferContent(target, content, StandardOpenOption.CREATE_NEW);
         }
-        writeMetadata(base, target, validateSource(Map.of("title", target.getFileName().toString(), "sourceModule", "manual")));
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("path", relative(base, target));
-        result.put("size", Files.size(target));
-        return result;
+        return Map.of("path", relative(base, target), "size", size);
+    }
+
+    private static Object writeLock(Path target) {
+        // Share a bounded set of locks so failed-write cleanup cannot delete another request's replacement.
+        return WRITE_LOCKS[Math.floorMod(target.hashCode(), WRITE_LOCKS.length)];
+    }
+
+    private long overwriteFile(Path base, Path target, InputStreamSource content,
+                               Map<String, String> source, boolean replacingFile) throws IOException {
+        if (replacingFile && (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target))) {
+            throw new IOException("目标文件不可覆盖");
+        }
+        Path temporary = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
+        boolean published = false;
+        try {
+            long size;
+            try (InputStream input = content.getInputStream();
+                 OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
+                size = input.transferTo(output);
+            }
+            if (replacingFile) preservePosixPermissions(target, temporary);
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            published = true;
+            writeMetadata(base, target, source);
+            return size;
+        } catch (IOException | RuntimeException failure) {
+            if (!published) removeFailedWrite(temporary, failure);
+            else if (!replacingFile) removeFailedWrite(target, failure);
+            throw failure;
+        }
+    }
+
+    private long writeNewFile(Path base, Path target, InputStreamSource content,
+                              Map<String, String> source) throws IOException {
+        boolean created = false;
+        try {
+            long size;
+            try (InputStream input = content.getInputStream();
+                 OutputStream output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW)) {
+                created = true;
+                size = input.transferTo(output);
+            }
+            writeMetadata(base, target, source);
+            return size;
+        } catch (IOException | RuntimeException failure) {
+            if (created) removeFailedWrite(target, failure);
+            throw failure;
+        }
+    }
+
+    private static void removeFailedWrite(Path path, Exception failure) {
+        try { Files.deleteIfExists(path); }
+        catch (IOException cleanupError) { failure.addSuppressed(cleanupError); }
     }
 
     private static void preservePosixPermissions(Path existing, Path replacement) throws IOException {
@@ -488,12 +537,6 @@ public class UserArtifactService {
         var attributes = view.readAttributes();
         if (!attributes.isRegularFile()) throw new IOException("目标文件不可覆盖");
         Files.setPosixFilePermissions(replacement, attributes.permissions());
-    }
-
-    private static void transferContent(Path target, InputStreamSource content, OpenOption... options) throws IOException {
-        try (InputStream input = content.getInputStream(); var output = Files.newOutputStream(target, options)) {
-            input.transferTo(output);
-        }
     }
 
     public Map<String, Object> createDirectory(String userId, String relativePath) throws IOException {
@@ -537,8 +580,10 @@ public class UserArtifactService {
     }
 
     private void deletePath(Path base, Path target) throws IOException {
-        Files.deleteIfExists(target);
-        Files.deleteIfExists(metadataPath(base, relative(base, target)));
+        synchronized (writeLock(target)) {
+            Files.deleteIfExists(target);
+            Files.deleteIfExists(metadataPath(base, relative(base, target)));
+        }
     }
 
     public Map<String, Object> archive(String userId, ArchiveRequest request) throws IOException {

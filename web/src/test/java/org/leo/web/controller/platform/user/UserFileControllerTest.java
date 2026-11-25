@@ -1,6 +1,7 @@
 package org.leo.web.controller.platform.user;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.MultipartConfigElement;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -18,6 +19,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +42,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -49,9 +52,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -68,7 +73,9 @@ class UserFileControllerTest {
 
     private final SystemConfigService systemConfigService = mock(SystemConfigService.class);
     private final UserArtifactService artifacts = new UserArtifactService(new ObjectMapper(), systemConfigService);
-    private final UserFileController controller = new UserFileController(artifacts);
+    private final Optional<MultipartConfigElement> multipartLimits = Optional.of(
+            new MultipartConfigElement("", 2 * 1024 * 1024, 4 * 1024 * 1024, 0));
+    private final UserFileController controller = new UserFileController(artifacts, multipartLimits);
     private final String userId = "test-user-file-" + UUID.randomUUID();
 
     @ParameterizedTest
@@ -161,11 +168,14 @@ class UserFileControllerTest {
         assertEquals(originalPermissions, Files.getPosixFilePermissions(target));
     }
 
-    @Test
-    void interruptedOverwriteKeepsTheExistingFileAndMetadata() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void interruptedUploadLeavesTheCatalogAsItWas(boolean overwrite) throws Exception {
         var request = authenticatedRequest();
-        assertEquals(200, controller.createFile(request, "notes/report.md", "original fixture", false).get("code"));
         Path target = workspace().resolve("notes/report.md");
+        if (overwrite) {
+            assertEquals(200, controller.createFile(request, "notes/report.md", "original fixture", false).get("code"));
+        }
         var before = artifacts.list(userId, null, null, null, 1, 50, false);
         MultipartFile upload = mock(MultipartFile.class);
         when(upload.getOriginalFilename()).thenReturn("report.md");
@@ -180,13 +190,27 @@ class UserFileControllerTest {
             }
         });
 
-        assertEquals(500, controller.upload(request, upload, "notes", null, true).get("code"));
+        assertEquals(500, controller.upload(request, upload, "notes", null, overwrite).get("code"));
 
-        assertEquals("original fixture", Files.readString(target));
+        if (overwrite) assertEquals("original fixture", Files.readString(target));
         assertEquals(before, artifacts.list(userId, null, null, null, 1, 50, false));
         try (var entries = Files.list(target.getParent())) {
-            assertEquals(List.of(target), entries.toList());
+            assertEquals(overwrite ? List.of(target) : List.of(), entries.toList());
         }
+    }
+
+    @Test
+    void failedMetadataWriteLeavesNewUploadRetryable() throws Exception {
+        var mapper = spy(new ObjectMapper());
+        doThrow(new IOException("fixture metadata write failed")).doCallRealMethod()
+                .when(mapper).writeValue(any(File.class), any());
+        var uploading = new UserFileController(new UserArtifactService(mapper, systemConfigService), multipartLimits);
+        var request = authenticatedRequest();
+        var file = new MockMultipartFile("file", "note.txt", "text/plain", "fixture".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(500, uploading.upload(request, file, "imports", null, false).get("code"));
+        assertFalse(Files.exists(workspace().resolve("imports/note.txt")));
+        assertEquals(200, uploading.upload(request, file, "imports", null, false).get("code"));
     }
 
     @Test
@@ -644,10 +668,12 @@ class UserFileControllerTest {
                         .param("page", "1").param("pageSize", "1").param("source", "platform-ai").param("search", "review"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.page").value(1))
                 .andExpect(jsonPath("$.data.count").value(1)).andExpect(jsonPath("$.data.fileList[0].metadata.title").value("Review"))
+                .andExpect(jsonPath("$.data.maxUploadBytes").doesNotHaveJsonPath())
                 .andExpect(jsonPath("$.data.overview").doesNotHaveJsonPath());
         mvc.perform(get("/platform/user/file/list").session(session).param("recursive", "true")
                         .param("includeOverview", "true").param("path", "imports"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.count").value(0))
+                .andExpect(jsonPath("$.data.maxUploadBytes").value(2 * 1024 * 1024))
                 .andExpect(jsonPath("$.data.overview.totalFiles").value(1));
     }
 

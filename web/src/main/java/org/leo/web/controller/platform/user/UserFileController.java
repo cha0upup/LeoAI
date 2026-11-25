@@ -2,6 +2,7 @@ package org.leo.web.controller.platform.user;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.MultipartConfigElement;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.application.artifact.UserArtifactService;
@@ -20,14 +21,27 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/platform/user/file")
 public class UserFileController {
     private final UserArtifactService artifacts;
+    private final Optional<MultipartConfigElement> multipartLimits;
 
-    public UserFileController(UserArtifactService artifacts) {
+    public UserFileController(UserArtifactService artifacts, Optional<MultipartConfigElement> multipartLimits) {
         this.artifacts = artifacts;
+        this.multipartLimits = multipartLimits;
+    }
+
+    private long maxUploadBytes() {
+        long max = artifacts.maxUploadBytes();
+        if (multipartLimits.isEmpty()) return max;
+        MultipartConfigElement limits = multipartLimits.get();
+        if (limits.getMaxFileSize() >= 0) max = Math.min(max, limits.getMaxFileSize());
+        // The total request limit includes multipart headers as well as file bytes.
+        if (limits.getMaxRequestSize() >= 0) max = Math.min(max, limits.getMaxRequestSize());
+        return max;
     }
 
     @RequestMapping(value = "/overview", method = RequestMethod.GET)
@@ -41,7 +55,7 @@ public class UserFileController {
 
             HashMap<String, Object> data = new HashMap<>(artifacts.overview(user.getUserId(), includeRecent));
             data.put("rootPath", "");
-            data.put("maxUploadBytes", artifacts.maxUploadBytes());
+            data.put("maxUploadBytes", maxUploadBytes());
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("获取用户空间概览失败: " + e.getMessage());
@@ -62,8 +76,13 @@ public class UserFileController {
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            if (recursive) return ApiResponse.success(artifacts.list(user.getUserId(), relativePath, search, source,
-                    page, pageSize, includeOverview));
+            if (recursive) {
+                var listing = artifacts.list(user.getUserId(), relativePath, search, source, page, pageSize, includeOverview);
+                if (!includeOverview) return ApiResponse.success(listing);
+                var data = new HashMap<>(listing);
+                data.put("maxUploadBytes", maxUploadBytes());
+                return ApiResponse.success(data);
+            }
             var directory = artifacts.listDirectory(user.getUserId(), relativePath);
             return directory == null ? ApiResponse.notFound("目录不存在") : ApiResponse.success(directory);
         } catch (IllegalArgumentException e) {
@@ -96,9 +115,9 @@ public class UserFileController {
             if (file == null || file.isEmpty()) {
                 return ApiResponse.badRequest("上传文件不能为空");
             }
-            long maxUploadBytes = artifacts.maxUploadBytes();
+            long maxUploadBytes = maxUploadBytes();
             if (file.getSize() > maxUploadBytes) {
-                return ApiResponse.badRequest("文件超过单文件上传上限（" + (maxUploadBytes / 1024 / 1024) + " MB）");
+                return ApiResponse.badRequest("文件超过单文件上传上限（" + maxUploadBytes + " 字节）");
             }
 
             String uploadName = sanitizeFileName(filename);

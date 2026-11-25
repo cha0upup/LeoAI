@@ -19,6 +19,7 @@ import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
@@ -136,6 +137,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<HashMap<String, Object>> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException error) {
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.error(415, "请使用 application/json 提交请求"));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<HashMap<String, Object>> handleUploadTooLarge() {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error(HttpStatus.PAYLOAD_TOO_LARGE.value(), "文件或表单超过上传大小限制"));
     }
 
     @ExceptionHandler(FileStoreException.class)
