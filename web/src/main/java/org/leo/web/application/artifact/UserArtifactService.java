@@ -92,12 +92,17 @@ public class UserArtifactService {
         return Files.isRegularFile(target) ? target : null;
     }
 
-    private void walk(Path base, String categoryFilter, BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
-        Files.walkFileTree(base, new SimpleFileVisitor<>() {
+    private boolean walk(Path base, String categoryFilter, boolean collectAllCategories,
+                         BiConsumer<Path, BasicFileAttributes> consumer) throws IOException {
+        class CatalogVisitor extends SimpleFileVisitor<Path> {
+            private boolean overviewComplete = true;
+
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (dir.equals(base)) return FileVisitResult.CONTINUE;
                 if (hasDotPrefix(dir) || "ai-tasks".equals(dir.getFileName().toString())) return FileVisitResult.SKIP_SUBTREE;
-                if (outsideCategoryAtRoot(base, dir, categoryFilter)) return FileVisitResult.SKIP_SUBTREE;
+                if (!collectAllCategories && outsideCategoryAtRoot(base, dir, categoryFilter)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
                 consumer.accept(dir, attrs);
                 return FileVisitResult.CONTINUE;
             }
@@ -110,10 +115,28 @@ public class UserArtifactService {
                 if (error instanceof NoSuchFileException) return FileVisitResult.CONTINUE;
                 // The walker opens a directory before calling preVisitDirectory.
                 if (!path.equals(base) && hasDotPrefix(path)) return FileVisitResult.CONTINUE;
-                if (outsideCategoryAtRoot(base, path, categoryFilter)) return FileVisitResult.CONTINUE;
+                if (skipUnrelatedFailure(path)) return FileVisitResult.CONTINUE;
                 throw error;
             }
-        });
+
+            @Override public FileVisitResult postVisitDirectory(Path path, IOException error) throws IOException {
+                if (error == null || skipUnrelatedFailure(path)) return FileVisitResult.CONTINUE;
+                throw error;
+            }
+
+            private boolean skipUnrelatedFailure(Path path) {
+                if (!collectAllCategories) return outsideCategoryAtRoot(base, path, categoryFilter);
+                if (categoryFilter != null && !path.equals(base) && !categoryFilter.equals(category(relative(base, path)))) {
+                    // The filtered list can still load, but partial workspace totals would be misleading.
+                    overviewComplete = false;
+                    return true;
+                }
+                return false;
+            }
+        }
+        CatalogVisitor visitor = new CatalogVisitor();
+        Files.walkFileTree(base, visitor);
+        return visitor.overviewComplete;
     }
 
     private static boolean hasDotPrefix(Path path) { return path.getFileName().toString().startsWith("."); }
@@ -155,27 +178,55 @@ public class UserArtifactService {
 
     public Map<String, Object> overview(String userId, boolean includeRecent) throws IOException {
         Path base = root(userId);
-        Map<String, long[]> categories = new LinkedHashMap<>();
-        CATEGORIES.forEach(key -> categories.put(key, new long[2]));
-        long[] totals = new long[4]; // files, directories, bytes, last modified
+        CatalogOverview summary = new CatalogOverview();
         PriorityQueue<ArtifactMatch> recent = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
-        walk(base, null, (path, attrs) -> {
-            totals[3] = Math.max(totals[3], attrs.lastModifiedTime().toMillis());
-            if (attrs.isDirectory()) { totals[1]++; return; }
-            totals[0]++; totals[2] += attrs.size();
+        walk(base, null, false, (path, attrs) -> {
+            if (attrs.isDirectory()) { summary.addDirectory(attrs); return; }
             String relative = relative(base, path);
-            long[] counts = categories.get(category(relative));
-            counts[0]++; counts[1] += attrs.size();
+            summary.addFile(category(relative), attrs);
             if (includeRecent) {
-                retainMatch(recent, RECENT_FILES_LIMIT, new ArtifactMatch(path, relative, attrs, null, totals[0]));
+                retainMatch(recent, RECENT_FILES_LIMIT, new ArtifactMatch(path, relative, attrs, null, summary.totalFiles));
             }
         });
-        return Map.of("totalFiles", totals[0], "totalDirectories", totals[1], "totalBytes", totals[2],
-                "updatedAt", totals[3], "recentFiles", recent.stream()
-                        .sorted(ARTIFACT_ORDER)
-                        .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata())).toList(),
-                "categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
-                        "files", entry.getValue()[0], "bytes", entry.getValue()[1])).toList());
+        Map<String, Object> result = summary.toMap();
+        result.put("recentFiles", recent.stream().sorted(ARTIFACT_ORDER)
+                .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata())).toList());
+        return result;
+    }
+
+    private static final class CatalogOverview {
+        private final Map<String, LongSummaryStatistics> categories = new LinkedHashMap<>();
+        private long totalFiles;
+        private long totalDirectories;
+        private long totalBytes;
+        private long updatedAt;
+
+        private CatalogOverview() {
+            CATEGORIES.forEach(key -> categories.put(key, new LongSummaryStatistics()));
+        }
+
+        private void addDirectory(BasicFileAttributes attrs) {
+            totalDirectories++;
+            updatedAt = Math.max(updatedAt, attrs.lastModifiedTime().toMillis());
+        }
+
+        private void addFile(String category, BasicFileAttributes attrs) {
+            totalFiles++;
+            totalBytes += attrs.size();
+            updatedAt = Math.max(updatedAt, attrs.lastModifiedTime().toMillis());
+            categories.get(category).accept(attrs.size());
+        }
+
+        private Map<String, Object> toMap() {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("totalFiles", totalFiles);
+            result.put("totalDirectories", totalDirectories);
+            result.put("totalBytes", totalBytes);
+            result.put("updatedAt", updatedAt);
+            result.put("categories", categories.entrySet().stream().map(entry -> Map.of("path", entry.getKey(),
+                    "files", entry.getValue().getCount(), "bytes", entry.getValue().getSum())).toList());
+            return result;
+        }
     }
 
     /** Returns a visible directory listing, or null when the requested directory is missing. */
@@ -247,7 +298,8 @@ public class UserArtifactService {
         }
     }
 
-    public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize) throws IOException {
+    public Map<String, Object> list(String userId, String category, String search, String source, int page, int pageSize,
+                                    boolean includeOverview) throws IOException {
         String categoryFilter = category == null || category.isBlank() ? null : category;
         if (categoryFilter != null && !CATEGORIES.contains(categoryFilter)) throw new IllegalArgumentException("未知成果分类");
         int size = Math.max(1, Math.min(200, pageSize));
@@ -259,10 +311,18 @@ public class UserArtifactService {
         PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
         int[] matched = {0};
         Path base = root(userId);
-        walk(base, categoryFilter, (path, attrs) -> {
-            if (!attrs.isRegularFile()) return;
+        CatalogOverview overview = includeOverview ? new CatalogOverview() : null;
+        boolean overviewComplete = walk(base, categoryFilter, includeOverview, (path, attrs) -> {
+            if (attrs.isDirectory()) {
+                if (overview != null) overview.addDirectory(attrs);
+                return;
+            }
             String relative = relative(base, path);
-            if (categoryFilter != null && !categoryFilter.equals(category(relative))) return;
+            if (overview != null || categoryFilter != null) {
+                String fileCategory = category(relative);
+                if (overview != null) overview.addFile(fileCategory, attrs);
+                if (categoryFilter != null && !categoryFilter.equals(fileCategory)) return;
+            }
             boolean searchMetadata = !keyword.isEmpty() && !relative.toLowerCase(Locale.ROOT).contains(keyword);
             Map<String, Object> details = null;
             if (filterSource || searchMetadata) {
@@ -278,8 +338,12 @@ public class UserArtifactService {
                     .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata()))
                     .forEachOrdered(pageFiles::add);
         }
-        return Map.of("fileList", pageFiles, "count", matched[0],
+        Map<String, Object> pageData = Map.of("fileList", pageFiles, "count", matched[0],
                 "page", current, "pageSize", size, "hasMore", matched[0] > windowSize);
+        if (overview == null || !overviewComplete) return pageData;
+        Map<String, Object> response = new LinkedHashMap<>(pageData);
+        response.put("overview", overview.toMap());
+        return response;
     }
 
     private Path metadataPath(Path base, String path) {

@@ -55,13 +55,15 @@ public class UserFileController {
                                         @RequestParam(defaultValue = "1") int page,
                                         @RequestParam(defaultValue = "50") int pageSize,
                                         @RequestParam(required = false) String search,
-                                        @RequestParam(required = false) String source) {
+                                        @RequestParam(required = false) String source,
+                                        @RequestParam(defaultValue = "false") boolean includeOverview) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            if (recursive) return ApiResponse.success(artifacts.list(user.getUserId(), relativePath, search, source, page, pageSize));
+            if (recursive) return ApiResponse.success(artifacts.list(user.getUserId(), relativePath, search, source,
+                    page, pageSize, includeOverview));
             var directory = artifacts.listDirectory(user.getUserId(), relativePath);
             return directory == null ? ApiResponse.notFound("目录不存在") : ApiResponse.success(directory);
         } catch (IllegalArgumentException e) {

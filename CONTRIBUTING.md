@@ -77,6 +77,7 @@
 
 ## 成果库读取契约
 
+- `GET /platform/user/file/list?recursive=true&includeOverview=true` 用同一次目录遍历返回筛选后的分页和全工作区计数。`overview` 只包含统计字段；如果筛选范围外的目录不可读，仍返回当前列表，但省略不完整的 `overview`。不传 `includeOverview` 时，分页契约及分类剪枝保持原样。
 - `GET /platform/user/file/overview?includeRecent=false` 跳过最近文件和元数据读取，`recentFiles` 返回空数组，分类和总计不变。
 - `GET /platform/user/file/preview?includeBase64=false` 仅省略 `contentBase64`，文本、大小和截断标记不变。两个参数均默认 `true`，旧请求无需调整。
 

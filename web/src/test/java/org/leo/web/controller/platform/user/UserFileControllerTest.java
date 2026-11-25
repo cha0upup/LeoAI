@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
+import java.nio.file.FileVisitor;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
@@ -44,6 +45,7 @@ import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -114,7 +116,7 @@ class UserFileControllerTest {
                         new MockMultipartFile("file", "uploaded.txt", "text/plain", new byte[]{1}), "notes", null, false);
                 case "create-file" -> controller.createFile(request, "notes/new.txt", "fixture", false);
                 case "create-dir" -> controller.createDir(request, "notes/new-folder");
-                case "list" -> controller.list(request, "notes", false, 1, 50, null, null);
+                case "list" -> controller.list(request, "notes", false, 1, 50, null, null, false);
                 case "preview" -> controller.preview(request, "notes/fixture.txt", null, true);
                 case "archive" -> controller.archive(request,
                         new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
@@ -154,7 +156,7 @@ class UserFileControllerTest {
         assertEquals("second", Files.readString(file));
         long modified = Files.getLastModifiedTime(file).toMillis();
         try (var reads = mockStatic(Files.class, CALLS_REAL_METHODS)) {
-            var listing = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
+            var listing = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "", false).get("data");
             var items = (List<?>) listing.get("fileList");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 6L, "lastModified", modified)), items);
@@ -162,7 +164,7 @@ class UserFileControllerTest {
             reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS));
             reads.when(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS))
                     .thenThrow(new java.io.IOException("fixture attributes unavailable"));
-            var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "").get("data");
+            var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "", false).get("data");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 0L, "lastModified", 0L)), fallback.get("fileList"));
         }
@@ -188,7 +190,7 @@ class UserFileControllerTest {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "notes/report.md", "original fixture", false).get("code"));
         Path target = workspace().resolve("notes/report.md");
-        var before = artifacts.list(userId, null, null, null, 1, 50);
+        var before = artifacts.list(userId, null, null, null, 1, 50, false);
         MultipartFile upload = mock(MultipartFile.class);
         when(upload.getOriginalFilename()).thenReturn("report.md");
         when(upload.getSize()).thenReturn(16L);
@@ -205,7 +207,7 @@ class UserFileControllerTest {
         assertEquals(500, controller.upload(request, upload, "notes", null, true).get("code"));
 
         assertEquals("original fixture", Files.readString(target));
-        assertEquals(before, artifacts.list(userId, null, null, null, 1, 50));
+        assertEquals(before, artifacts.list(userId, null, null, null, 1, 50, false));
         try (var entries = Files.list(target.getParent())) {
             assertEquals(List.of(target), entries.toList());
         }
@@ -237,7 +239,7 @@ class UserFileControllerTest {
         Locale previous = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag(languageTag));
-            var directory = (Map<String, Object>) controller.list(request, "", false, 1, 50, "", "").get("data");
+            var directory = (Map<String, Object>) controller.list(request, "", false, 1, 50, "", "", false).get("data");
             var items = (List<Map<String, Object>>) directory.get("fileList");
             assertEquals(List.of("ai-reports", "Imports", "script-builds"),
                     items.stream().map(item -> item.get("name")).toList());
@@ -248,7 +250,7 @@ class UserFileControllerTest {
         var listing = new UserArtifactService(metadataReader, systemConfigService);
         Map<String, Object> page;
         try (var directoryLookup = mockStatic(AgentNodeSessionWorkDirUtil.class, CALLS_REAL_METHODS)) {
-            page = listing.list(userId, "", "", "", 1, 2);
+            page = listing.list(userId, "", "", "", 1, 2, false);
             directoryLookup.verify(() -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
         }
         assertEquals(3, page.get("count"));
@@ -261,8 +263,8 @@ class UserFileControllerTest {
                 pageFiles.stream().map(file -> ((Map<?, ?>) file.get("metadata")).get("title")).toList());
         assertEquals(true, page.get("hasMore"));
         verify(metadataReader, times(2)).readValue(anyString(), eq(Map.class));
-        assertEquals(1, ((List<?>) artifacts.list(userId, "", "", "", 2, 2).get("fileList")).size());
-        assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50).get("count"));
+        assertEquals(1, ((List<?>) artifacts.list(userId, "", "", "", 2, 2, false).get("fileList")).size());
+        assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50, false).get("count"));
     }
 
     @ParameterizedTest
@@ -282,15 +284,48 @@ class UserFileControllerTest {
             }
             return invocation.callRealMethod();
         })) {
-            var builds = artifacts.list(userId, "script-builds", null, null, 1, 50);
+            var builds = artifacts.list(userId, "script-builds", null, null, 1, 50, false);
             assertEquals(1, builds.get("count"));
-            var imported = (List<Map<String, Object>>) artifacts.list(userId, "imports", null, null, 1, 50).get("fileList");
+            var imported = (List<Map<String, Object>>) artifacts.list(userId, "imports", null, null, 1, 50, false).get("fileList");
             assertEquals(List.of("imports/dedicated.txt", "loose.txt", "notes/readme.txt"),
                     imported.stream().map(file -> (String) file.get("path")).sorted().toList());
-            var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50);
+            var taskResults = artifacts.list(userId, "task-results", null, null, 1, 50, false);
             assertEquals(1, taskResults.get("count"));
-            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, "ai-reports", null, null, 1, 50));
-            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, null, null, null, 1, 50));
+            assertEquals(builds, artifacts.list(userId, "script-builds", null, null, 1, 50, true));
+            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, "ai-reports", null, null, 1, 50, false));
+            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, "ai-reports", null, null, 1, 50, true));
+            assertThrows(AccessDeniedException.class, () -> artifacts.list(userId, null, null, null, 1, 50, false));
+        }
+    }
+
+    @Test
+    void recursivePageAndWorkspaceTotalsUseOneTraversalAndIndependentFilters() throws Exception {
+        var request = authenticatedRequest();
+        assertEquals(200, controller.createFile(request, "imports/match.txt", "match", false).get("code"));
+        assertEquals(200, controller.createFile(request, "imports/other.txt", "other", false).get("code"));
+        assertEquals(200, controller.createFile(request, "ai-reports/report.md", "report", false).get("code"));
+        Path base = workspace();
+        Files.writeString(base.resolve(".hidden.txt"), "internal");
+        Path runtime = base.resolve("ai-tasks/job/files/runtime.txt");
+        Files.createDirectories(runtime.getParent());
+        Files.writeString(runtime, "runtime");
+        var standaloneOverview = artifacts.overview(userId, false);
+        var filteredPage = artifacts.list(userId, "imports", "match", "manual", 1, 1, false);
+
+        try (var filesystem = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            var combined = artifacts.list(userId, "imports", "match", "manual", 1, 1, true);
+            filesystem.verify(() -> Files.walkFileTree(eq(base), org.mockito.ArgumentMatchers.<FileVisitor<Path>>any()));
+
+            var overview = (Map<?, ?>) combined.remove("overview");
+            assertEquals(filteredPage, combined);
+            assertEquals(1, combined.get("count"));
+            assertEquals(3L, overview.get("totalFiles"));
+            assertEquals(16L, overview.get("totalBytes"));
+            assertEquals(List.of(0L, 1L, 0L, 2L), ((List<?>) overview.get("categories")).stream()
+                    .map(row -> ((Map<?, ?>) row).get("files")).toList());
+            assertEquals(standaloneOverview.get("updatedAt"), overview.get("updatedAt"));
+            assertEquals(standaloneOverview.get("categories"), overview.get("categories"));
+            assertFalse(overview.containsKey("recentFiles"));
         }
     }
 
@@ -313,7 +348,7 @@ class UserFileControllerTest {
             }
             return invocation.callRealMethod();
         })) {
-            var response = controller.list(request, "notes", false, 1, 50, null, null);
+            var response = controller.list(request, "notes", false, 1, 50, null, null, false);
             assertEquals(targetVanished ? 404 : 200, response.get("code"));
             if (!targetVanished) {
                 var data = (Map<?, ?>) response.get("data");
@@ -345,7 +380,7 @@ class UserFileControllerTest {
             return invocation.callRealMethod();
         })) {
             var overview = controller.overview(request, true);
-            var listing = controller.list(request, "imports", true, 1, 50, null, null);
+            var listing = controller.list(request, "imports", true, 1, 50, null, null, false);
             assertEquals(expectedStatus, overview.get("code"));
             assertEquals(expectedStatus, listing.get("code"));
             if (expectedStatus == 200) {
@@ -376,7 +411,7 @@ class UserFileControllerTest {
 
         var overview = artifacts.overview(userId, true);
         var recent = (List<Map<String, Object>>) overview.get("recentFiles");
-        var firstPage = (List<Map<String, Object>>) artifacts.list(userId, null, null, null, 1, 8).get("fileList");
+        var firstPage = (List<Map<String, Object>>) artifacts.list(userId, null, null, null, 1, 8, false).get("fileList");
 
         assertEquals(10L, overview.get("totalFiles"));
         assertEquals(List.of(newest, "notes/tied-0.txt", "notes/tied-1.txt", "notes/tied-2.txt", "notes/tied-3.txt",
@@ -399,7 +434,7 @@ class UserFileControllerTest {
 
         var metadataReader = spy(new ObjectMapper());
         var listing = new UserArtifactService(metadataReader, systemConfigService);
-        var first = listing.list(userId, "ai-reports", " KEEP ", "manual", 1, 2);
+        var first = listing.list(userId, "ai-reports", " KEEP ", "manual", 1, 2, false);
         var firstRows = (List<Map<String, Object>>) first.get("fileList");
         assertEquals(List.of("a-keep.txt", "z-keep.txt"), firstRows.stream().map(row -> row.get("name")).toList());
         assertEquals(List.of("manual", "manual"),
@@ -410,16 +445,16 @@ class UserFileControllerTest {
 
         var filenameSearchReader = spy(new ObjectMapper());
         var filenameSearch = new UserArtifactService(filenameSearchReader, systemConfigService);
-        assertEquals(first, filenameSearch.list(userId, "ai-reports", " KEEP ", null, 1, 2));
+        assertEquals(first, filenameSearch.list(userId, "ai-reports", " KEEP ", null, 1, 2, false));
         // 两条分页结果和一条路径未匹配的记录需要元数据，其余两条仅凭文件名即可计数。
         verify(filenameSearchReader, times(3)).readValue(anyString(), eq(Map.class));
 
-        var second = listing.list(userId, "ai-reports", " KEEP ", "manual", 2, 2);
+        var second = listing.list(userId, "ai-reports", " KEEP ", "manual", 2, 2, false);
         var secondRows = (List<Map<String, Object>>) second.get("fileList");
         assertEquals(List.of("middle-keep.txt", "0-old-keep.txt"), secondRows.stream().map(row -> row.get("name")).toList());
         assertEquals(4, second.get("count"));
         assertEquals(false, second.get("hasMore"));
-        var beyond = listing.list(userId, "ai-reports", " KEEP ", "manual", Integer.MAX_VALUE, Integer.MAX_VALUE);
+        var beyond = listing.list(userId, "ai-reports", " KEEP ", "manual", Integer.MAX_VALUE, Integer.MAX_VALUE, false);
         assertEquals(Map.of("fileList", List.of(), "count", 4, "page", Integer.MAX_VALUE, "pageSize", 200, "hasMore", false), beyond);
     }
 
@@ -433,7 +468,7 @@ class UserFileControllerTest {
                 Map.of("title", " 数据库审查 ", "sourceModule", "node-ai", "sourceId", "thread-a", "hostName", "db-host")));
         verify(mapper, never()).readValue(anyString(), eq(Map.class));
         var reopened = new UserArtifactService(new ObjectMapper(), systemConfigService);
-        var page = reopened.list(userId, "ai-reports", " DB-HOST ", "node-ai", 1, 50);
+        var page = reopened.list(userId, "ai-reports", " DB-HOST ", "node-ai", 1, 50, false);
         var file = ((List<Map<String, Object>>) page.get("fileList")).get(0);
         var metadata = (Map<String, Object>) file.get("metadata");
         assertEquals(saved.get("path"), file.get("path"));
@@ -442,11 +477,11 @@ class UserFileControllerTest {
         assertEquals("thread-a", metadata.get("sourceId"));
         assertTrue(metadata.containsKey("createdAt"));
         assertTrue(metadata.containsKey("id"));
-        assertEquals(0, reopened.list(userId, "", "", "platform-ai", 1, 50).get("count"));
+        assertEquals(0, reopened.list(userId, "", "", "platform-ai", 1, 50, false).get("count"));
         assertThrows(IllegalArgumentException.class, () -> reopened.findFile(userId, "../../other-user/workspace/" + saved.get("path")));
         controller.createFile(authenticatedRequest(), String.valueOf(saved.get("path")), "manual revision", true);
-        assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50).get("count"));
-        assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50).get("count"));
+        assertEquals(0, reopened.list(userId, "", "", "node-ai", 1, 50, false).get("count"));
+        assertEquals(1, reopened.list(userId, "", "", "manual", 1, 50, false).get("count"));
         Path workspace = workspace();
         Path survivor = workspace.resolve("retained/fixture.txt");
         if (recursive) {
@@ -483,7 +518,7 @@ class UserFileControllerTest {
         String json = "{\"title\":\"报告\"}";
         String exact = json + " ".repeat(limit - json.getBytes(StandardCharsets.UTF_8).length);
         Files.writeString(metadata, exact);
-        var page = listing.list(userId, null, null, null, 1, 50);
+        var page = listing.list(userId, null, null, null, 1, 50, false);
         var row = (Map<?, ?>) ((List<?>) page.get("fileList")).get(0);
         assertEquals(Map.of("title", "报告"), row.get("metadata"));
 
@@ -493,7 +528,7 @@ class UserFileControllerTest {
             if (sizeLookup.equals(invocation.getMethod()) && metadata.equals(invocation.getArgument(0))) return (long) limit;
             return invocation.callRealMethod();
         })) {
-            var oversizedPage = listing.list(userId, null, "REPORT", "unrecorded", 1, 50);
+            var oversizedPage = listing.list(userId, null, "REPORT", "unrecorded", 1, 50, false);
             assertEquals(1, oversizedPage.get("count"));
             var oversizedRow = (Map<?, ?>) ((List<?>) oversizedPage.get("fileList")).get(0);
             assertEquals(Map.of(), oversizedRow.get("metadata"));
@@ -528,7 +563,7 @@ class UserFileControllerTest {
         var metadata = (Map<?, ?>) saved.get("metadata");
         assertEquals("task-output", metadata.get("sourceModule"));
         assertEquals("job", metadata.get("sourceId"));
-        assertEquals(1, artifacts.list(userId, "task-results", "", "task-output", 1, 50).get("count"));
+        assertEquals(1, artifacts.list(userId, "task-results", "", "task-output", 1, 50, false).get("count"));
         assertEquals(200, controller.preview(authenticatedRequest(), source, null, true).get("code"));
         assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
                 new UserArtifactService.ArchiveRequest("task-results", "private.txt", null, "ai-tasks/job/.internal/private.txt", Map.of())));
@@ -594,19 +629,19 @@ class UserFileControllerTest {
         assertEquals(400, controller.createDir(request, ".artifacts").get("code"));
         assertEquals(400, controller.delete(request, "", true).get("code"));
         assertEquals(401, controller.delete(new MockHttpServletRequest(), "original.txt", false).get("code"));
-        assertEquals(400, controller.list(request, "ai-tasks", false, 1, 50, "", "").get("code"));
+        assertEquals(400, controller.list(request, "ai-tasks", false, 1, 50, "", "", false).get("code"));
         Path actual = workspace().resolve("original.txt");
         Files.writeString(actual, "content");
         Files.createSymbolicLink(workspace().resolve("link.txt"), actual);
         assertThrows(IllegalArgumentException.class, () -> artifacts.findFile(userId, "link.txt"));
-        assertEquals(1, artifacts.list(userId, "", "", "", 1, 50).get("count"));
-        var directory = (Map<?, ?>) controller.list(request, "", false, 1, 50, "", "").get("data");
+        assertEquals(1, artifacts.list(userId, "", "", "", 1, 50, false).get("count"));
+        var directory = (Map<?, ?>) controller.list(request, "", false, 1, 50, "", "", false).get("data");
         assertEquals(1, directory.get("count"));
         assertEquals(Map.of("code", 404, "msg", "目录不存在"),
-                controller.list(request, "missing", false, 1, 50, "", ""));
+                controller.list(request, "missing", false, 1, 50, "", "", false));
         assertEquals(Map.of("code", 400, "msg", "path不是目录"),
-                controller.list(request, "original.txt", false, 1, 50, "", ""));
-        assertEquals(401, controller.list(new MockHttpServletRequest(), "", false, 1, 50, "", "").get("code"));
+                controller.list(request, "original.txt", false, 1, 50, "", "", false));
+        assertEquals(401, controller.list(new MockHttpServletRequest(), "", false, 1, 50, "", "", false).get("code"));
         assertEquals(401, controller.archive(new MockHttpServletRequest(), null).get("code"));
     }
 
@@ -637,7 +672,12 @@ class UserFileControllerTest {
         mvc.perform(get("/platform/user/file/list").session(session).param("recursive", "true")
                         .param("page", "1").param("pageSize", "1").param("source", "platform-ai").param("search", "review"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.page").value(1))
-                .andExpect(jsonPath("$.data.count").value(1)).andExpect(jsonPath("$.data.fileList[0].metadata.title").value("Review"));
+                .andExpect(jsonPath("$.data.count").value(1)).andExpect(jsonPath("$.data.fileList[0].metadata.title").value("Review"))
+                .andExpect(jsonPath("$.data.overview").doesNotHaveJsonPath());
+        mvc.perform(get("/platform/user/file/list").session(session).param("recursive", "true")
+                        .param("includeOverview", "true").param("path", "imports"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.count").value(0))
+                .andExpect(jsonPath("$.data.overview.totalFiles").value(1));
     }
 
     @Test
