@@ -24,7 +24,7 @@ class RuntimeConfigurationTest {
     }
 
     @Test
-    void webConfigurationResolvesThePluginKeyEnvironmentSetting() {
+    void runtimeResolvesThePluginKeyAndNormalizesTheConfiguredVfsPath() {
         runner().withPropertyValues("LEO_PLUGIN_ENCRYPT_KEY=fixture-environment-key")
                 .run(context -> {
                     assertNull(context.getStartupFailure());
@@ -32,6 +32,7 @@ class RuntimeConfigurationTest {
                     assertEquals("fixture-environment-key", config.getConfiguredPluginEncryptKey());
                     assertEquals(config.getConfiguredPluginEncryptKey(), LeoConfig.getPluginEncryptKey());
                     assertEquals(temp.resolve("vfs").toString(), config.getConfiguredVfsPath());
+                    assertEquals(config.getConfiguredVfsPath(), LeoConfig.getVfsPath());
                 });
     }
 
@@ -55,6 +56,6 @@ class RuntimeConfigurationTest {
         return new ApplicationContextRunner()
                 .withInitializer(new ConfigDataApplicationContextInitializer())
                 .withUserConfiguration(LeoConfig.class)
-                .withPropertyValues("VfsPath=" + temp.resolve("vfs"));
+                .withPropertyValues("VfsPath=" + temp.resolve("unused/../vfs"));
     }
 }
