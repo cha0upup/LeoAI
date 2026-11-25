@@ -14,10 +14,7 @@ import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
 import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.SystemInitializationService;
-import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.mock.web.MockHttpSession;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.Map;
 import java.util.Set;
@@ -32,9 +29,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class LoginControllerTest {
 
@@ -78,7 +72,6 @@ class LoginControllerTest {
         Team team = new Team();
         team.setTeamName("Example team");
         when(permissionService.requireLogin(request)).thenReturn(user);
-        when(userService.getUserById("user-1")).thenReturn(user);
         when(teamService.getTeamById("team-1")).thenReturn(team);
 
         Map<?, ?> data = (Map<?, ?>) controller.profile(request).get("data");
@@ -195,42 +188,6 @@ class LoginControllerTest {
     }
 
     @Test
-    void updatesOnlyEditableProfileFieldsAndLeavesSessionCredentialsAlone() throws Exception {
-        User sessionUser = new User();
-        sessionUser.setUserId("user-1");
-        User storedUser = new User();
-        storedUser.setUserId("user-1");
-        storedUser.setUserName("alice");
-        storedUser.setPrivilege(UserService.PRIVILEGE_NORMAL);
-        storedUser.setTeamId("team-1");
-        storedUser.setStatus(1);
-        storedUser.setEmail("alice@example.com");
-        storedUser.setPhone("13800138000");
-        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(sessionUser);
-        when(userService.updateProfile(sessionUser, "alice@example.com", "13800138000", null))
-                .thenReturn(storedUser);
-        var session = new MockHttpSession();
-        session.setAttribute("user", sessionUser);
-        MockMvcBuilders.standaloneSetup(controller).build()
-                .perform(post("/platform/user/profile").session(session).contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"email":" alice@example.com ","phone":" 13800138000 ","remark":"  "}
-                                """))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data.email").value("alice@example.com"))
-                .andExpect(jsonPath("$.data.phone").value("13800138000"))
-                .andExpect(jsonPath("$.data.remark").hasJsonPath())
-                .andExpect(jsonPath("$.data.userName").value("alice"))
-                .andExpect(jsonPath("$.data.teamId").value("team-1"))
-                .andExpect(jsonPath("$.data.password").doesNotHaveJsonPath());
-        assertNull(sessionUser.getEmail());
-        assertSame(sessionUser, session.getAttribute("user"));
-        verify(userService).updateProfile(sessionUser, "alice@example.com", "13800138000", null);
-        org.mockito.Mockito.verifyNoMoreInteractions(userService);
-    }
-
-    @Test
     void reportsConflictIfTheVerifiedAccountChangedBeforeTheProfileWrite() {
         var request = new MockHttpServletRequest();
         var verified = new User();
@@ -242,34 +199,5 @@ class LoginControllerTest {
 
         assertEquals(409, error.getCode());
         assertNull(verified.getRemark());
-    }
-
-    @Test
-    void rejectsProfileFieldsOverTheirLimits() {
-        User sessionUser = new User();
-        sessionUser.setUserId("user-1");
-        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(sessionUser);
-
-        ApiException error = assertThrows(ApiException.class,
-                () -> controller.updateProfile(new MockHttpServletRequest(),
-                        new UpdateProfileRequest("x".repeat(101), null, null)));
-
-        assertEquals(400, error.getCode());
-    }
-
-    @Test
-    void rejectsInvalidProfileEmail() {
-        User sessionUser = new User();
-        sessionUser.setUserId("user-1");
-        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(sessionUser);
-
-        ApiException error = assertThrows(ApiException.class,
-                () -> controller.updateProfile(new MockHttpServletRequest(),
-                        new UpdateProfileRequest("invalid-email", null, null)));
-
-        assertEquals(400, error.getCode());
-        assertEquals("邮箱格式不正确", error.getMessage());
     }
 }

@@ -222,21 +222,35 @@ class PasswordRoundTripIntegrationTest {
     }
 
     @Test
-    void profileWriteReturnsCurrentPublicFieldsAndLeavesTheAccountSnapshotUntouched() {
+    void profileEndpointValidatesAndSavesOnlyEditableFieldsWithoutChangingCredentials() throws Exception {
         User verified = users.getUserById("fixture-admin");
         assertNotNull(users.recordSuccessfulLogin(verified.getUserId(), verified.getPassword()));
+        String path = "/platform/user/profile";
 
-        User profile = users.updateProfile(verified, "example@example.test", null, "notes");
+        mvc.perform(body(path, Map.of("email", "invalid-email")).session(adminSession))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.msg").value("邮箱格式不正确"));
+        mvc.perform(body(path, Map.of("email", "x".repeat(101))).session(adminSession))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.msg").value("邮箱不能超过 100 个字符"));
 
-        assertNotNull(profile);
-        assertEquals("example@example.test", profile.getEmail());
-        assertEquals("notes", profile.getRemark());
-        assertEquals(1, profile.getLoginCount());
-        assertNotNull(profile.getLastLoginTime());
-        assertEquals(verified.getAccountRevision() + 1, profile.getAccountRevision());
-        assertNull(profile.getPassword());
-        assertNull(verified.getEmail());
+        mvc.perform(body(path, Map.of("email", " example@example.test ", "phone", " 13800138000 ", "remark", "  "))
+                        .session(adminSession))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.email").value("example@example.test"))
+                .andExpect(jsonPath("$.data.phone").value("13800138000"))
+                .andExpect(jsonPath("$.data.remark").hasJsonPath())
+                .andExpect(jsonPath("$.data.loginCount").value(1))
+                .andExpect(jsonPath("$.data.lastLoginTime").isNotEmpty())
+                .andExpect(jsonPath("$.data.password").doesNotHaveJsonPath());
+
+        User sessionUser = (User) adminSession.getAttribute("user");
+        assertNull(sessionUser.getEmail());
+        assertEquals(verified.getAccountRevision(), sessionUser.getAccountRevision());
+        assertEquals(verified.getPassword(), sessionUser.getPassword());
         User stored = users.getUserById(verified.getUserId());
+        assertEquals("example@example.test", stored.getEmail());
+        assertEquals("13800138000", stored.getPhone());
+        assertNull(stored.getRemark());
+        assertEquals(verified.getAccountRevision() + 1, stored.getAccountRevision());
         assertEquals(verified.getPassword(), stored.getPassword());
         assertEquals(verified.getPrivilege(), stored.getPrivilege());
     }
