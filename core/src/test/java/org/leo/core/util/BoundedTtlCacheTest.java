@@ -2,7 +2,6 @@ package org.leo.core.util;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.ArrayList;
@@ -34,33 +33,13 @@ class BoundedTtlCacheTest {
         assertEquals(0, cache.size());
     }
 
-    @ParameterizedTest
-    @EnumSource(BoundedTtlCache.EvictionOrder.class)
-    void ttlIsFixedOnReadsAndRenewedOnlyByReplacement(BoundedTtlCache.EvictionOrder order) {
-        AtomicLong now = new AtomicLong(100);
-        BoundedTtlCache<String> cache = new BoundedTtlCache<>(2, 1, TimeUnit.SECONDS, order, now::get);
-        cache.put("fixed", "old");
-        cache.put("replaced", "old");
-        now.set(1000);
-        assertEquals("old", cache.get("fixed"));
-        cache.put("replaced", "new");
-        now.set(1101);
-        assertNull(cache.get("fixed"));
-        assertEquals("new", cache.get("replaced"));
-        assertEquals(1, cache.size());
-        now.set(2000);
-        assertEquals("new", cache.get("replaced"));
-        now.incrementAndGet();
-        assertNull(cache.get("replaced"));
-        assertEquals(0, cache.size());
-    }
-
-    @ParameterizedTest
-    @EnumSource(BoundedTtlCache.EvictionOrder.class)
-    void perEntryTtlKeepsTheDefaultAndOtherEntriesIndependent(BoundedTtlCache.EvictionOrder order) {
+    @Test
+    void readsDoNotRenewTtlAndReplacementRenewsOnlyItsOwnEntry() {
         AtomicLong now = new AtomicLong(0);
-        BoundedTtlCache<String> cache = new BoundedTtlCache<>(3, 10, TimeUnit.SECONDS, order, now::get);
+        BoundedTtlCache<String> cache = new BoundedTtlCache<>(4, 10, TimeUnit.SECONDS,
+                BoundedTtlCache.EvictionOrder.ACCESS, now::get);
         cache.put("default", "default");
+        cache.put("replaced", "old");
         cache.put("short", "short", 2, TimeUnit.SECONDS);
         cache.put("long", "long", 20, TimeUnit.SECONDS);
 
@@ -69,10 +48,17 @@ class BoundedTtlCacheTest {
         now.incrementAndGet();
         assertNull(cache.get("short"));
         assertEquals("default", cache.get("default"));
-        assertEquals("long", cache.get("long"));
+
+        now.set(9_000);
+        cache.put("replaced", "new");
         now.set(10_001);
         assertNull(cache.get("default"));
+        assertEquals("new", cache.get("replaced"));
         assertEquals("long", cache.get("long"));
+        now.set(19_000);
+        assertEquals("new", cache.get("replaced"));
+        now.incrementAndGet();
+        assertNull(cache.get("replaced"));
         now.set(20_001);
         assertNull(cache.get("long"));
         assertEquals(0, cache.size());
@@ -106,10 +92,9 @@ class BoundedTtlCacheTest {
         assertEquals("new", cache.get("live"));
     }
 
-    @ParameterizedTest
-    @EnumSource(BoundedTtlCache.EvictionOrder.class)
-    void concurrentWritesAndReadsRespectCapacity(BoundedTtlCache.EvictionOrder order) throws Exception {
-        BoundedTtlCache<Integer> cache = new BoundedTtlCache<>(16, 1, TimeUnit.MINUTES, order);
+    @Test
+    void concurrentWritesAndReadsRespectCapacity() throws Exception {
+        BoundedTtlCache<Integer> cache = new BoundedTtlCache<>(16, 1, TimeUnit.MINUTES);
         var executor = Executors.newFixedThreadPool(4);
         try {
             List<Future<?>> writes = new ArrayList<>();
