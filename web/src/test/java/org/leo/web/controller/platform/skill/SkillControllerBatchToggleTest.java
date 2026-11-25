@@ -232,7 +232,7 @@ class SkillControllerBatchToggleTest extends SkillControllerTestSupport {
         assertEquals(200, controller.deleteFile(params).get("code"));
         assertFalse(Files.exists(skillDir.resolve("assets/renamed.bin")));
 
-        for (String path : List.of("SKILL.md", "./manifest.yaml")) {
+        for (String path : List.of("SKILL.md", "./SKILL.md", "manifest.yaml", "./manifest.yaml")) {
             params.put("path", path);
             params.put("from", path);
             assertEquals(400, controller.deleteFile(params).get("code"));

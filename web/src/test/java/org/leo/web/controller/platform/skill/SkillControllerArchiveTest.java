@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.service.importing.ImportOverwritePolicy;
 import org.leo.ai.service.skill.SkillExportService.ImportResult;
 import org.leo.ai.service.skill.SkillOperationLock;
@@ -39,10 +38,9 @@ import static org.mockito.Mockito.*;
 
 class SkillControllerArchiveTest extends SkillControllerTestSupport {
 
-    @ParameterizedTest
-    @ValueSource(strings = {"en-US", "tr-TR"})
+    @Test
     @ResourceLock("java.util.Locale.default")
-    void singleExportRoundTripsMetadataAndBinaryResources(String languageTag) throws Exception {
+    void archiveRoundTripPreservesBinaryResourcesAndImportsAsDisabledDraft() throws Exception {
         writeSkill("alpha", "original");
         Files.createDirectories(skillDir("alpha").resolve("assets"));
         Files.write(skillDir("alpha").resolve("assets/data.bin"), new byte[]{0, 1, -1});
@@ -60,7 +58,7 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
         clearInvocations(registry);
         Locale previous = Locale.getDefault();
         try {
-            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
             var imported = controller.importSkills(upload(exported.getBody()), "agent-node", "alpha", null);
             assertEquals(200, imported.get("code"));
             assertEquals("imported", result(imported, "alpha").get("status"));
@@ -68,7 +66,9 @@ class SkillControllerArchiveTest extends SkillControllerTestSupport {
             Locale.setDefault(previous);
         }
         assertArrayEquals(new byte[]{0, 1, -1}, Files.readAllBytes(skillDir("alpha").resolve("assets/data.bin")));
-        var descriptor = manifestService.inspect(skillDir("alpha"), "agent-node").descriptor();
+        var inspection = manifestService.inspect(skillDir("alpha"), "agent-node");
+        assertTrue(inspection.valid());
+        var descriptor = inspection.descriptor();
         assertEquals("draft", descriptor.status());
         assertEquals("imported", descriptor.source());
         assertFalse(descriptor.enabled());

@@ -57,26 +57,6 @@ class SkillManifestServiceTest {
                 .anyMatch(issue -> issue.field().equals("manifest.enabled")));
     }
 
-    @Test
-    void importedSkillIsForcedToDraftAndDisabled() {
-        String imported = service.markImportedDraft(validManifest(true));
-        SkillInspection inspection = service.inspect(
-                "agent-node", "sample-skill", skillContent(), imported);
-
-        assertTrue(inspection.valid());
-        assertFalse(inspection.descriptor().enabled());
-        assertTrue("draft".equals(inspection.descriptor().status()));
-        assertTrue("imported".equals(inspection.descriptor().source()));
-    }
-
-    @Test
-    void requiredMetadataFilesCannotBeHiddenBehindDotPrefix() {
-        assertTrue(SkillFileService.isRequiredMetadataFile("SKILL.md"));
-        assertTrue(SkillFileService.isRequiredMetadataFile("./SKILL.md"));
-        assertTrue(SkillFileService.isRequiredMetadataFile("manifest.yaml"));
-        assertTrue(SkillFileService.isRequiredMetadataFile("./manifest.yaml"));
-    }
-
     private String skillContent() {
         return """
                 ---
