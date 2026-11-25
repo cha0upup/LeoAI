@@ -193,13 +193,14 @@ public class UserFileController {
     public HashMap<String, Object> preview(HttpServletRequest request,
                                            @RequestParam("path") String relativePath,
                                            @RequestParam(value = "size", required = false) Long size,
-                                           @RequestParam(defaultValue = "true") boolean includeBase64) {
+                                           @RequestParam(defaultValue = "true") boolean includeBase64,
+                                           @RequestParam(defaultValue = "false") boolean textOnly) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
             if (user == null) {
                 return ApiResponse.unauthorized("用户未登录");
             }
-            var preview = artifacts.preview(user.getUserId(), relativePath, size, includeBase64);
+            var preview = artifacts.preview(user.getUserId(), relativePath, size, includeBase64, textOnly);
             return preview == null ? ApiResponse.notFound("文件不存在") : ApiResponse.success(preview);
         } catch (NoSuchFileException e) {
             return ApiResponse.notFound("文件不存在");

@@ -117,7 +117,7 @@ class UserFileControllerTest {
                 case "create-file" -> controller.createFile(request, "notes/new.txt", "fixture", false);
                 case "create-dir" -> controller.createDir(request, "notes/new-folder");
                 case "list" -> controller.list(request, "notes", false, 1, 50, null, null, false);
-                case "preview" -> controller.preview(request, "notes/fixture.txt", null, true);
+                case "preview" -> controller.preview(request, "notes/fixture.txt", null, true, false);
                 case "archive" -> controller.archive(request,
                         new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
                 case "delete" -> controller.delete(request, "notes/fixture.txt", false);
@@ -564,7 +564,7 @@ class UserFileControllerTest {
         assertEquals("task-output", metadata.get("sourceModule"));
         assertEquals("job", metadata.get("sourceId"));
         assertEquals(1, artifacts.list(userId, "task-results", "", "task-output", 1, 50, false).get("count"));
-        assertEquals(200, controller.preview(authenticatedRequest(), source, null, true).get("code"));
+        assertEquals(200, controller.preview(authenticatedRequest(), source, null, true, false).get("code"));
         assertThrows(IllegalArgumentException.class, () -> artifacts.archive(userId,
                 new UserArtifactService.ArchiveRequest("task-results", "private.txt", null, "ai-tasks/job/.internal/private.txt", Map.of())));
         Files.createDirectory(original.resolveSibling("folder"));
@@ -731,7 +731,7 @@ class UserFileControllerTest {
             }
             return invocation.callRealMethod();
         })) {
-            var preview = controller.preview(request, "notes/report.txt", null, true);
+            var preview = controller.preview(request, "notes/report.txt", null, true, false);
             controller.download(request, "notes/report.txt", null, download);
             int expected = accessDenied ? 500 : 404;
             assertEquals(expected, preview.get("code"));
@@ -762,7 +762,7 @@ class UserFileControllerTest {
             }
             return result;
         })) {
-            response = controller.preview(request, "notes/preview.txt", 5L, true);
+            response = controller.preview(request, "notes/preview.txt", 5L, true, false);
         }
 
         assertEquals(200, response.get("code"), response::toString);
@@ -795,50 +795,104 @@ class UserFileControllerTest {
     }
 
     @Test
+    void textPreviewTruncatesAtWholeUtf8Characters() throws Exception {
+        var request = authenticatedRequest();
+        String path = "imports/notes.txt";
+        String content = "A你🙂Z\n\t";
+        assertEquals(200, controller.createFile(request, path, content, false).get("code"));
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        var session = (org.springframework.mock.web.MockHttpSession) request.getSession();
+
+        mvc.perform(get("/platform/user/file/preview").session(session).param("path", path)
+                        .param("textOnly", "true").param("size", "2"))
+                .andExpect(jsonPath("$.data.previewable").value(true))
+                .andExpect(jsonPath("$.data.content").value("A"))
+                .andExpect(jsonPath("$.data.previewSize").value(1))
+                .andExpect(jsonPath("$.data.size").value(11))
+                .andExpect(jsonPath("$.data.truncated").value(true))
+                .andExpect(jsonPath("$.data.contentBase64").doesNotHaveJsonPath());
+
+        var emojiPrefix = controller.preview(request, path, 7L, false, true);
+        assertEquals(Map.of("path", path, "size", 11L, "previewable", true, "previewSize", 4,
+                "truncated", true, "content", "A你"), emojiPrefix.get("data"));
+        var whole = controller.preview(request, path, null, false, true);
+        assertEquals(Map.of("path", path, "size", 11L, "previewable", true, "previewSize", 11,
+                "truncated", false, "content", content), whole.get("data"));
+        String emptyPath = "imports/empty.txt";
+        assertEquals(200, controller.createFile(request, emptyPath, "", false).get("code"));
+        assertEquals(Map.of("path", emptyPath, "size", 0L, "previewable", true, "previewSize", 0,
+                "truncated", false, "content", ""), controller.preview(request, emptyPath, null, false, true).get("data"));
+    }
+
+    @Test
+    void textPreviewOmitsContentsForBinaryAndMalformedUtf8() throws Exception {
+        var request = authenticatedRequest();
+        String path = "imports/fixture.txt";
+        assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
+        List<byte[]> samples = List.of(new byte[]{'a', 0, 'b'}, new byte[]{'a', (byte) 0xff},
+                new byte[]{'a', (byte) 0xe4, (byte) 0xbd});
+        for (byte[] bytes : samples) {
+            Files.write(workspace().resolve(path), bytes);
+            var result = controller.preview(request, path, null, true, true);
+            assertEquals(200, result.get("code"));
+            assertEquals(Map.of("path", path, "size", (long) bytes.length, "previewable", false), result.get("data"));
+        }
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        var session = (org.springframework.mock.web.MockHttpSession) request.getSession();
+        mvc.perform(get("/platform/user/file/preview").session(session).param("path", path).param("textOnly", "true"))
+                .andExpect(jsonPath("$.data.previewable").value(false))
+                .andExpect(jsonPath("$.data.content").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.contentBase64").doesNotHaveJsonPath());
+        mvc.perform(get("/platform/user/file/preview").session(session).param("path", path))
+                .andExpect(jsonPath("$.data.previewable").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.contentBase64").value("YeS9"));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void previewKeepsFileLimitsAndPathAccessChecks() throws Exception {
         var request = authenticatedRequest();
         controller.createFile(request, "notes/preview.txt", "hello fixture", false);
 
-        var result = controller.preview(request, "notes/preview.txt", 5L, true);
+        var result = controller.preview(request, "notes/preview.txt", 5L, true, false);
         assertEquals(200, result.get("code"));
         var preview = (Map<String, Object>) result.get("data");
         assertEquals("hello", preview.get("content"));
         assertEquals(5, preview.get("previewSize"));
         assertEquals(true, preview.get("truncated"));
         assertEquals("notes/preview.txt", preview.get("path"));
-        var complete = (Map<String, Object>) controller.preview(request, "notes/preview.txt", null, true).get("data");
+        var complete = (Map<String, Object>) controller.preview(request, "notes/preview.txt", null, true, false).get("data");
         assertEquals("hello fixture", complete.get("content"));
         assertEquals(13, complete.get("previewSize"));
         assertEquals(false, complete.get("truncated"));
-        var minimum = (Map<String, Object>) controller.preview(request, "notes/preview.txt", 0L, true).get("data");
+        var minimum = (Map<String, Object>) controller.preview(request, "notes/preview.txt", 0L, true, false).get("data");
         assertEquals(1, minimum.get("previewSize"));
         assertEquals("h", minimum.get("content"));
 
         byte[] binary = new byte[1024 * 1024 + 17];
         Arrays.fill(binary, (byte) 0xff);
         Files.write(workspace().resolve("notes/binary.bin"), binary);
-        var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE, true).get("data");
+        var maximum = (Map<String, Object>) controller.preview(request, "notes/binary.bin", Long.MAX_VALUE, true, false).get("data");
         assertEquals((long) binary.length, maximum.get("size"));
         assertEquals(1024 * 1024, maximum.get("previewSize"));
         assertEquals(true, maximum.get("truncated"));
         assertArrayEquals(Arrays.copyOf(binary, 1024 * 1024), Base64.getDecoder().decode((String) maximum.get("contentBase64")));
-        var defaultSize = (Map<String, Object>) controller.preview(request, "notes/binary.bin", null, true).get("data");
+        var defaultSize = (Map<String, Object>) controller.preview(request, "notes/binary.bin", null, true, false).get("data");
         assertEquals(64 * 1024, defaultSize.get("previewSize"));
 
         controller.createFile(request, "notes/empty.txt", "", false);
-        var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null, true).get("data");
+        var empty = (Map<String, Object>) controller.preview(request, "notes/empty.txt", null, true, false).get("data");
         assertEquals(0, empty.get("previewSize"));
         assertEquals("", empty.get("contentBase64"));
-        assertEquals(404, controller.preview(request, "notes", null, true).get("code"));
-        assertEquals(404, controller.preview(request, "notes/missing.txt", null, true).get("code"));
-        assertEquals(400, controller.preview(request, "../private.txt", null, true).get("code"));
-        assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null, true).get("code"));
+        assertEquals(404, controller.preview(request, "notes", null, true, false).get("code"));
+        assertEquals(404, controller.preview(request, "notes/missing.txt", null, true, false).get("code"));
+        assertEquals(400, controller.preview(request, "../private.txt", null, true, false).get("code"));
+        assertEquals(401, controller.preview(new MockHttpServletRequest(), "notes/preview.txt", null, true, false).get("code"));
 
         var userWithoutId = new MockHttpServletRequest();
         userWithoutId.getSession().setAttribute("user", new User());
         assertEquals(Map.of("code", 400, "msg", "用户信息无效"),
-                controller.preview(userWithoutId, "notes/preview.txt", null, true));
+                controller.preview(userWithoutId, "notes/preview.txt", null, true, false));
     }
 
     private MockHttpServletRequest authenticatedRequest() {

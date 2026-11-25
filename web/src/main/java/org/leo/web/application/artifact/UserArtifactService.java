@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -264,7 +265,8 @@ public class UserArtifactService {
     }
 
     /** Returns a bounded preview, or null when the requested path is not a file. */
-    public Map<String, Object> preview(String userId, String relativePath, Long size, boolean includeBase64) throws IOException {
+    public Map<String, Object> preview(String userId, String relativePath, Long size,
+                                       boolean includeBase64, boolean textOnly) throws IOException {
         Path base = readRoot(userId);
         Path target = findFile(base, relativePath);
         if (target == null) return null;
@@ -278,10 +280,37 @@ public class UserArtifactService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("path", relative(base, target));
         result.put("size", fileSize);
+        if (textOnly) {
+            return addTextPreview(result, actual, fileSize > actual.length);
+        }
         result.put("previewSize", actual.length);
         result.put("truncated", fileSize > actual.length);
         result.put("content", new String(actual, StandardCharsets.UTF_8));
         if (includeBase64) result.put("contentBase64", Base64.getEncoder().encodeToString(actual));
+        return result;
+    }
+
+    private static Map<String, Object> addTextPreview(Map<String, Object> result, byte[] bytes, boolean truncated) {
+        for (byte value : bytes) {
+            // Keep common text separators and ANSI escape sequences in logs.
+            if (value >= 0 && value < 32 && value != '\t' && value != '\n' && value != '\r'
+                    && value != '\f' && value != 27) {
+                result.put("previewable", false);
+                return result;
+            }
+        }
+        ByteBuffer input = ByteBuffer.wrap(bytes);
+        CharBuffer output = CharBuffer.allocate(bytes.length);
+        // For a truncated prefix, underflow may leave an incomplete UTF-8 character unconsumed.
+        if (StandardCharsets.UTF_8.newDecoder().decode(input, output, !truncated).isError()) {
+            result.put("previewable", false);
+            return result;
+        }
+        output.flip();
+        result.put("previewable", true);
+        result.put("previewSize", input.position());
+        result.put("truncated", truncated);
+        result.put("content", output.toString());
         return result;
     }
 
