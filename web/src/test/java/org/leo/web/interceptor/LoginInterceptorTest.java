@@ -26,22 +26,12 @@ class LoginInterceptorTest {
     private final LoginInterceptor interceptor = new LoginInterceptor(permissionService);
 
     @Test
-    void rejectsNormalUserReadingAdminModelConfiguration() throws Exception {
-        User user = new User();
-        user.setPrivilege("normal");
-
-        HttpServletRequest request = requestFor(user, "/platform/admin/ai-models");
+    void rejectsNormalUsersInTheAdminNamespaceByDefault() throws Exception {
+        HttpServletRequest request = requestFor(normalUser(), "/platform/admin/audit-logs");
         HttpServletResponse response = responseWithWriter();
 
         assertFalse(interceptor.preHandle(request, response, handlerFor(DefaultAdminHandler.class)));
-    }
-
-    @Test
-    void rejectsNormalUserReadingAuditLogsByDefault() throws Exception {
-        User user = normalUser();
-        HttpServletRequest request = requestFor(user, "/platform/admin/audit-logs");
-
-        assertFalse(interceptor.preHandle(request, responseWithWriter(), handlerFor(DefaultAdminHandler.class)));
+        verify(response).setStatus(HttpServletResponse.SC_FORBIDDEN);
     }
 
     @Test

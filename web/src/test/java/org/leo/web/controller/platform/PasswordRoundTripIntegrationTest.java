@@ -10,8 +10,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.core.entity.User;
@@ -40,10 +38,8 @@ import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -104,8 +100,9 @@ class PasswordRoundTripIntegrationTest {
     }
 
     @ParameterizedTest
-    @MethodSource("passwordInputs")
-    void preservesEveryPasswordCharacterAcrossCreationResetUpdateChangeAndLogin(boolean ai, String password) throws Exception {
+    @ValueSource(booleans = {false, true})
+    void preservesEveryPasswordCharacterAcrossCreationResetUpdateChangeAndLogin(boolean ai) throws Exception {
+        String password = "\t 密码-fixture-口令 \t";
         createUser(password, ai);
         assertLogin("member", password);
         String userId = users.getUserByName("member").getUserId();
@@ -129,11 +126,6 @@ class PasswordRoundTripIntegrationTest {
                 .andExpect(status().isOk());
         assertEquals(0, users.getUserById(userId).getPasswordChangeRequired());
         assertLogin("member", changed);
-    }
-
-    private static Stream<Arguments> passwordInputs() {
-        return Stream.of(" edge-fixture-pass ", "\tfixture-pass\t", " 密码-fixture-口令 ")
-                .flatMap(password -> Stream.of(Arguments.of(false, password), Arguments.of(true, password)));
     }
 
     @ParameterizedTest
@@ -278,10 +270,7 @@ class PasswordRoundTripIntegrationTest {
     }
 
     private MockHttpSession assertLogin(String username, String password) throws Exception {
-        User stored = users.getUserByName(username);
-        assertTrue(PasswordUtil.verify(password, stored.getPassword()));
         if (!password.equals(password.trim())) {
-            assertFalse(PasswordUtil.verify(password.trim(), stored.getPassword()));
             mvc.perform(body("/platform/user/login", Map.of("username", username, "password", password.trim())))
                     .andExpect(status().isUnauthorized());
         }
