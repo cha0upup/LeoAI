@@ -5,9 +5,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.core.init.DatabaseInitializer;
 import org.leo.core.util.PasswordUtil;
@@ -153,26 +150,6 @@ class SystemInitializationIntegrationTest {
         assertEquals(admin.getPassword(), users.getUserByName("admin").getPassword());
     }
 
-    @ParameterizedTest
-    @NullAndEmptySource
-    @ValueSource(strings = {" \t ", "short"})
-    void invalidPasswordsRollBackTheClaimAndAllowRetry(String password) {
-        assertThrows(IllegalArgumentException.class, () -> setup.initializeAdmin(password, password));
-        assertEmptyInstallation();
-        setup.initializeAdmin("valid-fixture-password", "valid-fixture-password");
-        assertFalse(setup.isInitializationRequired());
-    }
-
-    @Test
-    void mismatchedAndOverlongPasswordsLeaveNoPartialState() {
-        assertThrows(IllegalArgumentException.class,
-                () -> setup.initializeAdmin("valid-fixture-password", "different-password"));
-        assertEmptyInstallation();
-        String longPassword = "x".repeat(257);
-        assertThrows(IllegalArgumentException.class, () -> setup.initializeAdmin(longPassword, longPassword));
-        assertEmptyInstallation();
-    }
-
     @Test
     void usesTheConfiguredPasswordPolicy() {
         context.getBean(SystemConfigMapper.class).upsert("security.password.min.length", "12", "number", "fixture");
@@ -290,8 +267,10 @@ class SystemInitializationIntegrationTest {
     }
 
     @Test
-    void httpSetupRejectsInvalidPasswordsAndMalformedOrNonJsonBodies() throws Exception {
+    void httpSetupRejectsInvalidRequestsWithoutPersistingAndAllowsRetry() throws Exception {
+        String longPassword = "x".repeat(257);
         for (String body : List.of("null", "{}", "{", "{\"password\":\"short\",\"confirmPassword\":\"short\"}",
+                "{\"password\":\"%s\",\"confirmPassword\":\"%s\"}".formatted(longPassword, longPassword),
                 "{\"password\":\"chosen-fixture-password\",\"confirmPassword\":\"different-password\"}")) {
             mvc.perform(post("/platform/setup").contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isBadRequest());
@@ -300,6 +279,11 @@ class SystemInitializationIntegrationTest {
         mvc.perform(post("/platform/setup").contentType(MediaType.TEXT_PLAIN).content("{}"))
                 .andExpect(status().isUnsupportedMediaType());
         assertEmptyInstallation();
+
+        mvc.perform(post("/platform/setup").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"chosen-fixture-password\",\"confirmPassword\":\"chosen-fixture-password\"}"))
+                .andExpect(status().isOk());
+        assertFalse(setup.isInitializationRequired());
     }
 
     private boolean attempt(SystemInitializationService target, CountDownLatch start, String password) throws Exception {

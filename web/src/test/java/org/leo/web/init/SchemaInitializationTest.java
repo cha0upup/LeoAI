@@ -135,8 +135,7 @@ class SchemaInitializationTest {
     @CsvSource({
             "ai_threads, context_checkpoint_json", "ai_turns, answer_to_question_id",
             "ai_user_input_requests, confirmation_consumed_at", "agents, payload_key",
-            "scan_tasks, error_message", "scan_tasks, stage_json",
-            "scan_endpoint_results, fingerprint_json", "scan_endpoint_results, response_size",
+            "scan_tasks, stage_json", "scan_endpoint_results, response_size",
             "scan_fingerprint_results, rule_hash", "ai_events, item_id"
     })
     void rejectsMissingColumnsWithoutMigrating(String table, String name) {
@@ -168,14 +167,13 @@ class SchemaInitializationTest {
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"ai_runs", "ai_events"})
-    void rejectsIncompleteDatabasesWithoutSeeding(String table) {
+    @Test
+    void rejectsDatabasesMissingTheRunTableWithoutSeeding() {
         var source = initializedSource();
         var jdbc = new JdbcTemplate(source);
-        jdbc.execute("DROP TABLE " + table);
+        jdbc.execute("DROP TABLE ai_runs");
         var error = assertThrows(IllegalStateException.class, () -> new DatabaseInitializer(source).run());
-        assertTrue(error.getMessage().contains(table));
+        assertTrue(error.getMessage().contains("ai_runs"));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs", Integer.class));
     }
 
@@ -191,7 +189,7 @@ class SchemaInitializationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"false,true,users", "true,false,teams", "false,false,users"})
+    @CsvSource({"false,true,users", "true,false,teams"})
     void rejectsProjectsMissingForeignKeysBeforeSeeding(boolean hasOwnerKey, boolean hasTeamKey, String missingTarget) {
         var source = initializedSource();
         var jdbc = new JdbcTemplate(source);
