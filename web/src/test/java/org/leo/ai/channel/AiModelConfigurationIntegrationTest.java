@@ -5,8 +5,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -35,6 +33,8 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiModelConfigurationIntegrationTest {
+    private static final String DAMAGED_SECRET = "invalid-fixture-ciphertext";
+
     @TempDir Path temp;
     private AnnotationConfigApplicationContext context;
     private DataSource dataSource;
@@ -103,9 +103,8 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_configs", Integer.class));
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"", "api_key", "headers_json"})
-    void runtimeChangesOnlyAfterCommitAndDeletingTheDefaultClearsDelegates(String damagedColumn) {
+    @Test
+    void runtimeChangesOnlyAfterCommitAndDeletingTheDefaultClearsDelegates() {
         AiProvider provider = provider("primary");
         AiModelConfig first = model(provider, "first");
         AiProvider secondary = provider("secondary");
@@ -126,10 +125,7 @@ class AiModelConfigurationIntegrationTest {
         });
         assertNotSame(delegate, chat.getDelegate());
         assertEquals(second.getId(), configs.getActive().getId());
-        if (!damagedColumn.isEmpty()) {
-            jdbc.update("UPDATE ai_providers SET " + damagedColumn + "=? WHERE id=?",
-                    "invalid-fixture-ciphertext", secondary.getId());
-        }
+        damageStoredProviderSecrets(secondary.getId());
         assertTrue(configs.deleteById(second.getId()));
         assertFalse(configs.deleteById(second.getId()));
         assertNull(configs.findById(first.getId()).getFallbackModelId());
@@ -137,9 +133,8 @@ class AiModelConfigurationIntegrationTest {
         assertNull(chat.getDelegate());
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"", "api_key", "headers_json"})
-    void providerDeletionUsesItsWriteResultAndCascadesWithoutDecryptingCredentials(String damagedColumn) {
+    @Test
+    void providerDeletionUsesItsWriteResultAndCascadesWithoutDecryptingCredentials() {
         AiProvider removed = provider("removed");
         AiModelConfig active = model(removed, "active");
         AiModelConfig sibling = model(removed, "sibling");
@@ -150,19 +145,15 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_capability_observations WHERE provider_id=?",
                 Integer.class, removed.getId()));
 
-        if (damagedColumn.isEmpty()) {
-            Object delegate = chat.getDelegate();
-            jdbc.execute("CREATE TRIGGER preserve_provider BEFORE DELETE ON ai_providers BEGIN SELECT RAISE(IGNORE); END");
-            assertFalse(configs.deleteProvider(removed.getId()));
-            assertNotNull(configs.findById(active.getId()));
-            assertEquals(active.getId(), configs.findById(retained.getId()).getFallbackModelId());
-            assertSame(delegate, chat.getDelegate());
-            jdbc.execute("DROP TRIGGER preserve_provider");
-        } else {
-            jdbc.update("UPDATE ai_providers SET " + damagedColumn + "=? WHERE id=?",
-                    "invalid-fixture-ciphertext", removed.getId());
-        }
+        Object delegate = chat.getDelegate();
+        jdbc.execute("CREATE TRIGGER preserve_provider BEFORE DELETE ON ai_providers BEGIN SELECT RAISE(IGNORE); END");
+        assertFalse(configs.deleteProvider(removed.getId()));
+        assertNotNull(configs.findById(active.getId()));
+        assertEquals(active.getId(), configs.findById(retained.getId()).getFallbackModelId());
+        assertSame(delegate, chat.getDelegate());
+        jdbc.execute("DROP TRIGGER preserve_provider");
 
+        damageStoredProviderSecrets(removed.getId());
         assertTrue(configs.deleteProvider(removed.getId()));
         assertFalse(configs.deleteProvider(removed.getId()));
         assertNull(configs.findProviderById(removed.getId()));
@@ -240,15 +231,13 @@ class AiModelConfigurationIntegrationTest {
                 .map(AiModelConfig::getId).collect(Collectors.toSet()));
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"api_key", "headers_json"})
-    void providerUpdateDoesNotDependOnUnrelatedProviderCredentials(String secretColumn) {
+    @Test
+    void providerUpdateDoesNotDependOnUnrelatedProviderCredentials() {
         AiProvider primary = provider("primary");
         AiModelConfig active = model(primary, "active");
         AiProvider unrelated = provider("unrelated");
         model(unrelated, "unrelated");
-        String invalidSecret = "invalid-fixture-ciphertext";
-        jdbc.update("UPDATE ai_providers SET " + secretColumn + "=? WHERE id=?", invalidSecret, unrelated.getId());
+        damageStoredProviderSecrets(unrelated.getId());
         AiProvider patch = new AiProvider();
         patch.setName("updated-provider");
         patch.setApiKey("replacement-key");
@@ -265,8 +254,8 @@ class AiModelConfigurationIntegrationTest {
                 "SELECT api_key FROM ai_providers WHERE id=?", String.class, primary.getId())));
         assertTrue(crypto.isEncrypted(jdbc.queryForObject(
                 "SELECT headers_json FROM ai_providers WHERE id=?", String.class, primary.getId())));
-        assertEquals(invalidSecret, jdbc.queryForObject(
-                "SELECT " + secretColumn + " FROM ai_providers WHERE id=?", String.class, unrelated.getId()));
+        assertEquals(Map.of("api_key", DAMAGED_SECRET, "headers_json", DAMAGED_SECRET), jdbc.queryForMap(
+                "SELECT api_key, headers_json FROM ai_providers WHERE id=?", unrelated.getId()));
         assertNotNull(chat.getDelegate());
     }
 
@@ -483,6 +472,10 @@ class AiModelConfigurationIntegrationTest {
         assertEquals("kimi", saved.getProviderKey());
         assertEquals("https://api.moonshot.cn/v1", saved.getBaseUrl());
         assertNotNull(chat.getDelegate());
+    }
+
+    private void damageStoredProviderSecrets(int providerId) {
+        jdbc.update("UPDATE ai_providers SET api_key=?, headers_json=? WHERE id=?", DAMAGED_SECRET, DAMAGED_SECRET, providerId);
     }
 
     private AiProvider provider(String name) {
