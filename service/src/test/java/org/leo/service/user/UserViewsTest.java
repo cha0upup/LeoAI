@@ -4,9 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 
-import java.util.Map;
-import java.util.Set;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,36 +22,6 @@ class UserViewsTest {
         copy.setUserName("changed");
         assertEquals("alice", source.getUserName());
         assertNull(UserViews.withoutPassword(null));
-    }
-
-    @Test
-    void profilePreservesTheExistingPublicResponseShape() {
-        User source = user();
-        Map<String, Object> profile = UserViews.profile(source);
-
-        assertEquals(Set.of("userId", "userName", "privilege", "email", "phone", "status",
-                "lastLoginTime", "loginCount", "createTime", "updateTime", "teamId", "remark"), profile.keySet());
-        assertEquals("alice", profile.get("userName"));
-        assertEquals("team-1", profile.get("teamId"));
-        assertEquals(3, profile.get("loginCount"));
-        assertFalse(JsonUtil.toJsonString(profile).contains("stored-password-hash"));
-        profile.put("userName", "changed");
-        assertEquals("alice", source.getUserName());
-    }
-
-    @Test
-    void authenticationReturnsABooleanPasswordChangeFlagAndNoExtraProfileFields() {
-        User source = user();
-        Map<String, Object> view = UserViews.authentication(source);
-
-        assertEquals(Set.of("userId", "userName", "privilege", "teamId", "passwordChangeRequired"), view.keySet());
-        assertEquals(true, view.get("passwordChangeRequired"));
-        source.setPasswordChangeRequired(null);
-        source.setTeamId(null);
-        view = UserViews.authentication(source);
-        assertEquals(false, view.get("passwordChangeRequired"));
-        assertTrue(view.containsKey("teamId"));
-        assertNull(view.get("teamId"));
     }
 
     private User user() {

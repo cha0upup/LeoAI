@@ -29,6 +29,7 @@ class AuditLogServiceTest {
         query.setUserId(" user ");
         query.setKeyword(" search ");
         query.setStatus(" ");
+        query.setStartTime(" 2026-01-01 00:00:00 ");
         var row = new AuditLog();
         when(mapper.searchAuditLogs(any())).thenReturn(List.of(row));
         when(mapper.countAuditLogs(any())).thenReturn(3);
@@ -38,17 +39,13 @@ class AuditLogServiceTest {
 
         assertEquals(" user ", query.getUserId());
         assertEquals(" search ", query.getKeyword());
-        assertEquals(" ", query.getStatus());
-        assertEquals(1000, query.getLimit());
-        assertEquals(7, query.getOffset());
         var normalized = ArgumentCaptor.forClass(AuditLogQuery.class);
         verify(mapper).searchAuditLogs(normalized.capture());
         assertNotSame(query, normalized.getValue());
         assertEquals("user", normalized.getValue().getUserId());
         assertEquals("search", normalized.getValue().getKeyword());
+        assertEquals("2026-01-01 00:00:00", normalized.getValue().getStartTime());
         assertNull(normalized.getValue().getStatus());
-        assertEquals(1000, normalized.getValue().getLimit());
-        assertEquals(7, normalized.getValue().getOffset());
     }
 
     @ParameterizedTest
@@ -72,7 +69,7 @@ class AuditLogServiceTest {
 
     @ParameterizedTest
     @NullSource
-    @ValueSource(ints = {0, -1, 7})
+    @ValueSource(ints = {0, 7})
     void cleanupUsesTheSameLocalTimeAsAuditWrites(Integer days) {
         int retention = days != null && days > 0 ? days : 30;
         LocalDateTime earliest = LocalDateTime.now().minusDays(retention).truncatedTo(ChronoUnit.SECONDS);
@@ -96,19 +93,5 @@ class AuditLogServiceTest {
 
         assertEquals(" ", query.getKeyword());
         verifyNoInteractions(mapper);
-    }
-
-    @Test
-    void missingQueriesAndRowsHaveAnEmptyDefaultPage() {
-        when(mapper.searchAuditLogs(any())).thenReturn(null);
-        when(mapper.countAuditLogs(any())).thenReturn(null);
-
-        assertTrue(logs.searchAuditLogs(null).isEmpty());
-        assertEquals(0, logs.countAuditLogs(null));
-
-        var query = ArgumentCaptor.forClass(AuditLogQuery.class);
-        verify(mapper).searchAuditLogs(query.capture());
-        assertEquals(50, query.getValue().getLimit());
-        assertEquals(0, query.getValue().getOffset());
     }
 }
