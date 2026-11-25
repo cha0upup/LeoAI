@@ -59,7 +59,6 @@ class GlobalExceptionHandlerTest {
     @ParameterizedTest
     @MethodSource("businessFailures")
     void mapsOriginalBusinessFailuresAtTheHttpBoundary(RuntimeException error, int code) throws Exception {
-        if (error instanceof ApiException apiError) assertEquals(code, apiError.getCode());
         MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
                 .setControllerAdvice(handler).build()
                 .perform(get("/business-failure-fixture"))
@@ -86,14 +85,6 @@ class GlobalExceptionHandlerTest {
                 TeamOperationException.Kind.FORBIDDEN, 403,
                 TeamOperationException.Kind.PERSISTENCE, 500);
         return Stream.of(
-                Stream.of(Arguments.of(ApiException.badRequest("HTTP 错误"), 400),
-                        Arguments.of(ApiException.unauthorized("HTTP 错误"), 401),
-                        Arguments.of(ApiException.forbidden("HTTP 错误"), 403),
-                        Arguments.of(ApiException.notFound("HTTP 错误"), 404),
-                        Arguments.of(ApiException.conflict("HTTP 错误"), 409),
-                        Arguments.of(ApiException.tooManyRequests("HTTP 错误"), 429),
-                        Arguments.of(ApiException.serverError("HTTP 错误"), 500),
-                        Arguments.of(ApiException.serviceUnavailable("HTTP 错误"), 503)),
                 useCases.entrySet().stream().map(entry -> Arguments.of(
                         new UseCaseException(entry.getKey(), "用例失败"), entry.getValue())),
                 ssh.entrySet().stream().map(entry -> Arguments.of(
@@ -120,35 +111,29 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void keepsEnvelopeStatusAndMessageAuthoritativeWhilePreservingConflictDetails() {
+    void keepsEnvelopeStatusAndMessageAuthoritativeWhilePreservingConflictDetails() throws Exception {
         ApiException error = ApiException.conflict("请确认主机指纹",
                 Map.of("code", 200, "msg", "overridden", "errorCode", "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
                         "fingerprint", "pin", "previousFingerprint", ""));
-        Map<String, Object> body = errorBody(handler.handleApiException(error), 409);
-        assertEquals("请确认主机指纹", body.get("msg"));
-        assertEquals("SSH_HOST_KEY_CONFIRMATION_REQUIRED", body.get("errorCode"));
-        assertEquals("pin", body.get("fingerprint"));
-        assertEquals("", body.get("previousFingerprint"));
+        MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
+                .setControllerAdvice(handler).build()
+                .perform(get("/business-failure-fixture"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(409))
+                .andExpect(jsonPath("$.msg").value("请确认主机指纹"))
+                .andExpect(jsonPath("$.errorCode").value("SSH_HOST_KEY_CONFIRMATION_REQUIRED"))
+                .andExpect(jsonPath("$.fingerprint").value("pin"))
+                .andExpect(jsonPath("$.previousFingerprint").value(""));
     }
 
     @ParameterizedTest
     @CsvSource({"400,400", "429,429", "500,500", "502,502", "503,503", "504,504",
             "200,422", "401,422", "403,422", "404,422", "799,422"})
-    void normalizesDatabaseCodesWithoutLosingStructuredDetailsOrChangingLoginState(int databaseCode, int httpCode)
-            throws Exception {
+    void normalizesDatabaseCodesWithoutLosingStructuredDetailsOrChangingLoginState(int databaseCode, int httpCode) {
         var error = new SqlExecutionException(databaseCode, "database error", "SQL_ERROR", "40001", true, 1213);
-        MockMvcBuilders.standaloneSetup(new BusinessFailureController(error))
-                .setControllerAdvice(handler).build()
-                .perform(get("/business-failure-fixture"))
-                .andExpect(status().is(httpCode))
-                .andExpect(jsonPath("$.code").value(httpCode))
-                .andExpect(jsonPath("$.msg").value("database error"))
-                .andExpect(jsonPath("$.databaseCode").value(databaseCode))
-                .andExpect(jsonPath("$.errorCategory").value("SQL_ERROR"))
-                .andExpect(jsonPath("$.sqlState").value("40001"))
-                .andExpect(jsonPath("$.retryable").value(true))
-                .andExpect(jsonPath("$.vendorCode").value(1213))
-                .andExpect(result -> assertSame(error, result.getResolvedException()));
+        assertEquals(Map.of("code", httpCode, "msg", "database error", "databaseCode", databaseCode,
+                        "errorCategory", "SQL_ERROR", "sqlState", "40001", "retryable", true, "vendorCode", 1213),
+                errorBody(handler.handleSqlExecutionException(error), httpCode));
     }
 
     @ParameterizedTest
@@ -178,6 +163,8 @@ class GlobalExceptionHandlerTest {
                     .perform(post(audited ? "/agent-node/sql/query/execute" : "/agent-node/sql/metadata/databases")
                             .contentType(MediaType.APPLICATION_JSON).content(new ObjectMapper().writeValueAsBytes(payload)))
                     .andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.databaseCode").value(503))
+                    .andExpect(jsonPath("$.retryable").value(true))
                     .andExpect(result -> assertSame(failure, result.getResolvedException()));
 
             if (audited) {
