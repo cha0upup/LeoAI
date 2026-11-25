@@ -1,5 +1,7 @@
 package org.leo.web.controller.platform.admin;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
@@ -104,13 +106,26 @@ public class UserController {
 
     // ── 用户创建 ─────────────────────────────────────────────────────────────────
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static final class CreateUserRequest {
+        public String userName;
+        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+        public String password;
+        public String privilege;
+        public String teamId;
+        public Integer status;
+        public String email;
+        public String phone;
+        public String remark;
+    }
+
     @RequestMapping(value = "/users", method = RequestMethod.POST)
-    public HashMap<String, Object> addUser(HttpServletRequest request, @RequestBody User user) {
+    public HashMap<String, Object> addUser(HttpServletRequest request, @RequestBody CreateUserRequest input) {
         User caller = ControllerUtil.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
-        if (user == null) return ApiResponse.badRequest("user参数不能为空");
+        if (input == null) return ApiResponse.badRequest("user参数不能为空");
 
-        String targetName = user.getUserName();
+        String targetName = input.userName;
         if (targetName == null || targetName.isBlank()) {
             return ApiResponse.badRequest("用户名不能为空");
         }
@@ -118,26 +133,24 @@ public class UserController {
         if (targetName.length() > MAX_USERNAME_LENGTH) {
             return ApiResponse.badRequest("用户名不能超过 " + MAX_USERNAME_LENGTH + " 个字符");
         }
-        user.setUserName(targetName);
-        if (user.getPassword() == null || user.getPassword().isBlank()) {
+        if (input.password == null || input.password.isBlank()) {
             return ApiResponse.badRequest("密码不能为空");
         }
         try {
-            passwordPolicy.validate(user.getPassword());
+            passwordPolicy.validate(input.password);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
-        if (exceeds(user.getEmail(), MAX_EMAIL_LENGTH)) {
+        if (exceeds(input.email, MAX_EMAIL_LENGTH)) {
             return ApiResponse.badRequest("邮箱不能超过 " + MAX_EMAIL_LENGTH + " 个字符");
         }
-        if (exceeds(user.getPhone(), MAX_PHONE_LENGTH)) {
+        if (exceeds(input.phone, MAX_PHONE_LENGTH)) {
             return ApiResponse.badRequest("手机号不能超过 " + MAX_PHONE_LENGTH + " 个字符");
         }
 
         // 确定目标角色
-        String targetPrivilege = normalizePrivilege(user.getPrivilege());
-        String targetTeamId = normalizeNullableId(user.getTeamId());
-        user.setTeamId(targetTeamId);
+        String targetPrivilege = normalizePrivilege(input.privilege);
+        String targetTeamId = normalizeNullableId(input.teamId);
 
         // 权限校验
         try {
@@ -150,10 +163,16 @@ public class UserController {
             return ApiResponse.badRequest("用户名已存在");
         }
 
+        User user = new User();
         user.setUserId(UUID.randomUUID().toString());
+        user.setUserName(targetName);
         user.setPrivilege(targetPrivilege);
-        user.setPassword(PasswordUtil.hash(user.getPassword()));
-        user.setStatus(normalizeStatus(user.getStatus(), 1));
+        user.setTeamId(targetTeamId);
+        user.setPassword(PasswordUtil.hash(input.password));
+        user.setStatus(normalizeStatus(input.status, 1));
+        user.setEmail(input.email);
+        user.setPhone(input.phone);
+        user.setRemark(input.remark);
         user.setLoginCount(0);
         user.setPasswordChangeRequired(1);
 

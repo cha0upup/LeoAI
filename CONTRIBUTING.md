@@ -82,8 +82,9 @@
 
 - `GET /platform/user/file/download` 仅下载当前登录用户的任务输出。任务文件引用通过 `userWorkspacePath` 提供路径，并通过 `downloadEndpoint` 提供下载地址。
 
-## 个人资料写入
+## 账号与资料写入
 
+- `POST /platform/admin/users` 接收用户名、密码、角色、团队、状态及可选联系资料和备注。用户 ID、登录记录和首次改密标志由服务端维护，客户端提交这些内部字段不会影响新账号。
 - `POST /platform/user/profile` 只更新邮箱、手机号和备注，仍使用请求内已校验用户的账号版本处理并发。账号在校验后发生变化时返回 409；成功响应不包含密码，也不替换会话中的凭据。
 
 ## 注意事项

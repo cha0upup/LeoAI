@@ -7,8 +7,11 @@ import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.core.entity.UserOption;
+import org.leo.core.util.PasswordUtil;
 import org.leo.service.user.UserService;
 import org.leo.service.user.PasswordPolicy;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -18,6 +21,9 @@ import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -25,6 +31,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 class UserControllerTest {
@@ -39,6 +46,41 @@ class UserControllerTest {
         request.getSession().setAttribute("user", cachedUser);
         assertEquals(401, controller.getUsers(request).get("code"));
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void accountCreationBindsProfileFieldsButNotServerManagedState() throws Exception {
+        User caller = account("manager", "admin", null);
+        when(service.addUser(any())).thenReturn(true);
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/admin/users").sessionAttr("user", caller)
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {
+                                  "userName":" Alice ", "password":" fixture-password ",
+                                  "privilege":"normal", "teamId":" team-1 ", "status":0,
+                                  "email":"alice@example.test", "phone":"12345", "remark":"fixture note",
+                                  "userId":"client-id", "lastLoginTime":"2026-01-01 00:00:00",
+                                  "loginCount":99, "passwordChangeRequired":0
+                                }
+                                """))
+                .andExpect(jsonPath("$.code").value(200));
+
+        var saved = ArgumentCaptor.forClass(User.class);
+        verify(service).checkCreatePermission(caller, "normal", "team-1");
+        verify(service).addUser(saved.capture());
+        User user = saved.getValue();
+        assertEquals("Alice", user.getUserName());
+        assertEquals("normal", user.getPrivilege());
+        assertEquals("team-1", user.getTeamId());
+        assertEquals(0, user.getStatus());
+        assertEquals("alice@example.test", user.getEmail());
+        assertEquals("12345", user.getPhone());
+        assertEquals("fixture note", user.getRemark());
+        assertTrue(PasswordUtil.verify(" fixture-password ", user.getPassword()));
+        assertNotEquals("client-id", user.getUserId());
+        assertNull(user.getLastLoginTime());
+        assertEquals(0, user.getLoginCount());
+        assertEquals(1, user.getPasswordChangeRequired());
     }
 
     @ParameterizedTest

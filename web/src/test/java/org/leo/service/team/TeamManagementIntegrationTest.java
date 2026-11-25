@@ -374,9 +374,9 @@ class TeamManagementIntegrationTest {
         admin.setUserId("fixture-admin");
         admin.setPrivilege("admin");
         request.getSession().setAttribute("user", admin);
-        User input = new User();
-        input.setUserName(" ORIGINAL ");
-        input.setPassword("fixture-password");
+        var input = new UserController.CreateUserRequest();
+        input.userName = " ORIGINAL ";
+        input.password = "fixture-password";
 
         var creation = controller.addUser(request, input);
         var rename = controller.updateUser(request, new HashMap<>(Map.of("userId", "member", "userName", " ORIGINAL ")));
