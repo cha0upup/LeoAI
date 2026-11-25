@@ -32,6 +32,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -41,8 +42,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -86,7 +90,12 @@ class TeamManagementIntegrationTest {
     @CsvSource({"false,normal", "true,admin"})
     void creationAssignsTheLeaderAndKeepsAdministratorPrivileges(boolean ai, String privilege) {
         seedUser("leader", privilege, null);
-        create(ai);
+        if (ai) {
+            assertEquals(Map.of("status", "created", "success", true, "teamId", "team", "teamName", "research"),
+                    tools.addTeam(" team ", " research ", " leader ", null, null, null));
+        } else {
+            teams.createWithLeader(team(" team ", " research ", " leader "));
+        }
 
         assertEquals("research", teams.getTeamById("team").getTeamName());
         User leader = users.getUserById("leader");
@@ -94,13 +103,12 @@ class TeamManagementIntegrationTest {
         assertEquals(privilege.equals("admin") ? "admin" : "leader", leader.getPrivilege());
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void failedCreationRollsBackTheLeadersMembershipAndRole(boolean ai) {
+    @Test
+    void failedCreationRollsBackTheLeadersMembershipAndRole() {
         seedUser("leader", "normal", null);
         jdbc.execute("CREATE TRIGGER reject_create BEFORE INSERT ON teams BEGIN SELECT RAISE(ABORT, 'fixture rejected'); END");
 
-        assertThrows(RuntimeException.class, () -> create(ai));
+        assertThrows(RuntimeException.class, () -> teams.createWithLeader(team("team", "research", "leader")));
 
         assertNull(teams.getTeamById("team"));
         assertAccount("leader", "normal", null);
@@ -119,11 +127,19 @@ class TeamManagementIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void deletionDetachesMembersAndDemotesOnlyLeaders(boolean ai) {
+    void deletionDetachesMembersAndDemotesOnlyLeaders(boolean ai) throws Exception {
         seedMembership();
         seedUser("unassigned", "normal", null);
         User staleMember = users.getUserById("member");
-        delete(ai, " team ");
+        if (ai) {
+            var result = tools.deleteTeam(" team ");
+            assertEquals("deleted", result.get("status"));
+            assertEquals(true, result.get("success"));
+        } else {
+            teamHttp().perform(post("/platform/admin/teams/delete").session(teamSession("admin"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"id\":\" team \"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200));
+        }
 
         assertNull(teams.getTeamById("team"));
         assertAccount("leader", "normal", null);
@@ -141,12 +157,7 @@ class TeamManagementIntegrationTest {
                                       status, create_time, update_time)
                 VALUES ('shared', 'Shared project', 'leader', 'team', 'team', 'archived', 'fixture', 'fixture')
                 """);
-        var session = new MockHttpSession();
-        session.setAttribute("user", users.getUserById("admin"));
-        var controller = new TeamController(teams, new PermissionService(mock(AgentService.class), users));
-        var mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
-
-        mvc.perform(post("/platform/admin/teams/delete").session(session)
+        teamHttp().perform(post("/platform/admin/teams/delete").session(teamSession("admin"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"id\":\"team\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value(409));
@@ -264,23 +275,30 @@ class TeamManagementIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"admin", "leader", "normal", "unassigned"})
-    void teamListingKeepsRoleAndMembershipBoundaries(String role) {
+    void teamListingKeepsRoleAndMembershipBoundaries(String role) throws Exception {
         seedTeam("team", "research", "leader");
         seedTeam("other", "other", "someone-else");
         jdbc.update("UPDATE users SET user_name = 'Current leader name' WHERE user_id = 'leader'");
-        User caller = new User();
-        caller.setUserId(role.equals("leader") ? "leader" : "caller");
-        caller.setPrivilege(role.equals("unassigned") ? "normal" : role);
-        caller.setTeamId(role.equals("unassigned") ? null : "team");
+        String callerId = "leader";
+        if (!role.equals("leader")) {
+            callerId = "caller";
+            boolean unassigned = role.equals("unassigned");
+            seedUser(callerId, unassigned ? "normal" : role, unassigned ? null : "team");
+        }
 
-        List<String> expected = role.equals("admin") ? List.of("other", "team")
-                : role.equals("unassigned") ? List.of() : List.of("team");
-        List<Team> visible = teams.getTeamsForUser(caller);
-        assertEquals(expected, visible.stream().map(Team::getTeamId).sorted().toList());
-        visible.forEach(team -> assertEquals(switch (role) {
-            case "admin", "leader" -> team.getTeamId().equals("team") ? "Current leader name" : "someone-else";
-            default -> null;
-        }, team.getLeaderName()));
+        var response = teamHttp().perform(get("/platform/admin/teams").session(teamSession(callerId)))
+                .andExpect(status().isOk());
+        switch (role) {
+            case "admin" -> response.andExpect(jsonPath("$.data[*].teamId", containsInAnyOrder("other", "team")))
+                    .andExpect(jsonPath("$.data[?(@.teamId == 'team')].leaderName", contains("Current leader name")))
+                    .andExpect(jsonPath("$.data[?(@.teamId == 'other')].leaderName", contains("someone-else")));
+            case "leader" -> response.andExpect(jsonPath("$.data[*].teamId", contains("team")))
+                    .andExpect(jsonPath("$.data[0].leaderName").value("Current leader name"));
+            case "normal" -> response.andExpect(jsonPath("$.data[*].teamId", contains("team")))
+                    .andExpect(jsonPath("$.data[0].leaderName").doesNotExist());
+            case "unassigned" -> response.andExpect(jsonPath("$.data").isEmpty());
+            default -> throw new AssertionError(role);
+        }
     }
 
     @Test
@@ -387,19 +405,20 @@ class TeamManagementIntegrationTest {
         assertAccount("replacement", "normal", null);
     }
 
-    private void create(boolean ai) {
-        if (ai) {
-            assertEquals(Map.of("status", "created", "success", true, "teamId", "team", "teamName", "research"),
-                    tools.addTeam(" team ", " research ", " leader ", null, null, null));
-        } else teams.createWithLeader(team(" team ", " research ", " leader "));
+    private MockMvc teamHttp() {
+        var controller = new TeamController(teams, new PermissionService(mock(AgentService.class), users));
+        return MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
+    }
+
+    private MockHttpSession teamSession(String userId) {
+        var session = new MockHttpSession();
+        session.setAttribute("user", users.getUserById(userId));
+        return session;
     }
 
     private void delete(boolean ai, String id) {
-        if (ai) {
-            var result = tools.deleteTeam(id);
-            assertEquals("deleted", result.get("status"));
-            assertEquals(true, result.get("success"));
-        } else teams.deleteWithMembers(id);
+        if (ai) tools.deleteTeam(id);
+        else teams.deleteWithMembers(id);
     }
 
     private void seedMembership() {

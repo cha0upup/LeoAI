@@ -15,8 +15,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.*;
@@ -37,21 +35,6 @@ class TeamControllerTest {
     }
 
     @Test
-    void listsOnlyTheTeamsSelectedForTheVerifiedCaller() throws Exception {
-        Team team = new Team();
-        team.setTeamId("visible");
-        team.setLeaderName("Leader name");
-        when(teams.getTeamsForUser(caller)).thenReturn(List.of(team));
-
-        mvc.perform(get("/platform/admin/teams"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].teamId").value("visible"))
-                .andExpect(jsonPath("$.data[0].leaderName").value("Leader name"));
-
-        verify(teams).getTeamsForUser(same(caller));
-    }
-
-    @Test
     void createKeepsTheRequestAndResponseContract() throws Exception {
         mvc.perform(post("/platform/admin/teams").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"teamId\":\"team\",\"teamName\":\"research\",\"leaderId\":\"leader\",\"leaderName\":\"ignored\"}"))
@@ -63,15 +46,6 @@ class TeamControllerTest {
         assertEquals("research", team.getValue().getTeamName());
         assertEquals("leader", team.getValue().getLeaderId());
         assertNull(team.getValue().getLeaderName());
-        verify(permissions).requireAdmin(caller);
-    }
-
-    @Test
-    void deleteKeepsTheIdPayloadAndDelegatesOneCompleteOperation() throws Exception {
-        mvc.perform(post("/platform/admin/teams/delete").contentType(MediaType.APPLICATION_JSON).content("{\"id\":\"team\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200));
-
-        verify(teams).deleteWithMembers("team");
         verify(permissions).requireAdmin(caller);
     }
 
