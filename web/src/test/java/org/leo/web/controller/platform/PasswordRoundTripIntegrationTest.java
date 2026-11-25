@@ -202,8 +202,7 @@ class PasswordRoundTripIntegrationTest {
                             Map.of("userId", userId, "newPassword", "replacement-fixture-password"))
                             .session(adminSession))
                     .andExpect(status().isOk());
-            profile.setEmail("member@example.test");
-            assertFalse(editor.updateUser(profile));
+            assertNull(editor.updateProfile(profile, "member@example.test", null, null));
         }
         User stored = users.getUserById(userId);
         assertTrue(PasswordUtil.verify("replacement-fixture-password", stored.getPassword()));
@@ -228,6 +227,26 @@ class PasswordRoundTripIntegrationTest {
         assertEquals("member@example.test", stored.getEmail());
         assertEquals(1, stored.getLoginCount());
         assertNotNull(stored.getLastLoginTime());
+    }
+
+    @Test
+    void profileWriteReturnsCurrentPublicFieldsAndLeavesTheAccountSnapshotUntouched() {
+        User verified = users.getUserById("fixture-admin");
+        assertNotNull(users.recordSuccessfulLogin(verified.getUserId(), verified.getPassword()));
+
+        User profile = users.updateProfile(verified, "example@example.test", null, "notes");
+
+        assertNotNull(profile);
+        assertEquals("example@example.test", profile.getEmail());
+        assertEquals("notes", profile.getRemark());
+        assertEquals(1, profile.getLoginCount());
+        assertNotNull(profile.getLastLoginTime());
+        assertEquals(verified.getAccountRevision() + 1, profile.getAccountRevision());
+        assertNull(profile.getPassword());
+        assertNull(verified.getEmail());
+        User stored = users.getUserById(verified.getUserId());
+        assertEquals(verified.getPassword(), stored.getPassword());
+        assertEquals(verified.getPrivilege(), stored.getPrivilege());
     }
 
     @ParameterizedTest

@@ -3,6 +3,7 @@ package org.leo.dao.mapper;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -87,6 +88,17 @@ public interface UserMapper {
             WHERE user_id=#{user.userId} AND account_revision=#{user.accountRevision}
             """)
     boolean updateUserById(@Param("user") User user, @Param("timestamp") String timestamp);
+
+    @Select(value = """
+            UPDATE users SET email=#{email}, phone=#{phone}, remark=#{remark},
+                update_time=#{timestamp}, account_revision=account_revision + 1
+            WHERE user_id=#{userId} AND status=1 AND account_revision=#{accountRevision}
+            RETURNING
+            """ + USER_LIST_COLUMNS, affectData = true)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    User updateProfile(@Param("userId") String userId, @Param("accountRevision") long accountRevision,
+                       @Param("email") String email, @Param("phone") String phone, @Param("remark") String remark,
+                       @Param("timestamp") String timestamp);
 
     @Update("""
             UPDATE users SET team_id=NULL, update_time=#{timestamp}, account_revision=account_revision + 1,

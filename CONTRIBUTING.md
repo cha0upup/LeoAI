@@ -80,6 +80,10 @@
 - `GET /platform/user/file/overview?includeRecent=false` 跳过最近文件和元数据读取，`recentFiles` 返回空数组，分类和总计不变。
 - `GET /platform/user/file/preview?includeBase64=false` 仅省略 `contentBase64`，文本、大小和截断标记不变。两个参数均默认 `true`，旧请求无需调整。
 
+## 个人资料写入
+
+- `POST /platform/user/profile` 只更新邮箱、手机号和备注，仍使用请求内已校验用户的账号版本处理并发。账号在校验后发生变化时返回 409；成功响应不包含密码，也不替换会话中的凭据。
+
 ## 注意事项
 
 - 发布入口会安装 lockfile 依赖，执行前端 lint/测试/构建、静态目录逐文件比对、组件 Java 6 API 与运行字节码检查、工具测试以及后端 `clean verify`。本地已准备依赖时可使用 `--skip-install`，CI 使用完整入口。

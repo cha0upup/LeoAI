@@ -101,6 +101,12 @@ public class UserService {
         return true;
     }
 
+    /** Writes only editable profile fields and leaves the verified account snapshot untouched. */
+    public User updateProfile(User verifiedUser, String email, String phone, String remark) {
+        return userMapper.updateProfile(verifiedUser.getUserId(), verifiedUser.getAccountRevision(),
+                email, phone, remark, now());
+    }
+
     public boolean delUser(String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("userId不能为空");
         return userMapper.delUser(userId.trim());

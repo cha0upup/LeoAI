@@ -204,10 +204,12 @@ class LoginControllerTest {
         storedUser.setPrivilege(UserService.PRIVILEGE_NORMAL);
         storedUser.setTeamId("team-1");
         storedUser.setStatus(1);
+        storedUser.setEmail("alice@example.com");
+        storedUser.setPhone("13800138000");
         when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(sessionUser);
-        when(userService.getUserById("user-1")).thenReturn(storedUser);
-        when(userService.updateUser(storedUser)).thenReturn(true);
+        when(userService.updateProfile(sessionUser, "alice@example.com", "13800138000", null))
+                .thenReturn(storedUser);
         var session = new MockHttpSession();
         session.setAttribute("user", sessionUser);
         MockMvcBuilders.standaloneSetup(controller).build()
@@ -215,14 +217,31 @@ class LoginControllerTest {
                         .content("""
                                 {"email":" alice@example.com ","phone":" 13800138000 ","remark":"  "}
                                 """))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200));
-        assertEquals("alice@example.com", storedUser.getEmail());
-        assertEquals("13800138000", storedUser.getPhone());
-        assertNull(storedUser.getRemark());
-        assertEquals("alice", storedUser.getUserName());
-        assertEquals("team-1", storedUser.getTeamId());
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.email").value("alice@example.com"))
+                .andExpect(jsonPath("$.data.phone").value("13800138000"))
+                .andExpect(jsonPath("$.data.remark").hasJsonPath())
+                .andExpect(jsonPath("$.data.userName").value("alice"))
+                .andExpect(jsonPath("$.data.teamId").value("team-1"))
+                .andExpect(jsonPath("$.data.password").doesNotHaveJsonPath());
+        assertNull(sessionUser.getEmail());
         assertSame(sessionUser, session.getAttribute("user"));
-        verify(userService).updateUser(storedUser);
+        verify(userService).updateProfile(sessionUser, "alice@example.com", "13800138000", null);
+        org.mockito.Mockito.verifyNoMoreInteractions(userService);
+    }
+
+    @Test
+    void reportsConflictIfTheVerifiedAccountChangedBeforeTheProfileWrite() {
+        var request = new MockHttpServletRequest();
+        var verified = new User();
+        verified.setUserId("user-1");
+        when(permissionService.requireLogin(request)).thenReturn(verified);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> controller.updateProfile(request, new UpdateProfileRequest(null, null, "notes")));
+
+        assertEquals(409, error.getCode());
+        assertNull(verified.getRemark());
     }
 
     @Test
