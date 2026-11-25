@@ -544,6 +544,22 @@ class UserFileControllerTest {
     }
 
     @Test
+    void filenamesStaySearchableBeforeTheWorkspaceHasMetadata() throws Exception {
+        Path file = workspace().resolve("imports/old-report.txt");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "legacy fixture");
+
+        var unrecorded = artifacts.list(userId, "imports", " REPORT ", "unrecorded", 1, 50, false);
+        assertEquals(1, unrecorded.get("count"));
+        var row = (Map<?, ?>) ((List<?>) unrecorded.get("fileList")).get(0);
+        assertEquals(Map.of(), row.get("metadata"));
+
+        assertEquals(200, controller.createFile(authenticatedRequest(), "imports/old-report.txt", "recorded fixture", true).get("code"));
+        assertEquals(0, artifacts.list(userId, "imports", "report", "unrecorded", 1, 50, false).get("count"));
+        assertEquals(1, artifacts.list(userId, "imports", "report", "manual", 1, 50, false).get("count"));
+    }
+
+    @Test
     void metadataLimitAppliesToActualBytesEvenIfTheReportedSizeIsStale() throws Exception {
         assertEquals(200, controller.createFile(authenticatedRequest(), "notes/report.txt", "fixture", false).get("code"));
         Path metadata;

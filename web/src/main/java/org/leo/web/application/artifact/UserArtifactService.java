@@ -15,6 +15,7 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.Channels;
+import java.nio.charset.CharsetDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -36,6 +37,7 @@ public class UserArtifactService {
     private static final long MAX_ARCHIVE_BYTES = 100L * 1024 * 1024;
     private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
+    private static final String METADATA_DIRECTORY = ".artifacts";
     private static final int MAX_METADATA_BYTES = 16 * 1024;
     private static final int RECENT_FILES_LIMIT = 8;
     private static final Object[] WRITE_LOCKS = new Object[64];
@@ -175,11 +177,11 @@ public class UserArtifactService {
     }
 
     private Map<String, Object> item(Path base, Path path, String relative, BasicFileAttributes attrs,
-                                     Map<String, Object> loadedMetadata) {
+                                     Map<String, Object> metadata) {
         Map<String, Object> result = fileInfo(base, path, relative, attrs);
         result.put("category", category(relative));
         if (attrs.isRegularFile()) {
-            result.put("metadata", loadedMetadata != null ? loadedMetadata : metadata(base, relative));
+            result.put("metadata", metadata);
         }
         return result;
     }
@@ -197,8 +199,10 @@ public class UserArtifactService {
             }
         });
         Map<String, Object> result = summary.toMap();
+        MetadataReader metadata = new MetadataReader(base);
         result.put("recentFiles", recent.stream().sorted(ARTIFACT_ORDER)
-                .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata())).toList());
+                .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), metadata.read(match.relativePath())))
+                .toList());
         return result;
     }
 
@@ -347,6 +351,7 @@ public class UserArtifactService {
         PriorityQueue<ArtifactMatch> window = new PriorityQueue<>(ARTIFACT_ORDER.reversed());
         int[] matched = {0};
         Path base = root(userId);
+        MetadataReader metadata = new MetadataReader(base);
         CatalogOverview overview = includeOverview ? new CatalogOverview() : null;
         boolean overviewComplete = walk(base, categoryFilter, includeOverview, (path, attrs) -> {
             if (attrs.isDirectory()) {
@@ -362,7 +367,7 @@ public class UserArtifactService {
             boolean searchMetadata = !keyword.isEmpty() && !relative.toLowerCase(Locale.ROOT).contains(keyword);
             Map<String, Object> details = null;
             if (filterSource || searchMetadata) {
-                details = metadata(base, relative);
+                details = metadata.read(relative);
                 if (filterSource && !source.equals(Objects.toString(details.get("sourceModule"), "unrecorded"))) return;
                 if (searchMetadata && !(relative + " " + details.values()).toLowerCase(Locale.ROOT).contains(keyword)) return;
             }
@@ -373,7 +378,9 @@ public class UserArtifactService {
         // The heap holds the window ending at this page, with its last result at the head.
         for (int i = 0; i < pageLength; i++) {
             ArtifactMatch match = window.remove();
-            pageFiles.add(item(base, match.path(), match.relativePath(), match.attributes(), match.metadata()));
+            var details = match.metadata();
+            if (details == null) details = metadata.read(match.relativePath());
+            pageFiles.add(item(base, match.path(), match.relativePath(), match.attributes(), details));
         }
         Collections.reverse(pageFiles);
         Map<String, Object> pageData = Map.of("fileList", pageFiles, "count", matched[0],
@@ -387,26 +394,46 @@ public class UserArtifactService {
     private Path metadataPath(Path base, String path) {
         try {
             String key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(path.getBytes(StandardCharsets.UTF_8)));
-            Path directory = base.resolve(".artifacts");
+            Path directory = base.resolve(METADATA_DIRECTORY);
             if (Files.isSymbolicLink(directory)) throw new IllegalArgumentException("元数据目录含符号链接");
             return directory.resolve(key + ".json");
         } catch (java.security.NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> metadata(Path base, String path) {
-        try {
-            Path file = metadataPath(base, path);
-            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return Map.of();
-            byte[] bytes;
-            try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
-                bytes = input.readNBytes(MAX_METADATA_BYTES + 1);
-            }
-            if (bytes.length > MAX_METADATA_BYTES) return Map.of();
-            String json = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
-            Map<String, Object> result = mapper.readValue(json, Map.class);
-            return result == null ? Map.of() : result;
-        } catch (Exception ignored) { return Map.of(); }
+    /** Scratch storage for one catalog read, allocated only if a metadata file is opened. */
+    private final class MetadataReader {
+        private final Path base;
+        private Boolean directoryAvailable;
+        private byte[] buffer;
+        private CharsetDecoder decoder;
+
+        private MetadataReader(Path base) {
+            this.base = base;
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> read(String path) {
+            try {
+                if (directoryAvailable == null) {
+                    directoryAvailable = Files.isDirectory(base.resolve(METADATA_DIRECTORY), LinkOption.NOFOLLOW_LINKS);
+                }
+                if (!directoryAvailable) return Map.of();
+                Path file = metadataPath(base, path);
+                if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return Map.of();
+                int length;
+                try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                    if (buffer == null) {
+                        buffer = new byte[MAX_METADATA_BYTES + 1];
+                        decoder = StandardCharsets.UTF_8.newDecoder();
+                    }
+                    length = input.readNBytes(buffer, 0, buffer.length);
+                }
+                if (length > MAX_METADATA_BYTES) return Map.of();
+                String json = decoder.decode(ByteBuffer.wrap(buffer, 0, length)).toString();
+                Map<String, Object> result = mapper.readValue(json, Map.class);
+                return result == null ? Map.of() : result;
+            } catch (Exception ignored) { return Map.of(); }
+        }
     }
 
     private static Map<String, String> validateSource(Map<String, String> source) {
