@@ -423,6 +423,8 @@ class UserFileControllerTest {
         assertEquals(List.of("middle-keep.txt", "0-old-keep.txt"), secondRows.stream().map(row -> row.get("name")).toList());
         assertEquals(4, second.get("count"));
         assertEquals(false, second.get("hasMore"));
+        var partial = listing.list(userId, "ai-reports", " KEEP ", "manual", 2, 3, false);
+        assertEquals(List.of(secondRows.get(1)), partial.get("fileList"));
         var beyond = listing.list(userId, "ai-reports", " KEEP ", "manual", Integer.MAX_VALUE, Integer.MAX_VALUE, false);
         assertEquals(Map.of("fileList", List.of(), "count", 4, "page", Integer.MAX_VALUE, "pageSize", 200, "hasMore", false), beyond);
     }

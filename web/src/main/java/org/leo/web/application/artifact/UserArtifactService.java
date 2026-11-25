@@ -361,12 +361,14 @@ public class UserArtifactService {
             }
             retainMatch(window, windowSize, new ArtifactMatch(path, relative, attrs, details, matched[0]++));
         });
-        List<Map<String, Object>> pageFiles = new ArrayList<>();
-        if (matched[0] > offset) {
-            window.stream().sorted(ARTIFACT_ORDER).skip(offset)
-                    .map(match -> item(base, match.path(), match.relativePath(), match.attributes(), match.metadata()))
-                    .forEachOrdered(pageFiles::add);
+        int pageLength = (int) Math.min(size, Math.max(0, matched[0] - offset));
+        List<Map<String, Object>> pageFiles = new ArrayList<>(pageLength);
+        // The heap holds the window ending at this page, with its last result at the head.
+        for (int i = 0; i < pageLength; i++) {
+            ArtifactMatch match = window.remove();
+            pageFiles.add(item(base, match.path(), match.relativePath(), match.attributes(), match.metadata()));
         }
+        Collections.reverse(pageFiles);
         Map<String, Object> pageData = Map.of("fileList", pageFiles, "count", matched[0],
                 "page", current, "pageSize", size, "hasMore", matched[0] > windowSize);
         if (overview == null || !overviewComplete) return pageData;
