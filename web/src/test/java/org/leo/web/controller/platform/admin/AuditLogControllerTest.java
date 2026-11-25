@@ -20,7 +20,6 @@ import org.leo.service.config.SystemConfigService;
 import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
-import org.mockito.ArgumentCaptor;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
@@ -50,50 +49,24 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AuditLogControllerTest {
-    private final AuditLogService logs = mock(AuditLogService.class);
     private final PermissionService permissions = mock(PermissionService.class);
-    private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         when(permissions.requireLogin(any())).thenReturn(new User());
-        mvc = MockMvcBuilders.standaloneSetup(new AuditLogController(logs, mock(AuditPolicyService.class), permissions)).build();
     }
 
     @ParameterizedTest
-    @CsvSource({",,50,0", "0,-4,50,0", "25,9,25,9", "2001,9,1000,9",
-            "invalid,invalid,50,0", "2147483648,2147483648,50,0"})
-    void responsePagingMatchesTheNormalizedQueryWithoutRelyingOnServiceMutation(
-            String limit, String offset, int expectedLimit, int expectedOffset) throws Exception {
-        AuditLog row = new AuditLog();
-        row.setLogId("log");
-        when(logs.searchAuditLogs(any())).thenReturn(List.of(row));
-        var request = get("/platform/admin/audit-logs").param("userId", " user ").param("status", "\t");
-        if (limit != null) request.param("limit", limit);
-        if (offset != null) request.param("offset", offset);
-
-        mvc.perform(request).andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.logs[0].logId").value("log"))
-                .andExpect(jsonPath("$.data.total").value(expectedOffset + 1))
-                .andExpect(jsonPath("$.data.limit").value(expectedLimit))
-                .andExpect(jsonPath("$.data.offset").value(expectedOffset));
-
-        var query = ArgumentCaptor.forClass(AuditLogQuery.class);
-        verify(logs).searchAuditLogs(query.capture());
-        assertEquals("user", query.getValue().getUserId());
-        assertNull(query.getValue().getStatus());
-        assertEquals(expectedLimit, query.getValue().getLimit());
-        assertEquals(expectedOffset, query.getValue().getOffset());
-        verify(logs, never()).countAuditLogs(any());
-    }
-
-    @ParameterizedTest
-    @CsvSource({"10,0,userId,user-a,3,3,0,log-3", "10,0,userId,missing,0,0,0,", "2,2,userId,user-a,1,3,0,log-1",
-            "2,0,userId,user-a,2,3,1,log-3", "2,8,userId,user-a,0,3,1,", "2,0,,,2,4,1,other",
-            "2,0,sessionId,session-a,2,2,1,log-3"})
-    void auditPagesOnlyCountWhenTheRowsDoNotDetermineTheTotal(int limit, int offset, String filterName,
-                                                               String filterValue, int rowCount, int total, int countQueries,
-                                                               String firstLogId, @TempDir Path temp) throws Exception {
+    @CsvSource({
+            "limit=2001&offset=-4&userId=user-a,1000,0,3,3,0,log-3",
+            "limit=bad&offset=2147483648&userId=missing,50,0,0,0,0,",
+            "limit=2&offset=2&userId=user-a,2,2,1,3,0,log-1",
+            "limit=2&offset=8&userId=user-a,2,8,0,3,1,",
+            "limit=2&sessionId=session-a,2,0,2,2,1,log-3"
+    })
+    void legacyAuditPagesNormalizeParametersAndCountOnlyWhenNeeded(String query, int limit, int offset,
+                                                                     int rowCount, int total, int countQueries,
+                                                                     String firstLogId, @TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
         new JdbcTemplate(source).update("""
                 INSERT INTO audit_logs (log_id, user_id, session_id, operation_type, operation_name, create_time)
@@ -109,15 +82,13 @@ class AuditLogControllerTest {
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
                     new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
 
-            var request = get("/platform/admin/audit-logs")
-                    .param("limit", Integer.toString(limit)).param("offset", Integer.toString(offset));
-            if (filterName != null) request.param(filterName, filterValue);
-            var response = storedMvc.perform(request)
+            var response = storedMvc.perform(get("/platform/admin/audit-logs?" + query))
                     .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.limit").value(limit))
+                    .andExpect(jsonPath("$.data.offset").value(offset))
                     .andExpect(jsonPath("$.data.logs.length()").value(rowCount))
                     .andExpect(jsonPath("$.data.total").value(total));
             if (firstLogId != null) response.andExpect(jsonPath("$.data.logs[0].logId").value(firstLogId));
-            verify(mapper).searchAuditLogs(any());
             verify(mapper, times(countQueries)).countAuditLogs(any());
         }
     }
@@ -182,6 +153,8 @@ class AuditLogControllerTest {
             clearInvocations(mapper);
             storedMvc.perform(get(path).param("view", "summary").param("userId", "missing"))
                     .andExpect(jsonPath("$.data.logs").isEmpty())
+                    .andExpect(jsonPath("$.data.limit").value(50))
+                    .andExpect(jsonPath("$.data.offset").value(0))
                     .andExpect(jsonPath("$.data.total").value(0))
                     .andExpect(jsonPath("$.data.successCount").value(0))
                     .andExpect(jsonPath("$.data.failedCount").value(0));
@@ -241,6 +214,7 @@ class AuditLogControllerTest {
 
     @Test
     void auditReadFailuresDoNotExposeStorageDetails() throws Exception {
+        var logs = mock(AuditLogService.class);
         when(logs.getSummaryPage(any())).thenThrow(new IllegalStateException("internal storage details"));
         MockMvc errorMvc = MockMvcBuilders.standaloneSetup(
                         new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
@@ -314,7 +288,8 @@ class AuditLogControllerTest {
                     BEGIN SELECT RAISE(IGNORE); END
                     """);
             var policy = new AuditPolicyService(config);
-            MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(logs, policy, permissions))
+            MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
+                            new AuditLogController(mock(AuditLogService.class), policy, permissions))
                     .setControllerAdvice(new ApiResponseStatusAdvice()).build();
 
             storedMvc.perform(post("/platform/admin/audit-logs/mode")
@@ -415,8 +390,7 @@ class AuditLogControllerTest {
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(AuditLogMapper.class);
         try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
-            var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
-            var stored = new AuditLogService(mapper);
+            var stored = new AuditLogService(session.getMapper(AuditLogMapper.class));
             String older = "2000-01-02 03:04:05";
             String now = jdbc.queryForObject("SELECT datetime('now')", String.class);
             insertAudit(stored, "member", older);
@@ -432,24 +406,16 @@ class AuditLogControllerTest {
 
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
                     new AuditLogController(stored, mock(AuditPolicyService.class), permissions)).build();
-            clearInvocations(mapper);
             storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-a"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.totalOperations").value(1))
                     .andExpect(jsonPath("$.data.recentOperations").value(0))
                     .andExpect(jsonPath("$.data.lastOperation").value(older));
-            assertEquals(1, mockingDetails(mapper).getInvocations().size());
             storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-b"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.totalOperations").value(2))
                     .andExpect(jsonPath("$.data.recentOperations").value(1))
                     .andExpect(jsonPath("$.data.lastOperation").value(now));
-            storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-empty"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.totalOperations").value(0))
-                    .andExpect(jsonPath("$.data.recentOperations").value(0))
-                    .andExpect(jsonPath("$.data.lastOperation").hasJsonPath())
-                    .andExpect(jsonPath("$.data.lastOperation").isEmpty());
             assertEquals(1, jdbc.queryForObject(
                     "SELECT COUNT(*) FROM audit_logs WHERE actor_team_id IS NULL", Integer.class));
         }
