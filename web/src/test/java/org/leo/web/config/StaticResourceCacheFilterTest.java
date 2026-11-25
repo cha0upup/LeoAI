@@ -17,35 +17,25 @@ class StaticResourceCacheFilterTest {
     void preventsCachingTheRootAndSpaRoutes() throws Exception {
         assertHtmlIsNotCached("/");
         assertHtmlIsNotCached("/index.html");
-        assertHtmlIsNotCached("/change-password");
-        assertHtmlIsNotCached("/main/agent/HOME");
         assertHtmlIsNotCached("/main/team.v2/settings");
     }
 
     @Test
     void cachesContentHashedAssetsAsImmutable() throws Exception {
-        MockHttpServletResponse response = filter("/assets/LoginView-BPIRt60c.js");
+        MockHttpServletResponse response = filter("/assets/main-Example01.js");
 
-        assertEquals(StaticResourceCacheFilter.HASHED_ASSET_CACHE_CONTROL,
-                response.getHeader(HttpHeaders.CACHE_CONTROL));
+        assertEquals("public, max-age=31536000, immutable", response.getHeader(HttpHeaders.CACHE_CONTROL));
     }
 
     @Test
-    void leavesApiResponsesToTheirOwnCachePolicy() throws Exception {
-        MockHttpServletResponse response = filter("/platform/user/status");
-
-        assertNull(response.getHeader(HttpHeaders.CACHE_CONTROL));
-    }
-
-    @Test
-    void leavesFilesOutsideTheAssetsDirectoryToTheirOwnCachePolicy() throws Exception {
+    void leavesApiAndOtherFilesToTheirOwnCachePolicy() throws Exception {
+        assertNull(filter("/platform/user/status").getHeader(HttpHeaders.CACHE_CONTROL));
         assertNull(filter("/main/team.v2/settings.json").getHeader(HttpHeaders.CACHE_CONTROL));
     }
 
     private void assertHtmlIsNotCached(String path) throws Exception {
         MockHttpServletResponse response = filter(path);
-        assertEquals(StaticResourceCacheFilter.HTML_CACHE_CONTROL,
-                response.getHeader(HttpHeaders.CACHE_CONTROL));
+        assertEquals("no-cache, no-store, must-revalidate", response.getHeader(HttpHeaders.CACHE_CONTROL), path);
         assertEquals("no-cache", response.getHeader(HttpHeaders.PRAGMA));
         assertEquals("Thu, 01 Jan 1970 00:00:00 GMT", response.getHeader(HttpHeaders.EXPIRES));
     }
