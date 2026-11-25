@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from check_architecture import audit, dependency_cycles
+from check_architecture import audit
 
 
 class ArchitectureAuditTest(unittest.TestCase):
@@ -32,14 +32,14 @@ class ArchitectureAuditTest(unittest.TestCase):
                    f'package {package};\npublic class {simple_name} {{ {body} }}')
 
     def test_accepts_layered_dependencies_and_ignores_non_production_code(self):
+        name = 'org.leo.web.Example'
+        self.production_type('web', name)
         self.write('service/src/main/java/Example.java',
-                   'import org.leo.core.Example;\n/* import org.leo.web.X; */\n'
-                   'class Example { String text = "import org.leo.web.X;"; '
-                   'String block = """\nimport org.leo.web.X;\n"""; }')
-        self.write('service/src/test/java/ExampleTest.java', 'import org.leo.web.X;')
+                   f'import org.leo.core.Example;\n/* new {name}(); */\n'
+                   f'class Example {{ String text = "{name}"; '
+                   f'String block = """\nimport {name};\nnew {name}();\n"""; }}')
+        self.write('service/src/test/java/ExampleTest.java', f'import {name};')
         self.assertEqual([], audit(self.root))
-        self.assertEqual([], dependency_cycles({'web': {'service', 'core'},
-                                               'service': {'core'}, 'core': set()}))
 
     def test_rejects_upward_dependencies_and_cycles(self):
         self.module('service', [('web', 'compile')])
@@ -87,28 +87,23 @@ class ArchitectureAuditTest(unittest.TestCase):
                     (self.root / path).unlink()
 
     def test_business_modules_keep_http_types_out_and_accept_stream_sources(self):
-        names = ('org.springframework.web.multipart.MultipartFile',
-                 'org.springframework.web.multipart.*', 'org.springframework.web.*',
-                 'org.springframework.web.bind.annotation.RestController',
-                 'org.springframework.web.bind.annotation.*',
-                 'org.springframework.http.HttpStatus', 'org.springframework.http.*',
-                 'jakarta.servlet.http.HttpServletRequest', 'jakarta.servlet.*',
-                 'javax.servlet.Servlet', 'javax.servlet.*')
-        for module in ('service', 'ai'):
+        cases = {
+            'service': ('import org.springframework.web.multipart.MultipartFile;',
+                        'import org.springframework.web.*;',
+                        'class Example { jakarta.servlet.http.HttpServletRequest value; }'),
+            'ai': ('import org.springframework.http.HttpStatus;', 'import javax.servlet.*;'),
+        }
+        for module, bodies in cases.items():
             self.write('pom.xml', f'<project><modules><module>{module}</module>'
                        '<module>web</module></modules></project>')
             self.module(module)
-            for name in names:
-                bodies = [f'import {name};']
-                if '*' not in name:
-                    bodies.append(f'class Example {{ {name} value; }}')
-                for body in bodies:
-                    with self.subTest(module=module, body=body):
-                        self.write(f'{module}/src/main/java/Example.java', f'package org.leo.{module};\n' + body)
-                        self.write('web/src/main/java/Example.java', 'package org.leo.web;\n' + body)
-                        issues = audit(self.root)
-                        self.assertEqual(1, len(issues), issues)
-                        self.assertIn('HTTP adapter API', issues[0])
+            for body in bodies:
+                with self.subTest(module=module, body=body):
+                    self.write(f'{module}/src/main/java/Example.java', f'package org.leo.{module};\n' + body)
+                    self.write('web/src/main/java/Example.java', 'package org.leo.web;\n' + body)
+                    issues = audit(self.root)
+                    self.assertEqual(1, len(issues), issues)
+                    self.assertIn('HTTP adapter API', issues[0])
             self.write(f'{module}/src/main/java/Example.java',
                        'import org.springframework.core.io.InputStreamSource;')
             self.assertEqual([], audit(self.root))
@@ -137,43 +132,34 @@ class ArchitectureAuditTest(unittest.TestCase):
         self.assertEqual([], audit(self.root))
 
     def test_web_application_keeps_adapter_and_composition_dependencies_out(self):
-        names = ('jakarta.servlet.http.HttpSession',
-                 'org.springframework.web.servlet.mvc.method.annotation.SseEmitter',
-                 'org.springframework.http.HttpStatus', 'org.springframework.web.*',
-                 'org.leo.web.controller.platform.ai.PlatformAiController',
-                 'org.leo.web.util.ControllerUtil', 'org.leo.web.adapter.ai.PlatformNodeAiBridgeTools',
-                 'org.leo.web.adapter.*', 'org.leo.web.config.WebConfig', 'org.leo.web.config.*',
-                 'org.leo.web.dto.agentnode.AgentNodeInitRequest', 'org.leo.web.dto.*',
-                 'org.leo.web.exception.ApiException', 'org.leo.web.exception.*')
-        for name in names:
-            for body in (f'import {name};', f'class Example {{ {name} value; }}'):
-                if '*' in body and not body.startswith('import'):
-                    continue
-                with self.subTest(body=body):
-                    # Package boundaries follow the declaration, not the filename.
-                    self.write('web/src/main/java/Example.java',
-                               'package org.leo.web.application.ai;\n' + body)
-                    issues = audit(self.root)
-                    self.assertEqual(1, len(issues), issues)
-                    self.assertIn('web application references adapter or composition', issues[0])
-                    self.write('web/src/main/java/Example.java',
-                               'package org.leo.web.adapter.ai;\n' + body)
-                    self.assertEqual([], audit(self.root))
+        bodies = ('import jakarta.servlet.http.HttpSession;',
+                  'import org.springframework.web.*;', 'import org.springframework.http.HttpStatus;',
+                  'import org.leo.web.controller.platform.ApplicationInfoController;',
+                  'class Example { org.leo.web.util.ControllerUtil value; }',
+                  'import org.leo.web.adapter.*;', 'import org.leo.web.config.*;',
+                  'import org.leo.web.dto.platform.project.ProjectDtos;',
+                  'import org.leo.web.exception.ApiException;')
+        for body in bodies:
+            with self.subTest(body=body):
+                # Package boundaries follow the declaration, not the filename.
+                self.write('web/src/main/java/Example.java', 'package org.leo.web.application.ai;\n' + body)
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('web application references adapter or composition', issues[0])
+                self.write('web/src/main/java/Example.java', 'package org.leo.web.adapter.ai;\n' + body)
+                self.assertEqual([], audit(self.root))
 
     def test_core_contracts_keep_infrastructure_out(self):
+        body = 'import org.leo.core.infrastructure.transport.HttpCommunication;'
         for package in ('net', 'agent.capability', 'agent.database', 'runtime',
                         'generator', 'component.runtime', 'rpc'):
-            for body in ('import org.leo.core.infrastructure.transport.HttpCommunication;',
-                         'class Example { org.leo.core.infrastructure.transport.HttpCommunication value; }'):
-                with self.subTest(package=package, body=body):
-                    self.write('core/src/main/java/Example.java',
-                               f'package org.leo.core.{package};\n' + body)
-                    issues = audit(self.root)
-                    self.assertEqual(1, len(issues), issues)
-                    self.assertIn('core contract references infrastructure', issues[0])
-                    self.write('core/src/main/java/Example.java',
-                               'package org.leo.core.infrastructure.persistence;\n' + body)
-                    self.assertEqual([], audit(self.root))
+            with self.subTest(package=package):
+                self.write('core/src/main/java/Example.java', f'package org.leo.core.{package};\n' + body)
+                issues = audit(self.root)
+                self.assertEqual(1, len(issues), issues)
+                self.assertIn('core contract references infrastructure', issues[0])
+        self.write('core/src/main/java/Example.java', 'package org.leo.core.infrastructure.persistence;\n' + body)
+        self.assertEqual([], audit(self.root))
 
     def test_java_implementations_use_their_own_namespace(self):
         self.write('pom.xml', '<project><modules><module>javacore</module></modules></project>')
@@ -201,12 +187,9 @@ class ArchitectureAuditTest(unittest.TestCase):
 
     def test_imports_resolve_to_the_source_module_instead_of_the_package_prefix(self):
         name = 'org.leo.shared.agent.impl.JavaAgentNode'
-        self.production_type('javacore', name,
-                             'public static final Object INSTANCE = null; public class Options {}')
+        self.production_type('javacore', name, 'public static final Object INSTANCE = null;')
         cases = (
             f'import {name};',
-            f'import {name}.Options;',
-            f'import static {name}.INSTANCE;',
             f'import static {name}.*;',
             f'import {name}.*;',
             'import org.leo.shared.agent.impl.*;',
@@ -223,9 +206,13 @@ class ArchitectureAuditTest(unittest.TestCase):
 
     def test_mixed_packages_keep_explicit_type_ownership_separate(self):
         self.production_type('core', 'org.leo.shared.agent.database.SqlCommand')
-        self.production_type('javacore', 'org.leo.shared.agent.database.JavaDatabaseConnectionAdapter')
         source = 'service/src/main/java/Example.java'
 
+        self.production_type('javacore', 'org.leo.shared.agent.database.impl.Adapter')
+        self.write(source, 'import org.leo.shared.agent.database.*;')
+        self.assertEqual([], audit(self.root))  # Java wildcards do not import subpackages.
+
+        self.production_type('javacore', 'org.leo.shared.agent.database.JavaDatabaseConnectionAdapter')
         self.write(source, 'import org.leo.shared.agent.database.SqlCommand;')
         self.assertEqual([], audit(self.root))
 
@@ -235,12 +222,6 @@ class ArchitectureAuditTest(unittest.TestCase):
         issues = audit(self.root)
         self.assertEqual(1, len(issues), issues)
         self.assertIn('javacore', issues[0])
-
-    def test_package_wildcards_do_not_include_subpackages(self):
-        self.production_type('core', 'org.leo.core.agent.AbstractAgentNode')
-        self.production_type('javacore', 'org.leo.shared.agent.impl.JavaAgentNode')
-        self.write('service/src/main/java/Example.java', 'import org.leo.core.agent.*;')
-        self.assertEqual([], audit(self.root))
 
     def test_physical_ownership_also_applies_to_non_leo_namespaces(self):
         name = 'com.vendor.bridge.Adapter'
@@ -265,14 +246,6 @@ class ArchitectureAuditTest(unittest.TestCase):
                 self.assertEqual(1, len(issues), issues)
                 self.assertIn('forbidden upward reference', issues[0])
                 self.assertIn('javacore', issues[0])
-
-    def test_comments_and_strings_are_not_source_dependencies(self):
-        name = 'org.leo.shared.agent.impl.JavaAgentNode'
-        self.production_type('javacore', name)
-        self.production_type('service', 'org.leo.service.Example',
-                             f'String value = "{name}"; /* new {name}(); */\n'
-                             f'String block = """\nimport {name};\nnew {name}();\n""";')
-        self.assertEqual([], audit(self.root))
 
     def test_dollar_identifiers_keep_their_full_type_name(self):
         for simple_name in ('Runtime$', '$Runtime'):

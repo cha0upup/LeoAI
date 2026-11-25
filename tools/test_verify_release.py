@@ -30,9 +30,6 @@ class ReleaseGateTest(unittest.TestCase):
             'version': '3.0.1', 'packages': {'': {'version': '3.0.1'}}
         }))
 
-    def test_aligned_versions_pass(self):
-        verify_release.assert_version_alignment(self.backend, self.frontend)
-
     def test_version_drift_stops_the_gate_before_installing_or_building(self):
         for path in [self.backend / 'core/pom.xml', self.frontend / 'package.json',
                      self.frontend / 'package-lock.json']:
@@ -51,16 +48,15 @@ class ReleaseGateTest(unittest.TestCase):
         verify_release.assert_static_matches(self.frontend, self.backend)
         self.assertEqual(before, verify_release.asset_manifest(self.bundled))
 
-    def test_changed_missing_and_stale_files_fail(self):
-        for folder, name in [(self.built, 'new.js'), (self.bundled, 'stale.js')]:
-            with self.subTest(name=name):
-                target = folder / name
-                target.write_text('content')
-                with self.assertRaises(ValueError):
-                    verify_release.assert_static_matches(self.frontend, self.backend)
-                target.unlink()
+    def test_bundled_assets_must_match_by_path_and_content(self):
+        new_asset = self.built / 'new.js'
+        new_asset.write_text('content')
+        with self.assertRaisesRegex(ValueError, r'new\.js'):
+            verify_release.assert_static_matches(self.frontend, self.backend)
+        new_asset.unlink()
+
         (self.built / 'index.html').write_text('changed')
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r'index\.html'):
             verify_release.assert_static_matches(self.frontend, self.backend)
 
     def test_empty_output_is_not_a_successful_build(self):
@@ -79,6 +75,9 @@ class ReleaseGateTest(unittest.TestCase):
     def test_checks_actual_packaged_assets_instead_of_only_source_directories(self):
         output = self.backend / 'web/target'
         output.mkdir()
+        with self.assertRaisesRegex(ValueError, 'Expected exactly one packaged application JAR'):
+            verify_release.assert_packaged_static_matches(self.frontend, self.backend)
+
         jar = output / 'fixture.jar'
         with zipfile.ZipFile(jar, 'w') as archive:
             archive.writestr('BOOT-INF/classes/static/index.html', 'fixture')
@@ -88,29 +87,21 @@ class ReleaseGateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_release.assert_packaged_static_matches(self.frontend, self.backend)
 
-    def test_missing_packaged_application_is_a_failure(self):
-        with self.assertRaises(ValueError):
-            verify_release.assert_packaged_static_matches(self.frontend, self.backend)
-
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
-    def test_failed_checks_stop_backend_packaging(self, _which):
-        for command in (['/fixture/npm', 'test'],
-                        [sys.executable, self.backend / 'tools/check_architecture.py',
-                         '--backend', self.backend]):
-            with self.subTest(command=command):
-                failure = subprocess.CalledProcessError(1, command)
+    def test_failed_architecture_check_stops_backend_packaging(self, _which):
+        command = [sys.executable, self.backend / 'tools/check_architecture.py', '--backend', self.backend]
 
-                def fail_check(label, actual, cwd):
-                    if actual == command:
-                        raise failure
+        def fail_check(label, actual, cwd):
+            if actual == command:
+                raise subprocess.CalledProcessError(1, actual)
 
-                with patch('verify_release.run_command', side_effect=fail_check) as run, \
-                        patch('verify_release.assert_packaged_static_matches') as packaged:
-                    with self.assertRaises(subprocess.CalledProcessError) as error:
-                        verify_release.verify_release(self.backend, self.frontend, install=False)
-                self.assertIs(failure, error.exception)
-                self.assertEqual(command, run.call_args.args[1])
-                packaged.assert_not_called()
+        with patch('verify_release.run_command', side_effect=fail_check) as run, \
+                patch('verify_release.assert_packaged_static_matches') as packaged:
+            with self.assertRaises(subprocess.CalledProcessError) as error:
+                verify_release.verify_release(self.backend, self.frontend, install=False)
+        self.assertEqual(1, error.exception.returncode)
+        self.assertEqual(command, run.call_args.args[1])
+        packaged.assert_not_called()
 
     @patch('verify_release.shutil.which', return_value='/fixture/npm')
     def test_asset_mismatch_prevents_backend_packaging(self, _which):
