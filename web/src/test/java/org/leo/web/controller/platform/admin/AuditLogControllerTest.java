@@ -144,11 +144,14 @@ class AuditLogControllerTest {
             verifyNoMoreInteractions(mapper);
             verify(permissions).requireAdmin(any(User.class));
 
-            storedMvc.perform(get(path).param("view", "summary").param("status", "ERROR").param("offset", "20"))
-                    .andExpect(jsonPath("$.data.logs").isEmpty())
-                    .andExpect(jsonPath("$.data.total").value(1))
-                    .andExpect(jsonPath("$.data.successCount").value(0))
-                    .andExpect(jsonPath("$.data.failedCount").value(1));
+            for (String status : List.of("SUCCESS", "ERROR", "success")) {
+                boolean succeeded = status.equals("SUCCESS");
+                storedMvc.perform(get(path).param("view", "summary").param("status", status).param("offset", "20"))
+                        .andExpect(jsonPath("$.data.logs").isEmpty())
+                        .andExpect(jsonPath("$.data.total").value(succeeded ? 2 : 1))
+                        .andExpect(jsonPath("$.data.successCount").value(succeeded ? 2 : 0))
+                        .andExpect(jsonPath("$.data.failedCount").value(status.equals("ERROR") ? 1 : 0));
+            }
 
             clearInvocations(mapper);
             storedMvc.perform(get(path).param("view", "summary").param("userId", "missing"))

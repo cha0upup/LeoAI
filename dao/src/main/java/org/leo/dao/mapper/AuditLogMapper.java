@@ -114,10 +114,14 @@ public interface AuditLogMapper {
             SELECT log_id, user_id, user_name, agent_id, agent_name, operation_type, operation_name,
                    operation_path, status, client_ip, create_time
             FROM audit_logs
+            WHERE rowid IN (
+                SELECT rowid FROM audit_logs
             """,
             AUDIT_LOG_FILTER_WHERE,
             AUDIT_LOG_ORDER,
             "LIMIT #{rowLimit} OFFSET #{query.offset}",
+            ")",
+            AUDIT_LOG_ORDER,
             "</script>"
     })
     List<AuditLogListItem> findAuditLogListItems(@Param("query") AuditLogQuery query, @Param("rowLimit") int rowLimit);
@@ -126,8 +130,16 @@ public interface AuditLogMapper {
             "<script>",
             """
             SELECT COUNT(*) AS total,
-                   COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) AS success_count,
-                   COUNT(CASE WHEN status IN ('FAILED', 'ERROR') THEN 1 END) AS failed_count
+            <choose>
+                <when test="query.status != null and query.status != ''">
+                    CASE WHEN #{query.status} = 'SUCCESS' THEN COUNT(*) ELSE 0 END AS success_count,
+                    CASE WHEN #{query.status} IN ('FAILED', 'ERROR') THEN COUNT(*) ELSE 0 END AS failed_count
+                </when>
+                <otherwise>
+                    COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) AS success_count,
+                    COUNT(CASE WHEN status IN ('FAILED', 'ERROR') THEN 1 END) AS failed_count
+                </otherwise>
+            </choose>
             FROM audit_logs
             """,
             AUDIT_LOG_FILTER_WHERE,
