@@ -81,10 +81,30 @@ public class AuditLogService {
     @Transactional(readOnly = true)
     public AuditLogSummaryPage getSummaryPage(AuditLogQuery query) {
         AuditLogQuery normalized = normalizeQuery(query);
-        List<AuditLogListItem> rows = auditLogMapper.findAuditLogListItems(normalized);
-        AuditLogCounts counts = auditLogMapper.countAuditLogsByStatus(normalized);
-        return new AuditLogSummaryPage(rows, counts.total(), counts.successCount(), counts.failedCount(),
-                normalized.getLimit(), normalized.getOffset());
+        int limit = normalized.getLimit();
+        int offset = normalized.getOffset();
+        // 首页多读一条摘要，区分恰好一页和仍有下一页。
+        int rowLimit = offset == 0 ? limit + 1 : limit;
+        List<AuditLogListItem> rows = auditLogMapper.findAuditLogListItems(normalized, rowLimit);
+        AuditLogCounts counts;
+        if (offset == 0 && rows.size() <= limit) {
+            counts = countCompletePage(rows);
+        } else {
+            counts = auditLogMapper.countAuditLogsByStatus(normalized);
+            if (rows.size() > limit) rows = rows.subList(0, limit);
+        }
+        return new AuditLogSummaryPage(rows, counts.total(), counts.successCount(), counts.failedCount(), limit, offset);
+    }
+
+    private static AuditLogCounts countCompletePage(List<AuditLogListItem> rows) {
+        long success = 0;
+        long failed = 0;
+        for (AuditLogListItem row : rows) {
+            String status = row.status();
+            if ("SUCCESS".equals(status)) success++;
+            else if ("FAILED".equals(status) || "ERROR".equals(status)) failed++;
+        }
+        return new AuditLogCounts(rows.size(), success, failed);
     }
 
     public record AuditLogSummaryPage(List<AuditLogListItem> logs, long total, long successCount, long failedCount,

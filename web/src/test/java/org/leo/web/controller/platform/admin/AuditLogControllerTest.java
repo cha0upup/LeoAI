@@ -138,6 +138,10 @@ class AuditLogControllerTest {
                        ('d', 'user-a', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'PENDING',
                         NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00'),
                        ('e', 'user-b', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'SUCCESS',
+                        NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00'),
+                       ('f', 'user-b', NULL, NULL, NULL, 'TEST', 'Test', NULL, NULL,
+                        NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00'),
+                       ('g', 'user-b', NULL, NULL, NULL, 'TEST', 'Test', NULL, 'success',
                         NULL, NULL, 'fixture-marker', NULL, '2026-10-01 00:00:00')
                 """);
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
@@ -164,7 +168,7 @@ class AuditLogControllerTest {
                     .andExpect(jsonPath("$.data.logs[0].sessionId").doesNotHaveJsonPath())
                     .andExpect(jsonPath("$.data.logs[0].requestParams").doesNotHaveJsonPath())
                     .andExpect(jsonPath("$.data.logs[0].responseMessage").doesNotHaveJsonPath());
-            verify(mapper).findAuditLogListItems(any());
+            verify(mapper).findAuditLogListItems(any(), eq(1));
             verify(mapper).countAuditLogsByStatus(any());
             verifyNoMoreInteractions(mapper);
             verify(permissions).requireAdmin(any(User.class));
@@ -174,11 +178,37 @@ class AuditLogControllerTest {
                     .andExpect(jsonPath("$.data.total").value(1))
                     .andExpect(jsonPath("$.data.successCount").value(0))
                     .andExpect(jsonPath("$.data.failedCount").value(1));
+
+            clearInvocations(mapper);
             storedMvc.perform(get(path).param("view", "summary").param("userId", "missing"))
                     .andExpect(jsonPath("$.data.logs").isEmpty())
                     .andExpect(jsonPath("$.data.total").value(0))
                     .andExpect(jsonPath("$.data.successCount").value(0))
                     .andExpect(jsonPath("$.data.failedCount").value(0));
+            storedMvc.perform(get(path).param("view", "summary").param("limit", "4")
+                            .param("userId", "user-a").param("keyword", "fixture-marker"))
+                    .andExpect(jsonPath("$.data.logs.length()").value(4))
+                    .andExpect(jsonPath("$.data.total").value(4))
+                    .andExpect(jsonPath("$.data.successCount").value(1))
+                    .andExpect(jsonPath("$.data.failedCount").value(2));
+            storedMvc.perform(get(path).param("view", "summary").param("userId", "user-b"))
+                    .andExpect(jsonPath("$.data.logs.length()").value(3))
+                    .andExpect(jsonPath("$.data.total").value(3))
+                    .andExpect(jsonPath("$.data.successCount").value(1))
+                    .andExpect(jsonPath("$.data.failedCount").value(0));
+            verify(mapper, times(2)).findAuditLogListItems(any(), eq(51));
+            verify(mapper).findAuditLogListItems(any(), eq(5));
+            verify(mapper, never()).countAuditLogsByStatus(any());
+
+            storedMvc.perform(get(path).param("view", "summary").param("limit", "2").param("userId", "user-a"))
+                    .andExpect(jsonPath("$.data.logs.length()").value(2))
+                    .andExpect(jsonPath("$.data.logs[0].logId").value("d"))
+                    .andExpect(jsonPath("$.data.logs[1].logId").value("c"))
+                    .andExpect(jsonPath("$.data.total").value(4))
+                    .andExpect(jsonPath("$.data.successCount").value(1))
+                    .andExpect(jsonPath("$.data.failedCount").value(2));
+            verify(mapper).findAuditLogListItems(any(), eq(3));
+            verify(mapper).countAuditLogsByStatus(any());
 
             storedMvc.perform(get(path).param("sessionId", "session-a"))
                     .andExpect(jsonPath("$.data.logs[0].requestParams").value("fixture-marker"))
@@ -230,6 +260,7 @@ class AuditLogControllerTest {
                 VALUES (?, 'TEST', 'Test', '2026-10-01 00:00:00')
                 """;
         jdbc.update(insert, "first");
+        jdbc.update(insert, "earlier");
         var configuration = new org.apache.ibatis.session.Configuration(
                 new Environment("audit-snapshot", new SpringManagedTransactionFactory(), source));
         configuration.setMapUnderscoreToCamelCase(true);
@@ -238,14 +269,14 @@ class AuditLogControllerTest {
         var delegate = template.getMapper(AuditLogMapper.class);
         var mapper = mock(AuditLogMapper.class, delegatesTo(delegate));
         doAnswer(call -> {
-            var rows = delegate.findAuditLogListItems(call.getArgument(0));
+            var rows = delegate.findAuditLogListItems(call.getArgument(0), call.getArgument(1));
             // 绕开当前 Spring 事务，以另一个连接在两次读取之间提交。
             try (var connection = source.getConnection(); var statement = connection.prepareStatement(insert)) {
                 statement.setString(1, "second");
                 assertEquals(1, statement.executeUpdate());
             }
             return rows;
-        }).when(mapper).findAuditLogListItems(any());
+        }).when(mapper).findAuditLogListItems(any(), anyInt());
 
         try (var context = new AnnotationConfigApplicationContext()) {
             context.register(AuditReadTransactions.class);
@@ -254,12 +285,14 @@ class AuditLogControllerTest {
             context.registerBean(AuditLogService.class);
             context.refresh();
 
-            var page = context.getBean(AuditLogService.class).getSummaryPage(AuditLogQuery.page(20, 0));
+            var page = context.getBean(AuditLogService.class).getSummaryPage(AuditLogQuery.page(1, 0));
             assertEquals(List.of("first"), page.logs().stream().map(row -> row.logId()).toList());
-            assertEquals(1, page.total());
-            assertEquals(1, page.successCount());
+            assertEquals(2, page.total());
+            assertEquals(2, page.successCount());
+            verify(mapper).findAuditLogListItems(any(), eq(2));
+            verify(mapper).countAuditLogsByStatus(any());
         }
-        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM audit_logs", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM audit_logs", Integer.class));
     }
 
     @Configuration(proxyBeanMethods = false)

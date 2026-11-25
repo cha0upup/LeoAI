@@ -65,6 +65,7 @@
 
 - 管理员使用 `GET /platform/admin/audit-logs?view=summary` 查询摘要页。筛选和分页参数沿用原列表；`data` 返回 `logs`、`total`、`successCount`、`failedCount`、`limit`、`offset`。
 - 数量对应**同一筛选条件命中的全部记录**，与当前页条数无关。失败合计包括 `FAILED` 和 `ERROR`；其他状态只计入总数。列表不会返回请求参数、响应消息等详情字段，但关键字搜索仍覆盖原有字段。
+- 首页最多多读取一条摘要，以识别完整结果。结果不超过一页时直接统计返回的记录；其余页面仍在同一读取事务中执行聚合，避免并发写入使分页和计数不一致。
 - 详情继续用 `GET /platform/admin/audit-logs/detail?logId=...`。不传 `view` 的列表、独立计数及写入接口保持原契约。部署新版管理后台时，先更新后端或随同一制品发布。
 
 团队管理的队长候选使用 `GET /platform/admin/users/no-team?view=options`，仅返回 `userId` 和 `userName`。旧视图、管理员限制和未入队判定保持原样。

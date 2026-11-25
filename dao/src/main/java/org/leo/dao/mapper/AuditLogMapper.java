@@ -68,7 +68,7 @@ public interface AuditLogMapper {
             </where>
             """;
 
-    String AUDIT_LOG_PAGE = "ORDER BY create_time DESC, log_id DESC LIMIT #{query.limit} OFFSET #{query.offset}";
+    String AUDIT_LOG_ORDER = "ORDER BY create_time DESC, log_id DESC";
 
     String AUDIT_STATISTICS_SELECT = """
             SELECT COUNT(*) AS total_operations,
@@ -102,7 +102,8 @@ public interface AuditLogMapper {
             "<script>",
             "SELECT * FROM audit_logs",
             AUDIT_LOG_FILTER_WHERE,
-            AUDIT_LOG_PAGE,
+            AUDIT_LOG_ORDER,
+            "LIMIT #{query.limit} OFFSET #{query.offset}",
             "</script>"
     })
     List<AuditLog> searchAuditLogs(@Param("query") AuditLogQuery query);
@@ -115,10 +116,11 @@ public interface AuditLogMapper {
             FROM audit_logs
             """,
             AUDIT_LOG_FILTER_WHERE,
-            AUDIT_LOG_PAGE,
+            AUDIT_LOG_ORDER,
+            "LIMIT #{rowLimit} OFFSET #{query.offset}",
             "</script>"
     })
-    List<AuditLogListItem> findAuditLogListItems(@Param("query") AuditLogQuery query);
+    List<AuditLogListItem> findAuditLogListItems(@Param("query") AuditLogQuery query, @Param("rowLimit") int rowLimit);
 
     @Select({
             "<script>",
