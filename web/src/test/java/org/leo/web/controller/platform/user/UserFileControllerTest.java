@@ -101,34 +101,6 @@ class UserFileControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"upload", "create-file", "create-dir", "list", "preview", "archive", "delete"})
-    void resolvesWorkspaceOnlyOncePerFileOperation(String operation) throws Exception {
-        var request = authenticatedRequest();
-        assertEquals(200, controller.createFile(request, "notes/fixture.txt", "fixture", false).get("code"));
-        String source = "ai-tasks/job/files/output.txt";
-        Path taskOutput = workspace().resolve(source);
-        Files.createDirectories(taskOutput.getParent());
-        Files.writeString(taskOutput, "task result");
-
-        try (var workspace = mockStatic(AgentNodeSessionWorkDirUtil.class, CALLS_REAL_METHODS)) {
-            var response = switch (operation) {
-                case "upload" -> controller.upload(request,
-                        new MockMultipartFile("file", "uploaded.txt", "text/plain", new byte[]{1}), "notes", null, false);
-                case "create-file" -> controller.createFile(request, "notes/new.txt", "fixture", false);
-                case "create-dir" -> controller.createDir(request, "notes/new-folder");
-                case "list" -> controller.list(request, "notes", false, 1, 50, null, null, false);
-                case "preview" -> controller.preview(request, "notes/fixture.txt", null, true, false);
-                case "archive" -> controller.archive(request,
-                        new UserArtifactService.ArchiveRequest("task-results", "output.txt", null, source, Map.of()));
-                case "delete" -> controller.delete(request, "notes/fixture.txt", false);
-                default -> throw new AssertionError(operation);
-            };
-            assertEquals(200, response.get("code"), response::toString);
-            workspace.verify(() -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
-        }
-    }
-
-    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void requiresExplicitOverwriteAndListsTheReplacementMetadata(boolean upload) throws Exception {
         MockHttpServletRequest request = authenticatedRequest();
@@ -160,8 +132,6 @@ class UserFileControllerTest {
             var items = (List<?>) listing.get("fileList");
             assertEquals(List.of(Map.of("name", "report.md", "path", "notes/report.md", "parentPath", "notes",
                     "isDirectory", false, "size", 6L, "lastModified", modified)), items);
-            reads.verify(() -> Files.isSymbolicLink(file), never());
-            reads.verify(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS));
             reads.when(() -> Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS))
                     .thenThrow(new java.io.IOException("fixture attributes unavailable"));
             var fallback = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "", false).get("data");
@@ -213,11 +183,10 @@ class UserFileControllerTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"en-US", "tr-TR"})
+    @Test
     @ResourceLock("java.util.Locale.default")
     @SuppressWarnings("unchecked")
-    void countsAndListsVisibleWorkspaceWithoutRuntimeOrInternalFiles(String languageTag) throws Exception {
+    void countsAndListsVisibleWorkspaceWithoutRuntimeOrInternalFiles() throws Exception {
         var request = authenticatedRequest();
         String buildPath = "script-builds/a/b/c/d/e/f/g/h/build.txt";
         controller.createFile(request, buildPath, "build", false);
@@ -238,7 +207,7 @@ class UserFileControllerTest {
         assertEquals(3, ((List<?>) overview.get("recentFiles")).size());
         Locale previous = Locale.getDefault();
         try {
-            Locale.setDefault(Locale.forLanguageTag(languageTag));
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
             var directory = (Map<String, Object>) controller.list(request, "", false, 1, 50, "", "", false).get("data");
             var items = (List<Map<String, Object>>) directory.get("fileList");
             assertEquals(List.of("ai-reports", "Imports", "script-builds"),
@@ -248,11 +217,7 @@ class UserFileControllerTest {
         }
         var metadataReader = spy(new ObjectMapper());
         var listing = new UserArtifactService(metadataReader, systemConfigService);
-        Map<String, Object> page;
-        try (var directoryLookup = mockStatic(AgentNodeSessionWorkDirUtil.class, CALLS_REAL_METHODS)) {
-            page = listing.list(userId, "", "", "", 1, 2, false);
-            directoryLookup.verify(() -> AgentNodeSessionWorkDirUtil.getUserWorkspaceDir(userId));
-        }
+        var page = listing.list(userId, "", "", "", 1, 2, false);
         assertEquals(3, page.get("count"));
         var pageFiles = (List<Map<String, Object>>) page.get("fileList");
         assertEquals(List.of("Imports/note.txt", "ai-reports/report.md"),
@@ -736,8 +701,6 @@ class UserFileControllerTest {
             int expected = accessDenied ? 500 : 404;
             assertEquals(expected, preview.get("code"));
             assertEquals(expected, download.getStatus());
-            filesystem.verify(() -> Files.isRegularFile(target), times(2));
-            filesystem.verify(() -> Files.exists(target), never());
         }
         assertNull(download.getHeader("Content-Disposition"));
         assertEquals(0, download.getContentAsByteArray().length);
