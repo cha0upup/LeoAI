@@ -18,6 +18,7 @@ import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
 import org.leo.service.config.SystemConfigService;
 import org.leo.web.config.ApiResponseStatusAdvice;
+import org.leo.web.config.GlobalExceptionHandler;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -220,15 +221,27 @@ class AuditLogControllerTest {
     }
 
     @Test
-    void auditReadFailuresDoNotExposeStorageDetails() throws Exception {
+    void unexpectedAuditFailuresReturnTraceIdsWithoutExposingStorageDetails() throws Exception {
         var logs = mock(AuditLogService.class);
         when(logs.getSummaryPage(any())).thenThrow(new IllegalStateException("internal storage details"));
+        when(logs.deleteOldAuditLogs(7)).thenThrow(new IllegalArgumentException("internal cleanup details"));
         MockMvc errorMvc = MockMvcBuilders.standaloneSetup(
                         new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
-                .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+                .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build();
         errorMvc.perform(get("/platform/admin/audit-logs").param("view", "summary"))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.msg").value("获取审计日志列表失败"));
+                .andExpect(jsonPath("$.msg").value("获取审计日志列表失败"))
+                .andExpect(jsonPath("$.traceId").isNotEmpty());
+        errorMvc.perform(post("/platform/admin/audit-logs/cleanup").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"days\":7}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.msg").value("清理审计日志失败"))
+                .andExpect(jsonPath("$.traceId").isNotEmpty());
+        errorMvc.perform(post("/platform/admin/audit-logs/delete-filtered").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.msg").value("confirm参数必须为DELETE"))
+                .andExpect(jsonPath("$.traceId").doesNotHaveJsonPath());
     }
 
     @Test
@@ -297,12 +310,18 @@ class AuditLogControllerTest {
             var policy = new AuditPolicyService(config);
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
                             new AuditLogController(mock(AuditLogService.class), policy, permissions))
-                    .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+                    .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build();
 
             storedMvc.perform(post("/platform/admin/audit-logs/mode")
                             .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"on\"}"))
                     .andExpect(status().isInternalServerError())
-                    .andExpect(jsonPath("$.code").value(500));
+                    .andExpect(jsonPath("$.code").value(500))
+                    .andExpect(jsonPath("$.msg").value("更新审计模式失败"))
+                    .andExpect(jsonPath("$.traceId").isNotEmpty());
+            storedMvc.perform(post("/platform/admin/audit-logs/mode")
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"invalid\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.msg").value("不支持的审计模式: invalid"));
 
             assertEquals(AuditPolicyService.MODE_WRITE, config.getString(AuditPolicyService.CONFIG_KEY_AUDIT_MODE, null));
             assertEquals(AuditPolicyService.MODE_WRITE, policy.getMode());

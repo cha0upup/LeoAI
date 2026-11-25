@@ -78,4 +78,11 @@ public class ApiException extends RuntimeException {
     public static ApiException serverError(String message) {
         return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, message);
     }
+
+    /** A public message plus a cause retained for server-side diagnosis. */
+    public static ApiException serverError(String message, Throwable cause) {
+        ApiException error = serverError(message);
+        error.initCause(cause);
+        return error;
+    }
 }

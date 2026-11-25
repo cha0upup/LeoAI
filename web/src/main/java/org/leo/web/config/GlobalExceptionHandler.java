@@ -41,6 +41,9 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<HashMap<String, Object>> handleApiException(ApiException e) {
+        if (e.getHttpStatus() == HttpStatus.INTERNAL_SERVER_ERROR && e.getCause() != null) {
+            return internalError(e.getMessage(), e);
+        }
         return businessError(e, e.getHttpStatus(), e.getDetails());
     }
 
@@ -170,9 +173,13 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<HashMap<String, Object>> handleException(Exception e) {
+        return internalError("服务器内部错误，请稍后重试", e);
+    }
+
+    private ResponseEntity<HashMap<String, Object>> internalError(String message, Exception error) {
         String traceId = UUID.randomUUID().toString();
-        logger.error("未处理异常 traceId={}", traceId, e);
-        HashMap<String, Object> body = ApiResponse.error("服务器内部错误，请稍后重试");
+        logger.error("请求处理失败 traceId={}", traceId, error);
+        HashMap<String, Object> body = ApiResponse.error(message);
         body.put("traceId", traceId);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(body);

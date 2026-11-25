@@ -7,6 +7,7 @@ import org.leo.core.entity.User;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
@@ -84,7 +85,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/mode", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditMode() {
-        return readResponse("获取审计模式失败", () -> {
+        return auditResponse("获取审计模式失败", () -> {
             String mode = auditPolicyService.getMode();
             HashMap<String, Object> data = buildAuditModeView(mode);
             return ApiResponse.success(data);
@@ -97,12 +98,20 @@ public class AuditLogController {
     @RequestMapping(value = "/mode", method = RequestMethod.POST)
     public HashMap<String, Object> updateAuditMode(@RequestBody HashMap<String, Object> params,
                                                    HttpServletRequest request) {
+        String requestedMode = textParam(params, "mode");
+        if (requestedMode == null || requestedMode.isBlank()) {
+            return ApiResponse.badRequest("mode参数不能为空");
+        }
+        String validMode;
         try {
-            if (params == null || params.get("mode") == null || params.get("mode").toString().isBlank()) {
-                return ApiResponse.badRequest("mode参数不能为空");
-            }
+            validMode = auditPolicyService.requireValidMode(requestedMode);
+        } catch (IllegalArgumentException error) {
+            return ApiResponse.badRequest(error.getMessage());
+        }
+
+        return auditResponse("更新审计模式失败", () -> {
             String oldMode = auditPolicyService.getMode();
-            String newMode = auditPolicyService.updateMode(params.get("mode").toString());
+            String newMode = auditPolicyService.updateMode(validMode);
 
             HashMap<String, Object> auditParams = new HashMap<String, Object>();
             auditParams.put("oldMode", oldMode);
@@ -125,12 +134,7 @@ public class AuditLogController {
             );
 
             return ApiResponse.success("审计模式已更新", buildAuditModeView(newMode));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (Exception e) {
-            logger.error("更新审计模式失败: {}", e.getMessage(), e);
-            return ApiResponse.error("更新审计模式失败: " + e.getMessage());
-        }
+        });
     }
     
     /**
@@ -138,7 +142,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "", method = RequestMethod.GET)
     public HashMap<String, Object> getAllAuditLogs(@RequestParam Map<String, String> params) {
-        return readResponse("获取审计日志列表失败", () -> {
+        return auditResponse("获取审计日志列表失败", () -> {
             AuditLogQuery query = buildQuery(params, true);
             if ("summary".equals(params.get("view"))) {
                 return ApiResponse.success(auditLogService.getSummaryPage(query));
@@ -169,7 +173,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/detail", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditLogById(@RequestParam(PARAM_LOG_ID) String logId) {
-        return readResponse("获取审计日志详情失败", () -> {
+        return auditResponse("获取审计日志详情失败", () -> {
             if (logId == null || logId.isBlank()) {
                 return ApiResponse.badRequest("logId参数不能为空");
             }
@@ -188,7 +192,7 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/count", method = RequestMethod.GET)
     public HashMap<String, Object> getAuditLogCount(@RequestParam Map<String, String> params) {
-        return readResponse("统计审计日志数量失败", () -> {
+        return auditResponse("统计审计日志数量失败", () -> {
             AuditLogQuery query = buildQuery(params, false);
             HashMap<String, Object> data = new HashMap<String, Object>();
             data.put("count", auditLogService.countAuditLogs(query));
@@ -199,7 +203,7 @@ public class AuditLogController {
 
     @RequestMapping(value = "/statistics/user", method = RequestMethod.GET)
     public HashMap<String, Object> getUserStatistics(@RequestParam(PARAM_USER_ID) String userId) {
-        return readResponse("获取用户审计统计失败", () -> {
+        return auditResponse("获取用户审计统计失败", () -> {
             if (userId == null || userId.isBlank()) {
                 return ApiResponse.badRequest("userId参数不能为空");
             }
@@ -209,7 +213,7 @@ public class AuditLogController {
 
     @RequestMapping(value = "/statistics/team", method = RequestMethod.GET)
     public HashMap<String, Object> getTeamStatistics(@RequestParam(PARAM_TEAM_ID) String teamId) {
-        return readResponse("获取团队审计统计失败", () -> {
+        return auditResponse("获取团队审计统计失败", () -> {
             if (teamId == null || teamId.isBlank()) {
                 return ApiResponse.badRequest("teamId参数不能为空");
             }
@@ -219,7 +223,7 @@ public class AuditLogController {
 
     @RequestMapping(value = "/statistics/agent", method = RequestMethod.GET)
     public HashMap<String, Object> getAgentStatistics(@RequestParam(PARAM_AGENT_ID) String agentId) {
-        return readResponse("获取主机审计统计失败", () -> {
+        return auditResponse("获取主机审计统计失败", () -> {
             if (agentId == null || agentId.isBlank()) {
                 return ApiResponse.badRequest("agentId参数不能为空");
             }
@@ -229,14 +233,14 @@ public class AuditLogController {
 
     @RequestMapping(value = "/statistics/operations", method = RequestMethod.GET)
     public HashMap<String, Object> getOperationStatistics() {
-        return readResponse("获取操作类型审计统计失败",
+        return auditResponse("获取操作类型审计统计失败",
                 () -> ApiResponse.success(auditLogService.getOperationStatistics()));
     }
 
     @RequestMapping(value = "/statistics/trend", method = RequestMethod.GET)
     public HashMap<String, Object> getTrendStatistics(
             @RequestParam(value = PARAM_DAYS, required = false) Integer days) {
-        return readResponse("获取审计趋势统计失败",
+        return auditResponse("获取审计趋势统计失败",
                 () -> ApiResponse.success(auditLogService.getTrendStatistics(days)));
     }
     
@@ -246,7 +250,7 @@ public class AuditLogController {
     @RequestMapping(value = "/cleanup", method = RequestMethod.POST)
     public HashMap<String, Object> cleanupOldAuditLogs(@RequestBody HashMap<String, Object> params,
                                                        HttpServletRequest request) {
-        try {
+        return auditResponse("清理审计日志失败", () -> {
             Integer days = null;
             if (params != null && params.containsKey(PARAM_DAYS)) {
                 Object daysObj = params.get(PARAM_DAYS);
@@ -292,10 +296,7 @@ public class AuditLogController {
             
             logger.info("清理审计日志完成，删除{}天前的日志，共删除{}条", days, deleted);
             return ApiResponse.success("清理完成，共删除 " + deleted + " 条日志", data);
-        } catch (Exception e) {
-            logger.error("清理审计日志失败: {}", e.getMessage(), e);
-            return ApiResponse.error("清理审计日志失败: " + e.getMessage());
-        }
+        });
     }
 
     /**
@@ -304,7 +305,7 @@ public class AuditLogController {
     @RequestMapping(value = "/delete", method = RequestMethod.POST)
     public HashMap<String, Object> deleteAuditLogs(@RequestBody HashMap<String, Object> params,
                                                    HttpServletRequest request) {
-        try {
+        return auditResponse("删除审计日志失败", () -> {
             List<String> logIds = parseLogIds(params);
             if (logIds.isEmpty()) {
                 return ApiResponse.badRequest("logIds参数不能为空");
@@ -333,10 +334,7 @@ public class AuditLogController {
             );
 
             return ApiResponse.success("删除完成，共删除 " + deleted + " 条日志", data);
-        } catch (Exception e) {
-            logger.error("删除审计日志失败: {}", e.getMessage(), e);
-            return ApiResponse.error("删除审计日志失败: " + e.getMessage());
-        }
+        });
     }
 
     /**
@@ -345,7 +343,7 @@ public class AuditLogController {
     @RequestMapping(value = "/delete-filtered", method = RequestMethod.POST)
     public HashMap<String, Object> deleteFilteredAuditLogs(@RequestBody HashMap<String, Object> params,
                                                            HttpServletRequest request) {
-        try {
+        return auditResponse("按筛选条件删除审计日志失败", () -> {
             if (params == null || !"DELETE".equals(String.valueOf(params.get(PARAM_CONFIRM)))) {
                 return ApiResponse.badRequest("confirm参数必须为DELETE");
             }
@@ -380,12 +378,7 @@ public class AuditLogController {
             );
 
             return ApiResponse.success("删除完成，共删除 " + deleted + " 条日志", data);
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.badRequest(e.getMessage());
-        } catch (Exception e) {
-            logger.error("按筛选条件删除审计日志失败: {}", e.getMessage(), e);
-            return ApiResponse.error("按筛选条件删除审计日志失败: " + e.getMessage());
-        }
+        });
     }
     
     /**
@@ -393,17 +386,15 @@ public class AuditLogController {
      */
     @RequestMapping(value = "/operation-types", method = RequestMethod.GET)
     public HashMap<String, Object> getOperationTypes() {
-        return readResponse("获取操作类型列表失败",
+        return auditResponse("获取操作类型列表失败",
                 () -> ApiResponse.success(auditPolicyService.getKnownOperationTypes()));
     }
 
-    private HashMap<String, Object> readResponse(String errorMessage,
-                                               Supplier<HashMap<String, Object>> request) {
+    private HashMap<String, Object> auditResponse(String errorMessage, Supplier<HashMap<String, Object>> request) {
         try {
             return request.get();
-        } catch (Exception e) {
-            logger.error(errorMessage + ": {}", e.getMessage(), e);
-            return ApiResponse.error(errorMessage);
+        } catch (RuntimeException error) {
+            throw ApiException.serverError(errorMessage, error);
         }
     }
 
