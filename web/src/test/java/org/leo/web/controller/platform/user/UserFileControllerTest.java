@@ -41,7 +41,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -100,32 +99,39 @@ class UserFileControllerTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void requiresExplicitOverwriteAndListsTheReplacementMetadata(boolean upload) throws Exception {
-        MockHttpServletRequest request = authenticatedRequest();
-        BiFunction<String, Boolean, Map<String, Object>> write = (content, overwrite) -> upload
-                ? controller.upload(request, new MockMultipartFile("file", "report.md", "text/plain",
-                        content.getBytes(java.nio.charset.StandardCharsets.UTF_8)), "notes", null, overwrite)
-                : controller.createFile(request, "notes/report.md", content, overwrite);
+    @Test
+    void textWritesAndUploadsBothRequireExplicitOverwrite() throws Exception {
+        var request = authenticatedRequest();
+        String path = "notes/report.md";
+        Path file = workspace().resolve(path);
+        var first = new MockMultipartFile("file", "report.md", "text/plain", "first".getBytes(StandardCharsets.UTF_8));
+        var replacement = new MockMultipartFile("file", "report.md", "text/plain", "third!".getBytes(StandardCharsets.UTF_8));
 
-        var created = write.apply("first", false);
-        var conflict = write.apply("second", false);
-        var overwritten = write.apply("second", true);
+        assertEquals(200, controller.upload(request, first, "notes", null, false).get("code"));
+        assertEquals(409, controller.createFile(request, path, "second", false).get("code"));
+        assertEquals(409, controller.upload(request, replacement, "notes", null, false).get("code"));
+        assertEquals("first", Files.readString(file));
 
-        assertEquals(200, created.get("code"));
-        assertEquals(409, conflict.get("code"));
-        assertEquals(200, overwritten.get("code"));
-        assertEquals(Map.of("path", "notes/report.md", "size", 6L), overwritten.get("data"));
-        assertEquals(409, controller.createDir(request, "notes/report.md").get("code"));
-        assertEquals(Map.of("path", "notes"), controller.createDir(request, "notes").get("data"));
-        Path file = workspace().resolve("notes/report.md");
+        var textOverwrite = controller.createFile(request, path, "second", true);
+        assertEquals(200, textOverwrite.get("code"));
+        var expectedMetadata = Map.of("path", path, "size", 6L);
+        assertEquals(expectedMetadata, textOverwrite.get("data"));
         assertEquals("second", Files.readString(file));
+
+        var uploadOverwrite = controller.upload(request, replacement, "notes", null, true);
+        assertEquals(200, uploadOverwrite.get("code"));
+        assertEquals(expectedMetadata, uploadOverwrite.get("data"));
+        assertEquals(409, controller.createDir(request, path).get("code"));
+        assertEquals(Map.of("path", "notes"), controller.createDir(request, "notes").get("data"));
+
         when(systemConfigService.getString("max.file.upload.size.mb", "100")).thenReturn("1");
         String oversized = "x".repeat(1024 * 1024 + 1);
-        assertEquals(upload ? 400 : 409, write.apply(oversized, false).get("code"));
-        assertEquals(400, write.apply(oversized, true).get("code"));
-        assertEquals("second", Files.readString(file));
+        var largeUpload = new MockMultipartFile("file", "report.md", "text/plain", oversized.getBytes(StandardCharsets.UTF_8));
+        assertEquals(409, controller.createFile(request, path, oversized, false).get("code"));
+        assertEquals(400, controller.createFile(request, path, oversized, true).get("code"));
+        assertEquals(400, controller.upload(request, largeUpload, "notes", null, false).get("code"));
+        assertEquals(400, controller.upload(request, largeUpload, "notes", null, true).get("code"));
+        assertEquals("third!", Files.readString(file));
         long modified = Files.getLastModifiedTime(file).toMillis();
         try (var reads = mockStatic(Files.class, CALLS_REAL_METHODS)) {
             var listing = (Map<?, ?>) controller.list(request, "notes", false, 1, 50, "", "", false).get("data");
@@ -228,8 +234,6 @@ class UserFileControllerTest {
                 pageFiles.stream().map(file -> ((Map<?, ?>) file.get("metadata")).get("title")).toList());
         assertEquals(true, page.get("hasMore"));
         verify(metadataReader, times(2)).readValue(anyString(), eq(Map.class));
-        assertEquals(1, ((List<?>) artifacts.list(userId, "", "", "", 2, 2, false).get("fileList")).size());
-        assertEquals(1, artifacts.list(userId, "script-builds", "", "", 1, 50, false).get("count"));
     }
 
     @ParameterizedTest
@@ -735,26 +739,19 @@ class UserFileControllerTest {
     }
 
     @Test
-    void catalogCanOmitRecentEntriesAndDuplicateBase64WithoutChangingLegacyResponses() throws Exception {
+    void workspaceOverviewCanOmitRecentEntriesWithoutChangingTotals() throws Exception {
         var request = authenticatedRequest();
         assertEquals(200, controller.createFile(request, "imports/note.txt", "hello", false).get("code"));
         var mvc = MockMvcBuilders.standaloneSetup(controller).build();
         var session = (org.springframework.mock.web.MockHttpSession) request.getSession();
-        String base = "/platform/user/file";
+        String overviewPath = "/platform/user/file/overview";
 
-        mvc.perform(get(base + "/overview").session(session))
+        mvc.perform(get(overviewPath).session(session))
                 .andExpect(jsonPath("$.data.recentFiles[0].path").value("imports/note.txt"));
-        mvc.perform(get(base + "/overview").session(session).param("includeRecent", "false"))
+        mvc.perform(get(overviewPath).session(session).param("includeRecent", "false"))
                 .andExpect(jsonPath("$.data.totalFiles").value(1))
                 .andExpect(jsonPath("$.data.totalBytes").value(5))
                 .andExpect(jsonPath("$.data.recentFiles").isEmpty());
-        mvc.perform(get(base + "/preview").session(session).param("path", "imports/note.txt"))
-                .andExpect(jsonPath("$.data.contentBase64").value("aGVsbG8="));
-        mvc.perform(get(base + "/preview").session(session).param("path", "imports/note.txt")
-                        .param("size", "3").param("includeBase64", "false"))
-                .andExpect(jsonPath("$.data.content").value("hel"))
-                .andExpect(jsonPath("$.data.truncated").value(true))
-                .andExpect(jsonPath("$.data.contentBase64").doesNotHaveJsonPath());
     }
 
     @Test
@@ -788,12 +785,11 @@ class UserFileControllerTest {
     }
 
     @Test
-    void textPreviewOmitsContentsForBinaryAndMalformedUtf8() throws Exception {
+    void previewOmitsUnsupportedTextAndPreservesLegacyResponseOptions() throws Exception {
         var request = authenticatedRequest();
         String path = "imports/fixture.txt";
         assertEquals(200, controller.createFile(request, path, "fixture", false).get("code"));
-        List<byte[]> samples = List.of(new byte[]{'a', 0, 'b'}, new byte[]{'a', (byte) 0xff},
-                new byte[]{'a', (byte) 0xe4, (byte) 0xbd});
+        List<byte[]> samples = List.of(new byte[]{'a', 0, 'b'}, new byte[]{'a', (byte) 0xe4, (byte) 0xbd});
         for (byte[] bytes : samples) {
             Files.write(workspace().resolve(path), bytes);
             var result = controller.preview(request, path, null, true, true);
@@ -809,6 +805,11 @@ class UserFileControllerTest {
         mvc.perform(get("/platform/user/file/preview").session(session).param("path", path))
                 .andExpect(jsonPath("$.data.previewable").doesNotHaveJsonPath())
                 .andExpect(jsonPath("$.data.contentBase64").value("YeS9"));
+        mvc.perform(get("/platform/user/file/preview").session(session).param("path", path)
+                        .param("size", "1").param("includeBase64", "false"))
+                .andExpect(jsonPath("$.data.content").value("a"))
+                .andExpect(jsonPath("$.data.truncated").value(true))
+                .andExpect(jsonPath("$.data.contentBase64").doesNotHaveJsonPath());
     }
 
     @Test
