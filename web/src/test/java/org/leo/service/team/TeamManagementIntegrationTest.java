@@ -45,7 +45,10 @@ import java.util.Map;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -390,6 +393,28 @@ class TeamManagementIntegrationTest {
                 "member", " ORIGINAL ", null, null, null, null, null, null, null)).getMessage());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class));
         assertEquals("member", users.getUserById("member").getUserName());
+    }
+
+    @Test
+    void deletionRejectsATeamTransferAfterPermissionCheck() {
+        seedMembership();
+        seedTeam("other", "Other", "other-leader");
+        var usersDuringDelete = spy(users);
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            User member = users.getUserById("member");
+            member.setTeamId("other");
+            assertTrue(users.updateUser(member));
+            return null;
+        }).when(usersDuringDelete).checkDeletePermission(any(), any());
+        var controller = new UserController(usersDuringDelete, mock(PasswordPolicy.class));
+        var request = new MockHttpServletRequest();
+        request.getSession().setAttribute("user", users.getUserById("leader"));
+
+        var result = controller.deleteUser(request, new HashMap<>(Map.of("id", "member")));
+
+        assertEquals(409, result.get("code"));
+        assertAccount("member", "normal", "other");
     }
 
     @Test

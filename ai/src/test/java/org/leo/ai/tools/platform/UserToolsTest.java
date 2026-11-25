@@ -122,7 +122,7 @@ class UserToolsTest {
                 "admin", null, null, "normal", null, null, null, null, null));
         assertThrows(IllegalArgumentException.class, () -> tools.updateUser(
                 "admin", null, null, null, null, null, 0, null, null));
-        verify(service, never()).delUser(any());
+        verify(service, never()).deleteUser(any());
         verify(service, never()).updateUser(any());
     }
 

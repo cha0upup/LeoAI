@@ -344,7 +344,7 @@ public class UserController {
             return ApiResponse.forbidden(e.getMessage());
         }
 
-        boolean ok = userService.delUser(target.getUserId());
+        boolean ok = userService.deleteUser(target);
         return ok ? ApiResponse.success() : ApiResponse.conflict("账号已变化，或仍负责项目或团队；请刷新后检查归属并先完成交接");
     }
 

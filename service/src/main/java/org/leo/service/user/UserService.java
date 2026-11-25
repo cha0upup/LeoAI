@@ -107,9 +107,12 @@ public class UserService {
                 email, phone, remark, now());
     }
 
-    public boolean delUser(String userId) {
-        if (userId == null || userId.isBlank()) throw new IllegalArgumentException("userId不能为空");
-        return userMapper.delUser(userId.trim());
+    /** Deletes only the account version checked by the caller, if it no longer owns a project or leads a team. */
+    public boolean deleteUser(User checkedUser) {
+        if (checkedUser == null || checkedUser.getUserId() == null || checkedUser.getUserId().isBlank()) {
+            throw new IllegalArgumentException("userId不能为空");
+        }
+        return userMapper.deleteUser(checkedUser.getUserId(), checkedUser.getAccountRevision());
     }
 
     /** Updates membership without rewriting unrelated account fields. */

@@ -172,7 +172,7 @@ public class UserTools {
         User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (user == null) throw new IllegalArgumentException("用户不存在");
         if (isBuiltInAdmin(user)) throw new IllegalArgumentException("admin用户为系统内置账户，禁止删除");
-        boolean deleted = userService.delUser(user.getUserId());
+        boolean deleted = userService.deleteUser(user);
         return buildResult("deleted", deleted, user.getUserId(), user.getUserName());
     }
 

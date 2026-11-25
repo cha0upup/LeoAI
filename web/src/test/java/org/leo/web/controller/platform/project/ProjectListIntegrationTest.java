@@ -237,8 +237,9 @@ class ProjectListIntegrationTest {
         ProjectMapper projectMapper = sqlSession.getMapper(ProjectMapper.class);
         Project beforeTransfer = projectMapper.findProjectById("owned");
         UserService storedUsers = new UserService(sqlSession.getMapper(UserMapper.class));
-        assertFalse(storedUsers.delUser("user-1"));
-        assertNotNull(storedUsers.getUserById("user-1"));
+        User previousOwner = storedUsers.getUserById("user-1");
+        assertNotNull(previousOwner);
+        assertFalse(storedUsers.deleteUser(previousOwner));
 
         var transfer = new ProjectOwnerTransferRequest("owned", "user-2");
         assertEquals(403, assertThrows(ApiException.class,
@@ -255,8 +256,8 @@ class ProjectListIntegrationTest {
         assertFalse(projectMapper.updateProject(beforeTransfer));
         assertThrows(IllegalStateException.class, () -> projectService.archive(beforeTransfer));
         assertEquals(0, projectMapper.deleteProject("owned", beforeTransfer.getOwnerUserId()));
-        assertTrue(storedUsers.delUser("user-1"));
-        assertFalse(storedUsers.delUser("user-2"));
+        assertTrue(storedUsers.deleteUser(previousOwner));
+        assertFalse(storedUsers.deleteUser(storedUsers.getUserById("user-2")));
     }
 
     @Test
