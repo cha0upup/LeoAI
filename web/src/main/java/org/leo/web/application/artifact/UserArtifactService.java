@@ -3,6 +3,8 @@ package org.leo.web.application.artifact;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.leo.core.infrastructure.persistence.session.AgentNodeSessionWorkDirUtil;
 import org.leo.service.config.SystemConfigService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +30,7 @@ import java.util.function.BiConsumer;
 /** Curated artifacts share file storage, but exclude live AI workspaces and internal metadata. */
 @Service
 public class UserArtifactService {
+    private static final Logger log = LoggerFactory.getLogger(UserArtifactService.class);
     private static final List<String> CATEGORIES = List.of("script-builds", "ai-reports", "task-results", "imports");
     private static final Set<String> SOURCES = Set.of("script-generator", "platform-ai", "node-ai", "task-output", "manual");
     private static final long MAX_ARCHIVE_BYTES = 100L * 1024 * 1024;
@@ -433,10 +436,17 @@ public class UserArtifactService {
         Path temporary = Files.createTempFile(metadata.getParent(), ".pending-", ".json");
         try {
             mapper.writeValue(temporary.toFile(), record);
-            try { Files.move(temporary, metadata, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
-            catch (AtomicMoveNotSupportedException ignored) { Files.move(temporary, metadata, StandardCopyOption.REPLACE_EXISTING); }
-        } finally { Files.deleteIfExists(temporary); }
+            replaceMetadata(temporary, metadata);
+        } catch (IOException | RuntimeException failure) {
+            removeFailedWrite(temporary, failure);
+            throw failure;
+        }
         return record;
+    }
+
+    private static void replaceMetadata(Path temporary, Path metadata) throws IOException {
+        try { Files.move(temporary, metadata, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
+        catch (AtomicMoveNotSupportedException ignored) { Files.move(temporary, metadata, StandardCopyOption.REPLACE_EXISTING); }
     }
 
     public Map<String, Object> upload(String userId, String relativeDir, String filename,
@@ -489,7 +499,6 @@ public class UserArtifactService {
             throw new IOException("目标文件不可覆盖");
         }
         Path temporary = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
-        boolean published = false;
         try {
             long size;
             try (InputStream input = content.getInputStream();
@@ -497,13 +506,53 @@ public class UserArtifactService {
                 size = input.transferTo(output);
             }
             if (replacingFile) preservePosixPermissions(target, temporary);
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            published = true;
-            writeMetadata(base, target, source);
+            publishOverwrite(base, target, temporary, source);
             return size;
         } catch (IOException | RuntimeException failure) {
-            if (!published) removeFailedWrite(temporary, failure);
-            else if (!replacingFile) removeFailedWrite(target, failure);
+            removeFailedWrite(temporary, failure);
+            throw failure;
+        }
+    }
+
+    private void publishOverwrite(Path base, Path target, Path content, Map<String, String> source) throws IOException {
+        Path metadata = metadataPath(base, relative(base, target));
+        Path backup = backupMetadata(metadata);
+        try {
+            // Keep the original content in place until its replacement metadata is ready.
+            writeMetadata(base, target, source);
+            Files.move(content, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                if (backup == null) Files.deleteIfExists(metadata);
+                else replaceMetadata(backup, metadata);
+            } catch (IOException | RuntimeException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+                log.error("成果元数据恢复失败: metadata={}, backup={}", metadata, backup, rollbackFailure);
+            }
+            backup = null; // A successful restore consumes the backup; otherwise keep it for recovery.
+            throw failure;
+        } finally {
+            if (backup != null) {
+                try { Files.deleteIfExists(backup); }
+                catch (IOException | RuntimeException error) { log.warn("清理成果元数据备份失败: {}", backup, error); }
+            }
+        }
+    }
+
+    private static Path backupMetadata(Path metadata) throws IOException {
+        try {
+            if (!Files.readAttributes(metadata, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isRegularFile()) {
+                throw new IOException("现有成果元数据不是普通文件");
+            }
+        } catch (NoSuchFileException ignored) {
+            return null;
+        }
+        Path backup = Files.createTempFile(metadata.getParent(), ".rollback-", ".json");
+        try {
+            Files.copy(metadata, backup, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS);
+            return backup;
+        } catch (IOException | RuntimeException failure) {
+            removeFailedWrite(backup, failure);
             throw failure;
         }
     }
@@ -528,7 +577,7 @@ public class UserArtifactService {
 
     private static void removeFailedWrite(Path path, Exception failure) {
         try { Files.deleteIfExists(path); }
-        catch (IOException cleanupError) { failure.addSuppressed(cleanupError); }
+        catch (IOException | RuntimeException cleanupError) { failure.addSuppressed(cleanupError); }
     }
 
     private static void preservePosixPermissions(Path existing, Path replacement) throws IOException {

@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
+import java.nio.file.CopyOption;
 import java.nio.file.FileVisitor;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -199,18 +200,60 @@ class UserFileControllerTest {
         }
     }
 
-    @Test
-    void failedMetadataWriteLeavesNewUploadRetryable() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failedMetadataWriteLeavesThePreviousStateAndAllowsRetry(boolean overwrite) throws Exception {
         var mapper = spy(new ObjectMapper());
         doThrow(new IOException("fixture metadata write failed")).doCallRealMethod()
                 .when(mapper).writeValue(any(File.class), any());
         var uploading = new UserFileController(new UserArtifactService(mapper, systemConfigService), multipartLimits);
         var request = authenticatedRequest();
         var file = new MockMultipartFile("file", "note.txt", "text/plain", "fixture".getBytes(StandardCharsets.UTF_8));
+        Path target = workspace().resolve("imports/note.txt");
+        if (overwrite) {
+            assertEquals(200, controller.createFile(request, "imports/note.txt", "original", false).get("code"));
+        }
+        var before = artifacts.list(userId, null, null, null, 1, 50, false);
 
-        assertEquals(500, uploading.upload(request, file, "imports", null, false).get("code"));
-        assertFalse(Files.exists(workspace().resolve("imports/note.txt")));
-        assertEquals(200, uploading.upload(request, file, "imports", null, false).get("code"));
+        assertEquals(500, uploading.upload(request, file, "imports", null, overwrite).get("code"));
+        if (overwrite) assertEquals("original", Files.readString(target));
+        else assertFalse(Files.exists(target));
+        assertEquals(before, artifacts.list(userId, null, null, null, 1, 50, false));
+        assertEquals(200, uploading.upload(request, file, "imports", null, overwrite).get("code"));
+        assertEquals("fixture", Files.readString(target));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failedContentReplacementRestoresPreviousMetadata(boolean hasMetadata) throws Exception {
+        var request = authenticatedRequest();
+        String path = "imports/note.txt";
+        Path target = workspace().resolve(path);
+        if (hasMetadata) {
+            assertEquals(200, controller.createFile(request, path, "original", false).get("code"));
+        } else {
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, "original");
+        }
+        var before = artifacts.list(userId, null, null, null, 1, 50, false);
+        var move = Files.class.getMethod("move", Path.class, Path.class, CopyOption[].class);
+        try (var filesystem = mockStatic(Files.class, invocation -> {
+            if (move.equals(invocation.getMethod()) && target.equals(invocation.getArgument(1))) {
+                throw new IOException("fixture content replacement failed");
+            }
+            return invocation.callRealMethod();
+        })) {
+            assertEquals(500, controller.createFile(request, path, "replacement", true).get("code"));
+        }
+
+        assertEquals("original", Files.readString(target));
+        assertEquals(before, artifacts.list(userId, null, null, null, 1, 50, false));
+        try (var entries = Files.list(target.getParent())) {
+            assertEquals(List.of(target), entries.toList());
+        }
+        try (var entries = Files.list(workspace().resolve(".artifacts"))) {
+            assertEquals(hasMetadata ? 1L : 0L, entries.count());
+        }
     }
 
     @Test
