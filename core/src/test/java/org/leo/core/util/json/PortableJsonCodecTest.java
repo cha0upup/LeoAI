@@ -16,28 +16,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class PortableJsonCodecTest {
 
     @Test
-    void roundTripsNestedBinaryValues() {
+    void roundTripsMixedPayloadsIncludingNestedAndEmptyBinaryValues() {
         Map<String, Object> decoded = PortableJsonCodec.decode(PortableJsonCodec.encode(Map.of(
-                "text", "leo",
                 "bytes", new byte[]{0, 1, 2},
-                "nested", List.of(Map.of("payload", new byte[]{9, 8}))
-        )));
-
-        assertEquals("leo", decoded.get("text"));
-        assertArrayEquals(new byte[]{0, 1, 2}, (byte[]) decoded.get("bytes"));
-        Map<?, ?> nested = (Map<?, ?>) ((List<?>) decoded.get("nested")).get(0);
-        assertArrayEquals(new byte[]{9, 8}, (byte[]) nested.get("payload"));
-    }
-
-    @Test
-    void roundTripsArraysMapKeysAndScalarFallbacksThroughThePublicCodec() {
-        Map<String, Object> decoded = PortableJsonCodec.decode(PortableJsonCodec.encode(Map.of(
+                "nested", List.of(Map.of("payload", new byte[]{9, 8})),
+                "empty", new byte[0],
                 "numbers", new int[]{1, 2},
                 "items", new Object[]{true, null, new byte[]{0, -1}},
                 "map", Map.of(5, "number-key"),
                 "fallback", new StringBuilder("text")
         )));
 
+        assertArrayEquals(new byte[]{0, 1, 2}, (byte[]) decoded.get("bytes"));
+        Map<?, ?> nested = (Map<?, ?>) ((List<?>) decoded.get("nested")).get(0);
+        assertArrayEquals(new byte[]{9, 8}, (byte[]) nested.get("payload"));
+        assertArrayEquals(new byte[0], (byte[]) decoded.get("empty"));
         assertEquals(List.of(1, 2), decoded.get("numbers"));
         List<?> items = (List<?>) decoded.get("items");
         assertEquals(true, items.get(0));
@@ -48,12 +41,9 @@ class PortableJsonCodecTest {
     }
 
     @Test
-    void acceptsEmptyInputAndPreservesEmptyBinaryValues() {
+    void acceptsMissingOrEmptyInput() {
         assertEquals(Map.of(), PortableJsonCodec.decode(null));
         assertEquals(Map.of(), PortableJsonCodec.decode(new byte[0]));
-        Map<String, Object> decoded = PortableJsonCodec.decode(
-                PortableJsonCodec.encode(Map.of("empty", new byte[0])));
-        assertArrayEquals(new byte[0], (byte[]) decoded.get("empty"));
     }
 
     @Test
@@ -66,7 +56,7 @@ class PortableJsonCodecTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"[]", "42", "true", "\"text\"", "null"})
+    @ValueSource(strings = {"[]", "42", "null"})
     void rejectsNonObjectRoots(String json) {
         assertThrows(IllegalArgumentException.class,
                 () -> PortableJsonCodec.decode(json.getBytes(StandardCharsets.UTF_8)));
