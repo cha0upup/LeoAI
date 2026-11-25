@@ -2,8 +2,6 @@ package org.leo.web.controller.platform.project;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.service.project.ProjectService;
@@ -38,31 +36,6 @@ class ProjectControllerTest {
     @BeforeEach
     void login() {
         when(permissionService.requireLogin(request)).thenReturn(user);
-    }
-
-    @ParameterizedTest
-    @CsvSource({"false, 400", "false, 403", "true, 400", "true, 403"})
-    void translatesProjectWriteFailuresAtTheHttpBoundary(boolean update, int code) {
-        Project input = project("project-1");
-        RuntimeException failure = code == 403
-                ? new SecurityException("没有公开项目权限") : new IllegalArgumentException("项目参数无效");
-        if (update) {
-            Project existing = project("project-1");
-            when(projectService.findById("project-1")).thenReturn(existing);
-            when(projectService.canView(existing, user)).thenReturn(true);
-            when(projectService.canManage(existing, user)).thenReturn(true);
-            when(projectService.update(existing, input, user)).thenThrow(failure);
-        } else {
-            when(projectService.create(input, user)).thenThrow(failure);
-        }
-
-        ApiException error = assertThrows(ApiException.class, () -> {
-            if (update) controller.updateProject(request, input);
-            else controller.createProject(request, input);
-        });
-
-        assertEquals(code, error.getCode());
-        assertEquals(failure.getMessage(), error.getMessage());
     }
 
     @Test

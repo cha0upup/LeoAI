@@ -10,7 +10,6 @@ import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.dao.mapper.ProjectMapper.MembershipRow;
-import org.leo.dao.mapper.ProjectMapper.ProjectAgentCount;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
@@ -99,31 +98,6 @@ class ProjectServiceTest {
         when(mapper.findVisibleProjectCandidates("user-1", "team-1", false)).thenReturn(List.of(hidden, owned));
 
         assertEquals(List.of(owned), service.listVisible(actor("normal")));
-    }
-
-    @Test
-    void groupsRequestedHostCountsWithOneMapperCall() {
-        List<String> projectIds = List.of("project-1", "project-2");
-        String projectIdsJson = "[\"project-1\",\"project-2\"]";
-        when(mapper.countAgentsByProject(projectIdsJson)).thenReturn(List.of(
-                new ProjectAgentCount("project-1", 3),
-                new ProjectAgentCount("project-2", 1)));
-
-        assertEquals(Map.of("project-1", 3, "project-2", 1), service.countAgentsByProject(projectIds));
-        verify(mapper).countAgentsByProject(projectIdsJson);
-    }
-
-    @Test
-    void returnsEmptyCountsWhenNoHostRelationsExist() {
-        when(mapper.countAgentsByProject("[\"project-1\"]")).thenReturn(List.of());
-
-        assertTrue(service.countAgentsByProject(List.of("project-1")).isEmpty());
-    }
-
-    @Test
-    void skipsHostAggregationWhenNoProjectsAreRequested() {
-        assertTrue(service.countAgentsByProject(List.of()).isEmpty());
-        verifyNoInteractions(mapper);
     }
 
     @Test

@@ -113,13 +113,17 @@ class ProjectListIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"false, public", "false, ' public '", "true, public", "true, ' public '"})
-    void nonAdministratorsCannotPublishProjectsWithPaddedPermissions(boolean update, String permission) {
+    @CsvSource({
+            "false, ' public ', active, 403", "true, ' public ', active, 403",
+            "false, private, invalid, 400", "true, private, invalid, 400"
+    })
+    void rejectsInvalidProjectWritesWithoutChangingStoredData(boolean update, String permission, String status, int code) {
         if (update) project("owned", "user-1", "private", "active", "Original");
         Project input = new Project();
         input.setProjectId("owned");
         input.setProjectName("Changed");
         input.setPermission(permission);
+        input.setStatus(status);
         MockHttpServletRequest request = requestAs("normal");
 
         ApiException error = assertThrows(ApiException.class, () -> {
@@ -127,11 +131,12 @@ class ProjectListIntegrationTest {
             else controller.createProject(request, input);
         });
 
-        assertEquals(403, error.getCode());
+        assertEquals(code, error.getCode());
+        assertEquals(code == 403 ? "只有管理员可以设置公开项目" : "项目状态值无效", error.getMessage());
         assertEquals(update ? 1 : 0, jdbc.queryForObject("SELECT COUNT(*) FROM projects", Integer.class));
         if (update) {
-            assertEquals("private", jdbc.queryForObject("SELECT permission FROM projects WHERE project_id='owned'", String.class));
-            assertEquals("Original", jdbc.queryForObject("SELECT project_name FROM projects WHERE project_id='owned'", String.class));
+            assertEquals(Map.of("permission", "private", "project_name", "Original", "status", "active"),
+                    jdbc.queryForMap("SELECT permission, project_name, status FROM projects WHERE project_id='owned'"));
         }
     }
 
