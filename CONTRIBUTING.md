@@ -77,15 +77,6 @@
 
 清理旧审计日志继续按指定天数执行，截止时间与日志写入都使用应用本地时间。等于截止时间的记录保留。
 
-## 成果库读取契约
-
-- `GET /platform/user/file/list?recursive=true&includeOverview=true` 用同一次目录遍历返回筛选后的分页和全工作区计数。`overview` 只包含统计字段；如果筛选范围外的目录不可读，仍返回当前列表，但省略不完整的 `overview`。不传 `includeOverview` 时，分页契约及分类剪枝保持原样。
-- `GET /platform/user/file/overview?includeRecent=false` 跳过最近文件和元数据读取，`recentFiles` 返回空数组，分类和总计不变。
-- 独立概览及带 `includeOverview=true` 的递归列表在 `data.maxUploadBytes` 返回导入单文件的字节数上界，取业务限制和 Servlet 已配置限制中的较小值。请求总大小还包含表单开销；Servlet 拒绝超限的表单时返回 HTTP 413 和 JSON 错误提示。
-- 覆盖已有成果时先暂存新内容和备份原元数据，再发布新元数据并替换内容；请求内发生写入错误时保留原文件并恢复元数据。内容与元数据是两个文件，此回滚不等同于断电或进程崩溃下的事务。
-- `GET /platform/user/file/preview?includeBase64=false` 仅省略 `contentBase64`，文本、大小和截断标记不变。`includeRecent`、`includeBase64` 均默认 `true`，旧请求无需调整。
-- 成果库使用 `GET /platform/user/file/preview?textOnly=true` 请求 UTF-8 文本。预览按完整字符截断，`previewSize` 是实际返回的字节数；文本样本含二进制控制字节或无效 UTF-8 时只返回路径、原始大小和 `previewable: false`。文本模式始终省略 Base64，`textOnly` 默认关闭。
-
 ## 个人资料写入
 
 - `POST /platform/user/profile` 只更新邮箱、手机号和备注，仍使用请求内已校验用户的账号版本处理并发。账号在校验后发生变化时返回 409；成功响应不包含密码，也不替换会话中的凭据。

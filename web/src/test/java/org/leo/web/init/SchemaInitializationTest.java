@@ -81,7 +81,7 @@ class SchemaInitializationTest {
                     Integer.class, name), name);
         }
 
-        assertEquals(Set.of("audit.mode", "max.file.upload.size.mb", "security.password.min.length",
+        assertEquals(Set.of("audit.mode", "security.password.min.length",
                         "security.login.max.attempts", "security.login.lock.seconds"),
                 Set.copyOf(jdbc.queryForList("SELECT config_key FROM system_configs", String.class)));
         assertTrue(jdbc.queryForObject(
@@ -98,6 +98,10 @@ class SchemaInitializationTest {
         initializer.run();
         var jdbc = new JdbcTemplate(source);
         jdbc.update("UPDATE system_configs SET config_value='write' WHERE config_key='audit.mode'");
+        jdbc.update("""
+                INSERT INTO system_configs (config_key, config_value, create_time, update_time)
+                VALUES ('max.file.upload.size.mb', '100', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """);
         new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
             jdbc.update("""
                     INSERT INTO users(user_id,user_name,password,create_time,update_time,team_id)
@@ -121,6 +125,7 @@ class SchemaInitializationTest {
         assertEquals("hash", jdbc.queryForObject("SELECT password FROM users WHERE user_id='fixture'", String.class));
         assertEquals("team-a", jdbc.queryForObject("SELECT team_id FROM agents WHERE agent_id='team-agent'", String.class));
         assertEquals("write", jdbc.queryForObject("SELECT config_value FROM system_configs WHERE config_key='audit.mode'", String.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM system_configs WHERE config_key='max.file.upload.size.mb'", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM teams", Integer.class));
         var error = assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO agents(agent_id,agent_name,parent_agent_id,create_by_user_id,conn_link,

@@ -1,0 +1,1 @@
+function e(e,{prop:t,order:n}){return!t||!n||e.sort((e,r)=>{let i=(e[t]||``).toString(),a=(r[t]||``).toString(),o=i.localeCompare(a);return n===`ascending`?o:-o}),e}export{e as t};

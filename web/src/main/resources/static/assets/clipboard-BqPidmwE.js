@@ -1,0 +1,1 @@
+import{a as e,n as t}from"./messageUtils-B68SW6vM.js";async function n(n,r=`已复制到剪贴板`,i=`复制失败，请手动复制`){try{let t=typeof n==`function`?n():n;await navigator.clipboard.writeText(t),e(r)}catch{t(i)}}export{n as t};
