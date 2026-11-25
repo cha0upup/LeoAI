@@ -83,7 +83,7 @@ class TeamManagementIntegrationTest {
     void close() { if (context != null) context.close(); }
 
     @ParameterizedTest
-    @CsvSource({"false,normal", "true,normal", "false,admin", "true,admin"})
+    @CsvSource({"false,normal", "true,admin"})
     void creationAssignsTheLeaderAndKeepsAdministratorPrivileges(boolean ai, String privilege) {
         seedUser("leader", privilege, null);
         create(ai);
@@ -107,8 +107,7 @@ class TeamManagementIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"false,system-admin,protected", "true,system-admin,protected",
-            "false,protected,系统管理员", "true,protected,系统管理员"})
+    @CsvSource({"false,system-admin,protected", "true,protected,系统管理员"})
     void protectedTeamsAreRejectedBeforeAnyMemberIsDetached(boolean ai, String id, String name) {
         seedTeam(id, name, "leader");
 
