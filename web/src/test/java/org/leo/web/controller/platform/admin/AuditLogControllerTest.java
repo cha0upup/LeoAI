@@ -194,7 +194,7 @@ class AuditLogControllerTest {
     }
 
     @Test
-    void cleanupDeletesOnlyRowsBeforeTheSuppliedLocalTimestamp(@TempDir Path temp) throws Exception {
+    void cleanupDeletesOnlyRowsBeforeTheLocalRetentionBoundary(@TempDir Path temp) {
         var source = SqliteTestDatabase.create(temp.resolve("audit-retention.db"));
         var jdbc = new JdbcTemplate(source);
         jdbc.update("""
@@ -205,8 +205,12 @@ class AuditLogControllerTest {
                 """);
         var configuration = SqliteTestDatabase.myBatisConfiguration(source);
         configuration.addMapper(AuditLogMapper.class);
-        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
-            assertEquals(1, session.getMapper(AuditLogMapper.class).deleteOldAuditLogs("2026-10-01 12:00:00"));
+        var applicationNow = LocalDateTime.of(2026, 10, 8, 12, 0);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
+             var clock = mockStatic(LocalDateTime.class, CALLS_REAL_METHODS)) {
+            clock.when(LocalDateTime::now).thenReturn(applicationNow);
+            var stored = new AuditLogService(session.getMapper(AuditLogMapper.class));
+            assertEquals(1, stored.deleteOldAuditLogs(7));
         }
         assertEquals(List.of("boundary", "new"),
                 jdbc.queryForList("SELECT log_id FROM audit_logs ORDER BY create_time", String.class));

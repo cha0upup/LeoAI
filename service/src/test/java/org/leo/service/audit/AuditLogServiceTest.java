@@ -11,8 +11,6 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 
@@ -69,19 +67,14 @@ class AuditLogServiceTest {
 
     @ParameterizedTest
     @NullSource
-    @ValueSource(ints = {0, 7})
-    void cleanupUsesTheSameLocalTimeAsAuditWrites(Integer days) {
-        int retention = days != null && days > 0 ? days : 30;
-        LocalDateTime earliest = LocalDateTime.now().minusDays(retention).truncatedTo(ChronoUnit.SECONDS);
-        when(mapper.deleteOldAuditLogs(anyString())).thenReturn(2);
-
-        assertEquals(2, logs.deleteOldAuditLogs(days));
-
-        var cutoff = ArgumentCaptor.forClass(String.class);
-        verify(mapper).deleteOldAuditLogs(cutoff.capture());
-        var localTime = LocalDateTime.parse(cutoff.getValue(), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        assertFalse(localTime.isBefore(earliest));
-        assertFalse(localTime.isAfter(LocalDateTime.now().minusDays(retention)));
+    @ValueSource(ints = 0)
+    void cleanupDefaultsToThirtyLocalDays(Integer days) {
+        var applicationNow = LocalDateTime.of(2026, 10, 31, 12, 0);
+        try (var clock = mockStatic(LocalDateTime.class, CALLS_REAL_METHODS)) {
+            clock.when(LocalDateTime::now).thenReturn(applicationNow);
+            logs.deleteOldAuditLogs(days);
+        }
+        verify(mapper).deleteOldAuditLogs("2026-10-01 12:00:00");
     }
 
     @Test

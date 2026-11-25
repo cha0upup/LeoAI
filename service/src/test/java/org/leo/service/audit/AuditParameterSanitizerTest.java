@@ -2,8 +2,6 @@ package org.leo.service.audit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.util.json.JsonUtil;
 
 import java.util.LinkedHashMap;
@@ -15,17 +13,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AuditParameterSanitizerTest {
 
-    @ParameterizedTest
-    @ValueSource(strings = {"password", "pwd", "passwd", "secret", "token", "key", "credential",
-            "content", "data", "filedata", "base64", "access_token", "api_key", " PASSWORD "})
-    void masksSensitiveFields(String field) {
-        assertEquals("***", AuditParameterSanitizer.sanitize(Map.of(field, "secret-value")).get(field));
-    }
-
     @Test
     void redactsNestedParametersWithoutChangingTheCallersData() {
+        var sensitiveFields = List.of("password", "pwd", "passwd", "secret", "token", "key", "credential",
+                "content", "data", "filedata", "base64", "access_token", "api_key", " PASSWORD ");
         Map<String, Object> connection = new LinkedHashMap<>();
-        connection.put("password", "original-password");
+        sensitiveFields.forEach(field -> connection.put(field, "fixture-secret"));
         connection.put("port", 3306);
         connection.put("enabled", true);
         connection.put("optional", null);
@@ -34,12 +27,12 @@ class AuditParameterSanitizerTest {
         Map<String, Object> sanitized = AuditParameterSanitizer.sanitize(source);
         Map<?, ?> nested = (Map<?, ?>) ((List<?>) sanitized.get("connections")).get(0);
         assertEquals(nested, ((List<?>) sanitized.get("connections")).get(1));
-        assertEquals("***", nested.get("password"));
+        sensitiveFields.forEach(field -> assertEquals("***", nested.get(field), field));
         assertEquals(3306, nested.get("port"));
         assertEquals(true, nested.get("enabled"));
         assertTrue(nested.containsKey("optional"));
         assertNull(nested.get("optional"));
-        assertEquals("original-password", connection.get("password"));
+        assertEquals("fixture-secret", connection.get("password"));
     }
 
     @Test

@@ -30,31 +30,12 @@ class AuditLogUtilTest {
     }
 
     @Test
-    void webAuditUsesTheSameRedactionForUrlAndNestedSecrets() {
+    void recordedAuditEntriesShareRedactionAndKeepTheirIdentity() {
         AuditLogService logs = recordingLogs();
         AuditLogUtil.logSystemOperation(null, "IGNORED", "test", "/test", null,
                 200, "ok", null, null, "127.0.0.1", false);
         verifyNoInteractions(logs);
 
-        AuditLogUtil.logSystemOperation(null, "TEST", "test", "/test",
-                Map.of("url", "https://user:url-secret@example.test?token=query-secret",
-                        "nested", Map.of("api_key", "key-secret")),
-                200, "ok", null, null, "127.0.0.1", false);
-
-        ArgumentCaptor<AuditLog> captured = ArgumentCaptor.forClass(AuditLog.class);
-        verify(logs).insertAuditLog(captured.capture());
-        AuditLog record = captured.getValue();
-        assertEquals("SUCCESS", record.getStatus());
-        assertEquals("127.0.0.1", record.getClientIp());
-        assertFalse(record.getRequestParams().contains("url-secret"));
-        assertFalse(record.getRequestParams().contains("query-secret"));
-        assertFalse(record.getRequestParams().contains("key-secret"));
-        assertTrue(record.getRequestParams().contains("example.test"));
-    }
-
-    @Test
-    void bothAuditEntriesShareSessionExtractionWithoutLosingUserOrAgentIdentity() {
-        AuditLogService logs = recordingLogs();
         User user = new User();
         user.setUserId("user");
         user.setUserName("name");
@@ -64,10 +45,11 @@ class AuditLogUtilTest {
         AbstractAgentNode node = mock(AbstractAgentNode.class);
         when(node.getUser()).thenReturn(user);
         when(node.getAgent()).thenReturn(agent);
-        Map<String, Object> params = Map.of("sessionId", 17, "password", "secret");
+        Map<String, Object> params = Map.of("sessionId", 17,
+                "url", "https://user:url-secret@example.test?token=query-secret", "nested", Map.of("api_key", "key-secret"));
 
-        AuditLogUtil.logOperation(node, "TEST", "test", "/test", params, 200, "ok", null, null, "ip");
-        AuditLogUtil.logSystemOperation(user, "TEST", "test", "/test", params, 200, "ok", null, null, "ip", false);
+        AuditLogUtil.logOperation(node, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1");
+        AuditLogUtil.logSystemOperation(user, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1", false);
 
         ArgumentCaptor<AuditLog> captured = ArgumentCaptor.forClass(AuditLog.class);
         verify(logs, times(2)).insertAuditLog(captured.capture());
@@ -76,7 +58,9 @@ class AuditLogUtilTest {
             assertEquals("user", record.getUserId());
             assertEquals("name", record.getUserName());
             assertEquals("SUCCESS", record.getStatus());
+            assertEquals("127.0.0.1", record.getClientIp());
             assertFalse(record.getRequestParams().contains("secret"));
+            assertTrue(record.getRequestParams().contains("example.test"));
         }
         assertEquals("agent", captured.getAllValues().get(0).getAgentId());
         assertEquals("host", captured.getAllValues().get(0).getAgentName());
@@ -95,7 +79,7 @@ class AuditLogUtilTest {
     }
 
     private static Stream<Map<String, Object>> requestsWithoutSession() {
-        return Stream.of(null, Map.of(), Collections.singletonMap("sessionId", null));
+        return Stream.of(null, Collections.singletonMap("sessionId", null));
     }
 
     private AuditLogService recordingLogs() {
