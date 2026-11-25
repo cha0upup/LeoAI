@@ -79,8 +79,7 @@
 
 ## 任务附件下载
 
-- 任务详情沿用 `GET /platform/user/file/download` 下载当前登录用户的任务输出。该接口不列出文件、不接收上传，也不读取历史个人归档文件；任务引用中的 `downloadEndpoint` 保持不变。
-- 旧上传上限配置仅在服务启动时清理，既有用户文件仍保留在磁盘上。
+- `GET /platform/user/file/download` 仅下载当前登录用户的任务输出。任务文件引用通过 `userWorkspacePath` 提供路径，并通过 `downloadEndpoint` 提供下载地址。
 
 ## 个人资料写入
 
