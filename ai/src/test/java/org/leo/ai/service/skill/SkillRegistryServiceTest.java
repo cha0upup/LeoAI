@@ -3,9 +3,6 @@ package org.leo.ai.service.skill;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,55 +65,52 @@ class SkillRegistryServiceTest {
         assertTrue(allSkills.contains("restricted-skill"));
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"agent-node", "platform"})
-    void formattedIndexReflectsRegistryRefreshWithoutSeparateInvalidation(String scope) throws Exception {
-        writeSkill(scope, "mutable-skill", true, "first body");
-        LeoSkillsProvider provider = new LeoSkillsProvider(registry);
-        assertTrue(provider.getFormattedSkills(scope).contains("mutable-skill"));
-
-        writeSkill(scope, "mutable-skill", false, "second body");
-        writeSkill(scope, "new-skill", true, "new body");
-        registry.invalidate();
-
-        String index = provider.getFormattedSkills(scope);
-        assertFalse(index.contains("mutable-skill"));
-        assertTrue(index.contains("new-skill"));
-    }
-
     @Test
-    void invalidatingDuringAScanCannotCacheItsOutdatedResult() throws Exception {
+    void invalidatingDuringAScanRefreshesTheFormattedIndexAndHealthTogether() throws Exception {
         writeSkill("platform", "mutable-skill", true, "body");
+        writeSkill("agent-node", "other-skill", true, "body");
         Path skillDir = tempDir.resolve("skills/platform/mutable-skill");
         AtomicBoolean invalidateOnce = new AtomicBoolean();
         doAnswer(call -> {
             SkillInspection inspected = (SkillInspection) call.callRealMethod();
             if (invalidateOnce.compareAndSet(false, true)) {
                 writeSkill("platform", "mutable-skill", false, "body");
+                writeSkill("platform", "new-skill", true, "body");
                 registry.invalidate();
             }
             return inspected;
         }).when(manifests).inspect(skillDir, "platform");
 
-        assertTrue(registry.listAllSkills("platform").get(0).isEnabled());
+        var provider = new LeoSkillsProvider(registry);
+        assertTrue(provider.getFormattedSkills("platform").contains("mutable-skill"));
 
-        assertFalse(registry.listAllSkills("platform").get(0).isEnabled());
-        assertFalse(registry.health("platform").get(0).descriptor().enabled());
+        String refreshed = provider.getFormattedSkills("platform");
+        assertFalse(refreshed.contains("mutable-skill"));
+        assertTrue(refreshed.contains("new-skill"));
+        var health = registry.health("platform").stream().filter(row -> row.name().equals("mutable-skill"))
+                .findFirst().orElseThrow();
+        assertFalse(health.descriptor().enabled());
+        String otherScope = provider.getFormattedSkills("agent-node");
+        assertTrue(otherScope.contains("other-skill"));
+        assertFalse(otherScope.contains("new-skill"));
     }
 
-    @ParameterizedTest
-    @CsvSource({"29999, false", "30000, false", "30001, true"})
-    void metadataAndHealthShareTheSameExpiry(long elapsedMillis, boolean expired) throws Exception {
+    @Test
+    void metadataAndHealthShareOneSnapshotUntilItExpires() throws Exception {
         writeSkill("platform", "mutable-skill", true, "body");
         assertTrue(registry.listAllSkills("platform").get(0).isEnabled());
 
+        Path skillDir = tempDir.resolve("skills/platform/mutable-skill");
         writeSkill("platform", "mutable-skill", false, "body");
-        clock.set(elapsedMillis);
+        clock.set(30_000);
+        assertTrue(registry.listAllSkills("platform").get(0).isEnabled());
+        assertTrue(registry.health("platform").get(0).descriptor().enabled());
+        verify(manifests).inspect(skillDir, "platform");
 
-        assertEquals(!expired, registry.listAllSkills("platform").get(0).isEnabled());
-        assertEquals(!expired, registry.health("platform").get(0).descriptor().enabled());
-        verify(manifests, times(expired ? 2 : 1))
-                .inspect(tempDir.resolve("skills/platform/mutable-skill"), "platform");
+        clock.incrementAndGet();
+        assertFalse(registry.health("platform").get(0).descriptor().enabled());
+        assertFalse(registry.listAllSkills("platform").get(0).isEnabled());
+        verify(manifests, times(2)).inspect(skillDir, "platform");
     }
 
     @Test
