@@ -95,7 +95,8 @@ class AiConversationPersistenceIntegrationTest {
             runtime.bindActiveRunId(running.runId());
             journal.attach("thread-1", runtime);
 
-            assertEquals(sequence, runtime.recordSseEvent("delta", Map.of("sequence", sequence)).seq());
+            String invocation = sequence == 2 ? "fixture-invocation" : null;
+            assertEquals(sequence, runtime.recordSseEvent("delta", Map.of("sequence", sequence), invocation).seq());
         }
 
         List<AiSseEvent> replay = journal.listAfter("thread-1", 1L, 200);
@@ -105,6 +106,8 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(turn.id(), event.turnId());
         assertEquals(turn.assistantItemId(), event.itemId());
         assertEquals(running.runId(), event.runId());
+        assertEquals("fixture-invocation", event.subagentInvocationId());
+        assertEquals("delta", event.name());
         assertEquals(Map.of("sequence", 2), event.data());
         assertEquals(2L, journal.lastSequence("thread-1"));
     }

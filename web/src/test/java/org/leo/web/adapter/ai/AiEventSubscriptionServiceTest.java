@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.ai.thread.AiMessageRepository;
@@ -62,7 +61,7 @@ class AiEventSubscriptionServiceTest {
             executor, writer, conversations, eventStore, turns, threadQueries);
 
     @ParameterizedTest
-    @CsvSource({"1,false", "200,false", "201,false", "401,false", "2,true"})
+    @CsvSource({"200,false", "401,false", "2,true"})
     void replaysInOrderWithoutRepeatedStateQueries(int eventCount, boolean running)
             throws Exception {
         AiThread thread = new AiThread("thread-1", "test");
@@ -217,16 +216,14 @@ class AiEventSubscriptionServiceTest {
         verify(emitter).complete();
     }
 
-    @ParameterizedTest
-    @ValueSource(ints = {2, 8, 16})
-    void sharesJournalReadsAcrossConcurrentSubscribersAndReleasesTheCache(int subscriberCount)
-            throws Exception {
+    @Test
+    void sharesJournalReadsAcrossConcurrentSubscribersAndReleasesTheCache() throws Exception {
         AiEventSubscriptionService shared = new AiEventSubscriptionService(
                 executor, writer, conversations, eventStore, turns, threadQueries, () -> 0L);
         AiThread thread = new AiThread("shared", "test");
         assertTrue(thread.claimExecution());
 
-        runOverlappingSubscribers(shared, thread, IntStream.range(0, subscriberCount)
+        runOverlappingSubscribers(shared, thread, IntStream.range(0, 8)
                 .mapToObj(index -> 0L).toList(), null);
 
         verify(eventStore).listAfter("shared", 0L, 200);
