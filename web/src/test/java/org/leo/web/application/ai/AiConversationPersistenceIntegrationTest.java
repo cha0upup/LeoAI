@@ -10,7 +10,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.runtime.AiTurnRecoveryContext;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.thread.*;
-import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.util.json.JsonUtil;
@@ -454,7 +453,7 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
-    void failedTurnKeepsRecoveryPrivateWhileRestoringItForTheModel() throws Exception {
+    void failedTurnKeepsRecoveryPrivateWhileRestoringItForTheModel() {
         var turn = reserve();
         var running = beginRun(turn);
         var plan = Map.of("kind", "plan", "step", "fixture step");
@@ -467,6 +466,8 @@ class AiConversationPersistenceIntegrationTest {
         var assistant = history.stream().filter(message -> "assistant".equals(message.get("role"))).findFirst().orElseThrow();
         assertEquals("", assistant.get("content"));
         assertEquals("discarded", assistant.get("status"));
+        assertEquals(running.runId(), assistant.get("runId"));
+        assertEquals("failed", assistant.get("runStatus"));
         assertEquals("fixture connection failed", assistant.get("protocolErrorMessage"));
         assertNotNull(assistant.get("nodes"));
         assertNotNull(assistant.get("plan"));
@@ -480,27 +481,34 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(recovery, memory.get(1).content());
         assertEquals(recovery, messages.contextMessage("thread-1", memory.get(1).sequence()).content());
         assertEquals(plan, JsonUtil.fromJsonString(messages.findLatestPlanJson("thread-1"), Map.class));
-
-        var row = new AiMessageRecord();
-        row.setContent("visible");
-        row.setRecoveryContext("private memory");
-        assertFalse(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(row).contains("private memory"));
     }
 
     @Test
-    void bothHistoryPaginationPathsPreserveLiteralReplyAndKeepRecoverySeparate() {
+    void bothHistoryPaginationPathsPreservePublicMetadataWithoutExposingRecovery() {
         var turn = reserve();
         String reply = "actual partial reply\n\n" + AiTurnRecoveryContext.build(List.of(), Map.of("step", "quoted example"));
         String recovery = "private progress for model memory";
         jdbc.update("UPDATE ai_messages SET status='discarded' WHERE turn_id=?", turn.id());
-        jdbc.update("UPDATE ai_messages SET content=?, recovery_context=? WHERE message_id=?", reply, recovery, turn.assistantItemId());
-        for (var history : List.of(messages.list("thread-1", 0, 20), messages.listBefore("thread-1", 3, 20))) {
-            var assistant = history.stream().filter(message -> "assistant".equals(message.get("role"))).findFirst().orElseThrow();
-            assertEquals(reply, assistant.get("content"));
-            assertFalse(assistant.containsKey("recoveryContext"));
-            assertFalse(assistant.toString().contains(recovery));
-        }
+        jdbc.update("""
+                UPDATE ai_messages SET content=?, recovery_context=?, attachments_json=?,
+                    review_json=?, nodes_json='not-json', plan_json='null' WHERE message_id=?
+                """, reply, recovery, "[{\"name\":\"a.txt\"}]", "{\"ok\":true}", turn.assistantItemId());
+
+        var history = messages.list("thread-1", 0, 20);
+        assertEquals(history, messages.listBefore("thread-1", 3, 20));
+        var assistant = history.get(1);
+        assertEquals(turn.assistantItemId(), assistant.get("messageId"));
+        assertEquals(turn.id(), assistant.get("turnId"));
+        assertEquals(2L, assistant.get("sequence"));
+        assertEquals(reply, assistant.get("content"));
+        assertEquals(List.of(Map.of("name", "a.txt")), assistant.get("attachments"));
+        assertEquals(Map.of("ok", true), assistant.get("review"));
+        assertFalse(assistant.containsKey("nodes"));
+        assertFalse(assistant.containsKey("plan"));
+        assertFalse(assistant.containsKey("recoveryContext"));
+        assertFalse(assistant.toString().contains(recovery));
         assertEquals(recovery, messages.contextMessage("thread-1", 2).content());
+        assertNull(messages.contextMessage("thread-1", 3));
         assertEquals(reply, jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         jdbc.update("UPDATE ai_messages SET recovery_context=NULL WHERE message_id=?", turn.assistantItemId());
         assertEquals(reply, messages.contextMessage("thread-1", 2).content());

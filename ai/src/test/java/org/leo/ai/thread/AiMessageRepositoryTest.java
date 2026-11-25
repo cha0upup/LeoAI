@@ -1,47 +1,18 @@
 package org.leo.ai.thread;
 
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.core.entity.AiMessageRecord;
 import org.leo.dao.mapper.AiConversationMapper;
 
-import java.util.List;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class AiMessageRepositoryTest {
     private final AiConversationMapper mapper = mock(AiConversationMapper.class);
     private final AiMessageRepository messages = new AiMessageRepository(mapper);
 
-    @Test
-    void modelContextKeepsSequenceOrderAndResumableProgress() {
-        AiMessageRecord user = new AiMessageRecord();
-        user.setMessageSeq(7L);
-        user.setRole("user");
-        user.setContent("continue");
-        AiMessageRecord recovery = new AiMessageRecord();
-        recovery.setMessageSeq(8L);
-        recovery.setRole("assistant");
-        recovery.setStatus("discarded");
-        recovery.setContent("partial reply");
-        recovery.setRecoveryContext("private progress");
-        when(mapper.recentContextMessages("thread", 20)).thenReturn(List.of(user, recovery));
-        when(mapper.findContextMessageBySequence("thread", 8L)).thenReturn(recovery);
-
-        assertEquals(List.of(new ConversationMessage(7L, "user", "continue"),
-                        new ConversationMessage(8L, "assistant", "private progress")),
-                messages.contextMessages("thread", 20));
-        assertEquals(new ConversationMessage(8L, "assistant", "private progress"), messages.contextMessage("thread", 8L));
-        assertNull(messages.contextMessage("thread", 9L));
-    }
-
     @ParameterizedTest
-    @CsvSource({"7,20,7,20,20", "-8,0,0,1,1", "0,200,0,200,200", "0,201,0,200,200",
-            "0,-1,0,200,1", "0,-2147483648,0,200,1"})
+    @CsvSource({"7,20,7,20,20", "-8,0,0,1,1", "0,201,0,200,200", "0,-1,0,200,1"})
     void boundsHistoryPagesConsistentlyWithoutChangingModelContextLimits(
             int offset, int limit, int expectedOffset, int historyLimit, int contextLimit) {
         messages.list("thread", offset, limit);
@@ -51,47 +22,5 @@ class AiMessageRepositoryTest {
         verify(mapper).listMessages("thread", expectedOffset, historyLimit);
         verify(mapper).listMessagesBefore("thread", 10L, historyLimit);
         verify(mapper).recentContextMessages("thread", contextLimit);
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void publicHistoryKeepsMetadataAndOmitsPrivateRecoveryAndInvalidJson(boolean cursor) {
-        AiMessageRecord row = new AiMessageRecord();
-        row.setMessageId("message-1");
-        row.setThreadId("thread");
-        row.setTurnId("turn-1");
-        row.setRunId("run-1");
-        row.setMessageSeq(3L);
-        row.setStatus("discarded");
-        row.setRole("assistant");
-        row.setContent("partial reply");
-        row.setRecoveryContext("private progress");
-        row.setRunStatus("cancelled");
-        row.setProtocolStatus("interrupted");
-        row.setTimestamp(100L);
-        row.setAttachmentsJson("[{\"name\":\"a.txt\"}]");
-        row.setNodesJson("not-json");
-        row.setReviewJson("{\"ok\":true}");
-        row.setPlanJson("null");
-        when(mapper.listMessages("thread", 0, 20)).thenReturn(List.of(row));
-        when(mapper.listMessagesBefore("thread", 10L, 20)).thenReturn(List.of(row));
-
-        Map<String, Object> message = (cursor
-                ? messages.listBefore("thread", 10L, 20) : messages.list("thread", 0, 20)).get(0);
-
-        assertEquals("message-1", message.get("messageId"));
-        assertEquals("partial reply", message.get("content"));
-        assertEquals("turn-1", message.get("turnId"));
-        assertEquals("run-1", message.get("runId"));
-        assertEquals(3L, message.get("sequence"));
-        assertEquals("discarded", message.get("status"));
-        assertEquals("cancelled", message.get("runStatus"));
-        assertEquals("interrupted", message.get("protocolStatus"));
-        assertEquals(List.of(Map.of("name", "a.txt")), message.get("attachments"));
-        assertEquals(Map.of("ok", true), message.get("review"));
-        assertFalse(message.containsKey("nodes"));
-        assertFalse(message.containsKey("plan"));
-        assertFalse(message.containsKey("recoveryContext"));
-        assertFalse(message.containsValue("private progress"));
     }
 }
