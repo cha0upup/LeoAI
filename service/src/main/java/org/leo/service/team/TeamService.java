@@ -96,9 +96,9 @@ public class TeamService {
         team.setTeamName(teamName);
 
         User leader = userService.getUserById(leaderId);
-        if (leader == null) throw failure(NOT_FOUND, "用户不存在");
+        if (leader == null) throw failure(NOT_FOUND, "所选队长账号已不存在，请重新选择");
         if (leader.getTeamId() != null && !leader.getTeamId().isBlank()) {
-            throw failure(VALIDATION, "该用户已属于某个团队");
+            throw failure(CONFLICT, "所选队长已加入团队，请重新选择");
         }
         if (teamMapper.existsTeamByName(teamName, null)) throw failure(VALIDATION, "团队名已存在");
         if (team.getTeamId() == null || team.getTeamId().isBlank()) {

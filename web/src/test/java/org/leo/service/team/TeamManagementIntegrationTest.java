@@ -117,6 +117,22 @@ class TeamManagementIntegrationTest {
         assertAccount("leader", "normal", null);
     }
 
+    @Test
+    void creatingATeamWithAnAlreadyAssignedCandidateReturnsConflictWithoutChangingMembership() throws Exception {
+        seedMembership();
+
+        teamHttp().perform(post("/platform/admin/teams").session(teamSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"teamId":"new-team","teamName":"New team","leaderId":"member"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(409));
+
+        assertNull(teams.getTeamById("new-team"));
+        assertAccount("member", "normal", "team");
+    }
+
     @ParameterizedTest
     @CsvSource({"false,system-admin,protected", "true,protected,系统管理员"})
     void protectedTeamsAreRejectedBeforeAnyMemberIsDetached(boolean ai, String id, String name) {
