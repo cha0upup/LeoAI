@@ -45,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -200,6 +201,27 @@ class PasswordRoundTripIntegrationTest {
         assertTrue(PasswordUtil.verify("replacement-fixture-password", stored.getPassword()));
         assertEquals(1, stored.getPasswordChangeRequired());
         assertNull(stored.getEmail());
+    }
+
+    @Test
+    void aProfileSavedFromAnOlderTabDoesNotOverwriteNewerChanges() throws Exception {
+        String path = "/platform/user/profile";
+        String snapshot = mvc.perform(get(path).session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountRevision").isNumber())
+                .andReturn().getResponse().getContentAsString();
+        long revision = json.readTree(snapshot).path("data").path("accountRevision").asLong();
+
+        mvc.perform(body(path, Map.of("accountRevision", revision, "email", "latest@example.test"))
+                        .session(adminSession))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.accountRevision").value(revision + 1));
+        mvc.perform(body(path, Map.of("accountRevision", revision, "remark", "Stale draft"))
+                        .session(adminSession))
+                .andExpect(status().isConflict());
+
+        User stored = users.getUserById("fixture-admin");
+        assertEquals("latest@example.test", stored.getEmail());
+        assertNull(stored.getRemark());
     }
 
     @Test

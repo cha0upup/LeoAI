@@ -65,10 +65,11 @@ class LoginControllerTest {
     }
 
     @Test
-    void profileUsesTheSharedPublicViewAndIncludesTeamName() {
+    void profileUsesTheSharedPublicViewWithTeamNameAndAccountRevision() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         User user = new User("user-1", "alice", "stored-hash", "normal", "2026-09-01");
         user.setTeamId("team-1");
+        user.setAccountRevision(5L);
         Team team = new Team();
         team.setTeamName("Example team");
         when(permissionService.requireLogin(request)).thenReturn(user);
@@ -77,8 +78,10 @@ class LoginControllerTest {
         Map<?, ?> data = (Map<?, ?>) controller.profile(request).get("data");
 
         assertEquals(Set.of("userId", "userName", "privilege", "email", "phone", "status", "teamId",
-                "teamName", "remark", "lastLoginTime", "loginCount", "createTime", "updateTime"), data.keySet());
+                "teamName", "remark", "lastLoginTime", "loginCount", "createTime", "updateTime", "accountRevision"),
+                data.keySet());
         assertEquals("Example team", data.get("teamName"));
+        assertEquals(5L, data.get("accountRevision"));
         assertEquals("stored-hash", user.getPassword());
         verifyNoInteractions(userService);
     }
@@ -195,7 +198,7 @@ class LoginControllerTest {
         when(permissionService.requireLogin(request)).thenReturn(verified);
 
         ApiException error = assertThrows(ApiException.class,
-                () -> controller.updateProfile(request, new UpdateProfileRequest(null, null, "notes")));
+                () -> controller.updateProfile(request, new UpdateProfileRequest(null, null, "notes", null)));
 
         assertEquals(409, error.getCode());
         assertNull(verified.getRemark());

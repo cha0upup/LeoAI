@@ -157,6 +157,9 @@ public class LoginController {
         if (body == null) {
             throw ApiException.badRequest("个人资料不能为空");
         }
+        if (body.accountRevision() != null && body.accountRevision() != verifiedUser.getAccountRevision()) {
+            throw ApiException.conflict("账号信息已变化，请刷新后重试");
+        }
 
         String email = normalizeOptional(body.email());
         String phone = normalizeOptional(body.phone());
@@ -226,6 +229,7 @@ public class LoginController {
 
     private Map<String, Object> profileView(User user) {
         Map<String, Object> data = UserViews.profile(user);
+        data.put("accountRevision", user.getAccountRevision());
         Team team = teamService.getTeamById(user.getTeamId());
         data.put("teamName", team != null ? team.getTeamName() : null);
         return data;
@@ -247,6 +251,6 @@ public class LoginController {
 
     record ChangePasswordRequest(String oldPassword, String newPassword) {}
 
-    /** 当前用户可自行维护的个人资料字段。 */
-    record UpdateProfileRequest(String email, String phone, String remark) {}
+    /** 可编辑字段及客户端读取资料时的账号版本。 */
+    record UpdateProfileRequest(String email, String phone, String remark, Long accountRevision) {}
 }
