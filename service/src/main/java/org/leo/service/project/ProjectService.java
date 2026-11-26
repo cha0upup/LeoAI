@@ -113,17 +113,22 @@ public class ProjectService {
         if (existing == null || changes == null || actor == null) throw new IllegalArgumentException("项目参数不能为空");
         String permission = normalizePermission(changes.getPermission(), actor);
         String name = requireName(changes.getProjectName());
-        String status = normalizeStatus(changes.getStatus());
+        String status = changes.getStatus() == null ? null : normalizeStatus(changes.getStatus());
         String teamId = resolveTeamId(permission, existing, actor);
-        existing.setProjectName(name);
-        existing.setProjectCode(trimToNull(changes.getProjectCode()));
-        existing.setDescription(trimToNull(changes.getDescription()));
-        existing.setPermission(permission);
-        existing.setStatus(status);
-        existing.setTeamId(teamId);
-        existing.setUpdateTime(now());
-        if (!projectMapper.updateProject(existing)) throw new IllegalStateException("更新项目失败");
-        return existing;
+
+        Project patch = new Project();
+        patch.setProjectId(existing.getProjectId());
+        patch.setOwnerUserId(existing.getOwnerUserId());
+        patch.setProjectName(name);
+        patch.setProjectCode(trimToNull(changes.getProjectCode()));
+        patch.setDescription(trimToNull(changes.getDescription()));
+        patch.setPermission(permission);
+        patch.setStatus(status);
+        patch.setTeamId(teamId);
+        patch.setUpdateTime(now());
+        Project updated = projectMapper.updateProject(patch);
+        if (updated == null) throw new IllegalStateException("更新项目失败");
+        return updated;
     }
 
     private String resolveTeamId(String permission, Project existing, User actor) {

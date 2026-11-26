@@ -222,6 +222,8 @@ Before deleting an account, transfer any teams and projects it leads or owns, in
 
 Project managers can archive with `POST /platform/projects/archive` or restore with `POST /platform/projects/restore`. Both endpoints accept only `projectId` and update only the project status and modification time; unsaved edits to other fields are not submitted.
 
+`POST /platform/projects/update` preserves the current stored status when `status` is omitted. Explicit `active` and `archived` values are still supported. The project's regular Save action does not send a status.
+
 Team audit statistics use the team recorded when each log entry was written. Moving a member or deleting an account or team leaves historical attribution intact. Retention uses the application's local time, matching the stored timestamps.
 
 ---

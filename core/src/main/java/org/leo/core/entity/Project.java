@@ -20,7 +20,6 @@ public class Project {
     private String updateTime;
 
     public Project() {
-        this.status = STATUS_ACTIVE;
         this.permission = "private";
     }
 

@@ -47,10 +47,15 @@ public interface ProjectMapper {
             "VALUES (#{projectId}, #{projectName}, #{projectCode}, #{description}, #{status}, #{ownerUserId}, #{teamId}, #{permission}, #{createTime}, #{updateTime})")
     boolean insertProject(Project project);
 
-    @Update("UPDATE projects SET project_name=#{projectName}, project_code=#{projectCode}, description=#{description}, " +
-            "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} " +
-            "WHERE project_id=#{projectId} AND owner_user_id=#{ownerUserId}")
-    boolean updateProject(Project project);
+    @Select(value = """
+            UPDATE projects SET project_name = #{projectName}, project_code = #{projectCode},
+                description = #{description}, team_id = #{teamId}, permission = #{permission},
+                status = COALESCE(#{status}, status), update_time = #{updateTime}
+            WHERE project_id = #{projectId} AND owner_user_id = #{ownerUserId}
+            RETURNING *
+            """, affectData = true)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    Project updateProject(Project project);
 
     @Select(value = """
             UPDATE projects SET status = #{status}, update_time = #{updatedAt}

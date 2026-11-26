@@ -1,5 +1,6 @@
 package org.leo.web.controller.platform.project;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.ibatis.executor.statement.StatementHandler;
 import org.apache.ibatis.plugin.Interceptor;
@@ -238,6 +239,28 @@ class ProjectListIntegrationTest {
     }
 
     @Test
+    void editingWithoutStatusDoesNotUndoAnArchiveAfterTheOriginalRead() throws Exception {
+        project("owned", "user-1", "private", "active", "Original");
+        Project earlierView = projectService.findById("owned");
+        var request = requestAs("normal");
+        User owner = (User) request.getSession().getAttribute("user");
+        Project details = new ObjectMapper().readValue("""
+                {"projectId":"owned","projectName":"Edited","permission":"private"}
+                """, Project.class);
+        projectService.archive(earlierView);
+
+        Project updated = projectService.update(earlierView, details, owner);
+
+        assertEquals("archived", updated.getStatus());
+        assertEquals("Edited", updated.getProjectName());
+        assertEquals("archived", projectService.findById("owned").getStatus());
+
+        details.setStatus("active");
+        Project explicitlyRestored = (Project) controller.updateProject(request, details).get("data");
+        assertEquals("active", explicitlyRestored.getStatus());
+    }
+
+    @Test
     void restoreChangesOnlyStatusAndStillRequiresProjectManagementPermission() throws Exception {
         project("owned", "user-1", "team", "archived", "Current name");
         jdbc.update("UPDATE projects SET project_code='latest', description='Current description' WHERE project_id='owned'");
@@ -283,7 +306,7 @@ class ProjectListIntegrationTest {
         assertEquals(200, controller.transferProject(admin, transfer).get("code"));
         assertEquals(Map.of("owner_user_id", "user-2", "team_id", "team-1", "status", "archived"),
                 jdbc.queryForMap("SELECT owner_user_id, team_id, status FROM projects WHERE project_id='owned'"));
-        assertFalse(projectMapper.updateProject(beforeTransfer));
+        assertNull(projectMapper.updateProject(beforeTransfer));
         assertThrows(IllegalStateException.class, () -> projectService.archive(beforeTransfer));
         assertEquals(0, projectMapper.deleteProject("owned", beforeTransfer.getOwnerUserId()));
         assertTrue(storedUsers.deleteUser(previousOwner));

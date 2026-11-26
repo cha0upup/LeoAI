@@ -252,6 +252,8 @@ Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘�
 
 项目管理者可通过 `POST /platform/projects/archive` 归档，或通过 `POST /platform/projects/restore` 恢复。两个接口均只接收 `projectId`，只更新项目状态和更新时间，不保存其他项目资料的草稿。
 
+`POST /platform/projects/update` 未传 `status` 时保留数据库中的当前状态；仍支持显式提交 `active` 或 `archived`。项目设置中的普通保存不会提交状态。
+
 团队审计统计使用日志写入时记录的团队归属；成员调组或删除账号、团队都不会改变已记录的归属。清理旧日志按应用本地时间计算，与记录时间一致。
 
 <img src="docs/images/screenshot-admin-console.png" alt="管理后台" width="800" />
