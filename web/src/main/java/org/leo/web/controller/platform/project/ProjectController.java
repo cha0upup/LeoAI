@@ -104,6 +104,13 @@ public class ProjectController {
         return ApiResponse.success(projectService.archive(project));
     }
 
+    @PostMapping("/restore")
+    public Map<String, Object> restoreProject(HttpServletRequest request, @RequestBody ProjectIdRequest body) {
+        User user = permissionService.requireLogin(request);
+        Project project = requireManageable(body != null ? body.projectId() : null, user);
+        return ApiResponse.success(projectService.restore(project));
+    }
+
     @PostMapping("/transfer")
     public Map<String, Object> transferProject(HttpServletRequest request, @RequestBody ProjectOwnerTransferRequest body) {
         User user = permissionService.requireLogin(request);

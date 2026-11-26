@@ -53,14 +53,15 @@ public interface ProjectMapper {
     boolean updateProject(Project project);
 
     @Select(value = """
-            UPDATE projects SET status = 'archived', update_time = #{updatedAt}
+            UPDATE projects SET status = #{status}, update_time = #{updatedAt}
             WHERE project_id = #{projectId} AND owner_user_id = #{ownerUserId}
             RETURNING *
             """, affectData = true)
     @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
-    Project archiveProject(@Param("projectId") String projectId,
-                           @Param("ownerUserId") String ownerUserId,
-                           @Param("updatedAt") String updatedAt);
+    Project updateProjectStatus(@Param("projectId") String projectId,
+                                @Param("ownerUserId") String ownerUserId,
+                                @Param("status") String status,
+                                @Param("updatedAt") String updatedAt);
 
     @Update("""
             UPDATE projects SET owner_user_id = #{newOwnerId}, update_time = #{updatedAt}

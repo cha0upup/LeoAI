@@ -42,11 +42,14 @@ import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.method.HandlerMethod;
 import org.sqlite.SQLiteDataSource;
 
@@ -58,6 +61,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 使用实际 SQLite schema 和 MyBatis 映射验证项目读写契约及查询次数。 */
 class ProjectListIntegrationTest {
@@ -227,6 +233,30 @@ class ProjectListIntegrationTest {
                         "permission", "team", "team_id", "team-1", "status", "archived", "update_time", archived.getUpdateTime()),
                 jdbc.queryForMap("""
                         SELECT project_name, project_code, description, permission, team_id, status, update_time
+                        FROM projects WHERE project_id='owned'
+                        """));
+    }
+
+    @Test
+    void restoreChangesOnlyStatusAndStillRequiresProjectManagementPermission() throws Exception {
+        project("owned", "user-1", "team", "archived", "Current name");
+        jdbc.update("UPDATE projects SET project_code='latest', description='Current description' WHERE project_id='owned'");
+        var input = new ProjectIdRequest("owned");
+        var colleague = requestAs("normal", "lead-1", "team-1");
+        assertEquals(403, assertThrows(ApiException.class, () -> controller.restoreProject(colleague, input)).getCode());
+        assertEquals("archived", projectService.findById("owned").getStatus());
+
+        var session = (MockHttpSession) requestAs("normal").getSession(false);
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/projects/restore").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"projectId":"owned"}
+                                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("active"));
+        assertEquals(Map.of("project_name", "Current name", "project_code", "latest", "description", "Current description",
+                        "permission", "team", "team_id", "team-1", "owner_user_id", "user-1", "status", "active"),
+                jdbc.queryForMap("""
+                        SELECT project_name, project_code, description, permission, team_id, owner_user_id, status
                         FROM projects WHERE project_id='owned'
                         """));
     }
