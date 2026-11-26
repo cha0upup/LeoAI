@@ -41,6 +41,13 @@
 - Node.js 24（前端 `.nvmrc` 和发布检查统一使用 24.14.1），使用 `npm ci` 安装 lockfile 依赖
 - Java Component 只读检查使用 Java 8 javac；应用构建使用 JDK 17
 
+## 本地构建与发布
+
+- 使用已同步的前端资源构建应用：`./mvnw -pl web -am -DskipTests clean package`。JAR 位于 `web/target/`。
+- 前端有改动时，先在前端仓库执行 `npm ci` 和 `npm run build`，再将 `dist/` 同步到后端的 `web/src/main/resources/static/`，移除已被替换的哈希资源。
+- 发布前运行 `python3 tools/verify_release.py --frontend ../LeoVueAi`。前后端应配套发布。
+- 前端开发的个人覆盖配置放在 `.env.development.local`；`VITE_*` 变量会进入浏览器产物，不存放密钥。
+
 ## 代码规范
 
 - Java 代码遵循项目现有风格
@@ -90,6 +97,11 @@
 - `POST /platform/admin/users/delete` 只删除服务端刚校验过的账号版本。若账号在校验后发生变化，或仍负责项目、担任队长，接口返回 409。管理端在收到 404 或 409 后刷新列表，不自动重试删除；若仍有项目或团队归属，先完成交接。
 - `POST /platform/user/profile` 只更新邮箱、手机号和备注，仍使用请求内已校验用户的账号版本处理并发。账号在校验后发生变化时返回 409；成功响应不包含密码，也不替换会话中的凭据。
 
+## 项目状态与资料写入
+
+- `POST /platform/projects/archive` 和 `POST /platform/projects/restore` 接收 `projectId`，只更新状态和更新时间。普通保存不发送项目状态，未传 `status` 时保留数据库中的当前值。
+- `POST /platform/projects/transfer` 接收 `projectId` 和 `newOwnerUserId`，只变更负责人，保留共享范围和归档状态。接任账号须已启用。
+
 ## 注意事项
 
 - 发布入口会安装 lockfile 依赖，执行前端 lint/测试/构建、静态目录逐文件比对、组件 Java 6 API 与运行字节码检查、工具测试以及后端 `clean verify`。本地已准备依赖时可使用 `--skip-install`，CI 使用完整入口。
@@ -101,5 +113,5 @@
 - 不要在代码中包含任何真实的密钥、凭据或敏感信息
 - 提交前检查 `git status --short` 与 `git diff --check`；数据库、`.leo/` 密钥、用户 VFS、环境覆盖文件、日志和诊断转储均属于本地数据，不随源码分发。
 - Docker 构建上下文使用显式白名单，仅包含入口脚本和随仓库分发的 VFS 种子。新增内置插件、伪装或指纹时同步更新 `.dockerignore`；内置 Skill 由 JAR 中的资源在启动时同步，不复制本地 Skill 工作区。
-- 代码变更后核对受影响的现存 Markdown 文档；行为、接口、配置、部署或验证命令与描述有出入时，同步修改文档，并保持中英文 README 一致。新功能请附带基本的使用说明。
+- README 只保留项目简介、主要功能和快速使用方法，并保持中英文说明一致。接口、实现、测试和发布细节放到贡献指南或专题文档；新功能只在影响基本用法时更新 README。
 - 通信协议以当前服务端和节点实现为准；修改协议时同步更新两端及测试，不保留旧版兼容分支
