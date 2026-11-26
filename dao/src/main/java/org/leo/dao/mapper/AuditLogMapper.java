@@ -164,8 +164,18 @@ public interface AuditLogMapper {
     @Select(AUDIT_STATISTICS_SELECT + "WHERE actor_team_id = #{teamId}")
     Map<String, Object> summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("recentSince") String recentSince);
 
-    @Select("SELECT operation_type AS operation, MIN(operation_name) AS operationName, COUNT(*) AS count FROM audit_logs GROUP BY operation_type ORDER BY count DESC")
-    List<Map<String, Object>> countAuditLogsByOperationType();
+    @Select("""
+            <script>
+            SELECT operation_type AS operation, MIN(operation_name) AS operationName, COUNT(*) AS count
+            FROM audit_logs
+            <if test="startTime != null">
+                WHERE create_time &gt;= #{startTime} AND create_time &lt; #{endExclusive}
+            </if>
+            GROUP BY operation_type ORDER BY count DESC, operation_type ASC
+            </script>
+            """)
+    List<Map<String, Object>> countAuditLogsByOperationType(@Param("startTime") String startTime,
+                                                            @Param("endExclusive") String endExclusive);
 
     @Select("""
             SELECT strftime('%Y-%m-%d', create_time) AS day, COUNT(*) AS count

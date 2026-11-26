@@ -232,9 +232,10 @@ public class AuditLogController {
     }
 
     @RequestMapping(value = "/statistics/operations", method = RequestMethod.GET)
-    public HashMap<String, Object> getOperationStatistics() {
+    public HashMap<String, Object> getOperationStatistics(
+            @RequestParam(value = PARAM_DAYS, required = false) Integer days) {
         return auditResponse("获取操作类型审计统计失败",
-                () -> ApiResponse.success(auditLogService.getOperationStatistics()));
+                () -> ApiResponse.success(auditLogService.getOperationStatistics(days)));
     }
 
     @RequestMapping(value = "/statistics/trend", method = RequestMethod.GET)

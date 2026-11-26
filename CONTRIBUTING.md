@@ -69,6 +69,7 @@
 - 摘要分页先按筛选及排序确定当前页的行，再读取摘要列。指定精确状态时，成功或失败数由该状态的匹配总数得出，无须逐条判定状态；未指定状态时仍按全筛选范围聚合。
 - 详情继续用 `GET /platform/admin/audit-logs/detail?logId=...`。不传 `view` 的列表、独立计数及写入接口保持原契约。部署新版管理后台时，先更新后端或随同一制品发布。
 - 参数校验失败保留业务提示；审计请求遇到意外错误时返回 HTTP 500、操作提示及 `traceId`，内部异常详情只进入服务端日志。
+- `GET /platform/admin/audit-logs/statistics/operations` 不传 `days` 时统计全部历史；传入时和趋势接口使用同一日历日范围，按服务端本地时间统计，包含当天，最多 90 天。
 
 团队管理的队长候选使用 `GET /platform/admin/users/no-team?view=options`，仅返回 `userId` 和 `userName`。旧视图、管理员限制和未入队判定保持原样。
 

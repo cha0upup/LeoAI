@@ -162,18 +162,24 @@ public class AuditLogService {
         return statistics;
     }
 
-    public List<Map<String, Object>> getOperationStatistics() {
-        List<Map<String, Object>> rows = auditLogMapper.countAuditLogsByOperationType();
-        return rows != null ? rows : new ArrayList<>();
+    public List<Map<String, Object>> getOperationStatistics(Integer days) {
+        List<Map<String, Object>> rows;
+        if (days == null) {
+            rows = auditLogMapper.countAuditLogsByOperationType(null, null);
+        } else {
+            LocalDate today = LocalDate.now();
+            LocalDate start = today.minusDays(normalizeStatisticsDays(days) - 1L);
+            rows = auditLogMapper.countAuditLogsByOperationType(startOfDay(start), startOfDay(today.plusDays(1)));
+        }
+        return rows != null ? rows : List.of();
     }
 
     public List<Map<String, Object>> getTrendStatistics(Integer days) {
-        int normalizedDays = normalizeTrendDays(days);
+        int normalizedDays = normalizeStatisticsDays(days);
         LocalDate today = LocalDate.now();
         LocalDate start = today.minusDays(normalizedDays - 1L);
         List<Map<String, Object>> rows = auditLogMapper.countAuditLogsByDay(
-                start.atStartOfDay().format(DATE_TIME_FORMAT),
-                today.plusDays(1).atStartOfDay().format(DATE_TIME_FORMAT));
+                startOfDay(start), startOfDay(today.plusDays(1)));
         Map<String, Integer> countsByDay = new HashMap<>();
         if (rows != null) {
             for (Map<String, Object> row : rows) {
@@ -247,7 +253,11 @@ public class AuditLogService {
                 || hasText(query.getEndTime());
     }
 
-    private int normalizeTrendDays(Integer days) {
+    private static String startOfDay(LocalDate day) {
+        return day.atStartOfDay().format(DATE_TIME_FORMAT);
+    }
+
+    private int normalizeStatisticsDays(Integer days) {
         if (days == null || days <= 0) {
             return RECENT_DAYS;
         }

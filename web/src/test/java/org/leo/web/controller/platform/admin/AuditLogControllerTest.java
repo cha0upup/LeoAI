@@ -34,6 +34,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -489,6 +490,35 @@ class AuditLogControllerTest {
                     .andExpect(jsonPath("$.data.lastOperation").hasJsonPath())
                     .andExpect(jsonPath("$.data.lastOperation").isEmpty());
             assertEquals(2, mockingDetails(mapper).getInvocations().size());
+        }
+    }
+
+    @Test
+    void operationDistributionSupportsTheSameCalendarWindowAsTrendAndKeepsAllTimeAsDefault(@TempDir Path temp)
+            throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
+        new JdbcTemplate(source).update("""
+                INSERT INTO audit_logs (log_id, operation_type, operation_name, create_time)
+                VALUES ('before', 'READ', 'Read', '2026-01-01 23:59:59'),
+                       ('start', 'READ', 'Read', '2026-01-02 00:00:00'),
+                       ('end', 'READ', 'Read', '2026-01-03 00:00:00')
+                """);
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(AuditLogMapper.class);
+        var today = LocalDate.of(2026, 1, 2);
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true);
+             var clock = mockStatic(LocalDate.class, CALLS_REAL_METHODS)) {
+            clock.when(LocalDate::now).thenReturn(today);
+            var stored = new AuditLogService(session.getMapper(AuditLogMapper.class));
+            var storedMvc = MockMvcBuilders.standaloneSetup(
+                    new AuditLogController(stored, mock(AuditPolicyService.class), permissions)).build();
+            String path = "/platform/admin/audit-logs/statistics/";
+            storedMvc.perform(get(path + "operations")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].count").value(3));
+            storedMvc.perform(get(path + "operations").param("days", "1")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].count").value(1));
+            storedMvc.perform(get(path + "trend").param("days", "1")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].count").value(1));
         }
     }
 
