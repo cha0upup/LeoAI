@@ -98,8 +98,7 @@ public class AgentManageController {
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
-        List<Agent> roots = agentService.getAllAgents().stream()
-                .filter(agent -> agent != null && ROOT_PARENT_ID.equals(agent.getParentAgentId())).toList();
+        List<Agent> roots = agentService.findAgentsByParentAgentId(ROOT_PARENT_ID);
         return ApiResponse.success(AgentDirectoryEntry.from(
                 directoryService.describe(roots, agent -> canViewAgent(agent, user))));
     }

@@ -53,6 +53,7 @@ public class GlobalExceptionHandler {
         HttpStatus status = switch (error.getKind()) {
             case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case OPERATION_FAILED -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
         return businessError(error, status, Map.of());

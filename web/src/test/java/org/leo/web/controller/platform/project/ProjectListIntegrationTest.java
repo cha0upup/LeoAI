@@ -34,7 +34,7 @@ import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
-import org.leo.web.application.project.ProjectMembershipQuery;
+import org.leo.web.application.project.ProjectReadService;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
@@ -117,10 +117,9 @@ class ProjectListIntegrationTest {
         permissions = new PermissionService(agents, users);
         TeamService teams = new TeamService(sqlSession.getMapper(TeamMapper.class), users);
         projectService = new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents, users, teams);
-        controller = new ProjectController(
-                projectService, permissions,
-                new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)),
-                mock(ProjectMembershipQuery.class));
+        controller = new ProjectController(projectService, permissions,
+                new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)),
+                new ProjectReadService(projectService, permissions, new AgentDirectoryService(agents)));
     }
 
     @AfterEach
@@ -543,11 +542,11 @@ class ProjectListIntegrationTest {
         try (var context = new AnnotationConfigApplicationContext()) {
             context.register(MembershipTransactions.class);
             context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(source));
-            context.registerBean(ProjectMembershipQuery.class, () -> new ProjectMembershipQuery(storedProjects, storedPermissions));
+            context.registerBean(ProjectReadService.class, () -> new ProjectReadService(
+                    storedProjects, storedPermissions, new AgentDirectoryService(storedAgents)));
             context.refresh();
             var membershipController = new ProjectController(storedProjects, storedPermissions,
-                    new AgentDirectoryService(storedAgents), mock(SessionLifecycleManager.class),
-                    context.getBean(ProjectMembershipQuery.class));
+                    mock(SessionLifecycleManager.class), context.getBean(ProjectReadService.class));
 
             var response = membershipController.listMemberships(requestAs("normal"), selection);
             assertEquals(200, response.get("code"));

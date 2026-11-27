@@ -1,8 +1,8 @@
 package org.leo.web.application.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
-import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,20 +14,25 @@ import org.leo.core.entity.User;
 import org.leo.dao.mapper.AgentMapper;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.agentnode.AgentService;
-import org.leo.service.discovery.NetworkProbeWorkflowService;
 import org.leo.service.discovery.UrlProbeService;
 import org.leo.service.project.ProjectService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
-import org.leo.web.application.project.ProjectMembershipQuery;
+import org.leo.web.application.project.ProjectReadService;
 import org.leo.web.controller.platform.agent.AgentManageController;
 import org.leo.web.controller.platform.project.ProjectController;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectChildrenRequest;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
@@ -41,8 +46,9 @@ import static org.mockito.Mockito.*;
 /** 使用真实 SQLite/MyBatis 和目录接口验证子机标记，无需新增数据库列。 */
 class AgentDirectoryIntegrationTest {
     @TempDir Path temp;
-    private SqlSession session;
+    private AnnotationConfigApplicationContext context;
     private JdbcTemplate jdbc;
+    private ProjectMapper projectMapper;
     private AgentDirectoryService directory;
     private AgentService agents;
     private PermissionService permissions;
@@ -56,12 +62,12 @@ class AgentDirectoryIntegrationTest {
         SQLiteDataSource source = SqliteTestDatabase.create(temp.resolve("directory.db"));
         jdbc = new JdbcTemplate(source);
         Configuration config = SqliteTestDatabase.myBatisConfiguration(source);
+        config.setEnvironment(new Environment("directory-test", new SpringManagedTransactionFactory(), source));
         config.addMapper(AgentMapper.class);
         config.addMapper(ProjectMapper.class);
-        session = new SqlSessionFactoryBuilder().build(config).openSession(true);
-        // Disable query caching so fresh-directory checks observe inserts/deletes from JdbcTemplate.
-        config.setLocalCacheScope(org.apache.ibatis.session.LocalCacheScope.STATEMENT);
-        agents = new AgentService(session.getMapper(AgentMapper.class));
+        var session = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(config));
+        projectMapper = session.getMapper(ProjectMapper.class);
+        agents = spy(new AgentService(session.getMapper(AgentMapper.class)));
         UserService users = mock(UserService.class);
         user = new User();
         user.setUserId("owner");
@@ -70,11 +76,15 @@ class AgentDirectoryIntegrationTest {
         when(users.getUserById("owner")).thenReturn(user);
         permissions = new PermissionService(agents, users);
         directory = new AgentDirectoryService(agents);
-        ProjectService projectService = new ProjectService(session.getMapper(ProjectMapper.class), agents,
-                users, mock(TeamService.class));
+        ProjectService projectService = new ProjectService(projectMapper, agents, users, mock(TeamService.class));
+        context = new AnnotationConfigApplicationContext();
+        context.register(DirectoryTransactions.class);
+        context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(source));
+        context.registerBean(ProjectReadService.class, () -> new ProjectReadService(projectService, permissions, directory));
+        context.refresh();
         global = new AgentManageController(agents, users, mock(UrlProbeService.class), projectService, directory);
-        projects = new ProjectController(projectService, permissions, directory,
-                new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)), mock(ProjectMembershipQuery.class));
+        projects = new ProjectController(projectService, permissions, mock(SessionLifecycleManager.class),
+                context.getBean(ProjectReadService.class));
         request = new MockHttpServletRequest();
         request.getSession(true).setAttribute("user", user);
         host("parent", "root", "owner");
@@ -93,13 +103,15 @@ class AgentDirectoryIntegrationTest {
     }
 
     @AfterEach
-    void tearDown() { if (session != null) session.close(); }
+    void tearDown() { if (context != null) context.close(); }
 
     @Test
-    void marksOnlyVisibleBranchesInTheGlobalRootDirectory() {
+    void queriesOnlyGlobalRootsAndMarksOnlyVisibleBranches() {
         List<AgentDirectoryEntry> result = entries(global.getAgent(request));
         assertEquals(List.of("parent", "leaf"), ids(result));
         assertEquals(List.of(true, false), result.stream().map(AgentDirectoryEntry::hasChildren).toList());
+        verify(agents).findAgentsByParentAgentId("root");
+        verify(agents, never()).getAllAgents();
     }
 
     @Test
@@ -125,10 +137,9 @@ class AgentDirectoryIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"project", " project "})
     void preservesProjectAndUnassignedWorkspaceBoundaries(String projectId) {
-        var mapper = session.getMapper(ProjectMapper.class);
-        assertTrue(mapper.existsAgentRelation("project", "parent"));
-        assertFalse(mapper.existsAgentRelation("project", "child"));
-        assertFalse(mapper.existsAgentRelation("other-project", "parent"));
+        assertTrue(projectMapper.existsAgentRelation("project", "parent"));
+        assertFalse(projectMapper.existsAgentRelation("project", "child"));
+        assertFalse(projectMapper.existsAgentRelation("other-project", "parent"));
         jdbc.update("""
                 INSERT INTO project_agents (project_id, agent_id, added_by_user_id, create_time)
                 VALUES ('project', 'child', 'owner', '2026-10-04')
@@ -151,8 +162,30 @@ class AgentDirectoryIntegrationTest {
         var result = directory.describe(agents.findAgentsByParentAgentId("root"),
                 agent -> permissions.canAccessAgentChain(agent, user));
         assertFalse(result.stream().filter(row -> "leaf".equals(row.agent().getAgentId())).findFirst().orElseThrow().hasChildren());
-        assertTrue(entries(projects.listChildren(request, "project", new ProjectChildrenRequest("child")))
-                .stream().allMatch(row -> "grandchild".equals(row.agent().getAgentId())));
+        assertEquals(List.of("grandchild"),
+                ids(entries(projects.listChildren(request, "project", new ProjectChildrenRequest("child")))));
+    }
+
+    @Test
+    void projectRowsAndChildMarkersUseTheSameSnapshot() {
+        assertEquals("wal", jdbc.queryForObject("PRAGMA journal_mode=WAL", String.class));
+        var source = jdbc.getDataSource();
+        doAnswer(call -> {
+            // 在根节点已读出、子节点尚未查询时，通过另一个连接提交变更。
+            try (var writer = source.getConnection(); var statement = writer.createStatement()) {
+                statement.executeUpdate("UPDATE agents SET create_by_user_id='other-owner' WHERE agent_id='child'");
+            }
+            return call.callRealMethod();
+        }).doCallRealMethod().when(agents).findAgentsByParentAgentIds(List.of("parent"));
+
+        List<AgentDirectoryEntry> first = entries(projects.listRootAgents(request, "project"));
+        assertEquals(List.of("parent"), ids(first));
+        assertTrue(first.get(0).hasChildren());
+
+        List<AgentDirectoryEntry> next = entries(projects.listRootAgents(request, "project"));
+        assertEquals(List.of("parent"), ids(next));
+        assertFalse(next.get(0).hasChildren());
+        assertTrue(entries(projects.listChildren(request, "project", new ProjectChildrenRequest("parent"))).isEmpty());
     }
 
     @Test
@@ -201,5 +234,10 @@ class AgentDirectoryIntegrationTest {
                 + "req_disguise_id, resp_disguise_id, create_time, update_time) "
                 + "VALUES (?, ?, ?, ?, 'private', 'local-fixture', 'request', 'response', '2026-10-04', '2026-10-04')",
                 id, id, parent, owner);
+    }
+
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class DirectoryTransactions {
     }
 }

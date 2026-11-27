@@ -1,16 +1,14 @@
 package org.leo.web.controller.platform.project;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
-import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
-import org.leo.web.application.project.ProjectMembershipQuery;
+import org.leo.web.application.project.ProjectReadService;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
@@ -42,18 +40,15 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final PermissionService permissionService;
-    private final AgentDirectoryService directoryService;
     private final SessionLifecycleManager sessionLifecycle;
-    private final ProjectMembershipQuery membershipQuery;
+    private final ProjectReadService projectReads;
 
     public ProjectController(ProjectService projectService, PermissionService permissionService,
-                             AgentDirectoryService directoryService, SessionLifecycleManager sessionLifecycle,
-                             ProjectMembershipQuery membershipQuery) {
+                             SessionLifecycleManager sessionLifecycle, ProjectReadService projectReads) {
         this.projectService = projectService;
         this.permissionService = permissionService;
-        this.directoryService = directoryService;
         this.sessionLifecycle = sessionLifecycle;
-        this.membershipQuery = membershipQuery;
+        this.projectReads = projectReads;
     }
 
     @GetMapping
@@ -147,14 +142,13 @@ public class ProjectController {
     public Map<String, Object> listRootAgents(HttpServletRequest request,
                                                @PathVariable String projectId) {
         User user = permissionService.requireLogin(request);
-        Project project = requireVisible(projectId, user);
-        return ApiResponse.success(filterAccessible(projectService.listRootAgents(project.getProjectId()), user));
+        return ApiResponse.success(AgentDirectoryEntry.from(projectReads.listRootAgents(projectId, user)));
     }
 
     @GetMapping("/unassigned/agents")
     public Map<String, Object> listUnassignedAgents(HttpServletRequest request) {
         User user = permissionService.requireLogin(request);
-        return ApiResponse.success(filterAccessible(projectService.listUnassignedRootAgents(), user));
+        return ApiResponse.success(AgentDirectoryEntry.from(projectReads.listUnassignedAgents(user)));
     }
 
     @PostMapping("/{projectId}/children")
@@ -162,11 +156,8 @@ public class ProjectController {
                                             @PathVariable String projectId,
                                             @RequestBody ProjectChildrenRequest body) {
         User user = permissionService.requireLogin(request);
-        Project project = requireVisible(projectId, user);
-        String parentId = PermissionService.requireText(
-                body != null ? body.parentAgentId() : null, "parentAgentId不能为空");
-        return ApiResponse.success(filterAccessible(
-                projectService.listAgentsByParent(project.getProjectId(), parentId), user));
+        String parentId = body != null ? body.parentAgentId() : null;
+        return ApiResponse.success(AgentDirectoryEntry.from(projectReads.listChildren(projectId, parentId, user)));
     }
 
     @PostMapping("/hosts/attach")
@@ -210,36 +201,23 @@ public class ProjectController {
                 : List.of();
         Map<String, List<ProjectMembershipSummary>> result = new LinkedHashMap<>();
         if (agentIds.isEmpty()) return ApiResponse.success(result);
-        membershipQuery.list(agentIds, user).forEach((agentId, projects) ->
+        projectReads.listMemberships(agentIds, user).forEach((agentId, projects) ->
                 result.put(agentId, projects.stream().map(ProjectMembershipSummary::new).toList()));
         return ApiResponse.success(result);
     }
 
-    private Project requireVisible(String projectId, User user) {
-        String id = PermissionService.requireText(projectId, "projectId不能为空");
-        Project project = projectService.findById(id);
-        if (project == null) throw ApiException.notFound("项目不存在");
-        if (!projectService.canView(project, user)) throw ApiException.forbidden("无权限访问此项目");
-        return project;
-    }
-
     private Project requireManageable(String projectId, User user) {
-        Project project = requireVisible(projectId, user);
+        Project project = projectReads.requireVisibleProject(projectId, user);
         if (!projectService.canManage(project, user)) throw ApiException.forbidden("无权限管理此项目");
         return project;
     }
 
     private Project requireContentEditable(String projectId, User user) {
-        Project project = requireVisible(projectId, user);
+        Project project = projectReads.requireVisibleProject(projectId, user);
         if (!projectService.canEditContent(project, user)) {
             throw ApiException.forbidden("无权限维护此项目的主机归属");
         }
         return project;
-    }
-
-    private List<AgentDirectoryEntry> filterAccessible(List<Agent> agents, User user) {
-        return AgentDirectoryEntry.from(
-                directoryService.describe(agents, agent -> permissionService.canAccessAgentChain(agent, user)));
     }
 
 }

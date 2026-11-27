@@ -69,7 +69,7 @@ class GlobalExceptionHandlerTest {
     }
 
     private static Stream<Arguments> businessFailures() {
-        var useCases = Map.of(UseCaseException.Kind.INVALID_INPUT, 400,
+        var useCases = Map.of(UseCaseException.Kind.INVALID_INPUT, 400, UseCaseException.Kind.FORBIDDEN, 403,
                 UseCaseException.Kind.NOT_FOUND, 404, UseCaseException.Kind.OPERATION_FAILED, 500);
         var ssh = Map.of(SshConnectionException.Kind.VALIDATION, 400,
                 SshConnectionException.Kind.NOT_FOUND, 404, SshConnectionException.Kind.CONFLICT, 409,

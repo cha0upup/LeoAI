@@ -4,7 +4,7 @@ import java.util.Objects;
 
 /** 应用用例可向调用方展示的失败；传输状态由入口适配器决定。 */
 public final class UseCaseException extends RuntimeException {
-    public enum Kind { INVALID_INPUT, NOT_FOUND, OPERATION_FAILED }
+    public enum Kind { INVALID_INPUT, NOT_FOUND, FORBIDDEN, OPERATION_FAILED }
 
     private final Kind kind;
 
