@@ -26,6 +26,12 @@ public interface AiModelConfigMapper {
     @Select(MODEL_WITH_PROVIDER + "ORDER BY p.provider_key, m.id")
     List<AiModelConfig> listAll();
 
+    @Select("SELECT id FROM ai_model_configs ORDER BY id")
+    List<Integer> listIds();
+
+    @Select("SELECT EXISTS (SELECT 1 FROM ai_model_configs WHERE id = #{id})")
+    boolean existsById(@Param("id") Integer id);
+
     @Select(MODEL_WITH_PROVIDER + "WHERE m.enabled = 1 ORDER BY p.provider_key, m.id")
     List<AiModelConfig> listEnabled();
 

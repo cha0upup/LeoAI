@@ -51,6 +51,14 @@ public class AiModelConfigService {
         return decryptModels(mapper.listAll());
     }
 
+    public List<Integer> listModelIds() {
+        return mapper.listIds();
+    }
+
+    public boolean modelExists(Integer id) {
+        return id != null && mapper.existsById(id);
+    }
+
     public List<AiModelConfig> listEnabled() {
         return decryptModels(mapper.listEnabled());
     }

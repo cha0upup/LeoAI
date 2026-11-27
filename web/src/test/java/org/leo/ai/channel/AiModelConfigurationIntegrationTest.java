@@ -26,6 +26,7 @@ import org.sqlite.SQLiteDataSource;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -232,12 +233,19 @@ class AiModelConfigurationIntegrationTest {
     }
 
     @Test
-    void providerUpdateDoesNotDependOnUnrelatedProviderCredentials() {
+    void providerUpdateAndHealthLookupDoNotDependOnUnrelatedProviderCredentials() {
         AiProvider primary = provider("primary");
         AiModelConfig active = model(primary, "active");
         AiProvider unrelated = provider("unrelated");
-        model(unrelated, "unrelated");
+        AiModelConfig unrelatedDraft = draft(unrelated, "unrelated");
+        unrelatedDraft.setEnabled(0);
+        AiModelConfig unrelatedModel = configs.create(unrelatedDraft);
         damageStoredProviderSecrets(unrelated.getId());
+
+        assertEquals(List.of(active.getId(), unrelatedModel.getId()), configs.listModelIds());
+        assertTrue(configs.modelExists(unrelatedModel.getId()));
+        assertFalse(configs.modelExists(Integer.MAX_VALUE));
+
         AiProvider patch = new AiProvider();
         patch.setName("updated-provider");
         patch.setApiKey("replacement-key");

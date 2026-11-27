@@ -6,11 +6,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -130,21 +127,6 @@ public class AiModelFailoverService {
             return new HealthSnapshot(configId, status, open, state.consecutiveFailures, state.openUntil,
                     state.lastCategory, state.lastSuccessAt, state.lastFailureAt);
         }
-    }
-
-    public List<Map<String, Object>> snapshots(List<AiModelConfig> configs) {
-        if (configs == null || configs.isEmpty()) return List.of();
-        List<Map<String, Object>> list = new ArrayList<>(configs.size());
-        for (AiModelConfig config : configs) {
-            if (config == null) continue;
-            LinkedHashMap<String, Object> item = new LinkedHashMap<>(snapshot(config.getId()).toMap());
-            item.put("configId", config.getId());
-            item.put("name", config.getName());
-            item.put("model", config.getModel());
-            item.put("fallbackModelId", config.getFallbackModelId());
-            list.add(item);
-        }
-        return list;
     }
 
     private boolean tryAcquire(Integer configId) {

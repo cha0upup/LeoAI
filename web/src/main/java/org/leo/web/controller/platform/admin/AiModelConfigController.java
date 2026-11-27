@@ -186,16 +186,19 @@ public class AiModelConfigController {
         }
     }
 
-    /** 返回运行进程内的模型健康与熔断快照，不包含任何凭据。 */
+    /** 按模型 ID 返回进程内的健康与熔断状态，无需读取连接配置。 */
     @RequestMapping(value = "/health", method = RequestMethod.GET)
     public HashMap<String, Object> health() {
-        return ApiResponse.success(failoverService.snapshots(configService.listAll()));
+        return ApiResponse.success(configService.listModelIds().stream()
+                .map(failoverService::snapshot)
+                .map(AiModelFailoverService.HealthSnapshot::toMap)
+                .toList());
     }
 
     /** 管理员修复配置后，可手动清除临时健康状态；成功的连接测试也会自动清除。 */
     @RequestMapping(value = "/{id}/health/reset", method = RequestMethod.POST)
     public HashMap<String, Object> resetHealth(@PathVariable("id") Integer id) {
-        if (configService.findById(id) == null) {
+        if (!configService.modelExists(id)) {
             return ApiResponse.notFound("模型配置不存在，id: " + id);
         }
         failoverService.reset(id);
