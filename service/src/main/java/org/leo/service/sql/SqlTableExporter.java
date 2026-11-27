@@ -62,7 +62,7 @@ public final class SqlTableExporter {
     private long writeRows(SqlCapable node, Map<String, Object> connection, SqlObjectRef table,
                            List<Map<String, Object>> columns, Progress progress, WorkbookRows writer) throws Exception {
         List<String> header = columnNames(columns);
-        if (!header.isEmpty()) writer.write(header);
+        if (!header.isEmpty()) writer.writeHeader(header);
         long totalRows = 0L;
         long expectedTotal = 0L;
         for (int page = 1; ; page++) {
@@ -74,16 +74,11 @@ public final class SqlTableExporter {
             if (pagination != null && pagination.get("total") != null) expectedTotal = longValue(pagination.get("total"));
             if (header.isEmpty()) {
                 header.addAll(columnNames((List<Map<String, Object>>) result.get("columns")));
-                if (!header.isEmpty() && totalRows == 0L) writer.write(header);
+                if (!header.isEmpty() && totalRows == 0L) writer.writeHeader(header);
             }
             if (rows == null || rows.isEmpty()) break;
             for (Map<String, Object> row : rows) {
-                List<String> values = new ArrayList<>(header.size());
-                for (String key : header) {
-                    Object value = row.get(key);
-                    values.add(value == null ? "" : String.valueOf(value));
-                }
-                writer.write(values);
+                writer.writeDataRow(header, row);
                 totalRows++;
             }
             if (expectedTotal > 0L) progress.rowsWritten(totalRows, expectedTotal);
@@ -106,7 +101,7 @@ public final class SqlTableExporter {
     private static final class WorkbookRows {
         private final SXSSFWorkbook workbook;
         private SXSSFSheet sheet;
-        private List<String> header;
+        private List<String> header = List.of();
         private int sheetNumber;
         private int nextRow;
 
@@ -115,13 +110,22 @@ public final class SqlTableExporter {
             addSheet();
         }
 
-        private void write(List<String> values) {
-            if (header == null) header = List.copyOf(values);
+        private void writeHeader(List<String> columns) {
+            header = List.copyOf(columns);
+            appendHeader();
+        }
+
+        private void writeDataRow(List<String> columns, Map<String, Object> values) {
             if (nextRow == SpreadsheetVersion.EXCEL2007.getMaxRows()) {
                 addSheet();
-                appendRow(header);
+                appendHeader();
             }
-            appendRow(values);
+            Row row = createRow(columns.size());
+            for (int column = 0; column < columns.size(); column++) {
+                Object value = values.get(columns.get(column));
+                // 保留数据库文本的精度，且不将源数据解释为公式。
+                row.createCell(column).setCellValue(value == null ? "" : String.valueOf(value));
+            }
         }
 
         private void addSheet() {
@@ -130,15 +134,18 @@ public final class SqlTableExporter {
             nextRow = 0;
         }
 
-        private void appendRow(List<String> values) {
-            if (values.size() > SpreadsheetVersion.EXCEL2007.getMaxColumns()) {
+        private void appendHeader() {
+            Row row = createRow(header.size());
+            for (int column = 0; column < header.size(); column++) {
+                row.createCell(column).setCellValue(header.get(column));
+            }
+        }
+
+        private Row createRow(int columnCount) {
+            if (columnCount > SpreadsheetVersion.EXCEL2007.getMaxColumns()) {
                 throw new IllegalArgumentException("导出列数超过 XLSX 工作表上限");
             }
-            Row row = sheet.createRow(nextRow++);
-            for (int column = 0; column < values.size(); column++) {
-                // 保留数据库文本的精度，且不将源数据解释为公式。
-                row.createCell(column).setCellValue(values.get(column));
-            }
+            return sheet.createRow(nextRow++);
         }
     }
 
