@@ -385,14 +385,12 @@ class TeamManagementIntegrationTest {
     void accountCreationAndRenameRejectPaddedCaseInsensitiveDuplicateNames() {
         seedUser("original", "normal", null);
         seedUser("member", "normal", null);
+        seedUser("fixture-admin", "admin", null);
         var policy = mock(PasswordPolicy.class);
-        var controller = new UserController(users, policy);
+        var controller = new UserController(users, policy, new PermissionService(mock(AgentService.class), users));
         var userTools = new UserTools(users, policy);
         var request = new MockHttpServletRequest();
-        User admin = new User();
-        admin.setUserId("fixture-admin");
-        admin.setPrivilege("admin");
-        request.getSession().setAttribute("user", admin);
+        request.getSession().setAttribute("user", users.getUserById("fixture-admin"));
         var input = new UserController.CreateUserRequest();
         input.userName = " ORIGINAL ";
         input.password = "fixture-password";
@@ -407,7 +405,7 @@ class TeamManagementIntegrationTest {
                 " ORIGINAL ", "fixture-password", null, null, null, null, null, null, null)).getMessage());
         assertEquals("用户名已存在", assertThrows(IllegalArgumentException.class, () -> userTools.updateUser(
                 "member", " ORIGINAL ", null, null, null, null, null, null, null)).getMessage());
-        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class));
         assertEquals("member", users.getUserById("member").getUserName());
     }
 
@@ -423,7 +421,8 @@ class TeamManagementIntegrationTest {
             assertTrue(users.updateUser(member));
             return null;
         }).when(usersDuringDelete).checkDeletePermission(any(), any());
-        var controller = new UserController(usersDuringDelete, mock(PasswordPolicy.class));
+        var controller = new UserController(usersDuringDelete, mock(PasswordPolicy.class),
+                new PermissionService(mock(AgentService.class), usersDuringDelete));
         var request = new MockHttpServletRequest();
         request.getSession().setAttribute("user", users.getUserById("leader"));
 

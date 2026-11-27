@@ -8,16 +8,19 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.User;
 import org.leo.core.entity.UserOption;
 import org.leo.core.util.PasswordUtil;
-import org.leo.service.user.UserService;
+import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.PasswordPolicy;
+import org.leo.service.user.UserService;
+import org.leo.web.interceptor.LoginInterceptor;
+import org.leo.web.security.PermissionService;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,10 +36,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class UserControllerTest {
     private final UserService service = mock(UserService.class);
-    private final UserController controller = new UserController(service, mock(PasswordPolicy.class));
+    private final UserService verifiedAccounts = mock(UserService.class);
+    private final PermissionService permissions = new PermissionService(mock(AgentService.class), verifiedAccounts);
+    private final UserController controller = new UserController(service, mock(PasswordPolicy.class), permissions);
     private final MockHttpServletRequest request = new MockHttpServletRequest();
 
     @ParameterizedTest
@@ -133,20 +139,21 @@ class UserControllerTest {
         assertEquals("team-2", target.getTeamId());
     }
 
-    private static User account(String id, String role, String team) {
+    private User account(String id, String role, String team) {
         User user = new User();
         user.setUserId(id);
         user.setUserName(id);
         user.setPrivilege(role);
         user.setTeamId(team);
+        user.setStatus(1);
+        user.setPassword("fixture-hash");
+        when(verifiedAccounts.getUserById(id)).thenReturn(user);
         return user;
     }
 
     @Test
     void teamLeaderOptionsRequireAdmin() {
-        User caller = new User();
-        caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
-        request.getSession(true).setAttribute("user", caller);
+        request.getSession(true).setAttribute("user", account("member", "normal", "team-1"));
 
         assertEquals(403, controller.getTeamLeaderOptions(request).get("code"));
         verifyNoInteractions(service);
@@ -193,21 +200,32 @@ class UserControllerTest {
     }
 
     @Test
-    void userListingKeepsLeaderAndNormalUserVisibilityBoundaries() {
-        User caller = new User();
-        caller.setUserId("user-1");
-        caller.setPrivilege(UserService.PRIVILEGE_LEADER);
-        caller.setTeamId("team-1");
-        request.getSession(true).setAttribute("user", caller);
-        when(service.getUsersByTeamId("team-1")).thenReturn(List.of(caller));
-        when(service.getUserById("user-1")).thenReturn(caller);
+    void userListingReusesVerifiedIdentityAndKeepsTeamVisibility() throws Exception {
+        User leader = account("team-leader", "leader", "team-1");
+        User member = account("user-1", "normal", "team-1");
+        member.setEmail("current@example.test");
+        User cachedMember = new User();
+        cachedMember.setUserId(member.getUserId());
+        cachedMember.setPassword(member.getPassword());
+        cachedMember.setPrivilege("leader");
+        when(service.getUsersByTeamId("team-1")).thenReturn(List.of(leader, member));
 
-        assertEquals(200, controller.getUsers(request).get("code"));
+        var mvc = MockMvcBuilders.standaloneSetup(controller).addInterceptors(new LoginInterceptor(permissions)).build();
+        mvc.perform(get("/platform/admin/users").sessionAttr("user", leader))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+        mvc.perform(get("/platform/admin/users").sessionAttr("user", cachedMember))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].userId").value(member.getUserId()))
+                .andExpect(jsonPath("$.data[0].privilege").value("normal"))
+                .andExpect(jsonPath("$.data[0].email").value(member.getEmail()))
+                .andExpect(jsonPath("$.data[0].password").doesNotHaveJsonPath());
+
+        verify(verifiedAccounts).getUserById(member.getUserId());
         verify(service).getUsersByTeamId("team-1");
-        caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
-        assertEquals(200, controller.getUsers(request).get("code"));
-        verify(service).getUserById("user-1");
-        verify(service, org.mockito.Mockito.never()).getAllUsers();
+        verify(service, never()).getUserById(any());
+        verify(service, never()).getAllUsers();
     }
 
     @Test
@@ -220,9 +238,7 @@ class UserControllerTest {
         stored.setPrivilege(UserService.PRIVILEGE_NORMAL);
         stored.setStatus(1);
         when(service.getAllUsers()).thenReturn(List.of(stored));
-        User admin = new User();
-        admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
-        request.getSession(true).setAttribute("user", admin);
+        request.getSession(true).setAttribute("user", account("manager", "admin", null));
 
         Map<String, Object> response = controller.getUsers(request);
         List<Map<String, Object>> users = (List<Map<String, Object>>) response.get("data");

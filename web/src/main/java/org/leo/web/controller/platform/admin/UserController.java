@@ -9,14 +9,13 @@ import org.leo.core.util.PasswordUtil;
 import org.leo.service.user.PasswordPolicy;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
+import org.leo.web.security.PermissionService;
 import org.leo.web.security.RoleAwareAdminEndpoint;
-import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,10 +48,12 @@ public class UserController {
 
     private final UserService userService;
     private final PasswordPolicy passwordPolicy;
+    private final PermissionService permissions;
 
-    public UserController(UserService userService, PasswordPolicy passwordPolicy) {
+    public UserController(UserService userService, PasswordPolicy passwordPolicy, PermissionService permissions) {
         this.userService = userService;
         this.passwordPolicy = passwordPolicy;
+        this.permissions = permissions;
     }
 
     // ── 用户查询 ─────────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ public class UserController {
      */
     @RequestMapping(value = "/users", method = RequestMethod.GET)
     public HashMap<String, Object> getUsers(HttpServletRequest request) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
 
         List<User> users;
@@ -72,9 +73,7 @@ public class UserController {
         } else if (UserService.PRIVILEGE_LEADER.equals(caller.getPrivilege())) {
             users = userService.getUsersByTeamId(caller.getTeamId());
         } else {
-            users = new ArrayList<>();
-            User self = userService.getUserById(caller.getUserId());
-            if (self != null) users.add(self);
+            users = List.of(caller);
         }
         return ApiResponse.success(sanitize(users));
     }
@@ -93,7 +92,7 @@ public class UserController {
     }
 
     private HashMap<String, Object> readForAdministrator(HttpServletRequest request, Supplier<?> lookup) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权访问");
@@ -118,7 +117,7 @@ public class UserController {
 
     @RequestMapping(value = "/users", method = RequestMethod.POST)
     public HashMap<String, Object> addUser(HttpServletRequest request, @RequestBody CreateUserRequest input) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (input == null) return ApiResponse.badRequest("user参数不能为空");
 
@@ -186,7 +185,7 @@ public class UserController {
     @RequestMapping(value = "/users/update", method = RequestMethod.POST)
     public HashMap<String, Object> updateUser(HttpServletRequest request,
                                                @RequestBody HashMap<String, Object> params) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
@@ -280,7 +279,7 @@ public class UserController {
     @RequestMapping(value = "/users/reset-password", method = RequestMethod.POST)
     public HashMap<String, Object> resetPassword(HttpServletRequest request,
                                                    @RequestBody HashMap<String, Object> params) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
@@ -323,7 +322,7 @@ public class UserController {
     @RequestMapping(value = "/users/delete", method = RequestMethod.POST)
     public HashMap<String, Object> deleteUser(HttpServletRequest request,
                                                @RequestBody HashMap<String, Object> params) {
-        User caller = ControllerUtil.getCurrentUser(request);
+        User caller = permissions.getCurrentUser(request);
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 

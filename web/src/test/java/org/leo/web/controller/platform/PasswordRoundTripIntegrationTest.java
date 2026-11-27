@@ -78,7 +78,7 @@ class PasswordRoundTripIntegrationTest {
         mvc = MockMvcBuilders.standaloneSetup(
                         new LoginController(users, mock(TeamService.class), permissions,
                                 new LoginAttemptService(config), passwords, mock(SystemInitializationService.class)),
-                        new UserController(users, passwords))
+                        new UserController(users, passwords, permissions))
                 .addMappedInterceptors(new String[]{"/platform/admin/**", "/platform/user/change-password"},
                         new LoginInterceptor(permissions))
                 .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice())
