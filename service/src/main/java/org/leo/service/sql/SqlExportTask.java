@@ -19,7 +19,7 @@ final class SqlExportTask {
     private final SqlExportTaskRepository repository;
     private final SqlExportTaskKey key;
     private Attempt attempt;
-    private boolean lastSaveSucceeded;
+    private boolean needsSave = true;
 
     private SqlExportTask(SqlExportTaskRepository repository, SqlExportTaskKey key, Map<String, Object> data) {
         this.repository = repository;
@@ -73,7 +73,13 @@ final class SqlExportTask {
     }
 
     synchronized boolean isCurrent(Attempt expected) { return expected != null && attempt == expected; }
-    synchronized void finishAttempt(Attempt expected) { if (attempt == expected) attempt = null; }
+
+    synchronized void finishAttempt(Attempt expected) {
+        if (!isCurrent(expected)) return;
+        if (needsSave) persist();
+        if (isCurrent(expected)) attempt = null;
+    }
+
     synchronized void clearAttempt() { attempt = null; }
 
     synchronized void signalCancellation() {
@@ -97,8 +103,6 @@ final class SqlExportTask {
         if (isTerminalStatus(status())) return;
         signalCancellation();
         update("CANCELLED", progress(), null);
-        data.put("endTime", Long.valueOf(System.currentTimeMillis()));
-        persist();
     }
 
     synchronized boolean prepareResume(String sessionId) {
@@ -120,6 +124,7 @@ final class SqlExportTask {
             data.put("rowCount", null);
             data.put("fileSize", null);
         }
+        needsSave = true;
         return true;
     }
 
@@ -135,9 +140,9 @@ final class SqlExportTask {
     synchronized boolean checkStopped(Attempt current) {
         if (current == null) return false;
         if (!isCurrent(current)) return true;
+        if ("CANCELLED".equals(status())) return true;
         if (current.cancelRequested) {
             update("CANCELLED", progress(), null);
-            data.put("endTime", Long.valueOf(System.currentTimeMillis()));
             return true;
         }
         if (current.pauseRequested) {
@@ -160,16 +165,20 @@ final class SqlExportTask {
     /** Page callbacks only report progress; table boundaries always write their full checkpoint. */
     synchronized void reportProgress(Attempt current, int percent) {
         if (!isCurrent(current)) return;
-        if (lastSaveSucceeded && "RUNNING".equals(status()) && progress() == percent) return;
+        if (!needsSave && "RUNNING".equals(status()) && progress() == percent) return;
         update("RUNNING", percent, null);
     }
 
     synchronized void rowsWritten(Attempt current, long rows) {
-        if (isCurrent(current)) data.put("rowCount", rows);
+        if (!isCurrent(current)) return;
+        data.put("rowCount", rows);
+        needsSave = true;
     }
 
     synchronized void tablesResolved(Attempt current, int count) {
-        if (isCurrent(current)) data.put("tableCount", Integer.valueOf(count));
+        if (!isCurrent(current)) return;
+        data.put("tableCount", count);
+        needsSave = true;
     }
 
     synchronized void tableStarted(Attempt current, SqlObjectRef table, int index, int percent) {
@@ -177,6 +186,7 @@ final class SqlExportTask {
         data.put("currentTable", table.name());
         data.put("currentObjectRef", table.toMap());
         data.put("processedTables", Integer.valueOf(index));
+        needsSave = true;
         running(current, percent);
     }
 
@@ -189,6 +199,7 @@ final class SqlExportTask {
     synchronized void complete(Attempt current, long fileSize) {
         if (!isCurrent(current)) return;
         data.put("fileSize", Long.valueOf(fileSize));
+        needsSave = true;
         update("COMPLETED", 100, null);
     }
 
@@ -223,11 +234,11 @@ final class SqlExportTask {
     }
 
     synchronized void persist() {
+        needsSave = false;
         try {
             repository.save(key, copy(data));
-            lastSaveSucceeded = true;
         } catch (Exception ignored) {
-            lastSaveSucceeded = false;
+            needsSave = true;
         }
     }
 

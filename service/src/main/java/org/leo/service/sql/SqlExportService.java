@@ -182,7 +182,6 @@ public class SqlExportService {
         } catch (Exception error) {
             task.failUnlessStopped(attempt, error);
         } finally {
-            task.persist();
             task.finishAttempt(attempt);
         }
     }

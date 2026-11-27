@@ -30,6 +30,7 @@ class SqlExportTaskTest {
         task.running(current, 12);
         task.tablesResolved(current, 2);
         var expected = task.snapshot();
+        clearInvocations(repository);
 
         task.running(old, 95);
         task.rowsWritten(old, 999);
@@ -45,6 +46,7 @@ class SqlExportTaskTest {
         task.finishAttempt(old);
         assertEquals(expected, task.snapshot());
         assertTrue(task.isCurrent(current));
+        verifyNoInteractions(repository);
 
         task.completeDatabase(current, 2, 7);
         assertEquals("COMPLETED", task.snapshot().get("status"));
@@ -52,20 +54,26 @@ class SqlExportTaskTest {
     }
 
     @Test
-    void cancelledStateIgnoresLateProgressAndFailureAndRejectsResume() {
+    void cancelledStateKeepsItsEndTimeWithoutRepeatedWritesAndRejectsResume() throws Exception {
         SqlExportTask task = table();
         var attempt = task.beginAttempt();
         task.running(attempt, 42);
+        clearInvocations(repository);
         task.cancel();
+        Object cancelledAt = task.snapshot().get("endTime");
+        assertTrue(task.checkStopped(attempt));
         task.running(attempt, 90);
         task.fail(attempt, "late failure");
         task.failUnlessStopped(attempt, new IllegalStateException("late failure"));
+        task.finishAttempt(attempt);
         var snapshot = task.snapshot();
         assertEquals("CANCELLED", snapshot.get("status"));
         assertEquals(42, snapshot.get("progress"));
         assertNull(snapshot.get("error"));
-        assertNotNull(snapshot.get("endTime"));
+        assertNotNull(cancelledAt);
+        assertEquals(cancelledAt, snapshot.get("endTime"));
         assertThrows(IllegalArgumentException.class, () -> task.prepareResume("session"));
+        verify(repository).save(eq(key), anyMap());
     }
 
     @ParameterizedTest

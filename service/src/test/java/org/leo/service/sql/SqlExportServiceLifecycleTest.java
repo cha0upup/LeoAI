@@ -236,6 +236,26 @@ class SqlExportServiceLifecycleTest {
         assertEquals("COMPLETED", service.progress("owner", id).get("status"));
     }
 
+    @Test void workerExitRetriesAnUnsavedTerminalState() throws Exception {
+        String id = id(start("table"));
+        var key = new SqlExportTaskKey("owner", id);
+        when(sql.getTableColumns(any(), anyMap(), any())).thenThrow(new IllegalStateException("fixture read failure"));
+        AtomicBoolean failedFirstSave = new AtomicBoolean();
+        doAnswer(call -> {
+            Map<String, Object> saved = call.getArgument(1);
+            if ("FAILED".equals(saved.get("status")) && failedFirstSave.compareAndSet(false, true)) {
+                throw new java.io.IOException("fixture save failure");
+            }
+            return call.callRealMethod();
+        }).when(repository).save(eq(key), anyMap());
+
+        queued.get(0).run();
+        var stored = repository.load(key);
+        assertTrue(failedFirstSave.get());
+        assertEquals("FAILED", stored.get("status"));
+        assertEquals("fixture read failure", stored.get("error"));
+    }
+
     private Map<String, Object> start(String kind) throws Exception {
         SqlObjectRef table = SqlObjectRef.table("app", "public", "orders");
         return kind.equals("table")
