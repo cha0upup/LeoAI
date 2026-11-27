@@ -19,6 +19,7 @@ final class SqlExportTask {
     private final SqlExportTaskRepository repository;
     private final SqlExportTaskKey key;
     private Attempt attempt;
+    private boolean lastSaveSucceeded;
 
     private SqlExportTask(SqlExportTaskRepository repository, SqlExportTaskKey key, Map<String, Object> data) {
         this.repository = repository;
@@ -156,6 +157,13 @@ final class SqlExportTask {
         if (isCurrent(current)) update("RUNNING", percent, null);
     }
 
+    /** Page callbacks only report progress; table boundaries always write their full checkpoint. */
+    synchronized void reportProgress(Attempt current, int percent) {
+        if (!isCurrent(current)) return;
+        if (lastSaveSucceeded && "RUNNING".equals(status()) && progress() == percent) return;
+        update("RUNNING", percent, null);
+    }
+
     synchronized void rowsWritten(Attempt current, long rows) {
         if (isCurrent(current)) data.put("rowCount", rows);
     }
@@ -215,8 +223,12 @@ final class SqlExportTask {
     }
 
     synchronized void persist() {
-        try { repository.save(key, copy(data)); }
-        catch (Exception ignored) { }
+        try {
+            repository.save(key, copy(data));
+            lastSaveSucceeded = true;
+        } catch (Exception ignored) {
+            lastSaveSucceeded = false;
+        }
     }
 
     private static Map<String, Object> copy(Map<String, Object> source) {

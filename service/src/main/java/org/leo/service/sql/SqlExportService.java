@@ -295,7 +295,7 @@ public class SqlExportService {
             @Override public void rowsWritten(long rows, long expectedTotal) {
                 if (task.checkStopped(attempt)) return;
                 int percent = start + (int) Math.min(end - start, (rows * (end - start)) / Math.max(1L, expectedTotal));
-                task.running(attempt, percent);
+                task.reportProgress(attempt, percent);
             }
         };
     }

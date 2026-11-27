@@ -149,6 +149,28 @@ class SqlExportTaskTest {
     }
 
     @Test
+    void unchangedPageProgressSkipsWritesOnlyAfterASuccessfulSave() throws Exception {
+        var customers = SqlObjectRef.table("app", "crm", "customers");
+        SqlExportTask task = database(orders, customers);
+        var attempt = task.beginAttempt();
+        doThrow(new IllegalStateException("offline")).doNothing().when(repository).save(eq(key), anyMap());
+
+        task.reportProgress(attempt, 30);
+        task.reportProgress(attempt, 30);
+        task.reportProgress(attempt, 30);
+        verify(repository, times(2)).save(eq(key), anyMap());
+
+        task.tableStarted(attempt, customers, 1, 30);
+        task.reportProgress(attempt, 30);
+        task.reportProgress(attempt, 31);
+        ArgumentCaptor<Map<String, Object>> saved = ArgumentCaptor.forClass(Map.class);
+        verify(repository, times(4)).save(eq(key), saved.capture());
+        assertEquals("customers", saved.getAllValues().get(2).get("currentTable"));
+        assertEquals(1, saved.getAllValues().get(2).get("processedTables"));
+        assertEquals(31, saved.getValue().get("progress"));
+    }
+
+    @Test
     void shutdownCancelsActiveAttemptsButRetainsFailedCheckpointsAndExpiryBoundaries() throws Exception {
         SqlExportTask active = table();
         var attempt = active.beginAttempt();
