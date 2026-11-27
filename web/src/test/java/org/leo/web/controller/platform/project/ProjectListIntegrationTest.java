@@ -3,6 +3,7 @@ package org.leo.web.controller.platform.project;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.ibatis.executor.statement.StatementHandler;
+import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.plugin.Intercepts;
 import org.apache.ibatis.plugin.Invocation;
@@ -22,6 +23,7 @@ import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
+import org.leo.dao.mapper.AgentMapper;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.dao.mapper.TeamMapper;
 import org.leo.dao.mapper.UserMapper;
@@ -32,6 +34,7 @@ import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.application.project.ProjectMembershipQuery;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
@@ -43,6 +46,9 @@ import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -52,6 +58,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.method.HandlerMethod;
 import org.sqlite.SQLiteDataSource;
 
@@ -111,7 +119,8 @@ class ProjectListIntegrationTest {
         projectService = new ProjectService(sqlSession.getMapper(ProjectMapper.class), agents, users, teams);
         controller = new ProjectController(
                 projectService, permissions,
-                new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)));
+                new AgentDirectoryService(agents), new SessionLifecycleManager(mock(NetworkProbeWorkflowService.class)),
+                mock(ProjectMembershipQuery.class));
     }
 
     @AfterEach
@@ -495,38 +504,79 @@ class ProjectListIntegrationTest {
     }
 
     @Test
-    void readsMembershipsForMultipleEntryHostsInOneQueryWithoutChangingVisibilityOrOrder() {
+    void checksAndReadsMembershipsInOneSnapshotWithoutRepeatedHostReads() throws Exception {
+        assertEquals("wal", jdbc.queryForObject("PRAGMA journal_mode=WAL", String.class));
         project("owned", "user-1", "private", "active", "zebra");
         project("team", "user-2", "team", "active", "Alpha");
         project("public", "user-2", "public", "archived", "A public");
         project("hidden", "user-2", "private", "active", "Hidden");
         jdbc.update("UPDATE projects SET project_code='shared-code' WHERE project_id='team'");
-        host("first");
-        host("second");
+        for (String id : List.of("child", "first", "second", "unassigned", "blocked-root")) host(id);
+        jdbc.update("UPDATE agents SET parent_agent_id='first' WHERE agent_id='child'");
+        jdbc.update("UPDATE agents SET create_by_user_id='user-2' WHERE agent_id='blocked-root'");
         for (String id : List.of("owned", "team", "public", "hidden")) attach(id, "first");
         attach("owned", "second");
-        for (String id : List.of("child", "first", "second", "unassigned")) {
-            Agent node = new Agent();
-            node.setAgentId(id);
-            node.setCreateByUserId("user-1");
-            node.setParentAgentId("child".equals(id) ? "first" : "root");
-            when(agents.findAgentById(id)).thenReturn(node);
-        }
         var selection = new AgentMembershipsRequest(List.of("second", " child ", "first", "second", "unassigned"));
 
-        var response = controller.listMemberships(requestAs("normal"), selection);
+        var source = jdbc.getDataSource();
+        Configuration configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.setEnvironment(new Environment("membership-test", new SpringManagedTransactionFactory(), source));
+        configuration.addMapper(AgentMapper.class);
+        configuration.addMapper(ProjectMapper.class);
+        configuration.addInterceptor(queries);
+        var template = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration));
+        var storedAgents = new AgentService(template.getMapper(AgentMapper.class));
+        var storedProjects = spy(new ProjectService(template.getMapper(ProjectMapper.class),
+                storedAgents, users, mock(TeamService.class)));
+        var storedPermissions = new PermissionService(storedAgents, users);
+        doAnswer(call -> {
+            // 用独立连接在权限校验结束后提交主机和项目的变化。
+            try (var writer = source.getConnection(); var statement = writer.createStatement()) {
+                writer.setAutoCommit(false);
+                statement.executeUpdate("UPDATE agents SET parent_agent_id='blocked-root' WHERE agent_id='child'");
+                statement.executeUpdate("UPDATE projects SET project_name='Updated' WHERE project_id='owned'");
+                writer.commit();
+            }
+            return call.callRealMethod();
+        }).when(storedProjects).listVisibleMemberships(any(), any());
 
-        assertEquals(200, response.get("code"));
-        Map<?, ?> memberships = (Map<?, ?>) response.get("data");
-        var owned = new ProjectMembershipSummary("owned", "zebra", null, "active");
-        var first = List.of(new ProjectMembershipSummary("team", "Alpha", "shared-code", "active"), owned,
-                new ProjectMembershipSummary("public", "A public", null, "archived"));
-        assertEquals(List.of("second", "child", "first", "unassigned"), List.copyOf(memberships.keySet()));
-        assertEquals(List.of(owned), memberships.get("second"));
-        assertEquals(first, memberships.get("child"));
-        assertEquals(first, memberships.get("first"));
-        assertEquals(List.of(), memberships.get("unassigned"));
-        assertEquals(1, queries.sql.size(), queries.sql.toString());
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.register(MembershipTransactions.class);
+            context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(source));
+            context.registerBean(ProjectMembershipQuery.class, () -> new ProjectMembershipQuery(storedProjects, storedPermissions));
+            context.refresh();
+            var membershipController = new ProjectController(storedProjects, storedPermissions,
+                    new AgentDirectoryService(storedAgents), mock(SessionLifecycleManager.class),
+                    context.getBean(ProjectMembershipQuery.class));
+
+            var response = membershipController.listMemberships(requestAs("normal"), selection);
+            assertEquals(200, response.get("code"));
+            Map<?, ?> memberships = (Map<?, ?>) response.get("data");
+            var owned = new ProjectMembershipSummary("owned", "zebra", null, "active");
+            var first = List.of(new ProjectMembershipSummary("team", "Alpha", "shared-code", "active"), owned,
+                    new ProjectMembershipSummary("public", "A public", null, "archived"));
+            assertEquals(List.of("second", "child", "first", "unassigned"), List.copyOf(memberships.keySet()));
+            assertEquals(List.of(owned), memberships.get("second"));
+            assertEquals(first, memberships.get("child"));
+            assertEquals(first, memberships.get("first"));
+            assertEquals(List.of(), memberships.get("unassigned"));
+            assertEquals(5, queries.sql.size(), queries.sql.toString());
+            assertEquals(4, queries.sql.stream().filter(sql -> sql.contains("FROM agents WHERE agent_id")).count());
+
+            // 后续请求重新校验：新的父节点不可见；批次中缺失的所选节点仍返回 404。
+            queries.sql.clear();
+            assertEquals(403, assertThrows(ApiException.class,
+                    () -> membershipController.listMemberships(requestAs("normal"), selection)).getCode());
+            assertEquals(404, assertThrows(ApiException.class, () -> membershipController.listMemberships(
+                    requestAs("normal"), new AgentMembershipsRequest(List.of("second", "missing")))).getCode());
+            assertTrue(queries.sql.stream().noneMatch(sql -> sql.contains("FROM project_agents")));
+            assertEquals("Updated", jdbc.queryForObject("SELECT project_name FROM projects WHERE project_id='owned'", String.class));
+        }
+    }
+
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class MembershipTransactions {
     }
 
     @Test

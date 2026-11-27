@@ -7,6 +7,7 @@ import org.leo.core.entity.User;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.application.project.ProjectMembershipQuery;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectIdRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
@@ -29,7 +30,8 @@ class ProjectControllerTest {
     private final PermissionService permissionService = mock(PermissionService.class);
     private final SessionLifecycleManager sessionLifecycle = mock(SessionLifecycleManager.class);
     private final ProjectController controller = new ProjectController(
-            projectService, permissionService, mock(AgentDirectoryService.class), sessionLifecycle);
+            projectService, permissionService, mock(AgentDirectoryService.class), sessionLifecycle,
+            mock(ProjectMembershipQuery.class));
     private final MockHttpServletRequest request = new MockHttpServletRequest();
     private final User user = new User();
 

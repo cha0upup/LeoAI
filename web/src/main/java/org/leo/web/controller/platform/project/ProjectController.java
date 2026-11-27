@@ -10,6 +10,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentDirectoryService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.application.project.ProjectMembershipQuery;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
 import org.leo.web.dto.platform.project.ProjectDtos.ProjectAgentsRequest;
@@ -43,13 +44,16 @@ public class ProjectController {
     private final PermissionService permissionService;
     private final AgentDirectoryService directoryService;
     private final SessionLifecycleManager sessionLifecycle;
+    private final ProjectMembershipQuery membershipQuery;
 
     public ProjectController(ProjectService projectService, PermissionService permissionService,
-                             AgentDirectoryService directoryService, SessionLifecycleManager sessionLifecycle) {
+                             AgentDirectoryService directoryService, SessionLifecycleManager sessionLifecycle,
+                             ProjectMembershipQuery membershipQuery) {
         this.projectService = projectService;
         this.permissionService = permissionService;
         this.directoryService = directoryService;
         this.sessionLifecycle = sessionLifecycle;
+        this.membershipQuery = membershipQuery;
     }
 
     @GetMapping
@@ -206,10 +210,7 @@ public class ProjectController {
                 : List.of();
         Map<String, List<ProjectMembershipSummary>> result = new LinkedHashMap<>();
         if (agentIds.isEmpty()) return ApiResponse.success(result);
-        for (String agentId : agentIds) {
-            permissionService.requireAccessibleAgentChain(agentId, user);
-        }
-        projectService.listVisibleMemberships(agentIds, user).forEach((agentId, projects) ->
+        membershipQuery.list(agentIds, user).forEach((agentId, projects) ->
                 result.put(agentId, projects.stream().map(ProjectMembershipSummary::new).toList()));
         return ApiResponse.success(result);
     }
