@@ -15,7 +15,7 @@ import org.leo.service.ssh.SshProfileConnectCommand;
 import org.leo.service.ssh.SshProfileSaveCommand;
 import org.leo.service.ssh.SshTransport;
 import org.leo.web.adapter.ssh.AgentSshService;
-import org.leo.web.dto.agentnode.SessionIdRequest;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.dto.agentnode.command.CommandExecRequest;
 import org.leo.web.dto.agentnode.command.SshProfileConnectRequest;
 import org.leo.web.dto.agentnode.command.SshProfileRequest;

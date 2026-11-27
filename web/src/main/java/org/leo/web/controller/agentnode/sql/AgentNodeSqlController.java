@@ -10,6 +10,7 @@ import org.leo.service.sql.AgentNodeSqlService;
 import org.leo.service.sql.SqlExecutionException;
 import org.leo.service.sql.SqlExportService;
 import org.leo.service.sql.SqlObjectRef;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionPayload;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ConnectionRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.CreateDatabaseRequest;
@@ -18,7 +19,6 @@ import org.leo.web.dto.agentnode.sql.SqlRequests.DeleteRowRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExecuteRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportDatabaseRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportResumeRequest;
-import org.leo.web.dto.agentnode.sql.SqlRequests.ExportSessionRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportTableRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.ExportTaskRequest;
 import org.leo.web.dto.agentnode.sql.SqlRequests.InsertRowRequest;
@@ -301,7 +301,7 @@ public class AgentNodeSqlController {
 
     @PostMapping("/export/tasks")
     public Map<String, Object> exportTasks(HttpServletRequest httpRequest,
-                                           @RequestBody ExportSessionRequest request) throws SqlExecutionException {
+                                           @RequestBody SessionIdRequest request) throws SqlExecutionException {
         return sqlCall("获取导出任务列表失败", () -> ApiResponse.success(
                 "ok",
                 sqlExportService.listBySessionId(requireUser(httpRequest).getUserId(), request.sessionId())));

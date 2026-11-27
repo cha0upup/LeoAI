@@ -14,8 +14,7 @@ import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.AgentCacheService;
 import org.leo.web.application.agent.AgentHostDiscoveryService;
 import org.leo.web.application.agent.AgentNodeLifecycleService;
-import org.leo.web.dto.agentnode.AgentIdRequest;
-import org.leo.web.dto.agentnode.SessionIdRequest;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.util.ControllerUtil;
@@ -140,6 +139,9 @@ public class AgentNodeController {
         Agent agent = permissionService.requireAccessibleAgentChain(agentId, user);
         Map<String, Object> result = agentConnectionService.testConnection(agent.getAgentId());
         return ApiResponse.success(result);
+    }
+
+    private record AgentIdRequest(String agentId) {
     }
 
     /**

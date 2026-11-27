@@ -100,7 +100,4 @@ public final class SqlRequests {
 
     public record ExportTaskRequest(String taskId) {
     }
-
-    public record ExportSessionRequest(String sessionId) {
-    }
 }

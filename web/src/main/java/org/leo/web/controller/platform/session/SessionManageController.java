@@ -8,10 +8,10 @@ import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.agentnode.AgentService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkChainResponse;
 import org.leo.web.dto.platform.session.SessionDtos.ConnLinkItem;
 import org.leo.web.dto.platform.session.SessionDtos.SessionInfo;
-import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -67,7 +67,7 @@ public class SessionManageController {
      * 删除会话及其工作目录。
      */
     @PostMapping("/sessions/delete")
-    public HashMap<String, Object> deleteSession(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> deleteSession(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         ControllerUtil.getAgentNodeSession(sessionId);
         try {
@@ -82,7 +82,7 @@ public class SessionManageController {
      * 获取当前会话的连接链路链（从当前节点到根节点）。
      */
     @PostMapping("/conn-link-chain")
-    public HashMap<String, Object> getConnLinkChain(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> getConnLinkChain(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
 

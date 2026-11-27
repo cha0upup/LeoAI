@@ -11,11 +11,6 @@ public final class SessionDtos {
 
     private SessionDtos() {}
 
-    // ─── 通用请求 ─────────────────────────────────────────────────────────────
-
-    /** 仅含 sessionId 的通用请求。 */
-    public record SessionRequest(String sessionId) {}
-
     // ─── 会话管理 ─────────────────────────────────────────────────────────────
 
     public record SessionInfo(

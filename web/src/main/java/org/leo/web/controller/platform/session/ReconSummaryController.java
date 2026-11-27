@@ -3,8 +3,8 @@ package org.leo.web.controller.platform.session;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.application.agent.ReconSummaryService;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.dto.platform.session.SessionDtos.AppendReconSummaryRequest;
-import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.dto.platform.session.SessionDtos.SetReconSummaryRequest;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,7 +26,7 @@ public class ReconSummaryController {
     }
 
     @PostMapping("/recon-summary")
-    public HashMap<String, Object> getReconSummary(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> getReconSummary(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.load(sessionId, session));
@@ -51,35 +51,35 @@ public class ReconSummaryController {
     }
 
     @PostMapping("/recon-summary/clear")
-    public HashMap<String, Object> clearReconSummary(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> clearReconSummary(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.clear(sessionId, session));
     }
 
     @PostMapping("/recon-summary/organize")
-    public HashMap<String, Object> organizeReconSummary(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> organizeReconSummary(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.organize(sessionId, session));
     }
 
     @PostMapping("/recon-summary/digest")
-    public HashMap<String, Object> getReconSummaryDigest(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> getReconSummaryDigest(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.digestStatus(sessionId, session));
     }
 
     @PostMapping("/recon-summary/digest/generate")
-    public HashMap<String, Object> generateReconSummaryDigest(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> generateReconSummaryDigest(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.generateDigest(sessionId, session));
     }
 
     @PostMapping("/recon-summary/auto-append/toggle")
-    public HashMap<String, Object> toggleAutoAppendRecon(@RequestBody SessionRequest request) {
+    public HashMap<String, Object> toggleAutoAppendRecon(@RequestBody SessionIdRequest request) {
         String sessionId = ControllerUtil.requireText(request.sessionId(), "sessionId 不能为空");
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
         return ApiResponse.success(reconSummaryService.toggleAutoAppend(sessionId, session));

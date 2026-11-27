@@ -13,6 +13,7 @@ import org.leo.web.application.ai.AiTurnCommandPayload;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.NodeAiThreadService;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.dto.agentnode.ai.*;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
@@ -129,10 +130,10 @@ public class NodeAiController {
     /**
      * 列出当前 agent 的所有 AI 对话线程（合并内存 + 持久化，去重，按 lastActiveAt 倒序）。
      *
-     * @param params {@code sessionId}
+     * @param body {@code sessionId}
      */
     @RequestMapping("/thread/list")
-    public HashMap<String, Object> listThreads(@RequestBody AiSessionRequest body) {
+    public HashMap<String, Object> listThreads(@RequestBody SessionIdRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         return ApiResponse.success(threadQueries.listNodeThreads(session));
     }
