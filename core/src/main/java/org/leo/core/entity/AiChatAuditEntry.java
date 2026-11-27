@@ -5,42 +5,18 @@ import java.util.UUID;
 /**
  * AI 对话审计记录。
  *
- * <p>记录每一次 AI Chat 请求的关键信息，包含操作人、会话来源、消息摘要、
- * 工具调用数量和最终结果，供管理员事后溯源。
+ * <p>后台执行可以更新结果；查询方始终读取一次完整的不可变快照。
  */
 public class AiChatAuditEntry {
 
     public enum SessionType { PLATFORM, AGENT }
 
-    /** 记录 ID（epoch 毫秒 + 随机后缀） */
-    private String id;
-    /** 记录时间戳（毫秒） */
-    private long timestamp;
-    /** 会话类型 */
-    private SessionType sessionType;
-    /** Agent 会话 ID（AGENT 类型时有值） */
-    private String sessionId;
-    /** 用户 ID */
-    private String userId;
-    /** 用户名 */
-    private String userName;
-    /** 用户角色 */
-    private String privilege;
-    /** 用户消息摘要（最多 200 字符） */
-    private String messageSummary;
-    /** 本轮触发的工具调用数 */
-    private int toolCallCount;
-    /** 结果状态：ok / error */
-    private String status;
-    /** AI 回复摘要（最多 200 字符）或错误信息 */
-    private String replySummary;
-    /** 耗时（毫秒） */
-    private long durationMs;
+    private static final int SUMMARY_LIMIT = 200;
+    private volatile Snapshot snapshot;
 
-    public AiChatAuditEntry() {
+    private AiChatAuditEntry(Snapshot snapshot) {
+        this.snapshot = snapshot;
     }
-
-    // ─── Builder-style factory ────────────────────────────────────────────────
 
     public static AiChatAuditEntry platform(String userId, String userName, String privilege,
                                             String message) {
@@ -55,49 +31,33 @@ public class AiChatAuditEntry {
     private static AiChatAuditEntry create(SessionType type, String sessionId,
                                             String userId, String userName, String privilege,
                                             String message) {
-        AiChatAuditEntry e = new AiChatAuditEntry();
-        e.id = UUID.randomUUID().toString();
-        e.timestamp = System.currentTimeMillis();
-        e.sessionType = type;
-        e.sessionId = sessionId;
-        e.userId = userId;
-        e.userName = userName;
-        e.privilege = privilege;
-        e.messageSummary = truncate(message, 200);
-        e.status = "pending";
-        return e;
+        return new AiChatAuditEntry(new Snapshot(UUID.randomUUID().toString(), System.currentTimeMillis(),
+                type, sessionId, userId, userName, privilege, summarize(message), 0, "pending", null, 0L));
     }
 
-    public void complete(String reply, int toolCallCount, long durationMs) {
-        this.replySummary = truncate(reply, 200);
-        this.toolCallCount = toolCallCount;
-        this.durationMs = durationMs;
-        this.status = "ok";
+    public synchronized void complete(String reply, int toolCallCount, long durationMs) {
+        snapshot = snapshot.withResult(toolCallCount, "ok", summarize(reply), durationMs);
     }
 
-    public void fail(String errorMsg, long durationMs) {
-        this.replySummary = truncate(errorMsg, 200);
-        this.durationMs = durationMs;
-        this.status = "error";
+    public synchronized void fail(String errorMsg, long durationMs) {
+        snapshot = snapshot.withResult(snapshot.toolCallCount(), "error", summarize(errorMsg), durationMs);
     }
 
-    private static String truncate(String s, int maxLen) {
-        if (s == null) return "";
-        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "…";
+    public Snapshot snapshot() {
+        return snapshot;
     }
 
-    // ─── Getters ──────────────────────────────────────────────────────────────
+    private static String summarize(String text) {
+        if (text == null) return "";
+        return text.length() <= SUMMARY_LIMIT ? text : text.substring(0, SUMMARY_LIMIT) + "…";
+    }
 
-    public String getId() { return id; }
-    public long getTimestamp() { return timestamp; }
-    public SessionType getSessionType() { return sessionType; }
-    public String getSessionId() { return sessionId; }
-    public String getUserId() { return userId; }
-    public String getUserName() { return userName; }
-    public String getPrivilege() { return privilege; }
-    public String getMessageSummary() { return messageSummary; }
-    public int getToolCallCount() { return toolCallCount; }
-    public String getStatus() { return status; }
-    public String getReplySummary() { return replySummary; }
-    public long getDurationMs() { return durationMs; }
+    public record Snapshot(String id, long timestamp, SessionType sessionType, String sessionId,
+                           String userId, String userName, String privilege, String messageSummary,
+                           int toolCallCount, String status, String replySummary, long durationMs) {
+        private Snapshot withResult(int toolCallCount, String status, String replySummary, long durationMs) {
+            return new Snapshot(id, timestamp, sessionType, sessionId, userId, userName, privilege,
+                    messageSummary, toolCallCount, status, replySummary, durationMs);
+        }
+    }
 }

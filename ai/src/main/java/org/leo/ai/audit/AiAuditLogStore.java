@@ -37,10 +37,10 @@ public class AiAuditLogStore {
     public synchronized Snapshot snapshot(int limit) {
         int total = entries.size();
         int count = limit > 0 ? Math.min(total, limit) : total;
-        List<AiChatAuditEntry> result = new ArrayList<>(count);
+        List<AiChatAuditEntry.Snapshot> result = new ArrayList<>(count);
         for (AiChatAuditEntry entry : entries) {
             if (result.size() == count) break;
-            result.add(entry);
+            result.add(entry.snapshot());
         }
         return new Snapshot(total, List.copyOf(result));
     }
@@ -50,6 +50,6 @@ public class AiAuditLogStore {
         entries.clear();
     }
 
-    public record Snapshot(int total, List<AiChatAuditEntry> logs) {
+    public record Snapshot(int total, List<AiChatAuditEntry.Snapshot> logs) {
     }
 }

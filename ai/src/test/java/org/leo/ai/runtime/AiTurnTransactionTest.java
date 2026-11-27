@@ -56,7 +56,7 @@ class AiTurnTransactionTest {
         assertSame(first, repeated);
         assertEquals("done", first.output());
         assertEquals(2, first.review().get("toolCount"));
-        assertEquals(first.review().get("toolCount"), audit.getToolCallCount());
+        assertEquals(first.review().get("toolCount"), audit.snapshot().toolCallCount());
         assertTrue(session.isTerminal());
         verify(terminal, times(1)).complete(
                 eq(persistedTurn), eq("done"), any(), eq(first.review()), any(), eq(2));

@@ -57,6 +57,6 @@ public class AiAuditLogController {
     private record AuditLogsRequest(Integer limit) {
     }
 
-    private record AuditLogsResponse(int total, int returned, List<AiChatAuditEntry> logs) {
+    private record AuditLogsResponse(int total, int returned, List<AiChatAuditEntry.Snapshot> logs) {
     }
 }

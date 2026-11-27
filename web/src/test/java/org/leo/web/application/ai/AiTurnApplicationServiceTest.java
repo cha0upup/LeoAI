@@ -225,13 +225,14 @@ class AiTurnApplicationServiceTest {
         assertEquals("user-1", request.userItemId());
         assertEquals("assistant-1", request.assistantItemId());
         assertNotNull(request.audit());
+        AiChatAuditEntry.Snapshot audit = request.audit().snapshot();
         assertEquals(agent ? AiChatAuditEntry.SessionType.AGENT : AiChatAuditEntry.SessionType.PLATFORM,
-                request.audit().getSessionType());
-        assertEquals(agent ? "session-1" : null, request.audit().getSessionId());
-        assertEquals("actor-1", request.audit().getUserId());
-        assertEquals("alice", request.audit().getUserName());
-        assertEquals("normal", request.audit().getPrivilege());
-        assertEquals("hello", request.audit().getMessageSummary());
+                audit.sessionType());
+        assertEquals(agent ? "session-1" : null, audit.sessionId());
+        assertEquals("actor-1", audit.userId());
+        assertEquals("alice", audit.userName());
+        assertEquals("normal", audit.privilege());
+        assertEquals("hello", audit.messageSummary());
         verify(fixture.auditLogStore).append(request.audit());
         assertTrue(request.startMs() >= beforeStart && request.startMs() <= System.currentTimeMillis());
         fixture.runtime.complete(new AiTurnOrchestrator.TerminalResult(AiTurnOutcome.COMPLETED, null));

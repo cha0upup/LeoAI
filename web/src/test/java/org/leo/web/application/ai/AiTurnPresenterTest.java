@@ -154,8 +154,9 @@ class AiTurnPresenterTest {
         assertTrue(fixture.thread.getAiSseEventQueue().isEmpty());
         assertEquals(List.of(status), fixture.persistedEvents.stream()
                 .filter(event -> "status".equals(event.name())).map(AiSseEvent::data).toList());
-        assertEquals("error", fixture.context.audit().getStatus());
-        assertEquals(message, fixture.context.audit().getReplySummary());
+        var audit = fixture.context.audit().snapshot();
+        assertEquals("error", audit.status());
+        assertEquals(message, audit.replySummary());
         assertEquals(status, fixture.context.trace().outcome());
         assertEquals(cancelled ? "cancelled" : "unknown", fixture.context.trace().errorCategory());
         assertEquals(message, fixture.context.trace().snapshot().get("errorMessage"));
