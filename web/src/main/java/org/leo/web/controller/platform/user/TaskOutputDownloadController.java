@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
@@ -21,7 +20,6 @@ public class TaskOutputDownloadController {
     @GetMapping("/platform/user/file/download")
     public void download(HttpServletRequest request,
                          @RequestParam("path") String relativePath,
-                         @RequestParam(value = "filename", required = false) String filename,
                          HttpServletResponse response) {
         try {
             User user = ControllerUtil.getCurrentUser(request);
@@ -34,11 +32,7 @@ public class TaskOutputDownloadController {
                 response.setStatus(404);
                 return;
             }
-            String downloadName = sanitizeFileName(filename);
-            if (downloadName == null || downloadName.isEmpty()) {
-                downloadName = target.getFileName().toString();
-            }
-            FileDownloadResponse.write(target, downloadName, response);
+            FileDownloadResponse.write(target, target.getFileName().toString(), response);
         } catch (NoSuchFileException e) {
             response.setStatus(404);
         } catch (IllegalArgumentException e) {
@@ -70,16 +64,5 @@ public class TaskOutputDownloadController {
             }
         }
         return Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) ? target : null;
-    }
-
-    private static String sanitizeFileName(String fileName) {
-        if (fileName == null) {
-            return null;
-        }
-        String safe = new File(fileName).getName();
-        if (safe.contains("..") || safe.contains("/") || safe.contains("\\") || !safe.equals(fileName)) {
-            throw new IllegalArgumentException("文件名包含非法字符");
-        }
-        return safe.trim();
     }
 }

@@ -29,12 +29,12 @@ class TaskOutputDownloadControllerTest {
     }
 
     @Test
-    void authenticatedUserCanDownloadNestedTaskOutputWithTheExistingFilenameContract() throws Exception {
-        String path = "ai-tasks/job/files/reports/note.txt";
+    void authenticatedUserCanDownloadNestedTaskOutputWithItsOriginalFilename() throws Exception {
+        String path = "ai-tasks/job/files/reports/中文报告.txt";
         writeFixture(path);
         var response = new MockHttpServletResponse();
 
-        controller.download(authenticatedRequest(), path, "中文报告.txt", response);
+        controller.download(authenticatedRequest(), path, response);
 
         assertEquals(200, response.getStatus());
         assertEquals("fixture", response.getContentAsString(StandardCharsets.UTF_8));
@@ -54,7 +54,7 @@ class TaskOutputDownloadControllerTest {
 
     private void assertRejected(MockHttpServletRequest request, String path, int status) {
         var response = new MockHttpServletResponse();
-        controller.download(request, path, null, response);
+        controller.download(request, path, response);
         assertEquals(status, response.getStatus(), path);
         assertNull(response.getHeader("Content-Disposition"));
         assertEquals(0, response.getContentAsByteArray().length);

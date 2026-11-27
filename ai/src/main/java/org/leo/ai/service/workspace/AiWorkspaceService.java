@@ -531,7 +531,6 @@ public class AiWorkspaceService {
         result.put("sha256", sha256);
         result.put("userWorkspacePath", TASKS_DIR + "/" + workspace.workspaceId()
                 + "/files/" + path);
-        result.put("downloadEndpoint", "/platform/user/file/download");
         return result;
     }
 

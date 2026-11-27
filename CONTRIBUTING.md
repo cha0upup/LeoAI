@@ -68,6 +68,7 @@
 - 首页最多多读取一条摘要，以识别完整结果。结果不超过一页时直接统计返回的记录；其余页面仍在同一读取事务中执行聚合，避免并发写入使分页和计数不一致。
 - 摘要分页先按筛选及排序确定当前页的行，再读取摘要列。指定精确状态时，成功或失败数由该状态的匹配总数得出，无须逐条判定状态；未指定状态时仍按全筛选范围聚合。
 - 完整日志通过 `GET /platform/admin/audit-logs/detail?logId=...` 按需读取。
+- 按记录删除使用 `POST /platform/admin/audit-logs/delete`，请求体的 `logIds` 为日志 ID 字符串数组。
 - 参数校验失败保留业务提示；审计请求遇到意外错误时返回 HTTP 500、操作提示及 `traceId`，内部异常详情只进入服务端日志。
 - `GET /platform/admin/audit-logs/statistics/operations` 不传 `days` 时统计全部历史；传入时和趋势接口使用同一日历日范围，按服务端本地时间统计，包含当天，最多 90 天。
 
@@ -83,7 +84,7 @@
 
 ## 任务附件下载
 
-- `GET /platform/user/file/download` 仅下载当前登录用户的任务输出。任务文件引用通过 `userWorkspacePath` 提供路径，并通过 `downloadEndpoint` 提供下载地址。
+- 任务文件引用通过 `userWorkspacePath` 提供路径。网页将此值作为 `GET /platform/user/file/download` 的 `path` 参数；接口仅下载当前登录用户的任务输出，并使用原文件名。
 
 ## 账号与资料写入
 

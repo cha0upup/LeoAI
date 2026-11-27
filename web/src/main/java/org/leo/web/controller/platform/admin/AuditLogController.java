@@ -20,7 +20,6 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -271,7 +270,12 @@ public class AuditLogController {
     public HashMap<String, Object> deleteAuditLogs(@RequestBody HashMap<String, Object> params,
                                                    HttpServletRequest request) {
         return auditResponse("删除审计日志失败", () -> {
-            List<String> logIds = parseLogIds(params);
+            Object rawLogIds = params == null ? null : params.get(PARAM_LOG_IDS);
+            if (!(rawLogIds instanceof List<?> ids) || ids.stream().anyMatch(id -> !(id instanceof String))) {
+                return ApiResponse.badRequest("logIds 必须是字符串数组");
+            }
+            List<String> logIds = ids.stream().map(String.class::cast).map(String::trim)
+                    .filter(id -> !id.isBlank()).distinct().toList();
             if (logIds.isEmpty()) {
                 return ApiResponse.badRequest("logIds参数不能为空");
             }
@@ -281,15 +285,12 @@ public class AuditLogController {
             data.put("deleted", deleted);
             data.put("logIds", logIds);
 
-            HashMap<String, Object> auditParams = new HashMap<String, Object>();
-            auditParams.put("logIds", logIds);
-            auditParams.put("deleted", deleted);
             AuditLogUtil.logSystemOperation(
                     ControllerUtil.getCurrentUser(request),
                     AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
                     "删除审计日志",
                     "selected:" + logIds.size(),
-                    auditParams,
+                    data,
                     ApiResponse.CODE_SUCCESS,
                     "删除审计日志，删除 " + deleted + " 条",
                     "SUCCESS",
@@ -324,16 +325,12 @@ public class AuditLogController {
             data.put("deleted", deleted);
             data.put("filter", queryToMap(query));
 
-            HashMap<String, Object> auditParams = new HashMap<String, Object>();
-            auditParams.put("filter", queryToMap(query));
-            auditParams.put("matched", matched);
-            auditParams.put("deleted", deleted);
             AuditLogUtil.logSystemOperation(
                     ControllerUtil.getCurrentUser(request),
                     AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
                     "按筛选条件删除审计日志",
                     "filtered:" + deleted,
-                    auditParams,
+                    data,
                     ApiResponse.CODE_SUCCESS,
                     "按筛选条件删除审计日志，删除 " + deleted + " 条",
                     "SUCCESS",
@@ -427,37 +424,6 @@ public class AuditLogController {
             return Integer.valueOf(text.trim());
         } catch (NumberFormatException e) {
             return null;
-        }
-    }
-
-    private List<String> parseLogIds(HashMap<String, Object> params) {
-        List<String> ids = new ArrayList<String>();
-        if (params == null || !params.containsKey(PARAM_LOG_IDS)) {
-            return ids;
-        }
-        Object raw = params.get(PARAM_LOG_IDS);
-        if (raw instanceof List<?>) {
-            for (Object item : (List<?>) raw) {
-                appendLogId(ids, item);
-            }
-        } else if (raw instanceof String) {
-            String[] parts = ((String) raw).split(",");
-            for (String part : parts) {
-                appendLogId(ids, part);
-            }
-        } else {
-            appendLogId(ids, raw);
-        }
-        return ids.stream().distinct().toList();
-    }
-
-    private void appendLogId(List<String> ids, Object value) {
-        if (value == null) {
-            return;
-        }
-        String text = value.toString().trim();
-        if (!text.isBlank()) {
-            ids.add(text);
         }
     }
 }

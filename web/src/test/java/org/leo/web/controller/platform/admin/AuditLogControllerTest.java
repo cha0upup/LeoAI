@@ -213,6 +213,29 @@ class AuditLogControllerTest {
     }
 
     @Test
+    void selectedDeletionAcceptsOnlyAnArrayOfLogIds() throws Exception {
+        var logs = mock(AuditLogService.class);
+        when(logs.deleteAuditLogsByIds(List.of("a", "b"))).thenReturn(2);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
+                .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+        String path = "/platform/admin/audit-logs/delete";
+        for (String ids : List.of("\"a,b\"", "7", "[\"a\",7]", "[]")) {
+            mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"logIds\":" + ids + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(logs);
+
+        mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"logIds\":[\" a \",\"b\",\"a\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(2))
+                .andExpect(jsonPath("$.data.logIds.length()").value(2));
+        verify(logs).deleteAuditLogsByIds(List.of("a", "b"));
+    }
+
+    @Test
     void summaryRowsAndCountsShareOneSnapshotDuringConcurrentInsert(@TempDir Path temp) {
         var source = SqliteTestDatabase.create(temp.resolve("audit-snapshot.db"));
         var jdbc = new JdbcTemplate(source);
