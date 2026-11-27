@@ -143,25 +143,20 @@ class UserControllerTest {
     }
 
     @Test
-    void unassignedUserListingUsesTheSharedFilterAndRequiresAdmin() {
+    void teamLeaderOptionsRequireAdmin() {
         User caller = new User();
         caller.setPrivilege(UserService.PRIVILEGE_NORMAL);
         request.getSession(true).setAttribute("user", caller);
 
-        assertEquals(403, controller.getNoTeamUsers(request, null).get("code"));
-        assertEquals(403, controller.getNoTeamUsers(request, "options").get("code"));
+        assertEquals(403, controller.getTeamLeaderOptions(request).get("code"));
         verifyNoInteractions(service);
-        caller.setPrivilege(UserService.PRIVILEGE_ADMIN);
-        when(service.getUsersWithoutTeam()).thenReturn(List.of());
-        assertEquals(200, controller.getNoTeamUsers(request, null).get("code"));
-        verify(service).getUsersWithoutTeam();
     }
 
     @Test
     void unassignedOptionsReturnOnlyIdentityFields() throws Exception {
         when(service.getUserOptionsWithoutTeam()).thenReturn(List.of(new UserOption("member", "Alice")));
         MockMvcBuilders.standaloneSetup(controller).build()
-                .perform(get("/platform/admin/users/no-team").param("view", "options")
+                .perform(get("/platform/admin/users/no-team")
                         .sessionAttr("user", account("admin", "admin", null)))
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data[0].userId").value("member"))

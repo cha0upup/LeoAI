@@ -58,43 +58,6 @@ class AuditLogControllerTest {
         when(permissions.requireLogin(any())).thenReturn(new User());
     }
 
-    @ParameterizedTest
-    @CsvSource({
-            "limit=2001&offset=-4&userId=user-a,1000,0,3,3,0,log-3",
-            "limit=bad&offset=2147483648&userId=missing,50,0,0,0,0,",
-            "limit=2&offset=2&userId=user-a,2,2,1,3,0,log-1",
-            "limit=2&offset=8&userId=user-a,2,8,0,3,1,",
-            "limit=2&sessionId=session-a,2,0,2,2,1,log-3"
-    })
-    void legacyAuditPagesNormalizeParametersAndCountOnlyWhenNeeded(String query, int limit, int offset,
-                                                                     int rowCount, int total, int countQueries,
-                                                                     String firstLogId, @TempDir Path temp) throws Exception {
-        var source = SqliteTestDatabase.create(temp.resolve("audit.db"));
-        new JdbcTemplate(source).update("""
-                INSERT INTO audit_logs (log_id, user_id, session_id, operation_type, operation_name, create_time)
-                VALUES ('log-1', 'user-a', 'session-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('log-2', 'user-a', 'session-b', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('log-3', 'user-a', 'session-a', 'TEST', 'Test', '2026-10-01 00:00:00'),
-                       ('other', 'user-b', NULL, 'TEST', 'Test', '2026-10-01 00:00:00')
-                """);
-        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
-        configuration.addMapper(AuditLogMapper.class);
-        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
-            var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
-            MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
-                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
-
-            var response = storedMvc.perform(get("/platform/admin/audit-logs?" + query))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.limit").value(limit))
-                    .andExpect(jsonPath("$.data.offset").value(offset))
-                    .andExpect(jsonPath("$.data.logs.length()").value(rowCount))
-                    .andExpect(jsonPath("$.data.total").value(total));
-            if (firstLogId != null) response.andExpect(jsonPath("$.data.logs[0].logId").value(firstLogId));
-            verify(mapper, times(countQueries)).countAuditLogs(any());
-        }
-    }
-
     @Test
     void summaryPageProjectsListFieldsAndAggregatesTheSameFilteredRows(@TempDir Path temp) throws Exception {
         var source = SqliteTestDatabase.create(temp.resolve("audit-summary.db"));
@@ -125,7 +88,7 @@ class AuditLogControllerTest {
                     new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
             String path = "/platform/admin/audit-logs";
 
-            storedMvc.perform(get(path).param("view", "summary").param("limit", "1").param("offset", "3")
+            storedMvc.perform(get(path).param("limit", "1").param("offset", "3")
                             .param("userId", " user-a ").param("keyword", "fixture-marker"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.total").value(4))
@@ -148,7 +111,7 @@ class AuditLogControllerTest {
 
             for (String status : List.of("SUCCESS", "ERROR", "success")) {
                 boolean succeeded = status.equals("SUCCESS");
-                storedMvc.perform(get(path).param("view", "summary").param("status", status).param("offset", "20"))
+                storedMvc.perform(get(path).param("status", status).param("offset", "20"))
                         .andExpect(jsonPath("$.data.logs").isEmpty())
                         .andExpect(jsonPath("$.data.total").value(succeeded ? 2 : 1))
                         .andExpect(jsonPath("$.data.successCount").value(succeeded ? 2 : 0))
@@ -156,29 +119,34 @@ class AuditLogControllerTest {
             }
 
             clearInvocations(mapper);
-            storedMvc.perform(get(path).param("view", "summary").param("userId", "missing"))
+            storedMvc.perform(get(path).param("userId", "missing")
+                            .param("limit", "bad").param("offset", "2147483648"))
                     .andExpect(jsonPath("$.data.logs").isEmpty())
                     .andExpect(jsonPath("$.data.limit").value(50))
                     .andExpect(jsonPath("$.data.offset").value(0))
                     .andExpect(jsonPath("$.data.total").value(0))
                     .andExpect(jsonPath("$.data.successCount").value(0))
                     .andExpect(jsonPath("$.data.failedCount").value(0));
-            storedMvc.perform(get(path).param("view", "summary").param("limit", "4")
+            storedMvc.perform(get(path).param("limit", "4")
                             .param("userId", "user-a").param("keyword", "fixture-marker"))
                     .andExpect(jsonPath("$.data.logs.length()").value(4))
                     .andExpect(jsonPath("$.data.total").value(4))
                     .andExpect(jsonPath("$.data.successCount").value(1))
                     .andExpect(jsonPath("$.data.failedCount").value(2));
-            storedMvc.perform(get(path).param("view", "summary").param("userId", "user-b"))
+            storedMvc.perform(get(path).param("userId", "user-b")
+                            .param("limit", "2001").param("offset", "-4"))
+                    .andExpect(jsonPath("$.data.limit").value(1000))
+                    .andExpect(jsonPath("$.data.offset").value(0))
                     .andExpect(jsonPath("$.data.logs.length()").value(3))
                     .andExpect(jsonPath("$.data.total").value(3))
                     .andExpect(jsonPath("$.data.successCount").value(1))
                     .andExpect(jsonPath("$.data.failedCount").value(0));
-            verify(mapper, times(2)).findAuditLogListItems(any(), eq(51));
+            verify(mapper).findAuditLogListItems(any(), eq(51));
+            verify(mapper).findAuditLogListItems(any(), eq(1001));
             verify(mapper).findAuditLogListItems(any(), eq(5));
             verify(mapper, never()).countAuditLogsByStatus(any());
 
-            storedMvc.perform(get(path).param("view", "summary").param("limit", "2").param("userId", "user-a"))
+            storedMvc.perform(get(path).param("limit", "2").param("userId", "user-a"))
                     .andExpect(jsonPath("$.data.logs.length()").value(2))
                     .andExpect(jsonPath("$.data.logs[0].logId").value("d"))
                     .andExpect(jsonPath("$.data.logs[1].logId").value("c"))
@@ -189,12 +157,11 @@ class AuditLogControllerTest {
             verify(mapper).countAuditLogsByStatus(any());
 
             storedMvc.perform(get(path).param("sessionId", "session-a"))
-                    .andExpect(jsonPath("$.data.logs[0].requestParams").value("fixture-marker"))
-                    .andExpect(jsonPath("$.data.successCount").doesNotHaveJsonPath());
+                    .andExpect(jsonPath("$.data.total").value(1))
+                    .andExpect(jsonPath("$.data.logs[0].logId").value("a"));
             storedMvc.perform(get(path + "/detail").param("logId", "a"))
+                    .andExpect(jsonPath("$.data.requestParams").value("fixture-marker"))
                     .andExpect(jsonPath("$.data.responseMessage").value("fixture-message"));
-            storedMvc.perform(get(path + "/count").param("userId", "user-a"))
-                    .andExpect(jsonPath("$.data.count").value(4));
         }
     }
 
@@ -229,7 +196,7 @@ class AuditLogControllerTest {
         MockMvc errorMvc = MockMvcBuilders.standaloneSetup(
                         new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
                 .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build();
-        errorMvc.perform(get("/platform/admin/audit-logs").param("view", "summary"))
+        errorMvc.perform(get("/platform/admin/audit-logs"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.msg").value("获取审计日志列表失败"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
@@ -475,13 +442,12 @@ class AuditLogControllerTest {
                     new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
             String path = "/platform/admin/audit-logs/statistics/" + subject;
 
-            var populated = storedMvc.perform(get(path).param(idField, " " + id + " "))
+            storedMvc.perform(get(path).param(idField, " " + id + " "))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data." + idField).value(id))
                     .andExpect(jsonPath("$.data.totalOperations").value(2))
                     .andExpect(jsonPath("$.data.recentOperations").value(1))
                     .andExpect(jsonPath("$.data.lastOperation").value(latest));
-            if ("agent".equals(subject)) populated.andExpect(jsonPath("$.data.hostId").value(id));
             assertEquals(1, mockingDetails(mapper).getInvocations().size());
             storedMvc.perform(get(path).param(idField, "missing"))
                     .andExpect(status().isOk())

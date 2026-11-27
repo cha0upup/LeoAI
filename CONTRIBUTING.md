@@ -63,15 +63,15 @@
 
 ## 管理后台审计查询契约
 
-- 管理员使用 `GET /platform/admin/audit-logs?view=summary` 查询摘要页。筛选和分页参数沿用原列表；`data` 返回 `logs`、`total`、`successCount`、`failedCount`、`limit`、`offset`。
+- 管理员使用 `GET /platform/admin/audit-logs` 查询摘要页，按条件筛选并通过 `limit`、`offset` 分页。`data` 返回 `logs`、`total`、`successCount`、`failedCount`、`limit`、`offset`。
 - 数量对应**同一筛选条件命中的全部记录**，与当前页条数无关。失败合计包括 `FAILED` 和 `ERROR`；其他状态只计入总数。列表不会返回请求参数、响应消息等详情字段，但关键字搜索仍覆盖原有字段。
 - 首页最多多读取一条摘要，以识别完整结果。结果不超过一页时直接统计返回的记录；其余页面仍在同一读取事务中执行聚合，避免并发写入使分页和计数不一致。
 - 摘要分页先按筛选及排序确定当前页的行，再读取摘要列。指定精确状态时，成功或失败数由该状态的匹配总数得出，无须逐条判定状态；未指定状态时仍按全筛选范围聚合。
-- 详情继续用 `GET /platform/admin/audit-logs/detail?logId=...`。不传 `view` 的列表、独立计数及写入接口保持原契约。部署新版管理后台时，先更新后端或随同一制品发布。
+- 完整日志通过 `GET /platform/admin/audit-logs/detail?logId=...` 按需读取。
 - 参数校验失败保留业务提示；审计请求遇到意外错误时返回 HTTP 500、操作提示及 `traceId`，内部异常详情只进入服务端日志。
 - `GET /platform/admin/audit-logs/statistics/operations` 不传 `days` 时统计全部历史；传入时和趋势接口使用同一日历日范围，按服务端本地时间统计，包含当天，最多 90 天。
 
-团队管理的队长候选使用 `GET /platform/admin/users/no-team?view=options`，仅返回 `userId` 和 `userName`。旧视图、管理员限制和未入队判定保持原样。
+团队管理的队长候选使用 `GET /platform/admin/users/no-team`。仅管理员可以读取，响应只包含未入队账号的 `userId` 和 `userName`。
 
 项目交接使用 `GET /platform/admin/users/enabled-options` 读取已启用账号，同样只返回 `userId` 和 `userName`。该接口仅向管理员开放；交接提交时仍在后端重新校验接任账号状态。
 

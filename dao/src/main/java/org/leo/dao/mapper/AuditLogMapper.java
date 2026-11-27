@@ -100,16 +100,6 @@ public interface AuditLogMapper {
 
     @Select({
             "<script>",
-            "SELECT * FROM audit_logs",
-            AUDIT_LOG_FILTER_WHERE,
-            AUDIT_LOG_ORDER,
-            "LIMIT #{query.limit} OFFSET #{query.offset}",
-            "</script>"
-    })
-    List<AuditLog> searchAuditLogs(@Param("query") AuditLogQuery query);
-
-    @Select({
-            "<script>",
             """
             SELECT log_id, user_id, user_name, agent_id, agent_name, operation_type, operation_name,
                    operation_path, status, client_ip, create_time

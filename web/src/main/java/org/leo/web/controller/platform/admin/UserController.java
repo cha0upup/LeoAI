@@ -14,7 +14,6 @@ import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -81,13 +80,11 @@ public class UserController {
     }
 
     /**
-     * 获取未加入任何团队的用户；队长选择器使用 view=options，仅返回标识和名称。
+     * 获取尚未入队的队长候选，仅返回账号标识和名称。
      */
     @RequestMapping(value = "/users/no-team", method = RequestMethod.GET)
-    public HashMap<String, Object> getNoTeamUsers(HttpServletRequest request,
-                                                 @RequestParam(name = "view", required = false) String view) {
-        return readForAdministrator(request, () -> "options".equals(view)
-                ? userService.getUserOptionsWithoutTeam() : sanitize(userService.getUsersWithoutTeam()));
+    public HashMap<String, Object> getTeamLeaderOptions(HttpServletRequest request) {
+        return readForAdministrator(request, userService::getUserOptionsWithoutTeam);
     }
 
     @RequestMapping(value = "/users/enabled-options", method = RequestMethod.GET)

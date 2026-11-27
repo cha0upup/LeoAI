@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
 import org.leo.dao.mapper.AuditLogMapper;
 import org.mockito.ArgumentCaptor;
@@ -22,23 +21,19 @@ class AuditLogServiceTest {
     private final AuditLogService logs = new AuditLogService(mapper);
 
     @Test
-    void readingPagesAndCountsDoesNotRewriteTheCallersQuery() {
-        AuditLogQuery query = AuditLogQuery.page(2001, 7);
+    void readingSummaryPageDoesNotRewriteTheCallersQuery() {
+        AuditLogQuery query = AuditLogQuery.page(2001, 0);
         query.setUserId(" user ");
         query.setKeyword(" search ");
         query.setStatus(" ");
         query.setStartTime(" 2026-01-01 00:00:00 ");
-        var row = new AuditLog();
-        when(mapper.searchAuditLogs(any())).thenReturn(List.of(row));
-        when(mapper.countAuditLogs(any())).thenReturn(3);
+        when(mapper.findAuditLogListItems(any(), eq(1001))).thenReturn(List.of());
 
-        assertEquals(List.of(row), logs.searchAuditLogs(query));
-        assertEquals(3, logs.countAuditLogs(query));
-
+        assertEquals(0, logs.getSummaryPage(query).total());
         assertEquals(" user ", query.getUserId());
         assertEquals(" search ", query.getKeyword());
         var normalized = ArgumentCaptor.forClass(AuditLogQuery.class);
-        verify(mapper).searchAuditLogs(normalized.capture());
+        verify(mapper).findAuditLogListItems(normalized.capture(), eq(1001));
         assertNotSame(query, normalized.getValue());
         assertEquals("user", normalized.getValue().getUserId());
         assertEquals("search", normalized.getValue().getKeyword());

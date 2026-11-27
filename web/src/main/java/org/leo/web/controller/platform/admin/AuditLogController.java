@@ -138,34 +138,12 @@ public class AuditLogController {
     }
     
     /**
-     * 审计日志分页；view=summary 时仅返回列表列，并附带同一筛选范围的成功和失败数。
+     * 返回审计日志摘要及同一筛选范围的成功和失败数。
      */
     @RequestMapping(value = "", method = RequestMethod.GET)
     public HashMap<String, Object> getAllAuditLogs(@RequestParam Map<String, String> params) {
-        return auditResponse("获取审计日志列表失败", () -> {
-            AuditLogQuery query = buildQuery(params, true);
-            if ("summary".equals(params.get("view"))) {
-                return ApiResponse.success(auditLogService.getSummaryPage(query));
-            }
-            List<AuditLog> logs = auditLogService.searchAuditLogs(query);
-            int offset = query.getOffset();
-            int total;
-            // 未满的一页可确定总数，除非非首空页可能已超出数据范围。
-            if (logs.size() < query.getLimit() && (offset == 0 || !logs.isEmpty())
-                    && offset <= Integer.MAX_VALUE - logs.size()) {
-                total = offset + logs.size();
-            } else {
-                total = auditLogService.countAuditLogs(query);
-            }
-            
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put("logs", logs);
-            data.put("total", total);
-            data.put("limit", query.getLimit());
-            data.put("offset", offset);
-            
-            return ApiResponse.success(data);
-        });
+        return auditResponse("获取审计日志列表失败",
+                () -> ApiResponse.success(auditLogService.getSummaryPage(buildQuery(params, true))));
     }
     
     /**
@@ -187,20 +165,6 @@ public class AuditLogController {
         });
     }
     
-    /**
-     * 统计审计日志总数
-     */
-    @RequestMapping(value = "/count", method = RequestMethod.GET)
-    public HashMap<String, Object> getAuditLogCount(@RequestParam Map<String, String> params) {
-        return auditResponse("统计审计日志数量失败", () -> {
-            AuditLogQuery query = buildQuery(params, false);
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put("count", auditLogService.countAuditLogs(query));
-            
-            return ApiResponse.success(data);
-        });
-    }
-
     @RequestMapping(value = "/statistics/user", method = RequestMethod.GET)
     public HashMap<String, Object> getUserStatistics(@RequestParam(PARAM_USER_ID) String userId) {
         return auditResponse("获取用户审计统计失败", () -> {
