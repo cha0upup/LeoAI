@@ -8,14 +8,22 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.AiProvider;
+import org.leo.core.entity.AiProviderSummary;
 
 import java.util.List;
 
 @Mapper
 public interface AiProviderMapper {
 
-    @Select("SELECT * FROM ai_providers ORDER BY id")
-    List<AiProvider> listAll();
+    @Select("""
+            SELECT id, name, provider_key, base_url, protocol, completions_path, enabled,
+                   create_time, update_time, remark,
+                   COALESCE(TRIM(headers_json) <> '', 0) AS headers_configured,
+                   api_key <> '' AS api_key_configured
+            FROM ai_providers
+            ORDER BY id
+            """)
+    List<AiProviderSummary> listSummaries();
 
     @Select("SELECT * FROM ai_providers WHERE id = #{id}")
     AiProvider findById(@Param("id") Integer id);

@@ -2,6 +2,7 @@ package org.leo.web.controller.platform.admin;
 
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.core.entity.AiProvider;
+import org.leo.core.entity.AiProviderSummary;
 import org.leo.core.util.ApiResponse;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -10,8 +11,6 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
 
 @RestController
 @RequestMapping("/platform/admin/ai-providers")
@@ -25,10 +24,7 @@ public class AiProviderController {
 
     @RequestMapping(method = RequestMethod.GET)
     public HashMap<String, Object> list() {
-        List<HashMap<String, Object>> view = configService.listProviders().stream()
-                .map(AiProviderController::toView)
-                .toList();
-        return ApiResponse.success(view);
+        return ApiResponse.success(configService.listProviderSummaries());
     }
 
     @RequestMapping(method = RequestMethod.POST)
@@ -68,22 +64,11 @@ public class AiProviderController {
         }
     }
 
-    private static HashMap<String, Object> toView(AiProvider p) {
-        HashMap<String, Object> m = new LinkedHashMap<>();
-        m.put("id", p.getId());
-        m.put("name", p.getName());
-        m.put("providerKey", p.getProviderKey());
-        m.put("baseUrl", p.getBaseUrl());
-        m.put("protocol", p.getProtocol());
-        m.put("completionsPath", p.getCompletionsPath());
+    private static AiProviderSummary toView(AiProvider p) {
         String headers = p.getHeadersJson();
-        m.put("headersConfigured", headers != null && !headers.isBlank());
-        m.put("enabled", p.getEnabled());
-        m.put("createTime", p.getCreateTime());
-        m.put("updateTime", p.getUpdateTime());
-        m.put("remark", p.getRemark());
         String key = p.getApiKey();
-        m.put("apiKeyConfigured", key != null && !key.isEmpty());
-        return m;
+        return new AiProviderSummary(p.getId(), p.getName(), p.getProviderKey(), p.getBaseUrl(), p.getProtocol(),
+                p.getCompletionsPath(), p.getEnabled(), p.getCreateTime(), p.getUpdateTime(), p.getRemark(),
+                headers != null && !headers.isBlank(), key != null && !key.isEmpty());
     }
 }

@@ -3,6 +3,7 @@ package org.leo.ai.channel;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiProvider;
+import org.leo.core.entity.AiProviderSummary;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
@@ -63,8 +64,8 @@ public class AiModelConfigService {
         return decryptModels(mapper.listEnabled());
     }
 
-    public List<AiProvider> listProviders() {
-        return decryptProviders(providerMapper.listAll());
+    public List<AiProviderSummary> listProviderSummaries() {
+        return providerMapper.listSummaries();
     }
 
     public List<AiModelCapability> listModelCapabilities() {
@@ -178,7 +179,7 @@ public class AiModelConfigService {
         if (defaultIndex >= 0) {
             notifyModelRefresh();
         }
-        return findProviderById(saved.getId());
+        return saved;
     }
 
     @Transactional
@@ -567,13 +568,6 @@ public class AiModelConfigService {
             cursor = findById(nextId);
             if (cursor == null) break;
         }
-    }
-
-    private List<AiProvider> decryptProviders(List<AiProvider> rows) {
-        if (rows == null) return List.of();
-        List<AiProvider> decrypted = new ArrayList<>(rows.size());
-        rows.forEach(row -> decrypted.add(decryptProvider(row)));
-        return decrypted;
     }
 
     private List<AiModelConfig> decryptModels(List<AiModelConfig> rows) {

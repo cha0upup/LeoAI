@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
+import org.leo.core.entity.AiProviderSummary;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
@@ -135,7 +136,7 @@ class AiModelConfigurationIntegrationTest {
     }
 
     @Test
-    void providerDeletionUsesItsWriteResultAndCascadesWithoutDecryptingCredentials() {
+    void providerSummaryAndDeletionWorkWithoutDecryptingCredentials() {
         AiProvider removed = provider("removed");
         AiModelConfig active = model(removed, "active");
         AiModelConfig sibling = model(removed, "sibling");
@@ -155,6 +156,12 @@ class AiModelConfigurationIntegrationTest {
         jdbc.execute("DROP TRIGGER preserve_provider");
 
         damageStoredProviderSecrets(removed.getId());
+        List<AiProviderSummary> summaries = configs.listProviderSummaries();
+        assertEquals(List.of(removed.getId(), kept.getId()), summaries.stream().map(AiProviderSummary::id).toList());
+        assertEquals("removed", summaries.get(0).name());
+        assertTrue(summaries.get(0).headersConfigured());
+        assertFalse(summaries.get(1).headersConfigured());
+        assertTrue(summaries.stream().allMatch(AiProviderSummary::apiKeyConfigured));
         assertTrue(configs.deleteProvider(removed.getId()));
         assertFalse(configs.deleteProvider(removed.getId()));
         assertNull(configs.findProviderById(removed.getId()));
