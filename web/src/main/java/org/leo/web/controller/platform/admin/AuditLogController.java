@@ -3,14 +3,13 @@ package org.leo.web.controller.platform.admin;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogQuery;
-import org.leo.core.entity.User;
+import org.leo.core.util.ApiResponse;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
-import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
+import org.leo.web.infrastructure.audit.WebAuditRecorder;
 import org.leo.web.security.PermissionService;
 import org.leo.web.util.AuditLogUtil;
-import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -65,13 +64,16 @@ public class AuditLogController {
     private final AuditLogService auditLogService;
     private final AuditPolicyService auditPolicyService;
     private final PermissionService permissionService;
+    private final WebAuditRecorder auditRecorder;
     
     public AuditLogController(AuditLogService auditLogService,
                               AuditPolicyService auditPolicyService,
-                              PermissionService permissionService) {
+                              PermissionService permissionService,
+                              WebAuditRecorder auditRecorder) {
         this.auditLogService = auditLogService;
         this.auditPolicyService = auditPolicyService;
         this.permissionService = permissionService;
+        this.auditRecorder = auditRecorder;
     }
 
     @ModelAttribute
@@ -117,20 +119,11 @@ public class AuditLogController {
             auditParams.put("newMode", newMode);
             auditParams.put("newModeLabel", auditPolicyService.getModeLabel(newMode));
 
-            User currentUser = ControllerUtil.getCurrentUser(request);
-            AuditLogUtil.logSystemOperation(
-                    currentUser,
-                    AuditPolicyService.OPERATION_AUDIT_MODE_CHANGE,
+            recordAuditChange(request, AuditPolicyService.OPERATION_AUDIT_MODE_CHANGE,
                     "变更审计模式",
                     request != null ? request.getRequestURI() : "/platform/admin/audit-logs/mode",
                     auditParams,
-                    ApiResponse.CODE_SUCCESS,
-                    "审计模式已更新为" + auditPolicyService.getModeLabel(newMode),
-                    "SUCCESS",
-                    null,
-                    AuditLogUtil.getClientIp(request),
-                    true
-            );
+                    "审计模式已更新为" + auditPolicyService.getModeLabel(newMode));
 
             return ApiResponse.success("审计模式已更新", buildAuditModeView(newMode));
         });
@@ -244,19 +237,11 @@ public class AuditLogController {
             HashMap<String, Object> auditParams = new HashMap<String, Object>();
             auditParams.put("days", days);
             auditParams.put("deleted", deleted);
-            AuditLogUtil.logSystemOperation(
-                    ControllerUtil.getCurrentUser(request),
-                    AuditPolicyService.OPERATION_AUDIT_LOG_CLEANUP,
+            recordAuditChange(request, AuditPolicyService.OPERATION_AUDIT_LOG_CLEANUP,
                     "清理审计日志",
                     request != null ? request.getRequestURI() : "/platform/admin/audit-logs/cleanup",
                     auditParams,
-                    ApiResponse.CODE_SUCCESS,
-                    "清理审计日志，删除 " + deleted + " 条",
-                    "SUCCESS",
-                    null,
-                    AuditLogUtil.getClientIp(request),
-                    true
-            );
+                    "清理审计日志，删除 " + deleted + " 条");
             
             logger.info("清理审计日志完成，删除{}天前的日志，共删除{}条", days, deleted);
             return ApiResponse.success("清理完成，共删除 " + deleted + " 条日志", data);
@@ -285,19 +270,9 @@ public class AuditLogController {
             data.put("deleted", deleted);
             data.put("logIds", logIds);
 
-            AuditLogUtil.logSystemOperation(
-                    ControllerUtil.getCurrentUser(request),
-                    AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
-                    "删除审计日志",
-                    "selected:" + logIds.size(),
-                    data,
-                    ApiResponse.CODE_SUCCESS,
-                    "删除审计日志，删除 " + deleted + " 条",
-                    "SUCCESS",
-                    null,
-                    AuditLogUtil.getClientIp(request),
-                    true
-            );
+            recordAuditChange(request, AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
+                    "删除审计日志", "selected:" + logIds.size(), data,
+                    "删除审计日志，删除 " + deleted + " 条");
 
             return ApiResponse.success("删除完成，共删除 " + deleted + " 条日志", data);
         });
@@ -317,32 +292,22 @@ public class AuditLogController {
             if (!auditLogService.hasDeleteFilter(query)) {
                 return ApiResponse.badRequest("按筛选条件删除至少需要一个筛选条件");
             }
-            Integer matched = auditLogService.countAuditLogs(query);
-            Integer deleted = auditLogService.deleteAuditLogsByFilter(query);
+            int deleted = auditLogService.deleteAuditLogsByFilter(query);
 
             HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put("matched", matched);
+            // 保留客户端字段；matched 与 deleted 均对应实际执行删除时匹配的日志。
+            data.put("matched", deleted);
             data.put("deleted", deleted);
             data.put("filter", queryToMap(query));
 
-            AuditLogUtil.logSystemOperation(
-                    ControllerUtil.getCurrentUser(request),
-                    AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
-                    "按筛选条件删除审计日志",
-                    "filtered:" + deleted,
-                    data,
-                    ApiResponse.CODE_SUCCESS,
-                    "按筛选条件删除审计日志，删除 " + deleted + " 条",
-                    "SUCCESS",
-                    null,
-                    AuditLogUtil.getClientIp(request),
-                    true
-            );
+            recordAuditChange(request, AuditPolicyService.OPERATION_AUDIT_LOG_DELETE,
+                    "按筛选条件删除审计日志", "filtered:" + deleted, data,
+                    "按筛选条件删除审计日志，删除 " + deleted + " 条");
 
             return ApiResponse.success("删除完成，共删除 " + deleted + " 条日志", data);
         });
     }
-    
+
     /**
      * 获取所有操作类型列表
      */
@@ -350,6 +315,13 @@ public class AuditLogController {
     public HashMap<String, Object> getOperationTypes() {
         return auditResponse("获取操作类型列表失败",
                 () -> ApiResponse.success(auditPolicyService.getKnownOperationTypes()));
+    }
+
+    private void recordAuditChange(HttpServletRequest request, String operationType, String operationName,
+                                   String operationPath, Map<String, Object> details, String responseMessage) {
+        auditRecorder.logSystemOperation(permissionService.getCurrentUser(request), operationType,
+                operationName, operationPath, details, ApiResponse.CODE_SUCCESS, responseMessage,
+                "SUCCESS", null, AuditLogUtil.getClientIp(request), true);
     }
 
     private HashMap<String, Object> auditResponse(String errorMessage, Supplier<HashMap<String, Object>> request) {

@@ -89,19 +89,18 @@ public class LoginController {
             throw ApiException.forbidden("账号已禁用，请联系管理员");
         }
 
-        User refreshed = userService.recordSuccessfulLogin(user.getUserId(), user.getPassword());
-        if (refreshed == null || !Integer.valueOf(1).equals(refreshed.getStatus())
-                || !Objects.equals(user.getPassword(), refreshed.getPassword())) {
+        User authenticated = userService.recordSuccessfulLogin(user.getUserId(), user.getPassword());
+        if (authenticated == null || !Integer.valueOf(1).equals(authenticated.getStatus())
+                || !Objects.equals(user.getPassword(), authenticated.getPassword())) {
             throw ApiException.unauthorized("账号凭据已更新，请重新登录");
         }
-        user = refreshed;
         loginAttemptService.recordSuccess(username, remoteAddress);
 
         HttpSession session = request.getSession(true);
         request.changeSessionId();
-        session.setAttribute(SESSION_ATTR_USER, user);
-        logger.info("用户登录成功，userId: {}", user.getUserId());
-        return ApiResponse.success(UserViews.authentication(user));
+        session.setAttribute(SESSION_ATTR_USER, authenticated);
+        logger.info("用户登录成功，userId: {}", authenticated.getUserId());
+        return ApiResponse.success(UserViews.authentication(authenticated));
     }
 
     /**

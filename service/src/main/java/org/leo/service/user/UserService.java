@@ -121,13 +121,12 @@ public class UserService {
         userMapper.detachTeamMembers(teamId.trim(), now());
     }
 
-    /** Records the login only if the account still accepts the verified credential. */
+    /** 仅在已校验凭据仍有效时更新登录统计，并返回同一写入时刻的账号快照。 */
     public User recordSuccessfulLogin(String userId, String verifiedPasswordHash) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
-        if (!userMapper.recordSuccessfulLogin(userId.trim(), verifiedPasswordHash, now())) return null;
-        return getUserById(userId);
+        return userMapper.recordSuccessfulLogin(userId.trim(), verifiedPasswordHash, now());
     }
 
     // ── 权限校验 ─────────────────────────────────────────────────────────────────

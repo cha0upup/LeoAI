@@ -290,18 +290,29 @@ class PasswordRoundTripIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void loginStatsIgnoreAChangedPasswordOrDisabledAccount(boolean disable) throws Exception {
+    void aChangedPasswordOrDisabledAccountRejectsStaleCredentialsAndInvalidatesAnExistingSession(boolean disable)
+            throws Exception {
         createUser("current-fixture-password", false);
-        User original = users.getUserByName("member");
-        String verifiedHash = original.getPassword();
-        if (disable) original.setStatus(0);
-        else original.setPassword(PasswordUtil.hash("replacement-fixture-password"));
-        assertTrue(users.updateUser(original));
+        MockHttpSession existingSession = assertLogin("member", "current-fixture-password");
+        User verified = (User) existingSession.getAttribute("user");
+        assertEquals(1, verified.getLoginCount());
+        assertNotNull(verified.getLastLoginTime());
 
-        assertNull(users.recordSuccessfulLogin(original.getUserId(), verifiedHash));
-        User stored = users.getUserById(original.getUserId());
-        assertEquals(0, stored.getLoginCount());
-        assertNull(stored.getLastLoginTime());
+        try (SqlSession request = factory.openSession(true)) {
+            UserService editor = new UserService(request.getMapper(UserMapper.class));
+            User changed = editor.getUserById(verified.getUserId());
+            if (disable) changed.setStatus(0);
+            else changed.setPassword(PasswordUtil.hash("replacement-fixture-password"));
+            assertTrue(editor.updateUser(changed));
+        }
+
+        assertNull(users.recordSuccessfulLogin(verified.getUserId(), verified.getPassword()));
+        mvc.perform(get("/platform/user/profile").session(existingSession))
+                .andExpect(status().isUnauthorized());
+        assertTrue(existingSession.isInvalid());
+        User stored = users.getUserById(verified.getUserId());
+        assertEquals(1, stored.getLoginCount());
+        assertEquals(verified.getLastLoginTime(), stored.getLastLoginTime());
     }
 
     private void createUser(String password, boolean ai) throws Exception {

@@ -19,6 +19,7 @@ import org.leo.service.audit.AuditPolicyService;
 import org.leo.service.config.SystemConfigService;
 import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.config.GlobalExceptionHandler;
+import org.leo.web.infrastructure.audit.WebAuditRecorder;
 import org.leo.web.security.PermissionService;
 import org.leo.web.testing.SqliteTestDatabase;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -52,6 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AuditLogControllerTest {
     private final PermissionService permissions = mock(PermissionService.class);
+    private final WebAuditRecorder auditRecorder = mock(WebAuditRecorder.class);
 
     @BeforeEach
     void setUp() {
@@ -85,7 +87,7 @@ class AuditLogControllerTest {
         try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
             var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
             var storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
-                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
+                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions, auditRecorder)).build();
             String path = "/platform/admin/audit-logs";
 
             storedMvc.perform(get(path).param("limit", "1").param("offset", "3")
@@ -194,7 +196,7 @@ class AuditLogControllerTest {
         when(logs.getSummaryPage(any())).thenThrow(new IllegalStateException("internal storage details"));
         when(logs.deleteOldAuditLogs(7)).thenThrow(new IllegalArgumentException("internal cleanup details"));
         MockMvc errorMvc = MockMvcBuilders.standaloneSetup(
-                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
+                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions, auditRecorder))
                 .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build();
         errorMvc.perform(get("/platform/admin/audit-logs"))
                 .andExpect(status().isInternalServerError())
@@ -217,7 +219,7 @@ class AuditLogControllerTest {
         var logs = mock(AuditLogService.class);
         when(logs.deleteAuditLogsByIds(List.of("a", "b"))).thenReturn(2);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions))
+                        new AuditLogController(logs, mock(AuditPolicyService.class), permissions, auditRecorder))
                 .setControllerAdvice(new ApiResponseStatusAdvice()).build();
         String path = "/platform/admin/audit-logs/delete";
         for (String ids : List.of("\"a,b\"", "7", "[\"a\",7]", "[]")) {
@@ -233,6 +235,50 @@ class AuditLogControllerTest {
                 .andExpect(jsonPath("$.data.deleted").value(2))
                 .andExpect(jsonPath("$.data.logIds.length()").value(2));
         verify(logs).deleteAuditLogsByIds(List.of("a", "b"));
+    }
+
+    @Test
+    void filteredDeletionReportsActualRowsAndRecordsTheAdministratorEvenWhenAuditIsOff(@TempDir Path temp)
+            throws Exception {
+        var source = SqliteTestDatabase.create(temp.resolve("audit-delete.db"));
+        var jdbc = new JdbcTemplate(source);
+        jdbc.update("""
+                INSERT INTO audit_logs (log_id, operation_type, operation_name, status, create_time)
+                VALUES ('remove', 'FIXTURE', 'Test', 'FAILED', '2026-10-01 00:00:00'),
+                       ('keep', 'FIXTURE', 'Test', 'SUCCESS', '2026-10-01 00:00:00')
+                """);
+        var configuration = SqliteTestDatabase.myBatisConfiguration(source);
+        configuration.addMapper(AuditLogMapper.class);
+        var settings = mock(SystemConfigService.class);
+        when(settings.getString(eq(AuditPolicyService.CONFIG_KEY_AUDIT_MODE), anyString()))
+                .thenReturn(AuditPolicyService.MODE_OFF);
+        var policy = new AuditPolicyService(settings);
+        assertEquals(AuditPolicyService.MODE_OFF, policy.getMode());
+        var actor = new User();
+        actor.setUserId("fixture-admin");
+        when(permissions.getCurrentUser(any())).thenReturn(actor);
+
+        try (var session = new SqlSessionFactoryBuilder().build(configuration).openSession(true)) {
+            var logs = new AuditLogService(session.getMapper(AuditLogMapper.class));
+            var mvc = MockMvcBuilders.standaloneSetup(
+                            new AuditLogController(logs, policy, permissions, new WebAuditRecorder(logs, policy)))
+                    .setControllerAdvice(new ApiResponseStatusAdvice()).build();
+            String path = "/platform/admin/audit-logs/delete-filtered";
+            mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"confirm\":\"DELETE\",\"status\":\" \"}"))
+                    .andExpect(status().isBadRequest());
+            mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"confirm\":\"DELETE\",\"status\":\" FAILED \"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.matched").value(1))
+                    .andExpect(jsonPath("$.data.deleted").value(1))
+                    .andExpect(jsonPath("$.data.filter.status").value("FAILED"));
+        }
+        assertEquals(List.of("keep"),
+                jdbc.queryForList("SELECT log_id FROM audit_logs WHERE operation_type='FIXTURE'", String.class));
+        assertEquals("fixture-admin", jdbc.queryForObject(
+                "SELECT user_id FROM audit_logs WHERE operation_type=? AND operation_path='filtered:1'",
+                String.class, AuditPolicyService.OPERATION_AUDIT_LOG_DELETE));
     }
 
     @Test
@@ -300,7 +346,7 @@ class AuditLogControllerTest {
                     """);
             var policy = new AuditPolicyService(config);
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
-                            new AuditLogController(mock(AuditLogService.class), policy, permissions))
+                            new AuditLogController(mock(AuditLogService.class), policy, permissions, auditRecorder))
                     .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build();
 
             storedMvc.perform(post("/platform/admin/audit-logs/mode")
@@ -422,7 +468,7 @@ class AuditLogControllerTest {
             });
 
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(
-                    new AuditLogController(stored, mock(AuditPolicyService.class), permissions)).build();
+                    new AuditLogController(stored, mock(AuditPolicyService.class), permissions, auditRecorder)).build();
             storedMvc.perform(get("/platform/admin/audit-logs/statistics/team").param("teamId", "team-a"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.totalOperations").value(1))
@@ -462,7 +508,7 @@ class AuditLogControllerTest {
             clock.when(LocalDateTime::now).thenReturn(applicationNow);
             var mapper = mock(AuditLogMapper.class, delegatesTo(session.getMapper(AuditLogMapper.class)));
             MockMvc storedMvc = MockMvcBuilders.standaloneSetup(new AuditLogController(
-                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions)).build();
+                    new AuditLogService(mapper), mock(AuditPolicyService.class), permissions, auditRecorder)).build();
             String path = "/platform/admin/audit-logs/statistics/" + subject;
 
             storedMvc.perform(get(path).param(idField, " " + id + " "))
@@ -500,7 +546,7 @@ class AuditLogControllerTest {
             clock.when(LocalDate::now).thenReturn(today);
             var stored = new AuditLogService(session.getMapper(AuditLogMapper.class));
             var storedMvc = MockMvcBuilders.standaloneSetup(
-                    new AuditLogController(stored, mock(AuditPolicyService.class), permissions)).build();
+                    new AuditLogController(stored, mock(AuditPolicyService.class), permissions, auditRecorder)).build();
             String path = "/platform/admin/audit-logs/statistics/";
             storedMvc.perform(get(path + "operations")).andExpect(status().isOk())
                     .andExpect(jsonPath("$.data[0].count").value(3));

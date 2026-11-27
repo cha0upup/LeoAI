@@ -107,9 +107,14 @@ public interface UserMapper {
             """)
     void detachTeamMembers(@Param("teamId") String teamId, @Param("timestamp") String timestamp);
 
-    @Update("UPDATE users SET last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
-            + "update_time=#{lastLoginTime} WHERE user_id=#{userId} AND status=1 AND password=#{verifiedPasswordHash}")
-    boolean recordSuccessfulLogin(@Param("userId") String userId,
-                                  @Param("verifiedPasswordHash") String verifiedPasswordHash,
-                                  @Param("lastLoginTime") String lastLoginTime);
+    @Select(value = """
+            UPDATE users SET last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1,
+                update_time=#{lastLoginTime}
+            WHERE user_id=#{userId} AND status=1 AND password=#{verifiedPasswordHash}
+            RETURNING
+            """ + USER_LIST_COLUMNS + ", password", affectData = true)
+    @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+    User recordSuccessfulLogin(@Param("userId") String userId,
+                               @Param("verifiedPasswordHash") String verifiedPasswordHash,
+                               @Param("lastLoginTime") String lastLoginTime);
 }

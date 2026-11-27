@@ -137,14 +137,6 @@ public interface AuditLogMapper {
     })
     AuditLogCounts countAuditLogsByStatus(@Param("query") AuditLogQuery query);
 
-    @Select({
-            "<script>",
-            "SELECT COUNT(*) FROM audit_logs",
-            AUDIT_LOG_FILTER_WHERE,
-            "</script>"
-    })
-    Integer countAuditLogs(@Param("query") AuditLogQuery query);
-
     @Select(AUDIT_STATISTICS_SELECT + "WHERE user_id = #{userId}")
     Map<String, Object> summarizeUserAuditLogs(@Param("userId") String userId, @Param("recentSince") String recentSince);
 

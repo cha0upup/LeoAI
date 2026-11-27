@@ -1,62 +1,42 @@
 package org.leo.web.util;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.AuditLog;
-import org.leo.core.entity.Agent;
-import org.leo.core.entity.User;
 import org.leo.core.agent.AbstractAgentNode;
-import org.leo.service.audit.AuditLogService;
-import org.leo.service.audit.AuditPolicyService;
-import org.leo.service.audit.AuditParameterSanitizer;
-import org.leo.core.util.json.JsonUtil;
+import org.leo.core.entity.User;
+import org.leo.web.infrastructure.audit.WebAuditRecorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * 审计日志工具类
- * 提供便捷的审计日志记录方法
- * 
- * @author LeoSpring
- * @version 2.1
- */
+/** 尚未迁移的节点入口使用静态审计适配层；新调用直接注入 WebAuditRecorder。 */
 @Component
 public class AuditLogUtil {
     private static final Logger logger = LoggerFactory.getLogger(AuditLogUtil.class);
-    
-    private static AuditLogService auditLogService;
-    private static AuditPolicyService auditPolicyService;
-    
-    @Autowired
-    public void setAuditLogService(AuditLogService auditLogService) {
-        AuditLogUtil.auditLogService = auditLogService;
+    private static final AtomicReference<WebAuditRecorder> legacyRecorder = new AtomicReference<>();
+
+    private final WebAuditRecorder recorder;
+
+    public AuditLogUtil(WebAuditRecorder recorder) {
+        this.recorder = recorder;
     }
 
-    @Autowired
-    public void setAuditPolicyService(AuditPolicyService auditPolicyService) {
-        AuditLogUtil.auditPolicyService = auditPolicyService;
+    @PostConstruct
+    void registerRecorder() {
+        legacyRecorder.set(recorder);
     }
-    
-    /**
-     * 记录审计日志
-     * 
-     * @param agentNode Agent实体（包含用户和主机信息）
-     * @param operationType 操作类型
-     * @param operationName 操作名称
-     * @param operationPath 操作路径
-     * @param requestParams 请求参数
-     * @param responseCode 响应码
-     * @param responseMessage 响应消息
-     * @param status 状态（SUCCESS, FAILED, ERROR）
-     * @param errorMessage 错误信息
-     * @param clientIp 客户端IP
-     */
+
+    @PreDestroy
+    void unregisterRecorder() {
+        legacyRecorder.compareAndSet(recorder, null);
+    }
+
     public static void logOperation(AbstractAgentNode agentNode,
                                     String operationType,
                                     String operationName,
@@ -67,38 +47,13 @@ public class AuditLogUtil {
                                     String status,
                                     String errorMessage,
                                     String clientIp) {
-        try {
-            if (!shouldRecord(operationType, false)) {
-                return;
-            }
-            
-            AuditLog auditLog = new AuditLog();
-            
-            // 设置用户信息
-            if (agentNode != null && agentNode.getUser() != null) {
-                User user = agentNode.getUser();
-                auditLog.setUserId(user.getUserId());
-                auditLog.setUserName(user.getUserName());
-            }
-            
-            // 设置主机信息
-            if (agentNode != null && agentNode.getAgent() != null) {
-                Agent agent = agentNode.getAgent();
-                auditLog.setAgentId(agent.getAgentId());
-                auditLog.setAgentName(agent.getAgentName());
-            }
-            
-            writeAuditLog(auditLog, operationType, operationName, operationPath,
+        WebAuditRecorder current = getRecorder();
+        if (current != null) {
+            current.logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
-            
-        } catch (Exception e) {
-            logger.error("记录审计日志失败: {}", e.getMessage(), e);
         }
     }
 
-    /**
-     * 记录系统侧操作，不要求绑定 Agent 会话。
-     */
     public static void logSystemOperation(User user,
                                           String operationType,
                                           String operationName,
@@ -110,22 +65,13 @@ public class AuditLogUtil {
                                           String errorMessage,
                                           String clientIp,
                                           boolean forceRecord) {
-        try {
-            if (!shouldRecord(operationType, forceRecord)) {
-                return;
-            }
-            AuditLog auditLog = new AuditLog();
-            if (user != null) {
-                auditLog.setUserId(user.getUserId());
-                auditLog.setUserName(user.getUserName());
-            }
-            writeAuditLog(auditLog, operationType, operationName, operationPath,
-                    requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
-        } catch (Exception e) {
-            logger.error("记录系统审计日志失败: {}", e.getMessage(), e);
+        WebAuditRecorder current = getRecorder();
+        if (current != null) {
+            current.logSystemOperation(user, operationType, operationName, operationPath,
+                    requestParams, responseCode, responseMessage, status, errorMessage, clientIp, forceRecord);
         }
     }
-    
+
     /**
      * 记录成功操作的审计日志
      */
@@ -140,7 +86,7 @@ public class AuditLogUtil {
         logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, "SUCCESS", null, clientIp);
     }
-    
+
     /**
      * 记录失败操作的审计日志
      */
@@ -154,7 +100,7 @@ public class AuditLogUtil {
         logOperation(agentNode, operationType, operationName, operationPath,
                     requestParams, null, null, "FAILED", errorMessage, clientIp);
     }
-    
+
     /**
      * 记录错误操作的审计日志
      */
@@ -169,55 +115,14 @@ public class AuditLogUtil {
                     requestParams, null, null, "ERROR", errorMessage, clientIp);
     }
 
-    private static boolean shouldRecord(String operationType, boolean forceRecord) {
-        AuditPolicyService service = auditPolicyService;
-        if (service == null) {
-            return true;
+    private static WebAuditRecorder getRecorder() {
+        WebAuditRecorder current = legacyRecorder.get();
+        if (current == null) {
+            logger.warn("Web 审计记录器尚未初始化");
         }
-        return service.shouldRecord(operationType, forceRecord);
+        return current;
     }
 
-    private static void writeAuditLog(AuditLog auditLog,
-                                      String operationType,
-                                      String operationName,
-                                      String operationPath,
-                                      Map<String, Object> requestParams,
-                                      Integer responseCode,
-                                      String responseMessage,
-                                      String status,
-                                      String errorMessage,
-                                      String clientIp) {
-        AuditLogService service = auditLogService;
-        if (service == null) {
-            logger.warn("AuditLogService未初始化，无法记录审计日志");
-            return;
-        }
-
-        auditLog.setOperationType(operationType);
-        auditLog.setOperationName(operationName);
-        auditLog.setOperationPath(operationPath);
-
-        if (requestParams != null) {
-            Object sessionId = requestParams.get("sessionId");
-            if (sessionId != null) auditLog.setSessionId(sessionId.toString());
-            Map<String, Object> sanitizedParams = AuditParameterSanitizer.sanitize(requestParams);
-            try {
-                auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));
-            } catch (Exception e) {
-                logger.warn("序列化请求参数失败: {}", e.getMessage());
-                auditLog.setRequestParams(sanitizedParams.toString());
-            }
-        }
-
-        auditLog.setResponseCode(responseCode);
-        auditLog.setResponseMessage(responseMessage);
-        auditLog.setStatus(status != null ? status : "SUCCESS");
-        auditLog.setErrorMessage(errorMessage);
-        auditLog.setClientIp(clientIp);
-
-        service.insertAuditLog(auditLog);
-    }
-    
     /**
      * 从HttpServletRequest获取客户端IP
      */
@@ -243,7 +148,7 @@ public class AuditLogUtil {
         }
         return ip;
     }
-    
+
     /**
      * 从RequestContextHolder获取客户端IP
      */
@@ -259,5 +164,5 @@ public class AuditLogUtil {
         }
         return null;
     }
-    
+
 }

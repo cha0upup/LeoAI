@@ -1,6 +1,5 @@
-package org.leo.web.util;
+package org.leo.web.infrastructure.audit;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -19,20 +18,16 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-class AuditLogUtilTest {
+class WebAuditRecorderTest {
 
-    private final AuditLogUtil audit = new AuditLogUtil();
-
-    @AfterEach
-    void clearStaticDependencies() {
-        audit.setAuditLogService(null);
-        audit.setAuditPolicyService(null);
-    }
+    private final AuditLogService logs = mock(AuditLogService.class);
+    private final AuditPolicyService policy = mock(AuditPolicyService.class);
+    private final WebAuditRecorder audit = new WebAuditRecorder(logs, policy);
 
     @Test
     void recordedAuditEntriesShareRedactionAndKeepTheirIdentity() {
-        AuditLogService logs = recordingLogs();
-        AuditLogUtil.logSystemOperation(null, "IGNORED", "test", "/test", null,
+        when(policy.shouldRecord("TEST", false)).thenReturn(true);
+        audit.logSystemOperation(null, "IGNORED", "test", "/test", null,
                 200, "ok", null, null, "127.0.0.1", false);
         verifyNoInteractions(logs);
 
@@ -48,8 +43,8 @@ class AuditLogUtilTest {
         Map<String, Object> params = Map.of("sessionId", 17,
                 "url", "https://user:url-secret@example.test?token=query-secret", "nested", Map.of("api_key", "key-secret"));
 
-        AuditLogUtil.logOperation(node, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1");
-        AuditLogUtil.logSystemOperation(user, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1", false);
+        audit.logOperation(node, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1");
+        audit.logSystemOperation(user, "TEST", "test", "/test", params, 200, "ok", null, null, "127.0.0.1", false);
 
         ArgumentCaptor<AuditLog> captured = ArgumentCaptor.forClass(AuditLog.class);
         verify(logs, times(2)).insertAuditLog(captured.capture());
@@ -70,9 +65,9 @@ class AuditLogUtilTest {
     @ParameterizedTest
     @MethodSource("requestsWithoutSession")
     void missingSessionIdsStayNullForBothAuditEntries(Map<String, Object> params) {
-        AuditLogService logs = recordingLogs();
-        AuditLogUtil.logOperation(null, "TEST", "test", "/test", params, 200, "ok", null, null, "ip");
-        AuditLogUtil.logSystemOperation(null, "TEST", "test", "/test", params, 200, "ok", null, null, "ip", false);
+        when(policy.shouldRecord("TEST", false)).thenReturn(true);
+        audit.logOperation(null, "TEST", "test", "/test", params, 200, "ok", null, null, "ip");
+        audit.logSystemOperation(null, "TEST", "test", "/test", params, 200, "ok", null, null, "ip", false);
         ArgumentCaptor<AuditLog> captured = ArgumentCaptor.forClass(AuditLog.class);
         verify(logs, times(2)).insertAuditLog(captured.capture());
         for (AuditLog record : captured.getAllValues()) assertNull(record.getSessionId());
@@ -82,12 +77,4 @@ class AuditLogUtilTest {
         return Stream.of(null, Collections.singletonMap("sessionId", null));
     }
 
-    private AuditLogService recordingLogs() {
-        AuditLogService logs = mock(AuditLogService.class);
-        AuditPolicyService policy = mock(AuditPolicyService.class);
-        when(policy.shouldRecord("TEST", false)).thenReturn(true);
-        audit.setAuditLogService(logs);
-        audit.setAuditPolicyService(policy);
-        return logs;
-    }
 }

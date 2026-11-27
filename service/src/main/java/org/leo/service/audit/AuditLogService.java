@@ -66,10 +66,6 @@ public class AuditLogService {
         return auditLogMapper.findAuditLogById(logId);
     }
 
-    public int countAuditLogs(AuditLogQuery query) {
-        return defaultCount(auditLogMapper.countAuditLogs(normalizeQuery(query)));
-    }
-
     /** 同一次读取中返回分页和筛选后的全量计数，避免并发写入让两者使用不同快照。 */
     @Transactional(readOnly = true)
     public AuditLogSummaryPage getSummaryPage(AuditLogQuery query) {
@@ -219,7 +215,8 @@ public class AuditLogService {
         return defaultCount(auditLogMapper.deleteAuditLogsByIds(normalizedIds));
     }
 
-    public Integer deleteAuditLogsByFilter(AuditLogQuery query) {
+    /** 返回原子删除语句实际删除的日志数。 */
+    public int deleteAuditLogsByFilter(AuditLogQuery query) {
         AuditLogQuery normalizedQuery = normalizeQuery(query);
         if (!hasDeleteFilter(normalizedQuery)) {
             throw new IllegalArgumentException("按筛选条件删除至少需要一个筛选条件");
