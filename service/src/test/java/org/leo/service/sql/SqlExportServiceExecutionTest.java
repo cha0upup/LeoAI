@@ -1,5 +1,7 @@
 package org.leo.service.sql;
 
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +39,7 @@ class SqlExportServiceExecutionTest {
     private final SqlExportWorkspace workspace = new SqlExportWorkspace(() -> root);
     private final SqlExportTaskRepository repository = new FileSqlExportTaskRepository(workspace);
     private final SqlExportArtifacts artifacts = spy(new FileSqlExportArtifacts(workspace));
-    private final SqlExportService service = new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
+    private final SqlExportService service = new SqlExportService(sql, executor, repository, artifacts, new SqlTableExporter(sql));
     private final SqlObjectRef orders = SqlObjectRef.table("app", "sales", "orders");
     private final SqlObjectRef customers = SqlObjectRef.table("app", "sales", "customers");
 
@@ -66,6 +68,28 @@ class SqlExportServiceExecutionTest {
         assertFalse(result.containsKey("userId"));
         assertTrue(((String) result.get("downloadUrl")).startsWith("/user/file/download?path=downloads%2Fsql-export%2F"));
         assertEquals("COMPLETED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
+    }
+
+    @Test void defaultsSingleTableExportsToAReadableWorkbookWithoutReinterpretingValues() throws Exception {
+        when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
+                .thenReturn(Map.of("rows", List.of(Map.of("id", "00001234567890123456"), Map.of("id", "=备注")),
+                        "pagination", Map.of("total", 2)));
+        var task = service.startTableExport(node, "owner", "session", Map.of(), orders, null);
+        queued.get(0).run();
+        var result = service.progress("owner", id(task));
+        assertEquals("COMPLETED", result.get("status"), () -> String.valueOf(result.get("error")));
+        assertEquals("xlsx", result.get("format"));
+        assertEquals(2L, result.get("rowCount"));
+        Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
+        assertTrue(output.getFileName().toString().endsWith(".xlsx"));
+        try (var stream = Files.newInputStream(output); var workbook = WorkbookFactory.create(stream)) {
+            var sheet = workbook.getSheet("数据");
+            assertEquals("id", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals("00001234567890123456", sheet.getRow(1).getCell(0).getStringCellValue());
+            var text = sheet.getRow(2).getCell(0);
+            assertEquals(CellType.STRING, text.getCellType());
+            assertEquals("=备注", text.getStringCellValue());
+        }
     }
 
     @ParameterizedTest
@@ -208,7 +232,7 @@ class SqlExportServiceExecutionTest {
         stored.put(field, field.equals("finalPath") ? root.resolve("outside.csv").toString() : "unknown");
         repository.save(new SqlExportTaskKey("owner", id(task)), stored);
         // A fresh service ensures the persisted task is used rather than the existing cache.
-        var restarted = new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
+        var restarted = new SqlExportService(sql, executor, repository, artifacts, new SqlTableExporter(sql));
         try {
             restarted.resume(node, "owner", "session", id(task), Map.of());
             queued.get(1).run();
@@ -225,7 +249,7 @@ class SqlExportServiceExecutionTest {
             context.registerBean(ServiceTaskExecutor.class, () -> executor);
             context.registerBean(SqlExportWorkspace.class, () -> workspace);
             context.register(FileSqlExportTaskRepository.class, FileSqlExportArtifacts.class,
-                    SqlTableCsvExporter.class, SqlExportService.class);
+                    SqlTableExporter.class, SqlExportService.class);
             context.refresh();
             var wired = context.getBean(SqlExportService.class);
             var task = wired.startTableExport(node, "owner", "session", Map.of(), orders, "csv");

@@ -6,6 +6,7 @@ import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedWriter;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
@@ -26,18 +27,18 @@ public class SqlExportService {
     private final ServiceTaskExecutor taskExecutor;
     private final SqlExportTaskRepository taskRepository;
     private final SqlExportArtifacts artifacts;
-    private final SqlTableCsvExporter csvExporter;
+    private final SqlTableExporter tableExporter;
 
     public SqlExportService(AgentNodeSqlService agentNodeSqlService,
                             ServiceTaskExecutor taskExecutor,
                             SqlExportTaskRepository taskRepository,
                             SqlExportArtifacts artifacts,
-                            SqlTableCsvExporter csvExporter) {
+                            SqlTableExporter tableExporter) {
         this.agentNodeSqlService = agentNodeSqlService;
         this.taskExecutor = taskExecutor;
         this.taskRepository = taskRepository;
         this.artifacts = artifacts;
-        this.csvExporter = csvExporter;
+        this.tableExporter = tableExporter;
     }
 
     public Map<String, Object> startTableExport(SqlCapable agentNode,
@@ -55,13 +56,13 @@ public class SqlExportService {
         if (tableRef == null || isBlank(tableRef.name())) {
             throw new IllegalArgumentException("objectRef 必须包含表名");
         }
-        String exportFormat = safeLower(format);
-        if (!"csv".equals(exportFormat)) {
-            throw new IllegalArgumentException("当前仅支持 csv 格式单表导出");
+        String exportFormat = isBlank(format) ? "xlsx" : safeLower(format);
+        if (!"xlsx".equals(exportFormat) && !"csv".equals(exportFormat)) {
+            throw new IllegalArgumentException("无效的单表导出格式");
         }
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + ".csv");
+        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + "." + exportFormat);
         Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         SqlExportTask task = SqlExportTask.table(taskRepository, taskId, userId, sessionId,
@@ -228,11 +229,18 @@ public class SqlExportService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
-        try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
-            long total = csvExporter.write(writer, agentNode, connection, tableRef, columns,
-                    progress(task, 10, 95, attempt));
-            task.rowsWritten(attempt, total);
+        SqlTableExporter.Progress progress = progress(task, 10, 95, attempt);
+        long total;
+        if ("xlsx".equals(task.format())) {
+            try (OutputStream output = artifacts.openWorkbook(finalPath)) {
+                total = tableExporter.writeWorkbook(output, agentNode, connection, tableRef, columns, progress);
+            }
+        } else {
+            try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
+                total = tableExporter.writeCsv(writer, agentNode, connection, tableRef, columns, progress);
+            }
         }
+        task.rowsWritten(attempt, total);
         if (task.tableStopped(attempt)) return;
         task.complete(attempt, artifacts.size(finalPath));
     }
@@ -271,7 +279,7 @@ public class SqlExportService {
             if (includeData) {
                 Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
                 try (BufferedWriter writer = artifacts.openCsv(csvPath)) {
-                    csvExporter.write(writer, agentNode, connection, tableRef, columns,
+                    tableExporter.writeCsv(writer, agentNode, connection, tableRef, columns,
                             progress(task, progressBase, 95, attempt));
                 }
             }
@@ -293,8 +301,8 @@ public class SqlExportService {
         task.completeDatabase(attempt, tables.size(), artifacts.size(finalPath));
     }
 
-    private SqlTableCsvExporter.Progress progress(SqlExportTask task, int start, int end, SqlExportTask.Attempt attempt) {
-        return new SqlTableCsvExporter.Progress() {
+    private SqlTableExporter.Progress progress(SqlExportTask task, int start, int end, SqlExportTask.Attempt attempt) {
+        return new SqlTableExporter.Progress() {
             @Override public boolean stopped() { return task.checkStopped(attempt); }
             @Override public void rowsWritten(long rows, long expectedTotal) {
                 if (task.checkStopped(attempt)) return;

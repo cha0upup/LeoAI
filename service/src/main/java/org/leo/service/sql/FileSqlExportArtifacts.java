@@ -5,10 +5,13 @@ import org.springframework.stereotype.Component;
 
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -70,6 +73,13 @@ final class FileSqlExportArtifacts implements SqlExportArtifacts {
     public BufferedWriter openCsv(Path path) throws Exception {
         Files.createDirectories(path.getParent());
         return Files.newBufferedWriter(path, StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public OutputStream openWorkbook(Path path) throws Exception {
+        Files.createDirectories(path.getParent());
+        return Files.newOutputStream(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS);
     }
 
     @Override

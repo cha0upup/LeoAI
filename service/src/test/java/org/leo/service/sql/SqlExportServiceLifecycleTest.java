@@ -206,6 +206,6 @@ class SqlExportServiceLifecycleTest {
         return directory.resolve("users").resolve(user).resolve("downloads/sql-export/.sql-export-tasks").resolve(id).resolve("meta.json");
     }
     private SqlExportService newService() {
-        return new SqlExportService(sql, executor, repository, artifacts, new SqlTableCsvExporter(sql));
+        return new SqlExportService(sql, executor, repository, artifacts, new SqlTableExporter(sql));
     }
 }

@@ -60,6 +60,7 @@ final class SqlExportTask {
     synchronized SqlExportTaskKey key() { return new SqlExportTaskKey(userId(), taskId()); }
     synchronized String sessionId() { return String.valueOf(data.get("sessionId")); }
     synchronized String type() { return String.valueOf(data.get("taskType")); }
+    synchronized String format() { return safeString(data.get("format")); }
     synchronized String finalPath() { return String.valueOf(data.get("finalPath")); }
     synchronized long createdTime() { return toLong(data.get("createdTime")); }
     synchronized int processedTables() { return toInt(data.get("processedTables")); }
