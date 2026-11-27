@@ -120,7 +120,7 @@ class SqlExportTaskTest {
         ((List<?>) saved.getValue().get("tableRefs")).clear();
         assertEquals(refs, task.selectedTables());
         assertEquals("app", task.objectRef().catalog());
-        assertSame(task, task.requireOwner(key));
+        assertEquals(key, task.key());
         assertFalse(task.snapshot().containsKey("userId"));
         assertFalse(task.snapshot().containsKey("finalPath"));
 
@@ -130,7 +130,7 @@ class SqlExportTaskTest {
         source.put("status", "CANCELLED");
         source.put("userId", "other");
         assertEquals("PAUSED", restored.snapshot().get("status"));
-        assertSame(restored, restored.requireOwner(key));
+        assertEquals(key, restored.key());
     }
 
     @Test
@@ -179,12 +179,12 @@ class SqlExportTaskTest {
     }
 
     private SqlExportTask table() {
-        return SqlExportTask.table(repository, "task", "owner", "session", Path.of("export.xlsx"),
+        return SqlExportTask.table(repository, key, "session", Path.of("export.xlsx"),
                 "downloads/export.xlsx", orders);
     }
 
     private SqlExportTask database(SqlObjectRef... tables) {
-        return SqlExportTask.database(repository, "task", "owner", "session", Path.of("export.zip"),
+        return SqlExportTask.database(repository, key, "session", Path.of("export.zip"),
                 "downloads/export.zip", new SqlObjectRef("app", "sales", null, "schema"), List.of(tables), true, true);
     }
 

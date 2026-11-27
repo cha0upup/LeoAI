@@ -105,6 +105,21 @@ class SqlExportServiceLifecycleTest {
         } finally { restored.close(); }
     }
 
+    @Test void identicalTaskIdsInDifferentWorkspacesRemainIndependent() throws Exception {
+        String id = id(start("table"));
+        var otherKey = new SqlExportTaskKey("other", id);
+        Path otherOutput = artifacts.reserveOutput("other", "other.xlsx");
+        SqlExportTask.table(repository, otherKey, "other-session", otherOutput,
+                artifacts.relativePath("other", otherOutput), SqlObjectRef.table("app", "public", "orders")).persist();
+
+        assertEquals("other.xlsx", service.progress("other", id).get("fileName"));
+        assertEquals(1, service.listBySessionId("other", "other-session").get("count"));
+        assertEquals("CANCELLED", service.stop("other", id).get("status"));
+        assertEquals("CANCELLED", repository.load(otherKey).get("status"));
+        assertEquals("PENDING", service.progress("owner", id).get("status"));
+        verifyNoInteractions(sql);
+    }
+
     @Test void reportsTheReservedFilenameAndNeverOverwritesAnExistingExport() throws Exception {
         var first = start("table");
         Path firstPath = directory.resolve("users/owner").resolve((String) first.get("downloadPath"));

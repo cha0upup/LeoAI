@@ -23,7 +23,7 @@ public class SqlExportService {
     public static final String DATABASE_FORMAT = "zip";
     private static final long FINISHED_TASK_RETAIN_MILLIS = 30L * 60L * 1000L;
 
-    private final ConcurrentHashMap<String, SqlExportTask> liveTasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<SqlExportTaskKey, SqlExportTask> liveTasks = new ConcurrentHashMap<>();
     private final AgentNodeSqlService agentNodeSqlService;
     private final ServiceTaskExecutor taskExecutor;
     private final SqlExportTaskRepository taskRepository;
@@ -56,12 +56,12 @@ public class SqlExportService {
         if (tableRef == null || isBlank(tableRef.name())) {
             throw new IllegalArgumentException("objectRef 必须包含表名");
         }
-        String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
+        SqlExportTaskKey key = newTaskKey(userId);
         String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + "." + TABLE_FORMAT);
-        Path finalPath = artifacts.reserveOutput(userId, fileName);
+        Path finalPath = artifacts.reserveOutput(key.userId(), fileName);
 
-        SqlExportTask task = SqlExportTask.table(taskRepository, taskId, userId, sessionId,
-                finalPath, artifacts.relativePath(userId, finalPath), tableRef);
+        SqlExportTask task = SqlExportTask.table(taskRepository, key, sessionId,
+                finalPath, artifacts.relativePath(key.userId(), finalPath), tableRef);
         scheduleTask(task, agentNode, connection);
 
         return task.snapshot();
@@ -90,12 +90,12 @@ public class SqlExportService {
             throw new IllegalArgumentException("includeStructure 和 includeData 不能同时为 false");
         }
 
-        String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
+        SqlExportTaskKey key = newTaskKey(userId);
         String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + System.currentTimeMillis() + "." + DATABASE_FORMAT);
-        Path finalPath = artifacts.reserveOutput(userId, fileName);
+        Path finalPath = artifacts.reserveOutput(key.userId(), fileName);
 
-        SqlExportTask task = SqlExportTask.database(taskRepository, taskId, userId, sessionId,
-                finalPath, artifacts.relativePath(userId, finalPath), namespaceRef, tableRefs,
+        SqlExportTask task = SqlExportTask.database(taskRepository, key, sessionId,
+                finalPath, artifacts.relativePath(key.userId(), finalPath), namespaceRef, tableRefs,
                 exportStructure, exportData);
         scheduleTask(task, agentNode, connection);
 
@@ -103,7 +103,7 @@ public class SqlExportService {
     }
 
     public Map<String, Object> progress(String userId, String taskId) throws Exception {
-        return loadOwnedTask(userId, taskId).snapshot();
+        return loadOwnedTask(new SqlExportTaskKey(userId, taskId)).snapshot();
     }
 
     public Map<String, Object> pause(String userId, String taskId) throws Exception {
@@ -136,7 +136,7 @@ public class SqlExportService {
         List<SqlExportTask> tasks = new ArrayList<>();
         for (String taskId : taskRepository.listTaskIds(userId)) {
             try {
-                SqlExportTask task = loadOwnedTask(userId, taskId);
+                SqlExportTask task = loadOwnedTask(new SqlExportTaskKey(userId, taskId));
                 if (sessionId.equals(task.sessionId())) tasks.add(task);
             } catch (Exception ignored) {
                 // A missing/corrupt or out-of-scope entry must not expose another task.
@@ -153,9 +153,8 @@ public class SqlExportService {
     }
 
     private void scheduleTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection) {
-        String taskId = task.taskId();
         task.persist();
-        SqlExportTask previous = liveTasks.put(taskId, task);
+        SqlExportTask previous = liveTasks.put(task.key(), task);
         if (previous != null && previous != task) previous.signalCancellation();
         SqlExportTask.Attempt attempt = task.beginAttempt();
         try {
@@ -168,10 +167,10 @@ public class SqlExportService {
 
     private void runTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection,
                          SqlExportTask.Attempt attempt) {
-        if (liveTasks.get(task.taskId()) != task || !task.isCurrent(attempt)) return;
+        if (liveTasks.get(task.key()) != task || !task.isCurrent(attempt)) return;
         try {
             if (task.checkStopped(attempt)) return;
-            Path finalPath = artifacts.restoreOutput(task.userId(), task.finalPath());
+            Path finalPath = artifacts.restoreOutput(task.key().userId(), task.finalPath());
             if (task.checkStopped(attempt)) return;
             task.running(attempt, 1);
             switch (task.type()) {
@@ -190,7 +189,7 @@ public class SqlExportService {
     public int evictFinished() {
         long now = System.currentTimeMillis();
         int evicted = 0;
-        for (Map.Entry<String, SqlExportTask> entry : liveTasks.entrySet()) {
+        for (Map.Entry<SqlExportTaskKey, SqlExportTask> entry : liveTasks.entrySet()) {
             SqlExportTask task = entry.getValue();
             if (task.isExpired(now, FINISHED_TASK_RETAIN_MILLIS)
                     && liveTasks.remove(entry.getKey(), task)) {
@@ -332,15 +331,19 @@ public class SqlExportService {
     }
 
     private SqlExportTask requireTask(String userId, String taskId) throws Exception {
-        SqlExportTask task = loadOwnedTask(userId, taskId);
-        SqlExportTask previous = liveTasks.putIfAbsent(taskId, task);
-        return (previous == null ? task : previous).requireOwner(new SqlExportTaskKey(userId, taskId));
+        SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
+        SqlExportTask task = loadOwnedTask(key);
+        SqlExportTask previous = liveTasks.putIfAbsent(key, task);
+        return previous == null ? task : previous;
     }
 
-    private SqlExportTask loadOwnedTask(String userId, String taskId) throws Exception {
-        SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
-        SqlExportTask live = liveTasks.get(taskId);
-        return live == null ? SqlExportTask.restore(taskRepository, key) : live.requireOwner(key);
+    private SqlExportTask loadOwnedTask(SqlExportTaskKey key) throws Exception {
+        SqlExportTask live = liveTasks.get(key);
+        return live == null ? SqlExportTask.restore(taskRepository, key) : live;
+    }
+
+    private static SqlExportTaskKey newTaskKey(String userId) {
+        return new SqlExportTaskKey(userId, "sql_export_" + UUID.randomUUID().toString().replace("-", ""));
     }
 
     private String sanitizeFileName(String fileName) {

@@ -17,47 +17,45 @@ final class SqlExportTask {
 
     private final Map<String, Object> data;
     private final SqlExportTaskRepository repository;
+    private final SqlExportTaskKey key;
     private Attempt attempt;
 
-    private SqlExportTask(SqlExportTaskRepository repository, Map<String, Object> data) {
+    private SqlExportTask(SqlExportTaskRepository repository, SqlExportTaskKey key, Map<String, Object> data) {
         this.repository = repository;
-        this.data = copy(data);
+        this.key = key;
+        this.data = copy(key.requireOwner(data));
     }
 
-    static SqlExportTask table(SqlExportTaskRepository repository, String taskId, String userId, String sessionId,
+    static SqlExportTask table(SqlExportTaskRepository repository, SqlExportTaskKey key, String sessionId,
                                Path output, String downloadPath, SqlObjectRef table) {
-        Map<String, Object> data = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
+        Map<String, Object> data = createTask(key, sessionId, "TABLE_EXPORT",
                 output.getFileName().toString(), output, table.namespace(), table.name(), downloadPath);
         data.put("objectRef", table.toMap());
         data.put("format", SqlExportService.TABLE_FORMAT);
-        return new SqlExportTask(repository, data);
+        return new SqlExportTask(repository, key, data);
     }
 
-    static SqlExportTask database(SqlExportTaskRepository repository, String taskId, String userId, String sessionId,
+    static SqlExportTask database(SqlExportTaskRepository repository, SqlExportTaskKey key, String sessionId,
                                   Path output, String downloadPath, SqlObjectRef namespace, List<SqlObjectRef> tables,
                                   boolean structure, boolean rows) {
-        Map<String, Object> data = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
+        Map<String, Object> data = createTask(key, sessionId, "DATABASE_EXPORT",
                 output.getFileName().toString(), output, namespace.namespace(), null, downloadPath);
         data.put("format", SqlExportService.DATABASE_FORMAT);
         data.put("includeStructure", structure);
         data.put("includeData", rows);
         data.put("objectRef", namespace.toMap());
         data.put("tableRefs", toRefMaps(tables));
-        return new SqlExportTask(repository, data);
+        return new SqlExportTask(repository, key, data);
     }
 
     static SqlExportTask restore(SqlExportTaskRepository repository, SqlExportTaskKey key) throws Exception {
-        return new SqlExportTask(repository, key.requireOwner(repository.load(key)));
+        return new SqlExportTask(repository, key, repository.load(key));
     }
 
-    synchronized SqlExportTask requireOwner(SqlExportTaskKey key) {
-        key.requireOwner(data);
-        return this;
+    SqlExportTaskKey key() {
+        return key;
     }
 
-    synchronized String taskId() { return String.valueOf(data.get("taskId")); }
-    synchronized String userId() { return String.valueOf(data.get("userId")); }
-    synchronized SqlExportTaskKey key() { return new SqlExportTaskKey(userId(), taskId()); }
     synchronized String sessionId() { return String.valueOf(data.get("sessionId")); }
     synchronized String type() { return String.valueOf(data.get("taskType")); }
     synchronized String finalPath() { return String.valueOf(data.get("finalPath")); }
@@ -219,7 +217,7 @@ final class SqlExportTask {
     }
 
     synchronized void persist() {
-        try { repository.save(key(), copy(data)); }
+        try { repository.save(key, copy(data)); }
         catch (Exception ignored) { }
     }
 
@@ -248,8 +246,7 @@ final class SqlExportTask {
         private boolean cancelRequested;
     }
 
-    private static Map<String, Object> createTask(String taskId,
-                                           String userId,
+    private static Map<String, Object> createTask(SqlExportTaskKey key,
                                            String sessionId,
                                            String taskType,
                                            String fileName,
@@ -257,8 +254,8 @@ final class SqlExportTask {
                                            String database,
                                            String table, String downloadPath) {
         Map<String, Object> task = new LinkedHashMap<String, Object>();
-        task.put("taskId", taskId);
-        task.put("userId", userId);
+        task.put("taskId", key.taskId());
+        task.put("userId", key.userId());
         task.put("sessionId", sessionId);
         task.put("taskType", taskType);
         task.put("dataFormat", SqlExportService.TABLE_FORMAT);
