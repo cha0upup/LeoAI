@@ -216,15 +216,14 @@ public class AgentNodeSqlController {
                                            @RequestBody ExportTableRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_TABLE", "导出数据表",
                 sqlOperationPath(request, request == null ? null : request.objectRef(),
-                        request == null ? null : request.format()), node -> {
+                        SqlExportService.TABLE_FORMAT), node -> {
             User user = requireUser(httpRequest);
             return ApiResponse.success("导出任务已创建", sqlExportService.startTableExport(
                     node,
                     user.getUserId(),
                     request.sessionId(),
                     resolveConnection(request),
-                    request.objectRef(),
-                    request.format()));
+                    request.objectRef()));
         });
     }
 
@@ -233,7 +232,7 @@ public class AgentNodeSqlController {
                                               @RequestBody ExportDatabaseRequest request) throws SqlExecutionException {
         return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_DATABASE", "导出数据库",
                 sqlOperationPath(request, request == null ? null : request.objectRef(),
-                        request == null ? null : request.format()), node -> {
+                        SqlExportService.DATABASE_FORMAT), node -> {
             User user = requireUser(httpRequest);
             return ApiResponse.success("导出任务已创建", sqlExportService.startDatabaseExport(
                     node,
@@ -243,8 +242,7 @@ public class AgentNodeSqlController {
                     request.objectRef(),
                     request.tableRefs(),
                     request.includeStructure(),
-                    request.includeData(),
-                    request.format()));
+                    request.includeData()));
         });
     }
 
@@ -469,13 +467,13 @@ public class AgentNodeSqlController {
             params.put("where", deleteRowRequest.where());
         } else if (request instanceof ExportTableRequest exportTableRequest) {
             putObjectRef(params, exportTableRequest.objectRef());
-            params.put("format", exportTableRequest.format());
+            params.put("format", SqlExportService.TABLE_FORMAT);
         } else if (request instanceof ExportDatabaseRequest exportDatabaseRequest) {
             putObjectRef(params, exportDatabaseRequest.objectRef());
             params.put("tableRefs", exportDatabaseRequest.tableRefs());
             params.put("includeStructure", exportDatabaseRequest.includeStructure());
             params.put("includeData", exportDatabaseRequest.includeData());
-            params.put("format", exportDatabaseRequest.format());
+            params.put("format", SqlExportService.DATABASE_FORMAT);
         } else if (request instanceof ExportResumeRequest exportResumeRequest) {
             params.put("taskId", exportResumeRequest.taskId());
         }

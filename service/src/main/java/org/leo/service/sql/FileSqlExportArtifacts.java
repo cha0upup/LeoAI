@@ -3,7 +3,6 @@ package org.leo.service.sql;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -67,12 +66,6 @@ final class FileSqlExportArtifacts implements SqlExportArtifacts {
         Path base = workspace.userBase(userId);
         Path target = path.toAbsolutePath().normalize();
         return target.startsWith(base) ? base.relativize(target).toString().replace(File.separatorChar, '/') : "";
-    }
-
-    @Override
-    public BufferedWriter openCsv(Path path) throws Exception {
-        Files.createDirectories(path.getParent());
-        return Files.newBufferedWriter(path, StandardCharsets.UTF_8);
     }
 
     @Override

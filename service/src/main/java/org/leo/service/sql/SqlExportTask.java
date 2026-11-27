@@ -25,20 +25,20 @@ final class SqlExportTask {
     }
 
     static SqlExportTask table(SqlExportTaskRepository repository, String taskId, String userId, String sessionId,
-                               Path output, String downloadPath, SqlObjectRef table, String format) {
+                               Path output, String downloadPath, SqlObjectRef table) {
         Map<String, Object> data = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
                 output.getFileName().toString(), output, table.namespace(), table.name(), downloadPath);
         data.put("objectRef", table.toMap());
-        data.put("format", format);
+        data.put("format", SqlExportService.TABLE_FORMAT);
         return new SqlExportTask(repository, data);
     }
 
     static SqlExportTask database(SqlExportTaskRepository repository, String taskId, String userId, String sessionId,
                                   Path output, String downloadPath, SqlObjectRef namespace, List<SqlObjectRef> tables,
-                                  boolean structure, boolean rows, String format) {
+                                  boolean structure, boolean rows) {
         Map<String, Object> data = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
                 output.getFileName().toString(), output, namespace.namespace(), null, downloadPath);
-        data.put("format", format);
+        data.put("format", SqlExportService.DATABASE_FORMAT);
         data.put("includeStructure", structure);
         data.put("includeData", rows);
         data.put("objectRef", namespace.toMap());
@@ -60,7 +60,6 @@ final class SqlExportTask {
     synchronized SqlExportTaskKey key() { return new SqlExportTaskKey(userId(), taskId()); }
     synchronized String sessionId() { return String.valueOf(data.get("sessionId")); }
     synchronized String type() { return String.valueOf(data.get("taskType")); }
-    synchronized String format() { return safeString(data.get("format")); }
     synchronized String finalPath() { return String.valueOf(data.get("finalPath")); }
     synchronized long createdTime() { return toLong(data.get("createdTime")); }
     synchronized int processedTables() { return toInt(data.get("processedTables")); }
@@ -110,6 +109,9 @@ final class SqlExportTask {
         if ("RUNNING".equals(status)) return false;
         if ("COMPLETED".equals(status) || "CANCELLED".equals(status))
             throw new IllegalArgumentException("当前任务状态不支持恢复: " + status);
+        if (!SqlExportService.TABLE_FORMAT.equals(data.get("dataFormat"))) {
+            throw new IllegalArgumentException("旧版导出任务已停止支持，请重新创建导出任务");
+        }
         signalCancellation();
         clearAttempt();
         data.put("sessionId", sessionId);
@@ -259,6 +261,7 @@ final class SqlExportTask {
         task.put("userId", userId);
         task.put("sessionId", sessionId);
         task.put("taskType", taskType);
+        task.put("dataFormat", SqlExportService.TABLE_FORMAT);
         task.put("status", "PENDING");
         task.put("progress", Integer.valueOf(0));
         task.put("fileName", fileName);

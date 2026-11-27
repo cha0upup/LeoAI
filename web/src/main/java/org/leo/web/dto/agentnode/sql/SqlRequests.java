@@ -82,8 +82,7 @@ public final class SqlRequests {
 
     public record ExportTableRequest(String sessionId,
                                      Map<String, Object> connection,
-                                     SqlObjectRef objectRef,
-                                     String format) implements ConnectionPayload {
+                                     SqlObjectRef objectRef) implements ConnectionPayload {
     }
 
     public record ExportDatabaseRequest(String sessionId,
@@ -91,8 +90,7 @@ public final class SqlRequests {
                                         SqlObjectRef objectRef,
                                         List<SqlObjectRef> tableRefs,
                                         Boolean includeStructure,
-                                        Boolean includeData,
-                                        String format) implements ConnectionPayload {
+                                        Boolean includeData) implements ConnectionPayload {
     }
 
     public record ExportResumeRequest(String sessionId,

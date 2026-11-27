@@ -5,7 +5,6 @@ import org.leo.core.agent.capability.SqlCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedWriter;
 import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -20,6 +19,8 @@ import static org.leo.service.sql.SqlExportTask.refValue;
 @Service
 public class SqlExportService {
 
+    public static final String TABLE_FORMAT = "xlsx";
+    public static final String DATABASE_FORMAT = "zip";
     private static final long FINISHED_TASK_RETAIN_MILLIS = 30L * 60L * 1000L;
 
     private final ConcurrentHashMap<String, SqlExportTask> liveTasks = new ConcurrentHashMap<>();
@@ -45,8 +46,7 @@ public class SqlExportService {
                                                 String userId,
                                                 String sessionId,
                                                 Map<String, Object> connection,
-                                                SqlObjectRef tableRef,
-                                                String format) throws Exception {
+                                                SqlObjectRef tableRef) throws Exception {
         if (isBlank(userId)) {
             throw new IllegalArgumentException("用户信息无效");
         }
@@ -56,17 +56,12 @@ public class SqlExportService {
         if (tableRef == null || isBlank(tableRef.name())) {
             throw new IllegalArgumentException("objectRef 必须包含表名");
         }
-        String exportFormat = isBlank(format) ? "xlsx" : safeLower(format);
-        if (!"xlsx".equals(exportFormat) && !"csv".equals(exportFormat)) {
-            throw new IllegalArgumentException("无效的单表导出格式");
-        }
-
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + "." + exportFormat);
+        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + System.currentTimeMillis() + "." + TABLE_FORMAT);
         Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         SqlExportTask task = SqlExportTask.table(taskRepository, taskId, userId, sessionId,
-                finalPath, artifacts.relativePath(userId, finalPath), tableRef, exportFormat);
+                finalPath, artifacts.relativePath(userId, finalPath), tableRef);
         scheduleTask(task, agentNode, connection);
 
         return task.snapshot();
@@ -79,8 +74,7 @@ public class SqlExportService {
                                                    SqlObjectRef namespaceRef,
                                                    List<SqlObjectRef> tableRefs,
                                                    Boolean includeStructure,
-                                                   Boolean includeData,
-                                                   String format) throws Exception {
+                                                   Boolean includeData) throws Exception {
         if (isBlank(userId)) {
             throw new IllegalArgumentException("用户信息无效");
         }
@@ -90,10 +84,6 @@ public class SqlExportService {
         if (namespaceRef == null || isBlank(namespaceRef.namespace())) {
             throw new IllegalArgumentException("objectRef 必须包含 catalog 或 schema");
         }
-        String exportFormat = safeLower(format);
-        if (!"zip".equals(exportFormat)) {
-            throw new IllegalArgumentException("当前仅支持 zip 格式整库导出");
-        }
         boolean exportStructure = includeStructure == null || includeStructure.booleanValue();
         boolean exportData = includeData == null || includeData.booleanValue();
         if (!exportStructure && !exportData) {
@@ -101,12 +91,12 @@ public class SqlExportService {
         }
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + System.currentTimeMillis() + ".zip");
+        String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + System.currentTimeMillis() + "." + DATABASE_FORMAT);
         Path finalPath = artifacts.reserveOutput(userId, fileName);
 
         SqlExportTask task = SqlExportTask.database(taskRepository, taskId, userId, sessionId,
                 finalPath, artifacts.relativePath(userId, finalPath), namespaceRef, tableRefs,
-                exportStructure, exportData, exportFormat);
+                exportStructure, exportData);
         scheduleTask(task, agentNode, connection);
 
         return task.snapshot();
@@ -229,17 +219,8 @@ public class SqlExportService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
-        SqlTableExporter.Progress progress = progress(task, 10, 95, attempt);
-        long total;
-        if ("xlsx".equals(task.format())) {
-            try (OutputStream output = artifacts.openWorkbook(finalPath)) {
-                total = tableExporter.writeWorkbook(output, agentNode, connection, tableRef, columns, progress);
-            }
-        } else {
-            try (BufferedWriter writer = artifacts.openCsv(finalPath)) {
-                total = tableExporter.writeCsv(writer, agentNode, connection, tableRef, columns, progress);
-            }
-        }
+        long total = writeTableWorkbook(finalPath, agentNode, connection, tableRef, columns,
+                progress(task, 10, 95, attempt));
         task.rowsWritten(attempt, total);
         if (task.tableStopped(attempt)) return;
         task.complete(attempt, artifacts.size(finalPath));
@@ -277,11 +258,9 @@ public class SqlExportService {
                         sanitizeFileName(entryName) + ".columns.json"), columnResult);
             }
             if (includeData) {
-                Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
-                try (BufferedWriter writer = artifacts.openCsv(csvPath)) {
-                    tableExporter.writeCsv(writer, agentNode, connection, tableRef, columns,
-                            progress(task, progressBase, 95, attempt));
-                }
+                Path workbookPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + "." + TABLE_FORMAT);
+                writeTableWorkbook(workbookPath, agentNode, connection, tableRef, columns,
+                        progress(task, progressBase, 95, attempt));
             }
             if (task.checkStopped(attempt)) return;
             task.tableCompleted(attempt, i + 1);
@@ -292,6 +271,7 @@ public class SqlExportService {
         manifest.put("tableCount", tables.size());
         manifest.put("includeStructure", includeStructure);
         manifest.put("includeData", includeData);
+        if (includeData) manifest.put("dataFormat", TABLE_FORMAT);
         manifest.put("exportTime", Instant.now().toString());
         manifest.put("tables", tables.stream().map(SqlObjectRef::toMap).toList());
         artifacts.writeJson(workDir.resolve("manifest.json"), manifest);
@@ -299,6 +279,14 @@ public class SqlExportService {
         artifacts.zipDirectory(workDir, finalPath);
         if (task.checkStopped(attempt)) return;
         task.completeDatabase(attempt, tables.size(), artifacts.size(finalPath));
+    }
+
+    private long writeTableWorkbook(Path path, SqlCapable agentNode, Map<String, Object> connection,
+                                    SqlObjectRef tableRef, List<Map<String, Object>> columns,
+                                    SqlTableExporter.Progress progress) throws Exception {
+        try (OutputStream output = artifacts.openWorkbook(path)) {
+            return tableExporter.writeWorkbook(output, agentNode, connection, tableRef, columns, progress);
+        }
     }
 
     private SqlTableExporter.Progress progress(SqlExportTask task, int start, int end, SqlExportTask.Attempt attempt) {
@@ -360,10 +348,6 @@ public class SqlExportService {
             return "export.dat";
         }
         return fileName.replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]+", "_");
-    }
-
-    private String safeLower(String value) {
-        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static boolean isBlank(String value) {

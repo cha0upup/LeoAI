@@ -72,6 +72,7 @@ class SqlExportTaskTest {
     @ValueSource(strings = {"TABLE_EXPORT", "DATABASE_EXPORT"})
     void failedCheckpointsResumeWithTheAppropriateTableOrDatabaseReset(String type) throws Exception {
         Map<String, Object> metadata = metadata(type, "FAILED");
+        metadata.put("dataFormat", SqlExportService.TABLE_FORMAT);
         metadata.putAll(Map.of("progress", 60, "processedTables", 1, "rowCount", 4L,
                 "fileSize", 88L, "error", "failed", "endTime", 100L));
         when(repository.load(key)).thenReturn(metadata);
@@ -169,14 +170,22 @@ class SqlExportTaskTest {
         assertTrue(stored.isExpired(1101, 100));
     }
 
+    @Test
+    void requiresRestartingABackupThatCouldContainOlderTableFormats() throws Exception {
+        when(repository.load(key)).thenReturn(metadata("DATABASE_EXPORT", "PAUSED"));
+        SqlExportTask task = SqlExportTask.restore(repository, key);
+        assertThrows(IllegalArgumentException.class, () -> task.prepareResume("session"));
+        assertEquals("PAUSED", task.snapshot().get("status"));
+    }
+
     private SqlExportTask table() {
-        return SqlExportTask.table(repository, "task", "owner", "session", Path.of("export.csv"),
-                "downloads/export.csv", orders, "csv");
+        return SqlExportTask.table(repository, "task", "owner", "session", Path.of("export.xlsx"),
+                "downloads/export.xlsx", orders);
     }
 
     private SqlExportTask database(SqlObjectRef... tables) {
         return SqlExportTask.database(repository, "task", "owner", "session", Path.of("export.zip"),
-                "downloads/export.zip", new SqlObjectRef("app", "sales", null, "schema"), List.of(tables), true, true, "zip");
+                "downloads/export.zip", new SqlObjectRef("app", "sales", null, "schema"), List.of(tables), true, true);
     }
 
     private Map<String, Object> metadata(String type, String status) {

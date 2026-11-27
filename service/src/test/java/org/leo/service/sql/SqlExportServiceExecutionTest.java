@@ -6,20 +6,20 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.SqlCapable;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
@@ -55,33 +55,23 @@ class SqlExportServiceExecutionTest {
     @AfterEach void close() { service.close(); }
 
     @Test void completesTableExportsWithoutExposingPrivateTaskMetadata() throws Exception {
-        var task = startTable();
-        queued.get(0).run();
-        var result = service.progress("owner", id(task));
-        Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
-        assertEquals("COMPLETED", result.get("status"));
-        assertEquals(100, result.get("progress"));
-        assertEquals(1L, result.get("rowCount"));
-        assertEquals(Files.size(output), result.get("fileSize"));
-        assertEquals("\"id\"" + System.lineSeparator() + "\"7\"" + System.lineSeparator(), Files.readString(output));
-        assertFalse(result.containsKey("finalPath"));
-        assertFalse(result.containsKey("userId"));
-        assertTrue(((String) result.get("downloadUrl")).startsWith("/user/file/download?path=downloads%2Fsql-export%2F"));
-        assertEquals("COMPLETED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
-    }
-
-    @Test void defaultsSingleTableExportsToAReadableWorkbookWithoutReinterpretingValues() throws Exception {
         when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
                 .thenReturn(Map.of("rows", List.of(Map.of("id", "00001234567890123456"), Map.of("id", "=备注")),
                         "pagination", Map.of("total", 2)));
-        var task = service.startTableExport(node, "owner", "session", Map.of(), orders, null);
+        var task = startTable();
         queued.get(0).run();
         var result = service.progress("owner", id(task));
         assertEquals("COMPLETED", result.get("status"), () -> String.valueOf(result.get("error")));
+        assertEquals(100, result.get("progress"));
         assertEquals("xlsx", result.get("format"));
         assertEquals(2L, result.get("rowCount"));
         Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
         assertTrue(output.getFileName().toString().endsWith(".xlsx"));
+        assertEquals(Files.size(output), result.get("fileSize"));
+        assertFalse(result.containsKey("finalPath"));
+        assertFalse(result.containsKey("userId"));
+        assertTrue(((String) result.get("downloadUrl")).startsWith("/user/file/download?path=downloads%2Fsql-export%2F"));
+        assertEquals("COMPLETED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
         try (var stream = Files.newInputStream(output); var workbook = WorkbookFactory.create(stream)) {
             var sheet = workbook.getSheet("数据");
             assertEquals("id", sheet.getRow(0).getCell(0).getStringCellValue());
@@ -98,15 +88,28 @@ class SqlExportServiceExecutionTest {
         var task = startDatabase(structure, data);
         queued.get(0).run();
         var result = service.progress("owner", id(task));
-        assertEquals("COMPLETED", result.get("status"));
+        assertEquals("COMPLETED", result.get("status"), () -> String.valueOf(result.get("error")));
+        assertEquals("zip", result.get("format"));
         assertEquals(2, result.get("processedTables"));
         Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
         try (var zip = new ZipFile(output.toFile())) {
-            assertNotNull(zip.getEntry("manifest.json"));
+            try (var input = zip.getInputStream(zip.getEntry("manifest.json"))) {
+                var manifest = JsonUtil.fromJsonString(new String(input.readAllBytes(), StandardCharsets.UTF_8), Map.class);
+                assertEquals(data ? "xlsx" : null, manifest.get("dataFormat"));
+            }
             for (String name : List.of("app_sales_orders", "app_sales_customers")) {
                 assertEquals(structure, zip.getEntry("structure/" + name + ".columns.json") != null);
-                assertEquals(data, zip.getEntry("data/" + name + ".csv") != null);
+                var entry = zip.getEntry("data/" + name + ".xlsx");
+                assertEquals(data, entry != null);
+                if (entry != null) {
+                    try (var input = zip.getInputStream(entry); var workbook = WorkbookFactory.create(input)) {
+                        var sheet = workbook.getSheet("数据");
+                        assertEquals("id", sheet.getRow(0).getCell(0).getStringCellValue());
+                        assertEquals("7", sheet.getRow(1).getCell(0).getStringCellValue());
+                    }
+                }
             }
+            assertFalse(zip.stream().anyMatch(entry -> entry.getName().endsWith(".csv")));
         }
         verify(sql, times(data ? 2 : 0)).queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull());
     }
@@ -132,28 +135,21 @@ class SqlExportServiceExecutionTest {
         verify(sql, times(2)).queryTable(eq(node), anyMap(), eq(orders), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull());
     }
 
-    @ParameterizedTest
-    @CsvSource({"en-US,zip", "tr-TR,ZIP"})
-    @ResourceLock("java.util.Locale.default")
-    void emptyDatabasesStillProduceAManifestWithTheDefaultExportOptions(String languageTag, String format) throws Exception {
-        Locale previous = Locale.getDefault();
-        try {
-            Locale.setDefault(Locale.forLanguageTag(languageTag));
-            var namespace = new SqlObjectRef("app", "sales", null, "schema");
-            when(sql.getTables(node, Map.of(), namespace)).thenReturn(Map.of("tables", List.of()));
-            var task = service.startDatabaseExport(node, "owner", "session", Map.of(), namespace, List.of(), null, null, format);
-            queued.get(0).run();
-            var result = service.progress("owner", id(task));
-            assertEquals("COMPLETED", result.get("status"));
-            assertEquals(0, result.get("tableCount"));
-            assertEquals(true, result.get("includeStructure"));
-            assertEquals(true, result.get("includeData"));
-            Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
-            try (var zip = new ZipFile(output.toFile())) {
-                assertEquals(List.of("manifest.json"), zip.stream().map(entry -> entry.getName()).toList());
-            }
-            verify(sql, never()).getTableColumns(any(), anyMap(), any());
-        } finally { Locale.setDefault(previous); }
+    @Test void emptyDatabasesStillProduceAManifestWithTheDefaultExportOptions() throws Exception {
+        var namespace = new SqlObjectRef("app", "sales", null, "schema");
+        when(sql.getTables(node, Map.of(), namespace)).thenReturn(Map.of("tables", List.of()));
+        var task = service.startDatabaseExport(node, "owner", "session", Map.of(), namespace, List.of(), null, null);
+        queued.get(0).run();
+        var result = service.progress("owner", id(task));
+        assertEquals("COMPLETED", result.get("status"));
+        assertEquals(0, result.get("tableCount"));
+        assertEquals(true, result.get("includeStructure"));
+        assertEquals(true, result.get("includeData"));
+        Path output = root.resolve("users/owner").resolve((String) result.get("downloadPath"));
+        try (var zip = new ZipFile(output.toFile())) {
+            assertEquals(List.of("manifest.json"), zip.stream().map(entry -> entry.getName()).toList());
+        }
+        verify(sql, never()).getTableColumns(any(), anyMap(), any());
     }
 
     @ParameterizedTest
@@ -199,14 +195,14 @@ class SqlExportServiceExecutionTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"table,restore", "table,csv", "database,restore", "database,workspace", "database,json", "database,zip"})
+    @CsvSource({"table,restore", "table,workbook", "database,restore", "database,workspace", "database,json", "database,zip"})
     void artifactFailuresUseTheSamePersistedTaskFailureContract(String kind, String stage) throws Exception {
         var task = kind.equals("table") ? startTable() : startDatabase(true, true);
         String error = "fixture artifact failure: " + stage;
         switch (stage) {
             case "restore" -> doThrow(new IllegalArgumentException(error)).when(artifacts).restoreOutput(anyString(), anyString());
             case "workspace" -> doThrow(new IllegalArgumentException(error)).when(artifacts).workDirectory(any());
-            case "csv" -> doThrow(new IOException(error)).when(artifacts).openCsv(any());
+            case "workbook" -> doThrow(new IOException(error)).when(artifacts).openWorkbook(any());
             case "json" -> doThrow(new IOException(error)).when(artifacts).writeJson(any(), any());
             case "zip" -> doThrow(new IOException(error)).when(artifacts).zipDirectory(any(), any());
             default -> throw new AssertionError(stage);
@@ -229,7 +225,7 @@ class SqlExportServiceExecutionTest {
         service.pause("owner", id(task));
         queued.get(0).run();
         var stored = repository.load(new SqlExportTaskKey("owner", id(task)));
-        stored.put(field, field.equals("finalPath") ? root.resolve("outside.csv").toString() : "unknown");
+        stored.put(field, field.equals("finalPath") ? root.resolve("outside.xlsx").toString() : "unknown");
         repository.save(new SqlExportTaskKey("owner", id(task)), stored);
         // A fresh service ensures the persisted task is used rather than the existing cache.
         var restarted = new SqlExportService(sql, executor, repository, artifacts, new SqlTableExporter(sql));
@@ -238,7 +234,7 @@ class SqlExportServiceExecutionTest {
             queued.get(1).run();
             assertEquals("FAILED", restarted.progress("owner", id(task)).get("status"));
             assertEquals("FAILED", repository.load(new SqlExportTaskKey("owner", id(task))).get("status"));
-            assertFalse(Files.exists(root.resolve("outside.csv")));
+            assertFalse(Files.exists(root.resolve("outside.xlsx")));
             verifyNoInteractions(sql);
         } finally { restarted.close(); }
     }
@@ -252,7 +248,7 @@ class SqlExportServiceExecutionTest {
                     SqlTableExporter.class, SqlExportService.class);
             context.refresh();
             var wired = context.getBean(SqlExportService.class);
-            var task = wired.startTableExport(node, "owner", "session", Map.of(), orders, "csv");
+            var task = wired.startTableExport(node, "owner", "session", Map.of(), orders);
             assertEquals("PENDING", context.getBean(SqlExportTaskRepository.class)
                     .load(new SqlExportTaskKey("owner", id(task))).get("status"));
             assertTrue(context.getBean(SqlExportArtifacts.class) instanceof FileSqlExportArtifacts);
@@ -260,12 +256,12 @@ class SqlExportServiceExecutionTest {
     }
 
     private Map<String, Object> startTable() throws Exception {
-        return service.startTableExport(node, "owner", "session", Map.of(), orders, "csv");
+        return service.startTableExport(node, "owner", "session", Map.of(), orders);
     }
 
     private Map<String, Object> startDatabase(Boolean structure, Boolean data) throws Exception {
         return service.startDatabaseExport(node, "owner", "session", Map.of(),
-                new SqlObjectRef("app", "sales", null, "schema"), List.of(orders, customers), structure, data, "zip");
+                new SqlObjectRef("app", "sales", null, "schema"), List.of(orders, customers), structure, data);
     }
 
     private String id(Map<String, Object> task) { return (String) task.get("taskId"); }

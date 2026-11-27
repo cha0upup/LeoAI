@@ -34,7 +34,7 @@ class SqlExportFileAdaptersTest {
     void usesTheSameIdentityRulesForMetadataAndArtifacts(String invalid) {
         assertThrows(IllegalArgumentException.class, () -> new SqlExportTaskKey(invalid, "task"));
         assertThrows(IllegalArgumentException.class, () -> new SqlExportTaskKey("owner", invalid));
-        assertThrows(IllegalArgumentException.class, () -> artifacts.reserveOutput(invalid, "file.csv"));
+        assertThrows(IllegalArgumentException.class, () -> artifacts.reserveOutput(invalid, "file.xlsx"));
     }
 
     @Test void atomicallyReplacesMetadataAndLeavesNoTemporaryFiles() throws Exception {
@@ -92,12 +92,12 @@ class SqlExportFileAdaptersTest {
     }
 
     @Test void reservesOutputsAtomicallyEvenWhenWorkersHaveNotStarted() throws Exception {
-        Path existing = artifacts.reserveOutput("owner", "same.csv");
+        Path existing = artifacts.reserveOutput("owner", "same.xlsx");
         Files.writeString(existing, "existing");
         var pool = Executors.newFixedThreadPool(4);
         try {
             List<Future<Path>> jobs = new ArrayList<>();
-            for (int i = 0; i < 12; i++) jobs.add(pool.submit(() -> artifacts.reserveOutput("owner", "same.csv")));
+            for (int i = 0; i < 12; i++) jobs.add(pool.submit(() -> artifacts.reserveOutput("owner", "same.xlsx")));
             var paths = new java.util.HashSet<Path>();
             for (Future<Path> job : jobs) assertTrue(paths.add(job.get(20, TimeUnit.SECONDS)));
             assertEquals(12, paths.size());
@@ -107,30 +107,33 @@ class SqlExportFileAdaptersTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"../out.csv", "a/b.csv", "a\\b.csv", "C:out.csv", ".", "..", "bad\nname.csv"})
+    @ValueSource(strings = {"../out.xlsx", "a/b.xlsx", "a\\b.xlsx", "C:out.xlsx", ".", "..", "bad\nname.xlsx"})
     void rejectsOutputNamesThatAreNotSingleFileNames(String name) {
         assertThrows(IllegalArgumentException.class, () -> artifacts.reserveOutput("owner", name));
     }
 
     @Test void validatesRestoredOutputPathsAndKeepsDownloadPathsUserRelative() throws Exception {
-        Path path = artifacts.reserveOutput("owner", "result.csv");
+        Path path = artifacts.reserveOutput("owner", "result.xlsx");
         assertEquals(path, artifacts.restoreOutput("owner", path.toString()));
-        assertEquals("downloads/sql-export/result.csv", artifacts.relativePath("owner", path));
+        assertEquals("downloads/sql-export/result.xlsx", artifacts.relativePath("owner", path));
         assertEquals("", artifacts.relativePath("other", path));
         assertThrows(IllegalArgumentException.class, () -> artifacts.restoreOutput("other", path.toString()));
-        assertThrows(IllegalArgumentException.class, () -> artifacts.restoreOutput("owner", root.resolve("outside.csv").toString()));
+        assertThrows(IllegalArgumentException.class, () -> artifacts.restoreOutput("owner", root.resolve("outside.xlsx").toString()));
         assertNotEquals(artifacts.workDirectory(key), artifacts.workDirectory(new SqlExportTaskKey("other", "task")));
     }
 
     @Test void writesUtf8ArtifactsAndDeterministicRelativeZipEntries() throws Exception {
         Path work = artifacts.workDirectory(key);
         artifacts.writeJson(work.resolve("manifest.json"), Map.of("name", "中文"));
-        try (var csv = artifacts.openCsv(work.resolve("data/orders.csv"))) { csv.write("\"中文\"\n"); }
+        byte[] content = {0, 1, -1};
+        try (var output = artifacts.openWorkbook(work.resolve("data/orders.xlsx"))) { output.write(content); }
         Path zip = artifacts.reserveOutput("owner", "database.zip");
         artifacts.zipDirectory(work, zip);
         try (var archive = new ZipFile(zip.toFile())) {
-            assertEquals(List.of("data/orders.csv", "manifest.json"), archive.stream().map(entry -> entry.getName()).toList());
-            assertEquals("\"中文\"\n", new String(archive.getInputStream(archive.getEntry("data/orders.csv")).readAllBytes(), StandardCharsets.UTF_8));
+            assertEquals(List.of("data/orders.xlsx", "manifest.json"), archive.stream().map(entry -> entry.getName()).toList());
+            assertArrayEquals(content, archive.getInputStream(archive.getEntry("data/orders.xlsx")).readAllBytes());
+            assertTrue(new String(archive.getInputStream(archive.getEntry("manifest.json")).readAllBytes(),
+                    StandardCharsets.UTF_8).contains("中文"));
         }
         assertEquals(Files.size(zip), artifacts.size(zip));
     }

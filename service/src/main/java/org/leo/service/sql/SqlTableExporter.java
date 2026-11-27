@@ -7,14 +7,14 @@ import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.leo.core.agent.capability.SqlCapable;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedWriter;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-/** Streams the same table rows to workbooks or legacy CSV without owning task or file state. */
+/** Writes paged table data to a workbook without owning task or file state. */
 @Service
 public final class SqlTableExporter {
     private static final int PAGE_SIZE = 1000;
@@ -29,30 +29,38 @@ public final class SqlTableExporter {
         void rowsWritten(long rows, long expectedTotal);
     }
 
-    public long writeCsv(BufferedWriter writer, SqlCapable node, Map<String, Object> connection,
-                         SqlObjectRef table, List<Map<String, Object>> columns, Progress progress) throws Exception {
-        return writeRows(node, connection, table, columns, progress, values -> writeCsvLine(writer, values));
-    }
-
     public long writeWorkbook(OutputStream output, SqlCapable node, Map<String, Object> connection,
                               SqlObjectRef table, List<Map<String, Object>> columns, Progress progress) throws Exception {
+        if (progress.stopped()) return 0L;
         try (SXSSFWorkbook workbook = new SXSSFWorkbook(100)) {
             workbook.setCompressTempFiles(true);
-            WorkbookRows sheets = new WorkbookRows(workbook);
-            long total = writeRows(node, connection, table, columns, progress, sheets::write);
-            if (!progress.stopped()) workbook.write(output);
+            long total;
+            try {
+                total = writeRows(node, connection, table, columns, progress, new WorkbookRows(workbook));
+            } catch (Exception failure) {
+                try {
+                    flushPendingSheets(workbook);
+                } catch (IOException flushError) {
+                    failure.addSuppressed(flushError);
+                }
+                throw failure;
+            }
+            if (progress.stopped()) flushPendingSheets(workbook);
+            else workbook.write(output);
             return total;
         }
     }
 
-    @FunctionalInterface
-    private interface RowWriter {
-        void write(List<String> values) throws Exception;
+    private static void flushPendingSheets(SXSSFWorkbook workbook) throws IOException {
+        // When discarding an unfinished workbook, flush before close releases the sheet writers.
+        for (int index = 0; index < workbook.getNumberOfSheets(); index++) {
+            workbook.getSheetAt(index).flushRows();
+        }
     }
 
     @SuppressWarnings("unchecked")
     private long writeRows(SqlCapable node, Map<String, Object> connection, SqlObjectRef table,
-                           List<Map<String, Object>> columns, Progress progress, RowWriter writer) throws Exception {
+                           List<Map<String, Object>> columns, Progress progress, WorkbookRows writer) throws Exception {
         List<String> header = columnNames(columns);
         if (!header.isEmpty()) writer.write(header);
         long totalRows = 0L;
@@ -93,16 +101,6 @@ public final class SqlTableExporter {
             if (name != null && !String.valueOf(name).isBlank()) names.add(String.valueOf(name));
         }
         return names;
-    }
-
-    private static void writeCsvLine(BufferedWriter writer, List<String> values) throws Exception {
-        String separator = "";
-        for (String value : values) {
-            writer.append(separator).append('"')
-                    .append(value == null ? "" : value.replace("\"", "\"\"")).append('"');
-            separator = ",";
-        }
-        writer.newLine();
     }
 
     private static final class WorkbookRows {

@@ -196,9 +196,9 @@ class SqlExportServiceLifecycleTest {
     private Map<String, Object> start(String kind) throws Exception {
         SqlObjectRef table = SqlObjectRef.table("app", "public", "orders");
         return kind.equals("table")
-                ? service.startTableExport(node, "owner", "session", Map.of(), table, "csv")
+                ? service.startTableExport(node, "owner", "session", Map.of(), table)
                 : service.startDatabaseExport(node, "owner", "session", Map.of(),
-                        new SqlObjectRef("app", "public", null, "schema"), List.of(table), true, true, "zip");
+                        new SqlObjectRef("app", "public", null, "schema"), List.of(table), true, true);
     }
 
     private String id(Map<String, Object> task) { return (String) task.get("taskId"); }
