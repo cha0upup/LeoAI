@@ -1,9 +1,13 @@
 package org.leo.dao.mapper;
 
-import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Arg;
+import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.AiModelCapability;
@@ -13,25 +17,29 @@ import java.util.List;
 @Mapper
 public interface AiModelCapabilityMapper {
 
-    @Select("SELECT model_name AS modelName, source, "
+    String CATALOG_COLUMNS = "model_name AS modelName, source, "
             + "context_window_tokens AS contextWindowTokens, max_output_tokens AS maxOutputTokens, "
             + "supports_text_generation AS supportsTextGeneration, supports_reasoning AS supportsReasoning, "
             + "supports_streaming AS supportsStreaming, supports_function_calling AS supportsFunctionCalling, "
             + "supports_structured_output AS supportsStructuredOutput, supports_web_search AS supportsWebSearch, "
             + "supports_parallel_tool_calls AS supportsParallelToolCalls, "
-            + "create_time AS createTime, update_time AS updateTime, remark "
-            + "FROM ai_model_capabilities ORDER BY model_name")
+            + "create_time AS createTime, update_time AS updateTime, remark";
+
+    String OBSERVATION_COLUMNS = """
+            observation.supports_text_generation, observation.supports_reasoning,
+            observation.supports_streaming, observation.supports_function_calling,
+            observation.supports_structured_output, observation.update_time
+            """;
+
+    @Select("SELECT " + CATALOG_COLUMNS + " FROM ai_model_capabilities ORDER BY model_name")
     List<AiModelCapability> listAll();
 
-    @Select("SELECT model_name AS modelName, source, "
-            + "context_window_tokens AS contextWindowTokens, max_output_tokens AS maxOutputTokens, "
-            + "supports_text_generation AS supportsTextGeneration, supports_reasoning AS supportsReasoning, "
-            + "supports_streaming AS supportsStreaming, supports_function_calling AS supportsFunctionCalling, "
-            + "supports_structured_output AS supportsStructuredOutput, supports_web_search AS supportsWebSearch, "
-            + "supports_parallel_tool_calls AS supportsParallelToolCalls, "
-            + "create_time AS createTime, update_time AS updateTime, remark "
-            + "FROM ai_model_capabilities WHERE model_name = #{modelName} LIMIT 1")
+    @Select("SELECT " + CATALOG_COLUMNS + " FROM ai_model_capabilities WHERE model_name = #{modelName} LIMIT 1")
     AiModelCapability findByModelName(@Param("modelName") String modelName);
+
+    @Select("SELECT " + CATALOG_COLUMNS + " FROM ai_model_capabilities "
+            + "WHERE model_name IN (SELECT value FROM json_each(#{modelNamesJson}))")
+    List<AiModelCapability> findByModelNames(@Param("modelNamesJson") String modelNamesJson);
 
     @Insert("INSERT INTO ai_model_capabilities "
             + "(model_name, source, context_window_tokens, max_output_tokens, "
@@ -56,13 +64,36 @@ public interface AiModelCapabilityMapper {
     @Delete("DELETE FROM ai_model_capabilities WHERE model_name = #{modelName}")
     int deleteByModelName(@Param("modelName") String modelName);
 
-    @Select("SELECT supports_text_generation AS supportsTextGeneration, supports_reasoning AS supportsReasoning, "
-            + "supports_streaming AS supportsStreaming, supports_function_calling AS supportsFunctionCalling, "
-            + "supports_structured_output AS supportsStructuredOutput, update_time AS updateTime "
-            + "FROM ai_model_capability_observations WHERE provider_id=#{providerId} AND protocol=#{protocol} "
+    @Select("SELECT " + OBSERVATION_COLUMNS
+            + "FROM ai_model_capability_observations observation WHERE provider_id=#{providerId} AND protocol=#{protocol} "
             + "AND model_name=#{modelName} AND connection_key=#{connectionKey}")
+    @Results(id = "observation", value = {
+            @Result(column = "supports_text_generation", property = "supportsTextGeneration"),
+            @Result(column = "supports_reasoning", property = "supportsReasoning"),
+            @Result(column = "supports_streaming", property = "supportsStreaming"),
+            @Result(column = "supports_function_calling", property = "supportsFunctionCalling"),
+            @Result(column = "supports_structured_output", property = "supportsStructuredOutput"),
+            @Result(column = "update_time", property = "updateTime")
+    })
     AiModelCapability findObservation(@Param("providerId") Integer providerId, @Param("protocol") String protocol,
                                       @Param("modelName") String modelName, @Param("connectionKey") String connectionKey);
+
+    @Select("SELECT request.value ->> '$.configId' AS config_id, " + OBSERVATION_COLUMNS + """
+            FROM json_each(#{observationsJson}) request
+            JOIN ai_model_capability_observations observation
+                ON observation.provider_id = request.value ->> '$.providerId'
+               AND observation.protocol = request.value ->> '$.protocol'
+               AND observation.model_name = request.value ->> '$.modelName'
+               AND observation.connection_key = request.value ->> '$.connectionKey'
+            """)
+    @ConstructorArgs({
+            @Arg(column = "config_id", javaType = int.class, id = true),
+            @Arg(javaType = AiModelCapability.class, resultMap = "observation")
+    })
+    List<MatchedObservation> findObservations(@Param("observationsJson") String observationsJson);
+
+    record MatchedObservation(int configId, AiModelCapability capability) {
+    }
 
     @Insert("INSERT INTO ai_model_capability_observations "
             + "(provider_id, protocol, model_name, connection_key, supports_text_generation, supports_reasoning, "

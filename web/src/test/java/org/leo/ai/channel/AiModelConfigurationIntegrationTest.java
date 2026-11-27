@@ -9,6 +9,7 @@ import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
 import org.leo.core.entity.AiProviderSummary;
+import org.leo.core.entity.ProviderCapabilities;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
@@ -211,8 +212,7 @@ class AiModelConfigurationIntegrationTest {
             assertEquals(updated.getHeadersJson(), row.getHeadersJson());
             assertEquals(updated.getUpdateTime(), row.getUpdateTime());
         }
-        assertEquals(Set.of(first.getId(), second.getId()),
-                configs.listAll().stream().map(AiModelConfig::getId).collect(Collectors.toSet()));
+        assertEquals(Set.of(first.getId(), second.getId()), Set.copyOf(configs.listModelIds()));
         assertEquals(oldModelTime, jdbc.queryForObject(
                 "SELECT update_time FROM ai_model_configs WHERE id=?", String.class, first.getId()));
         assertNotNull(chat.getDelegate());
@@ -285,6 +285,7 @@ class AiModelConfigurationIntegrationTest {
         AiProvider firstProvider = provider("first-provider");
         AiModelConfig first = model(firstProvider, "first");
         AiModelConfig second = model(provider("second-provider"), "second");
+        jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", second.getId(), first.getId());
         configs.applyProbeResult(first, Map.of("functionCalling", false));
         assertFalse(configs.capabilitiesForModel(first).supportsFunctionCalling());
         assertTrue(configs.capabilitiesForModel(second).supportsFunctionCalling());
@@ -292,13 +293,26 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(65536, configs.capabilitiesForModel(first).contextWindowTokens());
         assertNull(jdbc.queryForObject("SELECT supports_streaming FROM ai_model_capability_observations", Integer.class));
         configs.applyProbeResult(first, Map.of("streaming", true));
-        assertFalse(configs.capabilitiesForModel(first).supportsFunctionCalling());
+        configs.applyProbeResult(second, Map.of("structuredOutput", true));
+        Map<Integer, AiModelConfigService.CatalogEntry> entries = configs.listCatalog().stream()
+                .collect(Collectors.toMap(entry -> entry.config().getId(), entry -> entry));
+        assertEquals(second.getName(), entries.get(first.getId()).fallbackModelName());
+        ProviderCapabilities firstCapabilities = entries.get(first.getId()).capabilities();
+        ProviderCapabilities secondCapabilities = entries.get(second.getId()).capabilities();
+        assertEquals(configs.capabilitiesForModel(first), firstCapabilities);
+        assertEquals(configs.capabilitiesForModel(second), secondCapabilities);
+        assertFalse(firstCapabilities.supportsFunctionCalling());
+        assertTrue(firstCapabilities.supportsStreaming());
+        assertTrue(secondCapabilities.supportsStructuredOutput());
 
         AiProvider patch = new AiProvider();
         patch.setApiKey("new-connection-key");
         configs.updateProvider(firstProvider.getId(), patch);
         AiModelConfig refreshed = configs.findById(first.getId());
         assertTrue(configs.capabilitiesForModel(refreshed).supportsFunctionCalling());
+        AiModelConfigService.CatalogEntry refreshedEntry = configs.listCatalog().stream()
+                .filter(entry -> first.getId().equals(entry.config().getId())).findFirst().orElseThrow();
+        assertEquals(configs.capabilitiesForModel(refreshed), refreshedEntry.capabilities());
         configs.applyProbeResult(refreshed, Map.of("streaming", true));
         assertTrue(configs.capabilitiesForModel(refreshed).supportsFunctionCalling());
     }

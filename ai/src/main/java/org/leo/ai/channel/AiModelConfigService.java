@@ -1,20 +1,22 @@
 package org.leo.ai.channel;
 
-import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiModelCapability;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
 import org.leo.core.entity.AiProviderSummary;
 import org.leo.core.entity.ProviderCapabilities;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
-import org.springframework.stereotype.Service;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -48,8 +50,55 @@ public class AiModelConfigService {
         this.events = events;
     }
 
-    public List<AiModelConfig> listAll() {
-        return decryptModels(mapper.listAll());
+    /** 列表使用同一数据库快照批量读取基础能力与当前连接的探测结果。 */
+    @Transactional(readOnly = true)
+    public List<CatalogEntry> listCatalog() {
+        List<AiModelConfig> models = decryptModels(mapper.listAll());
+        Map<Integer, String> displayNames = new HashMap<>();
+        Set<String> catalogNames = new HashSet<>();
+        List<Map<String, Object>> lookups = new ArrayList<>();
+        for (AiModelConfig config : models) {
+            displayNames.put(config.getId(), config.getName());
+            if (!isBlank(config.getModel())) {
+                catalogNames.add(capabilityModelName(config));
+                if (config.getProviderId() != null) {
+                    lookups.add(Map.of(
+                            "configId", config.getId(),
+                            "providerId", config.getProviderId(),
+                            "protocol", DynamicModelProvider.resolveProtocol(config),
+                            "modelName", config.getModel(),
+                            "connectionKey", ModelConfigurationKey.connection(config)));
+                }
+            }
+        }
+
+        Map<String, AiModelCapability> baselines = new HashMap<>();
+        if (!catalogNames.isEmpty()) {
+            for (AiModelCapability row : capabilityMapper.findByModelNames(JsonUtil.toJsonString(catalogNames))) {
+                baselines.put(row.getModelName(), row);
+            }
+        }
+        Map<Integer, AiModelCapability> observations = new HashMap<>();
+        if (!lookups.isEmpty()) {
+            for (AiModelCapabilityMapper.MatchedObservation row
+                    : capabilityMapper.findObservations(JsonUtil.toJsonString(lookups))) {
+                observations.put(row.configId(), row.capability());
+            }
+        }
+
+        List<CatalogEntry> entries = new ArrayList<>(models.size());
+        for (AiModelConfig config : models) {
+            String capabilityName = capabilityModelName(config);
+            ProviderCapabilities baseline = isBlank(config.getModel())
+                    ? ProviderCapabilities.missing() : catalogBaseline(baselines.get(capabilityName));
+            entries.add(new CatalogEntry(config, displayNames.get(config.getFallbackModelId()), capabilityName,
+                    mergeCapabilities(baseline, observations.get(config.getId()))));
+        }
+        return entries;
+    }
+
+    public record CatalogEntry(AiModelConfig config, String fallbackModelName, String capabilityModelName,
+                               ProviderCapabilities capabilities) {
     }
 
     public List<Integer> listModelIds() {
@@ -76,11 +125,11 @@ public class AiModelConfigService {
         if (modelName == null || modelName.isBlank()) {
             return ProviderCapabilities.missing();
         }
-        AiModelCapability row = capabilityMapper.findByModelName(normalizeCapabilityModelName(providerKey, modelName));
-        if (row == null) {
-            return ProviderCapabilities.conservativeDefault();
-        }
-        return capabilityFromRow(row);
+        return catalogBaseline(capabilityMapper.findByModelName(normalizeCapabilityModelName(providerKey, modelName)));
+    }
+
+    private static ProviderCapabilities catalogBaseline(AiModelCapability row) {
+        return row == null ? ProviderCapabilities.conservativeDefault() : capabilityFromRow(row);
     }
 
     public ProviderCapabilities capabilitiesForModel(AiModelConfig config) {

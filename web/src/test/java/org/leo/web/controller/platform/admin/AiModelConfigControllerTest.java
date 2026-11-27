@@ -109,26 +109,31 @@ class AiModelConfigControllerTest {
         assertEquals(List.of(models), preset.get("popularModels"), key);
     }
 
-    @ParameterizedTest
-    @CsvSource(value = {"null,null", "8,Fallback", "99,null"}, nullValues = "null")
-    void listUsesItsSnapshotForFallbackNames(Integer fallbackId, String fallbackName) {
+    @Test
+    void listSerializesTheCatalogWithoutPerRowReadsOrCredentials() throws Exception {
         AiModelConfig primary = model(7, "Primary");
         AiModelConfig fallback = model(8, "Fallback");
-        primary.setFallbackModelId(fallbackId);
-        when(configs.listAll()).thenReturn(List.of(primary, fallback));
-        when(configs.capabilityModelName(primary)).thenReturn("resolved-model");
-        when(configs.capabilitiesForModel(any(AiModelConfig.class)))
-                .thenReturn(ProviderCapabilities.conservativeDefault());
+        primary.setFallbackModelId(8);
+        ProviderCapabilities capabilities = ProviderCapabilities.conservativeDefault();
+        when(configs.listCatalog()).thenReturn(List.of(
+                new AiModelConfigService.CatalogEntry(primary, "Fallback", "resolved-model", capabilities),
+                new AiModelConfigService.CatalogEntry(fallback, null, "fallback-model", capabilities)));
 
-        var response = controller.list();
-        assertEquals(200, response.get("code"));
-        List<?> views = (List<?>) response.get("data");
-        assertEquals(List.of(7, 8), views.stream().map(view -> ((Map<?, ?>) view).get("id")).toList());
-        Map<?, ?> primaryView = (Map<?, ?>) views.get(0);
-        assertEquals(fallbackId, primaryView.get("fallbackModelId"));
-        assertEquals(fallbackName, primaryView.get("fallbackModelName"));
-        assertEquals("resolved-model", primaryView.get("capabilityModelName"));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(get("/platform/admin/ai-models"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(7))
+                .andExpect(jsonPath("$.data[1].id").value(8))
+                .andExpect(jsonPath("$.data[0].fallbackModelId").value(8))
+                .andExpect(jsonPath("$.data[0].fallbackModelName").value("Fallback"))
+                .andExpect(jsonPath("$.data[0].capabilityModelName").value("resolved-model"))
+                .andExpect(jsonPath("$.data[0].capabilitySource").value("conservative_default"))
+                .andExpect(jsonPath("$.data[0].apiKeyConfigured").value(true))
+                .andExpect(jsonPath("$.data[0].headersConfigured").value(true))
+                .andExpect(jsonPath("$.data[*].apiKey").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data[*].headersJson").doesNotHaveJsonPath());
         verify(configs, never()).findById(any());
+        verify(configs, never()).capabilitiesForModel(any(AiModelConfig.class));
         verifyNoInteractions(runtime);
     }
 

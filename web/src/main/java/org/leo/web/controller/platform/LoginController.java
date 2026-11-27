@@ -12,8 +12,8 @@ import org.leo.service.user.SystemInitializationService;
 import org.leo.service.user.UserService;
 import org.leo.service.user.UserViews;
 import org.leo.web.exception.ApiException;
-import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
+import org.leo.web.security.PermissionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -82,7 +82,6 @@ public class LoginController {
         User user = userService.getUserByName(username);
         if (user == null || !PasswordUtil.verify(password, user.getPassword())) {
             loginAttemptService.recordFailure(username, remoteAddress);
-            logger.warn("登录失败，用户名或密码错误: {}", username);
             throw ApiException.unauthorized("用户名或密码错误");
         }
         if (!Integer.valueOf(1).equals(user.getStatus())) {
@@ -101,7 +100,7 @@ public class LoginController {
         HttpSession session = request.getSession(true);
         request.changeSessionId();
         session.setAttribute(SESSION_ATTR_USER, user);
-        logger.info("用户登录成功: {} ({})", username, user.getPrivilege());
+        logger.info("用户登录成功，userId: {}", user.getUserId());
         return ApiResponse.success(UserViews.authentication(user));
     }
 
@@ -112,7 +111,7 @@ public class LoginController {
     public Map<String, Object> logout(HttpServletRequest request) {
         User user = permissionService.getCurrentUser(request);
         if (user != null) {
-            logger.info("用户登出: {}", user.getUserName());
+            logger.info("用户登出，userId: {}", user.getUserId());
         }
         HttpSession session = request.getSession(false);
         if (session != null) {

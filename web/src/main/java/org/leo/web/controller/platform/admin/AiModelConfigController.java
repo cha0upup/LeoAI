@@ -3,9 +3,9 @@ package org.leo.web.controller.platform.admin;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.AiModelDiscoveryService;
-import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.channel.ModelEndpoint;
@@ -60,12 +60,10 @@ public class AiModelConfigController {
 
     @RequestMapping(method = RequestMethod.GET)
     public HashMap<String, Object> list() {
-        List<AiModelConfig> models = configService.listAll();
-        Map<Integer, String> modelNames = new HashMap<>();
-        models.forEach(model -> modelNames.put(model.getId(), model.getName()));
-        List<HashMap<String, Object>> view = models.stream()
-                .map(model -> toView(model, modelNames.get(model.getFallbackModelId())))
-                .toList();
+        List<HashMap<String, Object>> view = new ArrayList<>();
+        for (AiModelConfigService.CatalogEntry entry : configService.listCatalog()) {
+            view.add(toView(entry.config(), entry.fallbackModelName(), entry.capabilityModelName(), entry.capabilities()));
+        }
         return ApiResponse.success(view);
     }
 
@@ -335,12 +333,13 @@ public class AiModelConfigController {
     private HashMap<String, Object> toView(AiModelConfig c) {
         AiModelConfig fallback = c.getFallbackModelId() != null
                 ? configService.findById(c.getFallbackModelId()) : null;
-        return toView(c, fallback != null ? fallback.getName() : null);
+        return toView(c, fallback != null ? fallback.getName() : null,
+                configService.capabilityModelName(c), configService.capabilitiesForModel(c));
     }
 
-    private HashMap<String, Object> toView(AiModelConfig c, String fallbackModelName) {
+    private HashMap<String, Object> toView(AiModelConfig c, String fallbackModelName, String capabilityModelName,
+                                           ProviderCapabilities capabilities) {
         HashMap<String, Object> m = new LinkedHashMap<>();
-        ProviderCapabilities capabilities = configService.capabilitiesForModel(c);
         m.put("id", c.getId());
         m.put("providerId", c.getProviderId());
         m.put("name", c.getName());
@@ -363,7 +362,7 @@ public class AiModelConfigController {
         m.put("headersConfigured", headers != null && !headers.isBlank());
         m.put("capabilityRecognized", capabilities.recognized());
         m.put("capabilitySource", capabilities.source());
-        m.put("capabilityModelName", configService.capabilityModelName(c));
+        m.put("capabilityModelName", capabilityModelName);
         m.put("capabilityContextWindowTokens", capabilities.contextWindowTokens());
         m.put("capabilityMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("effectiveContextWindowTokens", ModelRequestOptions.effectiveInputWindow(c, capabilities));
