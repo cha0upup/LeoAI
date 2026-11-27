@@ -2,12 +2,14 @@ package org.leo.service.sql;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.agent.database.DatabaseConnectionSpec;
 import org.leo.core.agent.database.SqlCommand;
 import org.leo.service.sql.dialect.SqlDialectRegistry;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -16,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentNodeSqlServiceResultBoundaryTest {
@@ -109,30 +112,43 @@ class AgentNodeSqlServiceResultBoundaryTest {
         assertEquals("orders", ((Map<?, ?>) first.get("ref")).get("name"));
     }
 
-    @Test
-    void skipsCountQueryWhenCallerAlreadyHasPaginationTotal() throws Exception {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(booleans = {false, true})
+    void paginationCountsOnlyWhenRequestedAndReusesTheResolvedConnection(Boolean includeTotal) throws Exception {
         AgentNodeSqlService service = new AgentNodeSqlService(new SqlDialectRegistry());
-        AtomicInteger executions = new AtomicInteger();
-        SqlCapable agent = sqlNode((connection, sqlScript) -> {
-            executions.incrementAndGet();
-            return Map.of("code", 200, "rows", List.of(Map.of("id", 1)));
+        List<DatabaseConnectionSpec> executed = new ArrayList<>();
+        SqlCapable agent = sqlNode((spec, command) -> {
+            executed.add(spec);
+            return Map.of("code", 200, "rows", List.of(executed.size() == 1
+                    ? Map.of("id", 1) : Map.of("total", 25)));
         });
+        Map<String, Object> connection = Map.of("dialect", "postgres", "connectionMode", "standard",
+                "host", "localhost", "database", "app", "timeoutSeconds", 30);
 
         Map<String, Object> result = service.queryTable(
                 agent,
-                Map.of("dialect", "postgresql", "connectionMode", "standard",
-                        "host", "localhost", "database", "app"),
+                connection,
                 SqlObjectRef.table(null, "sales", "orders"),
                 2,
                 20,
                 List.of("id"),
                 List.of(),
                 List.of(),
-                false,
-                null);
+                includeTotal,
+                45);
 
-        assertEquals(1, executions.get());
-        assertEquals(false, ((Map<?, ?>) result.get("pagination")).containsKey("total"));
+        boolean countRequested = !Boolean.FALSE.equals(includeTotal);
+        assertEquals(countRequested ? 2 : 1, executed.size());
+        DatabaseConnectionSpec spec = executed.get(0);
+        assertEquals("postgresql", spec.getDialect());
+        assertEquals(45, spec.getTimeoutSeconds());
+        assertEquals(45, spec.runtimeOptions("java").get("queryTimeoutSeconds"));
+        assertEquals(30, connection.get("timeoutSeconds"));
+        assertEquals(List.of(Map.of("id", 1)), result.get("rows"));
+        assertEquals(countRequested ? Map.of("page", 2, "pageSize", 20, "total", 25L)
+                : Map.of("page", 2, "pageSize", 20), result.get("pagination"));
+        if (countRequested) assertSame(spec, executed.get(1));
     }
 
     @Test

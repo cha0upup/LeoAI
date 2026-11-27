@@ -198,9 +198,10 @@ public class AgentNodeSqlService {
         requireTableRef(tableRef);
         int actualPage = page == null || page < 1 ? 1 : page;
         int actualPageSize = pageSize == null || pageSize < 1 ? 20 : Math.min(pageSize, 1000);
-        Map<String, Object> executionConnection = withQueryTimeout(connection, queryTimeoutSeconds);
-        Map<String, Object> rawQuery = executeRaw(agentNode, executionConnection,
-                dialect.buildQueryTableCommand(tableRef, actualPage, actualPageSize, columns, orderBy, filters));
+        Map<String, Object> timedConnection = withQueryTimeout(connection, queryTimeoutSeconds);
+        SqlCommand query = dialect.buildQueryTableCommand(tableRef, actualPage, actualPageSize, columns, orderBy, filters);
+        DatabaseConnectionSpec executionConnection = connectionSpec(timedConnection);
+        Map<String, Object> rawQuery = executeRaw(agentNode, executionConnection, query);
 
         Map<String, Object> data = normalizeQueryResult(rawQuery, "SELECT");
         Map<String, Object> pagination = new LinkedHashMap<String, Object>();
@@ -312,7 +313,13 @@ public class AgentNodeSqlService {
     private Map<String, Object> executeRaw(SqlCapable agentNode,
                                            Map<String, Object> connection,
                                            SqlCommand command) throws Exception {
-        Map<String, Object> result = agentNode.executeSql(connectionSpec(connection), command);
+        return executeRaw(agentNode, connectionSpec(connection), command);
+    }
+
+    private Map<String, Object> executeRaw(SqlCapable agentNode,
+                                           DatabaseConnectionSpec connection,
+                                           SqlCommand command) throws Exception {
+        Map<String, Object> result = agentNode.executeSql(connection, command);
         if (result == null) {
             throw new IllegalStateException("agent 执行结果为空");
         }
