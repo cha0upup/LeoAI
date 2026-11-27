@@ -157,7 +157,11 @@ public class LoginController {
         if (body == null) {
             throw ApiException.badRequest("个人资料不能为空");
         }
-        if (body.accountRevision() != null && body.accountRevision() != verifiedUser.getAccountRevision()) {
+        Long revision = body.accountRevision();
+        if (revision == null || revision < 0) {
+            throw ApiException.badRequest("请先读取个人资料，并在保存时提交有效的 accountRevision");
+        }
+        if (revision != verifiedUser.getAccountRevision()) {
             throw ApiException.conflict("账号信息已变化，请刷新后重试");
         }
 

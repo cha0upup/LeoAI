@@ -232,26 +232,4 @@ class UserControllerTest {
         assertFalse(users.get(0).containsKey("password"));
     }
 
-    @Test
-    void marksAnAdministrativelyResetPasswordForMandatoryChange() {
-        User target = new User();
-        target.setUserId("user-1");
-        target.setUserName("alice");
-        target.setPrivilege(UserService.PRIVILEGE_NORMAL);
-        target.setPasswordChangeRequired(0);
-        when(service.getUserById("user-1")).thenReturn(target);
-        when(service.updateUser(target)).thenReturn(true);
-        User admin = new User();
-        admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
-        request.getSession(true).setAttribute("user", admin);
-        HashMap<String, Object> params = new HashMap<>();
-        params.put("userId", "user-1");
-        params.put("newPassword", "new-password");
-
-        Map<String, Object> response = controller.resetPassword(request, params);
-
-        assertEquals(200, response.get("code"));
-        assertEquals(1, target.getPasswordChangeRequired());
-        verify(service).updateUser(target);
-    }
 }

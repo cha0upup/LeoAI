@@ -186,11 +186,18 @@ class PasswordRoundTripIntegrationTest {
     @Test
     void staleProfileWriteDoesNotUndoAnAccountChange() throws Exception {
         createUser("current-fixture-password", false);
-        String userId = users.getUserByName("member").getUserId();
+        User member = users.getUserByName("member");
+        member.setPasswordChangeRequired(0);
+        assertTrue(users.updateUser(member));
+        String userId = member.getUserId();
         try (SqlSession request = factory.openSession(true)) {
             UserService editor = new UserService(request.getMapper(UserMapper.class));
             User profile = editor.getUserById(userId);
 
+            mvc.perform(body("/platform/admin/users/reset-password",
+                            Map.of("id", userId, "newPassword", "ignored-fixture-password"))
+                            .session(adminSession))
+                    .andExpect(status().isBadRequest());
             mvc.perform(body("/platform/admin/users/reset-password",
                             Map.of("userId", userId, "newPassword", "replacement-fixture-password"))
                             .session(adminSession))
@@ -218,6 +225,8 @@ class PasswordRoundTripIntegrationTest {
         mvc.perform(body(path, Map.of("accountRevision", revision, "remark", "Stale draft"))
                         .session(adminSession))
                 .andExpect(status().isConflict());
+        mvc.perform(body(path, Map.of("remark", "Draft without a revision")).session(adminSession))
+                .andExpect(status().isBadRequest());
 
         User stored = users.getUserById("fixture-admin");
         assertEquals("latest@example.test", stored.getEmail());
@@ -249,12 +258,14 @@ class PasswordRoundTripIntegrationTest {
         assertNotNull(users.recordSuccessfulLogin(verified.getUserId(), verified.getPassword()));
         String path = "/platform/user/profile";
 
-        mvc.perform(body(path, Map.of("email", "invalid-email")).session(adminSession))
+        long revision = verified.getAccountRevision();
+        mvc.perform(body(path, Map.of("email", "invalid-email", "accountRevision", revision)).session(adminSession))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.msg").value("邮箱格式不正确"));
-        mvc.perform(body(path, Map.of("email", "x".repeat(101))).session(adminSession))
+        mvc.perform(body(path, Map.of("email", "x".repeat(101), "accountRevision", revision)).session(adminSession))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.msg").value("邮箱不能超过 100 个字符"));
 
-        mvc.perform(body(path, Map.of("email", " example@example.test ", "phone", " 13800138000 ", "remark", "  "))
+        mvc.perform(body(path, Map.of("email", " example@example.test ", "phone", " 13800138000 ", "remark", "  ",
+                        "accountRevision", revision))
                         .session(adminSession))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.email").value("example@example.test"))

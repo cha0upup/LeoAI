@@ -198,7 +198,8 @@ class LoginControllerTest {
         when(permissionService.requireLogin(request)).thenReturn(verified);
 
         ApiException error = assertThrows(ApiException.class,
-                () -> controller.updateProfile(request, new UpdateProfileRequest(null, null, "notes", null)));
+                () -> controller.updateProfile(request, new UpdateProfileRequest(
+                        null, null, "notes", verified.getAccountRevision())));
 
         assertEquals(409, error.getCode());
         assertNull(verified.getRemark());

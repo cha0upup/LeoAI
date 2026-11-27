@@ -285,7 +285,6 @@ public class UserController {
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
         String userId = getString(params, "userId");
-        if (userId == null) userId = getString(params, "id");
         if (userId == null) return ApiResponse.badRequest("userId不能为空");
 
         String newPassword = getRawString(params, "newPassword");
