@@ -56,10 +56,8 @@ final class SqlExportTask {
         return key;
     }
 
-    synchronized String sessionId() { return String.valueOf(data.get("sessionId")); }
     synchronized String type() { return String.valueOf(data.get("taskType")); }
     synchronized String finalPath() { return String.valueOf(data.get("finalPath")); }
-    synchronized long createdTime() { return toLong(data.get("createdTime")); }
     synchronized int processedTables() { return toInt(data.get("processedTables")); }
     synchronized SqlObjectRef objectRef() { return refValue(data.get("objectRef")); }
     synchronized List<SqlObjectRef> selectedTables() { return refListValue(data.get("tableRefs")); }
@@ -279,6 +277,17 @@ final class SqlExportTask {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         for (String field : SNAPSHOT_FIELDS) snapshot.put(field, copyValue(data.get(field)));
         return snapshot;
+    }
+
+    /** Capture membership and public state together so a concurrent resume cannot mix two versions. */
+    synchronized ListedTask snapshotForSession(String sessionId) {
+        if (!sessionId.equals(String.valueOf(data.get("sessionId")))) {
+            return null;
+        }
+        return new ListedTask(toLong(data.get("createdTime")), snapshot());
+    }
+
+    record ListedTask(long createdTime, Map<String, Object> snapshot) {
     }
 
     private static List<Map<String, Object>> toRefMaps(List<SqlObjectRef> refs) {

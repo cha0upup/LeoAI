@@ -133,18 +133,19 @@ public class SqlExportService {
         if (isBlank(sessionId)) {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
-        List<SqlExportTask> tasks = new ArrayList<>();
+        List<SqlExportTask.ListedTask> tasks = new ArrayList<>();
         for (String taskId : taskRepository.listTaskIds(userId)) {
             try {
                 SqlExportTask task = loadOwnedTask(new SqlExportTaskKey(userId, taskId));
-                if (sessionId.equals(task.sessionId())) tasks.add(task);
+                SqlExportTask.ListedTask row = task.snapshotForSession(sessionId);
+                if (row != null) tasks.add(row);
             } catch (Exception ignored) {
                 // A missing/corrupt or out-of-scope entry must not expose another task.
             }
         }
-        tasks.sort(Comparator.comparingLong(SqlExportTask::createdTime).reversed());
+        tasks.sort(Comparator.comparingLong(SqlExportTask.ListedTask::createdTime).reversed());
         List<Map<String, Object>> snapshots = new ArrayList<>(tasks.size());
-        for (SqlExportTask task : tasks) snapshots.add(task.snapshot());
+        for (SqlExportTask.ListedTask task : tasks) snapshots.add(task.snapshot());
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("sessionId", sessionId);
         result.put("count", Integer.valueOf(tasks.size()));

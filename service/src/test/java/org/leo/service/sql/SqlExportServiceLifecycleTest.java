@@ -120,6 +120,34 @@ class SqlExportServiceLifecycleTest {
         verifyNoInteractions(sql);
     }
 
+    @Test void listingKeepsTheTaskStateCapturedBeforeAConcurrentResume() throws Exception {
+        String id = id(start("table"));
+        service.pause("owner", id);
+        queued.get(0).run();
+        assertEquals("PAUSED", service.progress("owner", id).get("status"));
+
+        var otherKey = new SqlExportTaskKey("owner", "other-task");
+        Path otherOutput = artifacts.reserveOutput("owner", "other.xlsx");
+        SqlExportTask.table(repository, otherKey, "unrelated-session", otherOutput,
+                artifacts.relativePath("owner", otherOutput), SqlObjectRef.table("app", "public", "orders")).persist();
+        doReturn(List.of(id, otherKey.taskId())).when(repository).listTaskIds("owner");
+        doAnswer(call -> {
+            // Simulate a resume after the first task was selected but before the list is assembled.
+            service.resume(node, "owner", "new-session", id, Map.of());
+            return call.callRealMethod();
+        }).doCallRealMethod().when(repository).load(otherKey);
+
+        Map<String, Object> result = service.listBySessionId("owner", "session");
+        assertEquals(1, result.get("count"));
+        var row = (Map<?, ?>) ((List<?>) result.get("tasks")).get(0);
+        assertEquals(id, row.get("taskId"));
+        assertEquals("PAUSED", row.get("status"));
+        assertEquals("PENDING", service.progress("owner", id).get("status"));
+        assertEquals(0, service.listBySessionId("owner", "session").get("count"));
+        assertEquals(1, service.listBySessionId("owner", "new-session").get("count"));
+        verifyNoInteractions(sql);
+    }
+
     @Test void reportsTheReservedFilenameAndNeverOverwritesAnExistingExport() throws Exception {
         var first = start("table");
         Path firstPath = directory.resolve("users/owner").resolve((String) first.get("downloadPath"));

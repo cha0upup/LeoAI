@@ -87,11 +87,11 @@ class SqlExportTaskTest {
         assertEquals(1, resumed.get("processedTables"));
         assertNull(resumed.get("error"));
         assertNull(resumed.get("endTime"));
-        assertEquals("new-session", task.sessionId());
+        assertNotNull(task.snapshotForSession("new-session"));
         var attempt = task.beginAttempt();
         task.running(attempt, 1);
         assertFalse(task.prepareResume("ignored-session"));
-        assertEquals("new-session", task.sessionId());
+        assertNotNull(task.snapshotForSession("new-session"));
     }
 
     @Test
