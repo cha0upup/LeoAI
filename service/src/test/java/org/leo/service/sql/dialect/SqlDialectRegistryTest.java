@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,20 +81,21 @@ class SqlDialectRegistryTest {
     }
 
     @Test
-    void catalogAndCapabilityMapsAreReadOnly() {
+    void reusesAnImmutableCatalogIncludingNestedMetadata() {
         SqlDialectRegistry registry = new SqlDialectRegistry();
         List<Map<String, Object>> catalog = registry.getDialectInfos();
 
-        assertThrows(UnsupportedOperationException.class,
-                () -> catalog.add(Map.of("type", "invented")));
-        assertThrows(UnsupportedOperationException.class,
-                () -> catalog.get(0).put("type", "invented"));
-        assertThrows(UnsupportedOperationException.class,
-                () -> ((List<Map<String, Object>>) catalog.get(0).get("dataTypes"))
-                        .add(Map.of("type", "INVENTED")));
-        assertThrows(UnsupportedOperationException.class,
-                () -> ((List<Map<String, Object>>) catalog.get(0).get("dataTypes"))
-                        .get(0).put("type", "INVENTED"));
-        assertFalse(registry.supports("invented"));
+        assertReadOnly(catalog);
+        assertSame(catalog, registry.getDialectInfos());
+    }
+
+    private static void assertReadOnly(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            assertThrows(UnsupportedOperationException.class, map::clear);
+            map.values().forEach(SqlDialectRegistryTest::assertReadOnly);
+        } else if (value instanceof List<?> list) {
+            assertThrows(UnsupportedOperationException.class, list::clear);
+            list.forEach(SqlDialectRegistryTest::assertReadOnly);
+        }
     }
 }

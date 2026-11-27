@@ -19,6 +19,7 @@ public class SqlDialectRegistry {
     private final Map<String, AbstractSqlDialect> dialects =
             new LinkedHashMap<String, AbstractSqlDialect>();
     private final Map<String, String> aliases = new LinkedHashMap<String, String>();
+    private final List<Map<String, Object>> dialectInfos;
 
     public SqlDialectRegistry() {
         register(new MySqlDialect(), "mariadb");
@@ -29,6 +30,7 @@ public class SqlDialectRegistry {
         register(new KingbaseEsDialect(), "kingbase", "kes");
         register(new SqliteDialect());
         register(new GenericSqlDialect());
+        dialectInfos = buildDialectInfos();
     }
 
     public AbstractSqlDialect require(String type) {
@@ -56,7 +58,11 @@ public class SqlDialectRegistry {
     }
 
     public List<Map<String, Object>> getDialectInfos() {
-        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        return dialectInfos;
+    }
+
+    private List<Map<String, Object>> buildDialectInfos() {
+        List<Map<String, Object>> result = new ArrayList<>(dialects.size());
         for (Map.Entry<String, AbstractSqlDialect> entry : dialects.entrySet()) {
             Map<String, Object> info = new LinkedHashMap<String, Object>(entry.getValue().toInfo());
             info.put("aliases", aliasesFor(entry.getKey()));
