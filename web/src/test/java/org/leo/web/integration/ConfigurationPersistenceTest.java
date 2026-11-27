@@ -23,6 +23,8 @@ import org.leo.web.testing.SqliteTestDatabase;
 import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
+import java.util.Date;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -96,6 +98,35 @@ class ConfigurationPersistenceTest {
         profiles.update("owner", "node", id, Map.of("timeoutSeconds", 60));
         assertEquals(60, connections.selectById(id).getTimeoutSeconds());
         assertEquals(60, profiles.resolveActive("owner", "node", id).getTimeoutSeconds());
+    }
+
+    @Test
+    void profileListingReadsOnlyViewFieldsWhileIdLookupRetainsTheStoredPassword() {
+        assertTrue(agents.insertAgent(agent("node")));
+        var crypto = new DatabaseCredentialCryptoService("profile-fixture-key", "unused");
+        var persistence = new AgentDatabaseConnectionService(connections, crypto);
+        var profiles = new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry());
+        var created = profiles.create("owner", "node", Map.of(
+                "connectionName", "inventory", "timeoutSeconds", 45,
+                "description", "fixture description", "remark", "fixture remark",
+                "connection", Map.of("dialect", "mysql", "connectionMode", "standard", "host", "db.example", "port", 3306,
+                        "database", "inventory", "username", "reader", "password", "fixture-secret")));
+        String id = (String) created.get("connectionId");
+        var stored = connections.selectById(id);
+        assertTrue(crypto.isEncrypted(stored.getPassword()));
+        stored.setLastTestTime(new Date(1_700_000_000_000L));
+        stored.setLastTestMessage("fixture test result");
+        stored.setTestStatus(1);
+        assertEquals(1, connections.update(stored));
+
+        var rows = connections.selectViewFieldsByAgentId("node");
+        assertEquals(1, rows.size());
+        assertNull(rows.get(0).getPassword());
+        assertNull(rows.get(0).getCreateUserId());
+        var expectedView = persistence.toConnectionView(connections.selectById(id));
+        assertEquals(List.of(expectedView), profiles.listByAgent("owner", "node"));
+        assertTrue(profiles.listByAgent("owner", "other-node").isEmpty());
+        assertEquals("fixture-secret", profiles.resolveActive("owner", "node", id).getPassword());
     }
 
     private Agent agent(String id) {

@@ -31,8 +31,10 @@ public class AgentDatabaseConnectionService {
         return mapper.selectById(connectionId);
     }
 
-    public List<AgentDatabaseConnection> findByAgentId(String agentId) {
-        return mapper.selectByAgentId(agentId);
+    List<Map<String, Object>> listViewsByAgentId(String agentId) {
+        return mapper.selectViewFieldsByAgentId(agentId).stream()
+                .map(this::toConnectionView)
+                .toList();
     }
 
     public boolean saveOrUpdate(AgentDatabaseConnection connection) {

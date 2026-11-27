@@ -70,9 +70,7 @@ public final class DatabaseConnectionProfileService {
 
     public List<Map<String, Object>> listByAgent(String userId, String agentId) {
         requireContext(userId, agentId);
-        return connectionService.findByAgentId(agentId).stream()
-                .map(connectionService::toConnectionView)
-                .toList();
+        return connectionService.listViewsByAgentId(agentId);
     }
 
     public void delete(String userId, String agentId, String connectionId) {

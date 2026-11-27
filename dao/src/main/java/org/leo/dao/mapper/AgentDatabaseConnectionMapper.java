@@ -40,8 +40,14 @@ public interface AgentDatabaseConnectionMapper {
     @Select("SELECT * FROM agent_database_connections WHERE connection_id=#{connectionId}")
     AgentDatabaseConnection selectById(@Param("connectionId") String connectionId);
 
-    @Select("SELECT * FROM agent_database_connections WHERE agent_id=#{agentId} ORDER BY create_time DESC")
-    List<AgentDatabaseConnection> selectByAgentId(@Param("agentId") String agentId);
+    @Select("""
+            SELECT connection_id, connection_name, agent_id, dialect, connection_spec, username,
+                   status, test_status, last_test_time, last_test_message, timeout_seconds, description, remark
+            FROM agent_database_connections
+            WHERE agent_id = #{agentId}
+            ORDER BY create_time DESC
+            """)
+    List<AgentDatabaseConnection> selectViewFieldsByAgentId(@Param("agentId") String agentId);
 
     @Select("<script>SELECT COUNT(*) > 0 FROM agent_database_connections "
             + "WHERE agent_id=#{agentId} AND connection_name=#{connectionName} " +
