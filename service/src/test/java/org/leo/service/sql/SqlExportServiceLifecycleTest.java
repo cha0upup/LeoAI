@@ -12,13 +12,19 @@ import org.leo.core.agent.capability.SqlCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.mockito.stubbing.Answer;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -206,6 +212,66 @@ class SqlExportServiceLifecycleTest {
         queued.get(0).run();
         assertEquals("PENDING", service.progress("owner", id).get("status"));
         verifyNoInteractions(sql);
+    }
+
+    @Test void resumingAnExpiredFailureWhileItIsEvictedStillRunsTheExport() throws Exception {
+        var key = new SqlExportTaskKey("owner", "expired-task");
+        var table = SqlObjectRef.table("app", "public", "orders");
+        Path output = artifacts.reserveOutput(key.userId(), "orders.xlsx");
+        SqlExportTask.table(repository, key, "session", output,
+                artifacts.relativePath(key.userId(), output), table).persist();
+        var failed = repository.load(key);
+        failed.put("status", "FAILED");
+        failed.put("endTime", System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1));
+        repository.save(key, failed);
+        when(sql.getTableColumns(any(), anyMap(), any())).thenReturn(Map.of("columns", List.of(Map.of("name", "id"))));
+        when(sql.queryTable(any(), anyMap(), any(), anyInt(), anyInt(), anyList(), anyList(), anyList(), anyBoolean(), isNull()))
+                .thenReturn(Map.of("rows", List.of(Map.of("id", 7)), "pagination", Map.of("total", 1)));
+
+        var beforeRemoval = new CountDownLatch(1);
+        var releaseRemoval = new CountDownLatch(1);
+        ReflectionTestUtils.setField(service, "liveTasks", new ConcurrentHashMap<SqlExportTaskKey, SqlExportTask>() {
+            @Override public boolean remove(Object key, Object value) {
+                beforeRemoval.countDown();
+                try {
+                    assertTrue(releaseRemoval.await(10, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return super.remove(key, value);
+            }
+        });
+        assertEquals("FAILED", service.pause(key.userId(), key.taskId()).get("status"));
+
+        var eviction = new FutureTask<>(service::evictFinished);
+        var resume = new FutureTask<>(() -> service.resume(node, key.userId(), "new-session", key.taskId(), Map.of()));
+        var cleaner = new Thread(eviction, "sql-export-eviction-test");
+        var resumer = new Thread(resume, "sql-export-resume-test");
+        cleaner.start();
+        try {
+            assertTrue(beforeRemoval.await(5, TimeUnit.SECONDS));
+            resumer.start();
+            var threads = ManagementFactory.getThreadMXBean();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            // On the old path resume finishes before removal; on the fixed path it waits for eviction.
+            while (!resume.isDone()) {
+                var info = threads.getThreadInfo(resumer.getId());
+                if (info != null && info.getLockOwnerId() == cleaner.getId()) break;
+                assertTrue(System.nanoTime() - deadline < 0, "resume did not reach task eviction");
+                Thread.sleep(1);
+            }
+        } finally {
+            releaseRemoval.countDown();
+        }
+
+        assertEquals(1, eviction.get(5, TimeUnit.SECONDS));
+        assertEquals("PENDING", resume.get(5, TimeUnit.SECONDS).get("status"));
+        assertEquals(1, queued.size());
+        queued.get(0).run();
+        var saved = repository.load(key);
+        assertEquals("COMPLETED", saved.get("status"));
+        assertEquals("new-session", saved.get("sessionId"));
     }
 
     @Test void supersededRunningCallbacksAndRetirementKeepTheReplacementAttemptIntact() throws Exception {

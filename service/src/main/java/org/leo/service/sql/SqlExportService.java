@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 
 import static org.leo.service.sql.SqlExportTask.exportObjectName;
 import static org.leo.service.sql.SqlExportTask.refValue;
@@ -62,9 +63,7 @@ public class SqlExportService {
 
         SqlExportTask task = SqlExportTask.table(taskRepository, key, sessionId,
                 finalPath, artifacts.relativePath(key.userId(), finalPath), tableRef);
-        scheduleTask(task, agentNode, connection);
-
-        return task.snapshot();
+        return startTask(task, agentNode, connection);
     }
 
     public Map<String, Object> startDatabaseExport(SqlCapable agentNode,
@@ -97,9 +96,7 @@ public class SqlExportService {
         SqlExportTask task = SqlExportTask.database(taskRepository, key, sessionId,
                 finalPath, artifacts.relativePath(key.userId(), finalPath), namespaceRef, tableRefs,
                 exportStructure, exportData);
-        scheduleTask(task, agentNode, connection);
-
-        return task.snapshot();
+        return startTask(task, agentNode, connection);
     }
 
     public Map<String, Object> progress(String userId, String taskId) throws Exception {
@@ -107,23 +104,19 @@ public class SqlExportService {
     }
 
     public Map<String, Object> pause(String userId, String taskId) throws Exception {
-        SqlExportTask task = requireTask(userId, taskId);
-        task.pause();
-        return task.snapshot();
+        return updateTask(userId, taskId, SqlExportTask::pause);
     }
 
     public Map<String, Object> stop(String userId, String taskId) throws Exception {
-        SqlExportTask task = requireTask(userId, taskId);
-        task.cancel();
-        return task.snapshot();
+        return updateTask(userId, taskId, SqlExportTask::cancel);
     }
 
     public Map<String, Object> resume(SqlCapable agentNode,
                                       String userId, String sessionId, String taskId,
                                       Map<String, Object> connection) throws Exception {
-        SqlExportTask task = requireTask(userId, taskId);
-        if (task.prepareResume(sessionId)) scheduleTask(task, agentNode, connection);
-        return task.snapshot();
+        return updateTask(userId, taskId, task -> {
+            if (task.prepareResume(sessionId)) scheduleTask(task, agentNode, connection);
+        });
     }
 
     public Map<String, Object> listBySessionId(String userId, String sessionId) throws Exception {
@@ -153,10 +146,17 @@ public class SqlExportService {
         return result;
     }
 
+    private Map<String, Object> startTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection) {
+        synchronized (task) {
+            liveTasks.put(task.key(), task);
+            scheduleTask(task, agentNode, connection);
+        }
+        return task.snapshot();
+    }
+
+    /** Called with the registered task locked, so its transition and scheduling stay together. */
     private void scheduleTask(SqlExportTask task, SqlCapable agentNode, Map<String, Object> connection) {
         task.persist();
-        SqlExportTask previous = liveTasks.put(task.key(), task);
-        if (previous != null && previous != task) previous.signalCancellation();
         SqlExportTask.Attempt attempt = task.beginAttempt();
         try {
             taskExecutor.submitSqlExport(() -> runTask(task, agentNode, connection, attempt));
@@ -191,10 +191,12 @@ public class SqlExportService {
         int evicted = 0;
         for (Map.Entry<SqlExportTaskKey, SqlExportTask> entry : liveTasks.entrySet()) {
             SqlExportTask task = entry.getValue();
-            if (task.isExpired(now, FINISHED_TASK_RETAIN_MILLIS)
-                    && liveTasks.remove(entry.getKey(), task)) {
-                task.clearAttempt();
-                evicted++;
+            synchronized (task) {
+                if (task.isExpired(now, FINISHED_TASK_RETAIN_MILLIS)
+                        && liveTasks.remove(entry.getKey(), task)) {
+                    task.clearAttempt();
+                    evicted++;
+                }
             }
         }
         return evicted;
@@ -330,11 +332,22 @@ public class SqlExportService {
                 + "\u0000" + Objects.toString(ref.name(), "");
     }
 
-    private SqlExportTask requireTask(String userId, String taskId) throws Exception {
+    private Map<String, Object> updateTask(String userId, String taskId, Consumer<SqlExportTask> action) throws Exception {
         SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
-        SqlExportTask task = loadOwnedTask(key);
-        SqlExportTask previous = liveTasks.putIfAbsent(key, task);
-        return previous == null ? task : previous;
+        while (true) {
+            SqlExportTask task = liveTasks.get(key);
+            if (task == null) {
+                SqlExportTask restored = SqlExportTask.restore(taskRepository, key);
+                SqlExportTask existing = liveTasks.putIfAbsent(key, restored);
+                task = existing == null ? restored : existing;
+            }
+            synchronized (task) {
+                // Eviction may have removed this instance while we were waiting for its lock.
+                if (liveTasks.get(key) != task) continue;
+                action.accept(task);
+            }
+            return task.snapshot();
+        }
     }
 
     private SqlExportTask loadOwnedTask(SqlExportTaskKey key) throws Exception {
