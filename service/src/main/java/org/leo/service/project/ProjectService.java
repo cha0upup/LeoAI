@@ -1,7 +1,8 @@
 package org.leo.service.project;
 
-import org.leo.core.entity.Project;
 import org.leo.core.entity.Agent;
+import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.json.JsonUtil;
@@ -51,12 +52,12 @@ public class ProjectService {
         return projectMapper.findProjectById(projectId.trim());
     }
 
-    public List<Project> listVisible(User user) {
+    public List<ProjectListItem> listVisible(User user) {
         if (user == null) return List.of();
-        List<Project> projects = projectMapper.findVisibleProjectCandidates(user.getUserId(),
+        List<ProjectListItem> projects = projectMapper.findVisibleProjectCandidates(user.getUserId(),
                 visibilityTeamId(user), AccessPolicy.isAdmin(user));
         if (projects == null) return List.of();
-        return projects.stream().filter(project -> canView(project, user)).toList();
+        return projects.stream().filter(row -> canView(row.project(), user)).toList();
     }
 
     private static String visibilityTeamId(User user) {
@@ -213,15 +214,6 @@ public class ProjectService {
             currentId = current.getParentAgentId();
         }
         return false;
-    }
-
-    public Map<String, Integer> countAgentsByProject(Collection<String> projectIds) {
-        if (projectIds == null || projectIds.isEmpty()) return Map.of();
-        Map<String, Integer> counts = new HashMap<>();
-        for (var count : projectMapper.countAgentsByProject(JsonUtil.toJsonString(projectIds))) {
-            counts.put(count.projectId(), count.agentCount());
-        }
-        return counts;
     }
 
     public List<Agent> listRootAgents(String projectId) {

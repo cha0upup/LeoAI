@@ -11,8 +11,9 @@ import org.apache.ibatis.annotations.Result;
 import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
-import org.leo.core.entity.Project;
 import org.leo.core.entity.Agent;
+import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectListItem;
 
 import java.util.List;
 
@@ -28,16 +29,22 @@ public interface ProjectMapper {
 
     @Select("""
             <script>
-            SELECT p.* FROM projects p
+            SELECT p.*, (SELECT COUNT(*) FROM project_agents pa WHERE pa.project_id = p.project_id) AS host_count
+            FROM projects p
             <where>
             """ + VISIBLE_PROJECT_FILTER + """
             </where>
             ORDER BY p.status ASC, p.update_time DESC, p.project_name COLLATE NOCASE ASC
             </script>
             """)
-    List<Project> findVisibleProjectCandidates(@Param("userId") String userId,
-                                                @Param("teamId") String teamId,
-                                                @Param("admin") boolean admin);
+    @ConstructorArgs({
+            @Arg(column = "project_id", javaType = String.class, id = true),
+            @Arg(column = "host_count", javaType = int.class),
+            @Arg(javaType = Project.class, resultMap = "projectRow")
+    })
+    List<ProjectListItem> findVisibleProjectCandidates(@Param("userId") String userId,
+                                                        @Param("teamId") String teamId,
+                                                        @Param("admin") boolean admin);
 
     @Select("SELECT * FROM projects WHERE project_id = #{projectId}")
     @Results(id = "projectRow", value = @Result(column = "project_id", property = "projectId", id = true))
@@ -110,20 +117,6 @@ public interface ProjectMapper {
             """)
     int detachAgents(@Param("projectId") String projectId,
                      @Param("agentIdsJson") String agentIdsJson);
-
-    @Select("""
-            SELECT project_id, COUNT(*) AS agent_count
-            FROM project_agents
-            WHERE project_id IN (SELECT value FROM json_each(#{projectIdsJson}))
-            GROUP BY project_id
-            """)
-    @ConstructorArgs({
-            @Arg(column = "project_id", javaType = String.class),
-            @Arg(column = "agent_count", javaType = int.class)
-    })
-    List<ProjectAgentCount> countAgentsByProject(@Param("projectIdsJson") String projectIdsJson);
-
-    record ProjectAgentCount(String projectId, int agentCount) {}
 
     @Select("SELECT EXISTS (SELECT 1 FROM project_agents WHERE project_id=#{projectId} AND agent_id=#{agentId})")
     boolean existsAgentRelation(@Param("projectId") String projectId, @Param("agentId") String agentId);

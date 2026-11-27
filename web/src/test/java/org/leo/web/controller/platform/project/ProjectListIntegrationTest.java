@@ -18,6 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
@@ -327,7 +328,7 @@ class ProjectListIntegrationTest {
     }
 
     @Test
-    void preservesVisibilityHostTotalsOrderingAndOwnerOnlySessionsWithTwoQueries() throws Exception {
+    void listsVisibleProjectsWithHostAndSessionTotalsInOneProjectQuery() throws Exception {
         project("owned", "user-1", "private", "active", "zebra");
         project("team", "user-2", "team", "active", "Alpha");
         project("hidden", "user-2", "private", "active", "Hidden");
@@ -353,7 +354,7 @@ class ProjectListIntegrationTest {
         assertEquals(List.of(1, 1, 0), result.stream().map(ProjectSummary::activeSessionCount).toList());
         assertEquals(List.of(false, true, false), result.stream().map(ProjectSummary::manageable).toList());
         assertEquals(List.of(true, true, false), result.stream().map(ProjectSummary::contentEditable).toList());
-        assertTwoProjectQueries();
+        assertProjectListQuery();
         verify(users).getUserById("user-1");
     }
 
@@ -379,21 +380,9 @@ class ProjectListIntegrationTest {
 
         List<String> expected = List.of(expectedIds.split("/"));
         assertEquals(expected, mapper.findVisibleProjectCandidates(userId, teamId, admin).stream()
-                .map(Project::getProjectId).toList());
+                .map(ProjectListItem::projectId).toList());
         assertEquals(expected, mapper.findVisibleMembershipsByEntryAgentIds("[\"selected\"]", userId, teamId, admin).stream()
                 .map(ProjectMapper.MembershipRow::projectId).toList());
-    }
-
-    @Test
-    void countsOnlyRequestedProjectsEvenWhenOtherProjectsHaveHosts() {
-        project("visible", "user-1", "private", "active", "Visible");
-        project("hidden", "user-2", "private", "active", "Hidden");
-        host("shared");
-        attach("visible", "shared");
-        attach("hidden", "shared");
-
-        assertEquals(Map.of("visible", 1), projectService.countAgentsByProject(List.of("visible")));
-        assertEquals(1, queries.sql.size());
     }
 
     @Test
@@ -411,7 +400,7 @@ class ProjectListIntegrationTest {
         assertEquals(3, result.get(0).activeSessionCount());
         assertTrue(result.get(0).manageable());
         assertTrue(result.get(0).contentEditable());
-        assertTwoProjectQueries();
+        assertProjectListQuery();
     }
 
     @Test
@@ -545,12 +534,11 @@ class ProjectListIntegrationTest {
         project("hidden", "user-2", "private", "active", "Hidden");
 
         assertEquals(List.of(), listAs("normal"));
-        assertEquals(1, queries.sql.size());
-        assertTrue(queries.sql.get(0).contains("FROM projects"));
+        assertProjectListQuery();
     }
 
     @Test
-    void groupedCountsDoNotTruncateLargeProjectListsOrRequirePerProjectBindParameters() throws Exception {
+    void largeListsKeepEveryProjectAndItsHostCountInOneQuery() throws Exception {
         host("shared");
         for (int index = 0; index < 600; index++) {
             String id = "project-" + index;
@@ -562,7 +550,7 @@ class ProjectListIntegrationTest {
 
         assertEquals(600, result.size());
         assertTrue(result.stream().allMatch(item -> item.hostCount() == 1));
-        assertTwoProjectQueries();
+        assertProjectListQuery();
     }
 
     private List<ProjectSummary> listAs(String privilege) throws Exception {
@@ -595,10 +583,10 @@ class ProjectListIntegrationTest {
         return request;
     }
 
-    private void assertTwoProjectQueries() {
-        assertEquals(2, queries.sql.size(), queries.sql.toString());
+    private void assertProjectListQuery() {
+        assertEquals(1, queries.sql.size(), queries.sql.toString());
         assertTrue(queries.sql.get(0).contains("FROM projects"));
-        assertTrue(queries.sql.get(1).contains("GROUP BY project_id"));
+        assertTrue(queries.sql.get(0).contains("FROM project_agents"));
     }
 
     private void project(String id, String owner, String permission, String status, String name) {

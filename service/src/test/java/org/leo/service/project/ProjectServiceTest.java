@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.ProjectMapper;
@@ -95,9 +96,11 @@ class ProjectServiceTest {
         owned.setOwnerUserId("user-1");
         Project hidden = projectWithId("hidden");
         hidden.setOwnerUserId("other-user");
-        when(mapper.findVisibleProjectCandidates("user-1", "team-1", false)).thenReturn(List.of(hidden, owned));
+        var visibleRow = new ProjectListItem("owned", 2, owned);
+        when(mapper.findVisibleProjectCandidates("user-1", "team-1", false))
+                .thenReturn(List.of(new ProjectListItem("hidden", 3, hidden), visibleRow));
 
-        assertEquals(List.of(owned), service.listVisible(actor("normal")));
+        assertEquals(List.of(visibleRow), service.listVisible(actor("normal")));
     }
 
     @Test

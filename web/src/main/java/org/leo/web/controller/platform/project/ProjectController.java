@@ -3,6 +3,7 @@ package org.leo.web.controller.platform.project;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.Project;
+import org.leo.core.entity.ProjectListItem;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.ApiResponse;
@@ -27,11 +28,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/platform/projects")
@@ -53,19 +55,19 @@ public class ProjectController {
     @GetMapping
     public Map<String, Object> listProjects(HttpServletRequest request) {
         User user = permissionService.requireLogin(request);
-        List<Project> visibleProjects = projectService.listVisible(user);
+        List<ProjectListItem> visibleProjects = projectService.listVisible(user);
         if (visibleProjects.isEmpty()) return ApiResponse.success(List.of());
-        Set<String> visibleProjectIds = visibleProjects.stream().map(Project::getProjectId).collect(Collectors.toSet());
-        Map<String, Integer> hostCounts = projectService.countAgentsByProject(visibleProjectIds);
+        Set<String> visibleProjectIds = new HashSet<>();
+        for (ProjectListItem row : visibleProjects) {
+            visibleProjectIds.add(row.projectId());
+        }
         Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user, visibleProjectIds);
-        List<ProjectSummary> projects = visibleProjects.stream()
-                .map(project -> new ProjectSummary(
-                        project,
-                        hostCounts.getOrDefault(project.getProjectId(), 0),
-                        sessionCounts.getOrDefault(project.getProjectId(), 0),
-                        projectService.canManage(project, user),
-                        projectService.canEditContent(project, user)))
-                .toList();
+        List<ProjectSummary> projects = new ArrayList<>(visibleProjects.size());
+        for (ProjectListItem row : visibleProjects) {
+            Project project = row.project();
+            projects.add(new ProjectSummary(project, row.hostCount(), sessionCounts.getOrDefault(row.projectId(), 0),
+                    projectService.canManage(project, user), projectService.canEditContent(project, user)));
+        }
         return ApiResponse.success(projects);
     }
 

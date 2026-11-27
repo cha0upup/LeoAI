@@ -126,7 +126,7 @@ public class UserService {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
-        return userMapper.recordSuccessfulLogin(userId.trim(), verifiedPasswordHash, now());
+        return normalize(userMapper.recordSuccessfulLogin(userId.trim(), verifiedPasswordHash, now()));
     }
 
     // ── 权限校验 ─────────────────────────────────────────────────────────────────
