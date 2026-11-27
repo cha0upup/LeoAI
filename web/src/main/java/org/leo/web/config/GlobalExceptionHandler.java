@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
@@ -134,6 +135,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<HashMap<String, Object>> handleInvalidJson(HttpMessageNotReadableException error) {
         return ResponseEntity.badRequest().body(ApiResponse.badRequest("请求 JSON 格式不正确"));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<HashMap<String, Object>> handleUnsupportedMethod(HttpRequestMethodNotSupportedException error) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).headers(error.getHeaders())
+                .body(ApiResponse.error(HttpStatus.METHOD_NOT_ALLOWED.value(), "接口不支持当前请求方法"));
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)

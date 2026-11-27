@@ -69,15 +69,6 @@ public class AiModelConfigController {
         return ApiResponse.success(view);
     }
 
-    @RequestMapping(value = "/{id}", method = RequestMethod.GET)
-    public HashMap<String, Object> get(@PathVariable("id") Integer id) {
-        AiModelConfig row = configService.findById(id);
-        if (row == null) {
-            return ApiResponse.notFound("模型配置不存在，id: " + id);
-        }
-        return ApiResponse.success(toView(row));
-    }
-
     @RequestMapping(method = RequestMethod.POST)
     public HashMap<String, Object> create(@RequestBody AiModelConfig body) {
         try {
@@ -367,7 +358,6 @@ public class AiModelConfigController {
         m.put("temperature", c.getTemperature());
         String headers = c.getHeadersJson();
         m.put("headersConfigured", headers != null && !headers.isBlank());
-        m.put("capabilityStatus", capabilities.status());
         m.put("capabilityRecognized", capabilities.recognized());
         m.put("capabilitySource", capabilities.source());
         m.put("capabilityModelName", configService.capabilityModelName(c));
@@ -383,7 +373,6 @@ public class AiModelConfigController {
         m.put("supportsWebSearch", capabilities.supportsWebSearch());
         m.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
         m.put("requestOptions", ModelRequestOptions.forConfiguration(c, capabilities));
-        m.put("defaultMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("createTime", c.getCreateTime());
         m.put("updateTime", c.getUpdateTime());
         m.put("remark", c.getRemark());

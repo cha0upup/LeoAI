@@ -14,12 +14,15 @@ import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.web.config.ApiResponseStatusAdvice;
+import org.leo.web.config.GlobalExceptionHandler;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
@@ -108,11 +111,12 @@ class AiModelConfigControllerTest {
 
     @ParameterizedTest
     @CsvSource(value = {"null,null", "8,Fallback", "99,null"}, nullValues = "null")
-    void listUsesItsSnapshotForFallbackNamesAndMatchesTheSingleModelView(Integer fallbackId, String fallbackName) {
+    void listUsesItsSnapshotForFallbackNames(Integer fallbackId, String fallbackName) {
         AiModelConfig primary = model(7, "Primary");
         AiModelConfig fallback = model(8, "Fallback");
         primary.setFallbackModelId(fallbackId);
         when(configs.listAll()).thenReturn(List.of(primary, fallback));
+        when(configs.capabilityModelName(primary)).thenReturn("resolved-model");
         when(configs.capabilitiesForModel(any(AiModelConfig.class)))
                 .thenReturn(ProviderCapabilities.conservativeDefault());
 
@@ -123,12 +127,21 @@ class AiModelConfigControllerTest {
         Map<?, ?> primaryView = (Map<?, ?>) views.get(0);
         assertEquals(fallbackId, primaryView.get("fallbackModelId"));
         assertEquals(fallbackName, primaryView.get("fallbackModelName"));
+        assertEquals("resolved-model", primaryView.get("capabilityModelName"));
         verify(configs, never()).findById(any());
-
-        when(configs.findById(7)).thenReturn(primary);
-        if (fallbackId != null) when(configs.findById(fallbackId)).thenReturn(fallbackId == 8 ? fallback : null);
-        assertEquals(primaryView, controller.get(7).get("data"));
         verifyNoInteractions(runtime);
+    }
+
+    @Test
+    void removedDetailGetReturnsMethodNotAllowedAndPreservesAllowedMethods() throws Exception {
+        MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler(), new ApiResponseStatusAdvice()).build()
+                .perform(get("/platform/admin/ai-models/7"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value(405))
+                .andExpect(result -> assertEquals(Set.of("PUT", "DELETE"),
+                        Set.of(result.getResponse().getHeader(HttpHeaders.ALLOW).split(",\\s*"))));
+        verifyNoInteractions(configs, runtime);
     }
 
     @ParameterizedTest
