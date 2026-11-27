@@ -1,6 +1,5 @@
 package org.leo.web.dto.platform.ai;
 
-import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.web.dto.ai.AiFileAttachment;
 
 import java.util.List;
@@ -38,11 +37,5 @@ public final class PlatformAiDtos {
     }
 
     public record MessagesRequest(String threadId, Integer offset, Integer limit, Long beforeSequence) {
-    }
-
-    public record AuditLogsRequest(Integer limit) {
-    }
-
-    public record AuditLogsResponse(int total, int returned, List<AiChatAuditEntry> logs) {
     }
 }

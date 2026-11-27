@@ -3,52 +3,53 @@ package org.leo.ai.audit;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
-import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * AI 对话审计日志内存存储。
  *
- * <p>采用固定容量的环形缓冲：超过 {@link #MAX_ENTRIES} 时自动丢弃最旧的记录。
- * 线程安全，适合高并发写入场景。
+ * <p>保留最近的 {@link #MAX_ENTRIES} 条记录。新增、读取和清空共享同一把锁。
  */
 @Component
 public class AiAuditLogStore {
 
     private static final int MAX_ENTRIES = 2000;
 
-    private final Deque<AiChatAuditEntry> deque = new ConcurrentLinkedDeque<>();
+    private final Deque<AiChatAuditEntry> entries = new ArrayDeque<>();
 
     /** 写入一条审计记录（超容时丢弃最旧记录）。 */
-    public void append(AiChatAuditEntry entry) {
+    public synchronized void append(AiChatAuditEntry entry) {
         if (entry == null) return;
-        deque.addFirst(entry);
-        while (deque.size() > MAX_ENTRIES) {
-            deque.pollLast();
+        if (entries.size() == MAX_ENTRIES) {
+            entries.removeLast();
         }
+        entries.addFirst(entry);
     }
 
     /**
-     * 查询最近 N 条记录（最新在前）。
+     * 一次读取总数和最近 N 条记录（最新在前）。
      *
      * @param limit 最多返回条数，0 或负数表示返回全部
      */
-    public List<AiChatAuditEntry> recent(int limit) {
-        List<AiChatAuditEntry> result = new ArrayList<>(deque);
-        if (limit > 0 && result.size() > limit) {
-            return result.subList(0, limit);
+    public synchronized Snapshot snapshot(int limit) {
+        int total = entries.size();
+        int count = limit > 0 ? Math.min(total, limit) : total;
+        List<AiChatAuditEntry> result = new ArrayList<>(count);
+        for (AiChatAuditEntry entry : entries) {
+            if (result.size() == count) break;
+            result.add(entry);
         }
-        return result;
+        return new Snapshot(total, List.copyOf(result));
     }
 
     /** 清空所有记录。 */
-    public void clear() {
-        deque.clear();
+    public synchronized void clear() {
+        entries.clear();
     }
 
-    public int size() {
-        return deque.size();
+    public record Snapshot(int total, List<AiChatAuditEntry> logs) {
     }
 }
