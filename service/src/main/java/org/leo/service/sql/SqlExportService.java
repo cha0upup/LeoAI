@@ -100,7 +100,9 @@ public class SqlExportService {
     }
 
     public Map<String, Object> progress(String userId, String taskId) throws Exception {
-        return loadOwnedTask(new SqlExportTaskKey(userId, taskId)).snapshot();
+        SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
+        SqlExportTask live = liveTasks.get(key);
+        return live == null ? SqlExportTask.snapshot(loadOwnedMetadata(key)) : live.snapshot();
     }
 
     public Map<String, Object> pause(String userId, String taskId) throws Exception {
@@ -129,8 +131,11 @@ public class SqlExportService {
         List<SqlExportTask.ListedTask> tasks = new ArrayList<>();
         for (String taskId : taskRepository.listTaskIds(userId)) {
             try {
-                SqlExportTask task = loadOwnedTask(new SqlExportTaskKey(userId, taskId));
-                SqlExportTask.ListedTask row = task.snapshotForSession(sessionId);
+                SqlExportTaskKey key = new SqlExportTaskKey(userId, taskId);
+                SqlExportTask live = liveTasks.get(key);
+                SqlExportTask.ListedTask row = live == null
+                        ? SqlExportTask.snapshotForSession(loadOwnedMetadata(key), sessionId)
+                        : live.snapshotForSession(sessionId);
                 if (row != null) tasks.add(row);
             } catch (Exception ignored) {
                 // A missing/corrupt or out-of-scope entry must not expose another task.
@@ -350,9 +355,8 @@ public class SqlExportService {
         }
     }
 
-    private SqlExportTask loadOwnedTask(SqlExportTaskKey key) throws Exception {
-        SqlExportTask live = liveTasks.get(key);
-        return live == null ? SqlExportTask.restore(taskRepository, key) : live;
+    private Map<String, Object> loadOwnedMetadata(SqlExportTaskKey key) throws Exception {
+        return key.requireOwner(taskRepository.load(key));
     }
 
     private static SqlExportTaskKey newTaskKey(String userId) {

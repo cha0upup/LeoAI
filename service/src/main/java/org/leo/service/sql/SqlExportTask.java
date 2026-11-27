@@ -297,6 +297,10 @@ final class SqlExportTask {
     }
 
     synchronized Map<String, Object> snapshot() {
+        return snapshot(data);
+    }
+
+    static Map<String, Object> snapshot(Map<String, Object> data) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         for (String field : SNAPSHOT_FIELDS) snapshot.put(field, copyValue(data.get(field)));
         return snapshot;
@@ -304,10 +308,14 @@ final class SqlExportTask {
 
     /** Capture membership and public state together so a concurrent resume cannot mix two versions. */
     synchronized ListedTask snapshotForSession(String sessionId) {
+        return snapshotForSession(data, sessionId);
+    }
+
+    static ListedTask snapshotForSession(Map<String, Object> data, String sessionId) {
         if (!sessionId.equals(String.valueOf(data.get("sessionId")))) {
             return null;
         }
-        return new ListedTask(toLong(data.get("createdTime")), snapshot());
+        return new ListedTask(toLong(data.get("createdTime")), snapshot(data));
     }
 
     record ListedTask(long createdTime, Map<String, Object> snapshot) {

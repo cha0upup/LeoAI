@@ -99,14 +99,27 @@ class SqlExportServiceLifecycleTest {
         } finally { restored.close(); }
     }
 
-    @Test void freshServicesCanReadAndControlOwnedPersistedTasks() throws Exception {
-        String id = id(start("table"));
+    @Test
+    @SuppressWarnings("unchecked")
+    void freshServicesCanReadAndControlOwnedPersistedTasks() throws Exception {
+        var original = start("database");
+        String id = id(original);
+        var key = new SqlExportTaskKey("owner", id);
+        // Reuse one persisted snapshot to distinguish copied response fields from shared metadata.
+        var stored = repository.load(key);
+        doReturn(stored, stored).doCallRealMethod().when(repository).load(key);
         SqlExportService restored = newService();
         try {
-            assertEquals("PENDING", restored.progress("owner", id).get("status"));
+            var progress = restored.progress("owner", id);
+            assertEquals(original, progress);
+            var listed = restored.listBySessionId("owner", "session");
+            assertEquals(List.of(original), listed.get("tasks"));
+            ((Map<String, Object>) ((List<?>) progress.get("tableRefs")).get(0)).put("name", "changed");
+            assertEquals(List.of(original), listed.get("tasks"));
+            assertEquals(original.get("tableRefs"), stored.get("tableRefs"));
             assertEquals("CANCELLED", restored.stop("owner", id).get("status"));
             assertEquals("CANCELLED", restored.progress("owner", id).get("status"));
-            assertEquals("CANCELLED", repository.load(new SqlExportTaskKey("owner", id)).get("status"));
+            assertEquals("CANCELLED", repository.load(key).get("status"));
             verifyNoInteractions(sql);
         } finally { restored.close(); }
     }
