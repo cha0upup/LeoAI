@@ -1,8 +1,12 @@
-[中文](README.md) | **English**
+**English** | [中文](README.md)
 
-<img src="web/src/main/resources/static/leo-logo.png" alt="LeoAI logo" width="120" />
+<div align="center">
+
+<img src="web/src/main/resources/static/leo-logo.png" alt="LeoAI Logo" width="120" />
 
 # LeoAI
+
+**AI-Powered Post-Exploitation Management Platform**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
@@ -10,16 +14,25 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.23.0-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI is a web workspace for host management, project collaboration, and team administration.
+LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v3.0.1 introduces equal Java and PHP Agent runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
 
-<img src="docs/images/screenshot-dashboard.png" alt="LeoAI dashboard" width="800" />
+<img src="docs/images/screenshot-dashboard.png" alt="Dashboard Screenshot" width="800" />
 
-*Dashboard: browse hosts, active sessions, and host details in one place.*
+*Main interface: node list, detail panel, and traffic disguise strategy configuration*
+
+</div>
+
+> **Node naming**: execution nodes use Agent / AgentNode; AI interfaces use NodeAiAgent / PlatformAiAgent.
+>
+> **Development baseline**: this version is not officially released. Only the current `schema.sql` is maintained; no old-database migrations are bundled. Use a fresh database path or data directory after schema changes. Startup does not delete existing databases or VFS files.
+
+---
 
 ## Table of Contents
 
-- [Main features](#main-features)
-- [Interface preview](#interface-preview)
+- [v3.0.1 Highlights](#v301-highlights)
+- [Java/PHP Dual Runtime](#javaphp-dual-runtime)
+- [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
@@ -29,13 +42,173 @@ LeoAI is a web workspace for host management, project collaboration, and team ad
 - [Node and session terminology (Chinese)](docs/agent-terminology.md)
 - [FAQ](#faq)
 - [Security Recommendations](#security-recommendations)
+- [Disclaimer](#disclaimer)
 - [License](#license)
 
-## Main features
+---
 
-- **Hosts and projects:** Organize hosts by project, view existing sessions, and manage project details and archive status.
-- **AI assistant:** Start tasks and view their progress and results. Configure a model under **Admin Console → AI Model Integration** before use.
-- **Team administration:** Manage users, teams, and permissions, and review audit logs in the Admin Console.
+## v3.0.1 Highlights
+
+The current v3.0.1 development baseline spans runtimes, components, platform services, the web console, and deployment. It unifies Agent terminology and maintains only the current database structure.
+
+| Area | What changed in v3.0.1 |
+|------|-------------------------|
+| **PHP Agent** | Adds a PHP 5.6+ single-file entry point, HTTP RPC, on-demand Components, and runtime capability registration for commands, files, terminals, databases, networking, tunnels, and core system administration |
+| **Dual-runtime architecture** | Java and PHP use the same `AgentRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
+| **Component reliability** | Java/PHP Components now use bounded tasks, TTLs, resource deregistration, cache limits, and unified lifecycle cleanup; Java artifacts also remove redundant debug metadata and constants |
+| **Console and AI** | Agent routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
+| **Database baseline** | `schema.sql` creates the current structure directly; `data.sql` idempotently seeds base configuration, while web setup creates the administrator and its team in one transaction |
+| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `3.0.1`; the release artifact is `LeoAi-3.0.1.jar` and a fresh deployment sets its administrator password through web setup |
+
+> **Installation baseline:** v3.0.1 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
+
+---
+
+## Java/PHP Dual Runtime
+
+Java and PHP are equal Agent runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root. Generator AI tools and the concrete artifact cache live in `web.adapter.ai`; `service` and `ai` use shared contracts without depending on `jmg`. HTTP and AI entry points share Java generator metadata from `GeneratorCatalog`, keeping capability lists in one place.
+
+```mermaid
+graph TD
+    web["web: application composition and console"] --> service["service / ai: shared business and orchestration"]
+    web --> java["javacore: Java Agent Runtime"]
+    web --> php["phpcore: PHP Agent Runtime"]
+    service --> core["core: Runtime SPI / Capability / RPC / Session"]
+    java --> core
+    php --> core
+    web --> jmg["jmg: Java shell and memory-shell generation"]
+```
+
+| Capability | Java Agent | PHP Agent |
+|------------|-------------|------------|
+| **Entry point** | Java Core plus container/script generators | PHP 5.6+ single-file HTTP entry point |
+| **Component loading** | Independent Java Component bytecode loaded on demand | Independent PHP Components loaded lazily by digest |
+| **Commands and terminal** | `ProcessBuilder`, PTY/pipe sessions | `proc_open`, Python PTY/command backend |
+| **Files** | Browse, edit, chunked transfer, archive, and hash | Browse, edit, chunked transfer, archive, and hash |
+| **Database** | Shared connection description converted to JDBC parameters | Shared connection description converted to a PDO DSN |
+| **Networking** | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels |
+| **Discovery** | Declared dynamically through Runtime Profile | Declared dynamically through Runtime Profile |
+
+The exact PHP feature set depends on the target environment: database operations require the matching PDO driver, archives require `ZipArchive`, and persistent proxy/tunnel workers require at least one of `shell_exec`, `exec`, or `popen`.
+
+---
+
+## Features
+
+### AI & Intelligence
+
+| Feature | Description |
+|---------|-------------|
+| **AI Agent Automation** | Built on LangChain4j, supports multi-turn tool calls with parallel execution to automatically plan and execute post-exploitation operations |
+| **Multi-Model Support** | Compatible with OpenAI, Qwen, DeepSeek, Claude, and OpenAI-compatible APIs; hot-swappable at runtime |
+| **Large Context Window** | Dynamically adapts to model context windows (up to 1M tokens); auto-compresses history to preserve key information |
+| **Tool Result Paging** | Large tool results are archived per conversation for paged reads; the archive cache retains at most 256 entries, evicting the oldest insertion when full. Entries expire after 30 minutes by default, configurable through each AI execution setting's `tool-archive-ttl-ms` |
+| **Task Planning** | AI auto-plans multi-step tasks with result writeback and real-time progress tracking; reloading a Node AI thread restores unfinished plans and step progress |
+| **100+ AI Tools** | Atomic capabilities callable by the AI Agent — covering command execution, files, networking, credentials, scanning, HTTP requests, databases, scripting, plugins, and more |
+| **Built-in AI Skills** | Pre-configured agent-node / platform task prompts for launching reconnaissance, credential hunting, privilege escalation, persistence, lateral movement, disguise development, fingerprint development, and exploit suggestion workflows |
+| **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
+| **Context Accumulation** | Reconnaissance summaries accumulate and compress automatically; AI context grows richer as operations deepen |
+| **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
+
+AI workspace local commands are limited to administrators working in their own task directories. They share 2 workers and a queue of up to 32 commands globally. Submissions fail immediately without a run ID when the queue is full or the service is shut down; pending and running tasks are cancelled during shutdown.
+
+<img src="docs/images/screenshot-ai-assistant.png" alt="AI Assistant Demo" width="800" />
+
+*AI assistant automatically invoking recon tools, analyzing results, and generating a reconnaissance summary*
+
+### Node Management
+
+| Feature | Description |
+|---------|-------------|
+| **Multi-Protocol Communication** | HTTP, HTTP Chunked (large file transfer), WebSocket (real-time interaction) |
+| **Traffic Concealment** | TLS fingerprint spoofing, header noise injection, URL randomization, custom request/response encoding |
+| **Proxy & Tunneling** | HTTP proxy, SOCKS5 proxy, local port forwarding (ssh -L style), reverse tunneling (ssh -R style) |
+| **Team Collaboration** | Nodes can be shared among team members with controllable permissions |
+| **Batch Node Management** | Node grouping, tag management, bulk operations |
+
+### Operations Console Toolset
+
+#### Interactive & Command Execution
+- **Virtual Terminal**: Multi-session interactive shell based on xterm.js, with real-time streaming output, session search, clear, interrupt, close, and backend process lifecycle cleanup
+- **Background Tasks**: Asynchronous execution of long-running commands, with output polling and task cancellation
+
+#### Files & Storage
+- **File Manager**: Tree-style directory browsing, upload/download, online editing, compress/decompress, preview (text/image/PDF), chunked transfer for large files
+- **User File Space**: Independent local file storage area for each user
+
+#### Database & Information Systems
+- **Database Console**: Supports MySQL, PostgreSQL, Oracle, SQLite, SQL Server — with SQL editor and table structure browser
+- **Registry Manager** (Windows): Browse and modify registry keys and values
+- **Event Log Viewer**: Query Windows system event logs
+- **Firewall Manager**: View and modify firewall rules
+
+#### Network & Scanning
+- **Port Scanner**: TCP port scanning, host discovery (Ping Sweep)
+- **Fingerprint Identification**: Web service identification from HTTP request and response evidence, with support for custom rules
+- **Reconnaissance Scanning**: Concurrent multi-target, multi-rule recon with results automatically aggregated into AI context
+- **HTTP Requester**: Repeater (single request) and Fuzzer (bulk fuzzing)
+- **Proxy & Tunneling**: Use HTTP proxy, SOCKS5 proxy, local port forwarding (ssh -L), or reverse tunnel (ssh -R) through target nodes — with connection count and traffic monitoring
+
+#### System Management
+- **Screenshot**: Real-time capture of target desktop
+- **Process Manager**: List, kill, and create processes
+- **Scheduled Tasks**: Windows scheduled task management
+- **Service Manager**: Start, stop, restart Windows services
+- **Docker Manager**: List, start, stop, and inspect containers and images
+- **Java Web Runtime Management**: runtime profiles for Tomcat 6–11, WebLogic 10/12/14, Jetty, Undertow, JBoss/WildFly, WebSphere, Spring MVC, and Spring WebFlux; supports removing Filter / Servlet / Valve / Listener / Controller / Interceptor
+
+#### Security & Permissions
+- **Credential Harvesting**: System credentials and browser data
+- **SUID/Capability Check**: Quickly identify Linux privilege escalation vectors
+- **User Account Management**: Enumerate and manage users on target hosts
+- **Network Connection Viewer**: View active connections, network shares, and installed software
+
+#### Other Tools
+- **Class Bytecode Viewer**: Extract and decompile classes loaded in the JVM
+- **Class & Resource Browser**: Read any classpath resource the agent process can see (`.class` files inside jars, `application.yml`, `META-INF/MANIFEST.MF`, etc.) by class name or path. Auto-detects binary/text/`.class` and decompiles to Java source. When the agent is injected into Tomcat's global ClassLoader, falls back to scanning every WebappClassLoader so webapp-private classes remain reachable.
+- **HostId Switching**: Manage multiple intranet hosts under a single node
+
+<img src="docs/images/screenshot-console.png" alt="Operations Console Screenshot" width="800" />
+
+*Operations console: basic info overview, AI skill quick-launch panel, and chat area*
+
+### Shell Generator
+
+#### Memory Shell Generation
+- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket, HTTP UpgradeProtocol, WebFlux WebFilter/HandlerMethod/HandlerFunction, Netty Handler, and Dubbo Service
+- Supported middleware: Tomcat, Jetty5, Jetty, JBoss/JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin2, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, Struts2, SpringWebFlux, XXL-JOB, and Dubbo (24 total)
+- TongWeb Valve runtime contracts are selected by major version: 6 → `com.tongweb.web.thor`, 7 → `com.tongweb.catalina`, and 8 → `com.tongweb.server`; the UI and API require `serverVersion`
+- Agent mounts cover FilterChain and ContextValve for Tomcat/JBoss/GlassFish/Payara/InforSuite/TongWeb, Jetty Handler, Undertow ServletHandler, Resin FilterChain, WebLogic ServletContext, WebSphere FilterManager, Spring MVC FrameworkServlet, Apusic, and BES. Jetty 7–11 also provides an ordinary root Handler mount. Tomcat WebSocket includes a reverse-proxy-compatible mount that supplies Upgrade headers through a single-class JDK Proxy Valve. Tomcat 8.5–11 also exposes a connector-level `UpgradeInjector`; generated metadata reports the `Connection: Upgrade` and dynamic `Upgrade: <shellClassName>` activation headers while retaining header gates, custom response codes, HTTP Chunk, and Lambda class-name suffixes.
+- `AgentJarBase64` emits a `premain`/`agentmain` manifest for `-javaagent` and Attach API loading
+- XXL-JOB 2.2–2.5 uses `XxlJob`/`XxlJobJson` request bodies, while 2.0–2.1 uses `XxlJobHessian`; the capability catalog validates the Packer against `serverVersion`
+- Packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, JarBase64, AgentJarBase64, XXL-JOB JSON/Hessian, and more (49 total)
+- Build strategies: Lambda-shaped class suffixes, Injector static initialization, optional class shrinking, and automatic JDK 9+ module compatibility. Capability metadata hides URL configuration for global mounts and disables static initialization for Agent mounts. Packers receive Core, Shell, and Injector class entries together.
+
+#### WebShell Generation
+- Supported formats: JSP, JSPX, Groovy
+- AI-generated results are retrieved by `resultId`, with content and metadata read together. The temporary cache holds at most 256 results for up to 30 minutes and evicts the oldest insertion when full; download or archive results promptly.
+
+Every Java build keeps the final Packer text and also exposes downloadable Core,
+Shell, and Injector class artifacts with byte sizes and server-generated SHA-256 digests.
+
+### Fingerprint & Identification Rules
+
+- **Built-in Rule Library**: HTTP fingerprint rules that can match request data, response headers, status codes, and response bodies
+- **Custom Rules**: Add, edit, enable/disable fingerprint rules via the "Identification Rules" page
+- **Rule Tags**: Supports tag grouping for selective use during scanning
+- **Import/Export**: Export individual rules or batch-export as `.json` / `.zip`; import with conflict policies (skip/overwrite/rename) to easily share rule libraries across teams
+
+### Plugins & Script Execution
+
+- **Unified execution console**: the "Scripts & Plugins" module hosts both script editing and bytecode execution
+    - **Script editor**: JavaScript / Groovy / Python; run ad-hoc without saving, or save as a script plugin in one click
+    - **Java class execution**: drag-and-drop a `.class` file or paste base64 bytecode (URL-safe / whitespace / padding cleanup, `cafebabe` magic check); run ad-hoc or save as a Java plugin
+- **Unified plugin library**: Java bytecode and js/groovy/python script plugins coexist with type badges; script plugins can be reloaded into the editor with one click
+- **Hot-loading Java plugins**: dynamically load and execute custom Java plugins
+- **AI-ready built-in skills**: script execution, command execution, WebLogic password retrieval, heap-dump analysis, and more out of the box
+- **Import/Export**: single-file `.plugin` or batch `.zip`; conflict policies (skip / overwrite) on import
+
+ZIP imports for fingerprints, plugins, and disguises share decompression limits: at most 1000 entries, 5 MiB per entry, and 50 MiB in total. Filtered-out files and directory entries count toward the same budget.
 
 ### Management Features
 
@@ -49,59 +222,9 @@ LeoAI is a web workspace for host management, project collaboration, and team ad
 
 Before deleting an account, transfer any teams and projects it leads or owns, including archived projects. Administrators can call `POST /platform/projects/transfer` with `projectId` and `newOwnerUserId`. The new owner must be enabled. Transfers preserve the project's sharing scope and archived state.
 
-Project managers can archive with `POST /platform/projects/archive` or restore with `POST /platform/projects/restore`. Both endpoints accept only `projectId` and update only the project status and modification time; unsaved edits to other fields are not submitted.
-
-`POST /platform/projects/update` preserves the current stored status when `status` is omitted. Explicit `active` and `archived` values are still supported. The project's regular Save action does not send a status.
-
 Team audit statistics use the team recorded when each log entry was written. Moving a member or deleting an account or team leaves historical attribution intact. Retention uses the application's local time, matching the stored timestamps.
 
 ---
-
-## Interface preview
-
-These screenshots show earlier versions of the interface. Some menus and layouts may differ in the current version.
-
-### AI assistant
-
-<img src="docs/images/screenshot-ai-assistant.png" alt="AI assistant interface" width="800" />
-
-*Switch conversations, select a model, and review task progress and results in one place.*
-
-### File management
-
-<img src="docs/images/screenshot-file-manager.png" alt="File management interface" width="800" />
-
-*Browse with the folder tree and breadcrumbs, filter files by type, and view file properties.*
-
-### Admin console
-
-<img src="docs/images/screenshot-admin-console.png" alt="Admin console interface" width="800" />
-
-*Manage users, teams, and AI models, and review audit logs and activity trends.*
-
-### Extension management
-
-<img src="docs/images/screenshot-plugin-manager.png" alt="Extension management interface" width="800" />
-
-*Browse installed extensions, review their descriptions and parameters, and manage imports and exports.*
-
-### Fingerprint rules
-
-<img src="docs/images/screenshot-fingerprint-manager.png" alt="Fingerprint rules interface" width="800" />
-
-*Search and filter the rule catalog, and review tags, descriptions, and related references.*
-
-### Skill library
-
-<img src="docs/images/screenshot-skill-manager.png" alt="Skill library interface" width="800" />
-
-*Browse skills by category and see what they cover and which files they use.*
-
-### Other pages
-
-- **Operations console:** View the current host and switch between features using tabs.
-- **Script builder:** A workspace for template options, form fields, and previews.
-- **Traffic policies:** Browse the template catalog and preview requests and responses.
 
 ## Tech Stack
 
@@ -132,8 +255,7 @@ These screenshots show earlier versions of the interface. Some menus and layouts
 | **Browser** | Modern browsers: Chrome, Firefox, Edge, etc. |
 | **PHP Agent** | PHP 5.6+ on the target; PDO/ZipArchive and related extensions as required by the selected capabilities |
 
-> No separate database installation needed: SQLite is embedded and auto-initialized on first launch.
->
+> No separate database installation needed: SQLite is embedded and auto-initialized on first launch.  
 > No separate frontend deployment needed: the web interface is bundled inside the JAR.
 
 ---
@@ -422,11 +544,173 @@ spring.datasource.url=jdbc:sqlite:data.db
 
 ## Usage Guide
 
+### Adding a Node
+
+1. Log in and go to **Node Management**
+2. Click **Add Node** and fill in:
+    - **Node Name**: a custom identifier
+    - **Runtime Type**: choose Java or PHP to match the generated entry point
+    - **Target URL**: the target node address (e.g., `http://target.com/shell`)
+    - **Protocol**: HTTP / HTTP Chunked / WebSocket
+    - **Access Key**: must match the shell-side configuration
+3. Configure a traffic disguise template as needed, then save
+
+#### Protocol Selection Reference
+
+| Protocol | Best For |
+|----------|---------|
+| **HTTP** | General use; best firewall traversal |
+| **HTTP Chunked** | Large file transfers, long log queries |
+| **WebSocket** | Low-latency needs like terminal interaction |
+
+### Operations Console
+
+After entering a node, use the available tool modules:
+
+- **Virtual Terminal**: Run shell commands in multiple sessions with real-time streaming output; search output, clear screen, interrupt, close sessions, and reclaim backend processes on close/reset
+- **File Manager**: Tree browsing, upload/download, online editing, compress/decompress, file preview
+- **Database**: Add a shared connection profile in the database workspace; Java and PHP Agents convert it to JDBC or PDO runtime parameters respectively
+- **Network Asset Discovery**: Reachability, port scanning, service identification and component fingerprints; selectable stages, rule snapshots, incremental results and task history
+- **HTTP Requester**: Repeater for single requests, Fuzzer for bulk fuzzing
+
+Bundled HTTP fingerprints cover Nacos, Shiro, Spring Boot Actuator, and GeoServer. The GeoServer rule requests `/geoserver/web/` and `/web/` to cover the default context, root deployments, and application prefixes in an input URL. A single response must provide HTTP 200, a GeoServer page title, and a GeoServer-specific Wicket resource marker. Response bodies are limited to 8 KiB; the rule does not infer an exact version or vulnerability status. New seeds are added to VFS on startup. Existing scans retain their rule snapshots, so start a new scan or supplemental component scan to use the new rule.
+
+Discovery distinguishes confirmed responses, unconfirmed probes, and explicit DNS/routing failures. Successful or refused TCP connections confirm a responding host; sampled timeouts mean unconfirmed, not offline. With host discovery enabled, only confirmed hosts proceed to port scanning; unconfirmed hosts and DNS/routing failures are skipped. Disabling host discovery scans input targets directly. Backlogged result pages are drained immediately and acknowledged after database commit; idle polling waits only when there is no backlog. Workflow failures stop active child tasks, and Java cancellation closes registered sockets. Java/PHP HTTP probes connect to the planned IP/port while retaining the application hostname for Host/TLS SNI, with separate header/body limits, chunk decoding, and bounded gzip decoding. UI throughput counts completed probes rather than hosts. Update node components and recreate scan tasks together. Java node artifacts remain single-class and Java 6 API compatible; HTTPS capabilities depend on the node JVM's TLS support.
+
+Logical discovery tasks do not apply business quotas to hosts, input entries, endpoint combinations, or reachability/fingerprint requests. The supplemental HTTP endpoint accepts 1–256 assets per request, and rule selection accepts at most 64 HTTP fingerprints per scan. More than 10,000 hosts and other advisory thresholds produce preview warnings only; they do not prevent starting or truncate targets. Execution still uses node batches of at most 1,024 targets with concurrency, timeout, and backpressure controls. Plans are still expanded in server memory, so reserve resources for large inputs; address ranges must remain representable by Java collection indices, and node protocol/rule format validation is unchanged.
+
+Discovery uses per-task, layered backpressure (`MiB = 1024²` bytes):
+
+| Buffer | Wait at either high watermark | Resume below both low watermarks | Capacity |
+| --- | --- | --- | --- |
+| Java / PHP node | 3072 items / 3 MiB | 2048 items / 2 MiB | 4096 items / 4 MiB |
+| Server orchestration | 3072 items / 6 MiB | 2048 items / 4 MiB | 4096 items / 8 MiB |
+
+Node item counts cover unacknowledged observations; server counts include observations and errors. Java/server bytes estimate encoding and container overhead, while PHP counts cached JSON record bytes. These are not whole-process heap limits; bounded in-flight probes/pages use additional space. Node diagnostic summaries are separately capped at 128 items and 256 KiB so diagnostics alone never prevent resumption. Normal backlog waits rather than truncating a scan; an individually oversized row/batch fails explicitly.
+
+At high water, the server stops fetching/acknowledging further node pages, propagating pressure upstream. A workflow ACK after database commit frees server capacity; reaching low water resumes consumption. A node ACK confirms acceptance into server RAM, not a database commit, so this pipeline does not provide crash recovery. Automatic `backpressured` flags remain distinct from user pause/resume. Queries, ACKs and stop never wait for production capacity. Cancellation keeps accepted rows without an unlimited final node drain. Task lists include every status under `scope=history`, while `scope=active` includes only running and paused tasks. Both use descending `(created_at, task_id)` keyset pagination: 20 items by default, at most 100, returning `tasks`, `hasMore`, `nextCursor`, and `pageSize`. List rows contain lightweight summaries without stages, host samples, or evidence. Non-empty pages use one list query and two grouped count queries; empty pages use only the list query. The database has a history-order index and a partial active-task index.
+
+The UI initially loads the latest history page and offers “Load more history” in the selector; refreshing history preserves already loaded tasks. Independent `scope=active` pagination uses 100-item pages to synchronize running and paused tasks every two seconds after the previous refresh finishes, including when no live tasks are known, to discover tasks started by other clients without reloading all history. Only the selected task loads full details on demand; a known active task missing from the live list is queried again to confirm its terminal state. The task center reuses the same paging logic, refreshing only live tasks on its existing three-second timer and offering a load-more button; manual refresh reloads the latest history page. Scan-task filtering and search cover loaded records; load more history to find older tasks. Deploy the frontend and backend together for this task-list API change; node protocols and Java 6 compatibility are unchanged.
+
+Scheduling: each workflow turn processes one result page, waking on arriving results and using timers only as an idle-polling fallback and serial turns per task. Orchestration shares the actual runtime budget per node connection (256 Java threads or 16 PHP process slots). A FIFO admits child batches of at most 1024 targets; each completed batch returns its lease and rejoins the queue. New batches divide workers among runnable tasks, bounded by the requested limit and batch size. Nodes have separate accounts, while server worker/RPC pools retain global bounds. Pause/server backpressure parks the child and returns its lease; resume/low water rejoins the queue. An existing child reacquires its original worker allocation before resuming.
+
+Java node workers perform one probe step per turn and rejoin the executor FIFO. Pause/backpressure retains target/step cursors and already-read responses while returning the physical thread, without replaying completed steps. Already-started I/O may finish within its original timeout; pause does not forcibly interrupt it. In-flight/unpublished responses are bounded by worker counts and are additional to published-result watermarks, so JVM heap sizing must account for concurrency and task counts. Update server and node components together before starting new tasks. PHP uses a shared process pool within the state directory derived from one component file, across tasks and requests. Its 16 process slots include startup reservations; separate component copies have separate accounts, so this is not a machine-wide limit on all PHP processes. Each task has at most 16 logical shards; the registry retains at most 32 tasks, which must be released after collection.
+
+At a probe-step boundary, a PHP shard yields after 32 completed targets, 256 KiB of unpublished data, or 250ms, saves its checkpoint and rejoins the FIFO. Checkpoints retain target/step cursors, TCP connection results and bounded unpublished responses. Pause/backpressure no longer polls files every 50ms: a process switches to another runnable shard, then exits if no work remains. Start, resume, ACK and query drive dispatch, while active processes continue consuming the ready queue. Already-started I/O may finish within its original timeout. Resumption publishes cached responses before new I/O, without replaying normally completed steps.
+
+Slot `flock` ownership and startup tokens protect admission. Normal exit returns capacity; launch failure, an expired 10-second startup reservation, or an unexpectedly exited claimed process reclaims its slot. A live OS lock prevents premature reuse. Unexpected process exit fails the affected task rather than replaying network operations with unknown outcomes. Checkpoints support normal pause/backpressure resumption, not lossless crash recovery. Update the server and PHP node component together and recreate tasks.
+
+PHP storage consists of lightweight control metadata, a versioned manifest, JSONL result segments and fixed-width binary indexes. Worker state checks, scheduling and pause/resume never read result bodies. Segments rotate at 128 records or 256 KiB; an individually larger record occupies its own segment, still subject to batch/buffer limits. Each 8-byte index entry records the byte offset and record length. Queries binary-search the segment manifest, seek by index and decode only the requested page, without scanning unrelated bodies. Existing item/byte budgets, cursors and `includeEvidence` remain unchanged.
+
+The task lock serializes appends, queries and ACKs. Append preparation collects unpublished files and truncates unpublished tails; data and indexes are written before publishing a new manifest and atomically switching control metadata. Readers accept only committed record counts and byte ranges, hiding partial records/indexes and failed batches. Failed storage commits never advance published cursors. ACK computes released bytes from indexes; partial segments are not rewritten, and fully acknowledged segments are deleted after control commit. Replayed ACKs do not reclaim twice. Failed leftover collection stops subsequent storage mutations rather than allowing continued allocation.
+
+The 4 MiB watermark covers logical JSON bytes of unacknowledged records and diagnostics, not bounded index/manifest overhead, acknowledged prefixes in the head segment, unpublished tails or worker checkpoints. This is not a power-loss durability or lossless crash-replay guarantee. Existing PHP scan task layouts are unsupported; stop old tasks, update the component and create new tasks.
+
+### Proxy & Tunneling
+
+In the **Proxy** panel of the node console, four traffic forwarding modes are available:
+
+| Mode | Description | Typical Use Case |
+|------|-------------|-----------------|
+| **SOCKS5 Proxy** | Opens a SOCKS5 listener on the LeoAI server and reaches the intranet through the node | Proxychains / Burp upstream proxy |
+| **HTTP Proxy** | Listens on the LeoAI server; supports plain HTTP forwarding and CONNECT tunnels | Browser manual proxy |
+| **Local Port Forwarding** (ssh -L) | C2 local port → node → intranet host:port | Direct access to a single intranet service (RDP, DB, etc.) |
+| **Reverse Tunnel** (ssh -R) | Node opens a listener → intranet client connects back → C2 dials in | Have an intranet machine call back to your payload server |
+
+All modes provide connection count, upload/download traffic statistics, and a one-click stop button.
+
+SOCKS5, HTTP, and local port forwarding let you configure the **listen address on the machine running the LeoAI backend** in the panel (API parameter `bindAddr`). The default is `0.0.0.0`, listening on all IPv4 interfaces; select `127.0.0.1` to accept local connections only, or enter a specific local IPv4 or IPv6 address. Stop a running proxy before changing its listen address or port and starting it again. Stopping closes the listener and existing client connections, then attempts to clean up node-side connections. Remote cleanup cannot be confirmed when the node is unreachable. Reverse tunnels use `bindAddr` for their node-side listener, defaulting to `127.0.0.1`.
+
+The four proxy modes share per-node-session limits: 64 listeners, 512 connections (including handshakes, queued dials, and unfinished RPCs), and 16 reverse-tunnel dialer workers. Each listener still allows at most 200 connections. When capacity is exhausted, new connections are closed while existing ones continue. Idle reverse-tunnel ACCEPT polling backs off from 150 ms to 1 s and returns to 150 ms when connections arrive or remain active. Remote start/stop RPCs run outside the management lock so other proxy operations stay responsive.
+
+All four proxy modes use only `BATCH` for data (forward opcode 5, reverse opcode 8), including single-connection requests. WRITE / READ / EXCHANGE, capability negotiation, and legacy fallback have been removed. **Upgrade the backend and node components together, then restart existing proxies and tunnels.** Java node components remain JDK 6+ compatible. The server coalesces ready local data into frames of up to 256 KiB within a 2 ms drain budget, without waiting to fill a frame. Java nodes alternate writes and reads within the same 2 ms budget and return bytes received before EOF.
+
+Named Java component actions now use the RPC `action` field (network probes, Web runtime management, and JDBC); terminal IDs are sent as text. Network probe queries carry `cursor` and `ackCursor`, acknowledging accepted pages and selecting the next page in one request. The service immediately drains `hasMore` pages, backs off only when idle, and sends a final ACK before release. The legacy full-history result branch has been removed. Update the backend and node components together and recreate sessions.
+
+Server-side Java/PHP codecs share GZIP and AES-CBC frame handling while retaining their own serialization and key derivation. Encoding writes ciphertext into the final frame, and decoding reads ciphertext by offset. Random IVs, frame/decompression limits, and rejection behavior are preserved, with streams closed on failure. Node code and wire formats remain unchanged.
+
+Java file RPC paths and conflict strategies use text directly; file contents and upload/download chunks remain binary. Chunk transfers omit the unused `op` field. Compression reads request parameters without copying the entire map, and file-content searches compile the filename glob once per request for reuse during traversal. The server HTTP sender reuses the basic HTTP request adapter. Update the file adapter and compression component together.
+
+Java host snapshots now send memory bytes, uptime milliseconds, and numeric load; the backend derives MB, percentages, and display strings while preserving console fields. Java/PHP RPC clients share replay classification and bounded backoff. Only PING and explicitly listed snapshot queries (including cumulative network-probe ACK/query) replay after transport failure. Command execution, consuming terminal reads, SQL execution, file mutations, component loads, and unknown operations are sent once. HTTP transport disables implicit retries and redirects, so configure the final node URL; proxy batches retain their own offset/ACK retry owner. A failed send with an uncertain outcome is marked RPC_RESULT_UNKNOWN with its request ID; a correlated HOST_ID_MISMATCH is a pre-execution routing rejection and has a separate bounded routing budget. Interruptions stop further sends.
+
+Each node session shares two RPC workers that coalesce queued data frames for the same node instance and component across connections and listener ports. Forward and reverse components are sent separately, and sessions remain isolated: at most 16 frames and 1 MiB of combined write bytes and read credits per batch. Write/unacknowledged-read windows are bounded at 256 KiB per connection; read credits follow the actual selected batch: 256 KiB for one frame or 64 KiB per frame for multiple frames, independent of other queued components, with immediate follow-up reads when full. Request frames contain `connId` / `writeOffset` / `data` / `readAck` / `maxBytes`; correlated replies contain `connId` / `code` / `writeAck` / `readOffset` / `readCode` / `data`. Cumulative write ACKs cover accepted prefixes, and offsets suppress replayed bytes. Read bytes remain on the node until the next frame acknowledges successful local delivery. Transport failures permit at most three batch attempts without stacking generic RPC retries. EOF tails remain replayable until acknowledged or closed; close/idle cleanup releases replay windows. PHP ACKs mean queue admission; all data queues use the LEOQ2 format with a 1 MiB limit per direction. Workers pause socket reads at capacity and retain unfinished 64 KiB writes between iterations instead of blocking the other direction. Replay protection applies within a live session, not across node process restarts.
+
+Statistics endpoints keep their default full response and support `includeConnections: false` for summaries and `page` / `pageSize` for details (at most 200 rows per page). The panel refreshes summaries every 3 seconds and expanded details roughly every 10 seconds or on demand, showing 50 rows per page. Batch stop closes all local resources first, then uses at most four cleanup workers; after a 15-second wait it reports any unconfirmed cleanup. Lost startup replies are reconciled by `listenId`. Unconfirmed remote listeners retain their port reservations and remain visible for automatic reconciliation or cleanup retry.
+
+### Skill Manager
+
+Navigate to **Skills** in the main sidebar to visually manage all Skills under both scopes (agent-node / platform):
+
+- **View & Edit**: Click a Skill in the list to preview its content on the right; switch to edit mode to modify the body and description — changes take effect immediately without restarting
+- **Tags**: Each Skill can have multiple tags (e.g., `recon`, `exploit`, `linux`), viewable and editable in both list and edit modes; a tag filter panel on the left supports multi-select filtering
+- **Enable / Disable**: Disabled Skills are completely hidden from the AI's system prompt — the AI has no awareness of them; disable unused Skills to save tokens
+- **Full-Text Search**: Fuzzy search by name, description, or body content
+- **Create / Delete**: Create custom Skills with a name and description, then write the prompt in the editor
+- **Import/Export**: Export individual Skills as `.skill` files or batch-export selected Skills as `.zip`; import with conflict policies (skip/overwrite/rename) to migrate custom Skills across instances
+
+Skill files are stored in the VFS directory as standard Markdown with YAML frontmatter:
+
+```markdown
+---
+name: recon-basic-info
+description: Perform initial basic information reconnaissance on the target host...
+enabled: true
+tags:
+  - recon
+  - linux
+---
+
+# Skill body content
+...
+```
+
+### AI Assistant
+
+On interruption, failure, or orphaned-run recovery, partial user-visible replies stay in `ai_messages.content`. Plans, tool progress, and resume instructions are stored separately in the internal `recovery_context` column and used only to rebuild model memory. History responses do not expose this field, but still show tool timelines and failure reasons.
+
+**Node-level AI**: Open the AI chat panel on the right side of the operations console. Enter an instruction (e.g., "scan port 80 on the entire C-class subnet") and the AI automatically invokes tools, completes the operation, and continuously accumulates reconnaissance context.
+
+**SSH profiles and connection tests**: Node AI can list, inspect, create, partially update, and delete SSH profiles shared with the SSH panel. Connection tests use the current Agent relay and support password/private-key authentication without opening a remote shell. Credentials remain encrypted at rest; first-seen or changed host keys require explicit user confirmation through a question card.
+
+The console's skill quick-launch panel provides 5 pre-configured agent-node Skills for launching complete scenario tasks with one click:
+
+| Category | Skills |
+|----------|--------|
+| **Reconnaissance** | `recon-basic-info` |
+| **Credential Harvesting** | `hunt-credentials` |
+| **Privilege Escalation** | `escalate-linux-privilege` |
+| **Persistence** | `persistence-linux` |
+| **Lateral Movement** | `lateral-move-ssh` |
+
+**Platform-level AI**: A global AI assistant with 3 built-in platform Skills (`develop-disguise`, `develop-fingerprint`, `exploit-suggest`). It assists with writing traffic disguise templates, designing fingerprint rules, and generating exploitation suggestions based on matched fingerprints.
+
+### Shell Generation
+
+1. Go to **Tools → Shell Generator**
+2. Select **Memory Shell** or **WebShell**
+3. Select the transport: JSP/JSPX WebShell supports HTTP and HTTP Chunked; memory builds support HTTP, HTTP Chunked, and WebSocket
+4. For memory builds, select the target middleware and injector from the backend capability matrix; HTTP Chunk uses ordinary injector names, while WebSocket uses an endpoint path
+5. Configure the connection key, then click **Generate**
+6. Use the **Class Artifacts** menu to download Core, Shell, and Injector classes separately; WebShell builds expose the Core class
+
+### Traffic Disguise
+
+> Traffic disguises only wrap opaque bytes. The fixed PayloadCodec performs serialization, GZIP compression, and AES encryption; the AES key is entered by the user during generation and connection. A mismatched disguise cannot parse the request.
+
+1. Go to **Tools → Traffic Disguise**. Two built-in traffic wrappers are provided (JSON API and form) — use them as references or starting points
+2. Click **Add New**, write `trafficEncodeBody` / `trafficDecodeBody` wrappers, verify arbitrary-byte reversibility with the **Test** function, and save
+3. Select the same disguise when generating a shell to ensure both ends use identical codec implementations
+4. In the node configuration, point the "Request Disguise" and "Response Disguise" to the corresponding template
+
+**Import/Export**: Export individual disguises as encrypted `.disguise` files or batch-export as `.zip`; import with three conflict policies (skip/overwrite/rename) to migrate disguise configurations across environments or team members.
+
 ### Team Collaboration
 
 - Go to **Admin → Team Management** to create teams and invite members
 - In the node details, click **Share** to specify a team or member along with read/write permissions
 - All operations are recorded in **Admin → Audit Logs**, filterable by user, time, and type
+
+---
 
 ## FAQ
 
@@ -446,6 +730,18 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 2. Click **Test Connection** to verify the API key and base URL
 3. Check your API quota and rate limits
 4. Review server-side logs for detailed error information
+
+---
+
+**Q: Node connection failing**
+
+Troubleshoot in order:
+
+1. Confirm the target URL is reachable (test with curl)
+2. Confirm the protocol matches the shell implementation
+3. Confirm the node key matches the shell-side configuration
+4. If using traffic disguise, confirm both ends use matching encode/decode logic
+5. Check the browser Network panel and server-side logs
 
 ---
 
@@ -485,6 +781,10 @@ By default it's in the JAR's working directory. Specify a custom path via a star
 - Follow the principle of least privilege — assign only the minimum necessary permissions to each member
 - Use separate team accounts for different projects to maintain isolation
 - Keep LLM API keys secure; avoid exposing them in logs or screenshots
+- Enable traffic disguise in environments with traffic inspection risk
+- **Each user should create their own dedicated disguise**, and different projects should use different disguises — disguise is the communication key, and a leaked disguise means communications can be simulated or decrypted
+
+---
 
 ## Disclaimer
 
