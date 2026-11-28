@@ -13,6 +13,7 @@
 节点目录复用的会话来自 `GET /platform/session/sessions`，只列有运行时客户端的实时会话，不把缓存会话当作在线连接。
 控制台通过 `POST /agent-node/capabilities` 同时读取能力和会话绑定的 `currentHostId`；未绑定时该字段为 `null`。
 缓存会话的 `currentHostId` 表示缓存所属实例，不表示已连接。
+`POST /agent-node/basic-info` 读取该实例的基础信息；缓存会话读取已有快照。该接口不返回接入节点的连接配置。
 
 代码中，`AbstractAgentNode` 表示平台侧的运行时适配对象，不是 `agents` 表中的配置记录。
 

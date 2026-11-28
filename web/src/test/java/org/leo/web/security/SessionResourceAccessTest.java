@@ -5,12 +5,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.leo.core.agent.AbstractAgentNode;
+import org.leo.core.agent.capability.BasicInfoCapable;
 import org.leo.core.entity.Agent;
 import org.leo.core.entity.User;
+import org.leo.core.runtime.CapabilitySet;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
+import org.leo.web.application.agent.AgentCacheService;
 import org.leo.web.controller.agentnode.AgentNodeController;
 import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.exception.ApiException;
@@ -88,6 +92,41 @@ class SessionResourceAccessTest {
 
         assertEquals(403, assertThrows(ApiException.class,
                 () -> ControllerUtil.getAgentNodeSession("connection")).getCode());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void basicInfoAuthorizesOnceForEitherSessionMode(boolean cacheMode) throws Exception {
+        var cache = mock(AgentCacheService.class);
+        var controller = new AgentNodeController(null, permissions, null, null, cache, null);
+        var body = new SessionIdRequest("connection");
+        Map<String, Object> info = Map.of("OSInfo", Map.of("HostName", "fixture"));
+        session.bindHostId("instance");
+        session.setCacheMode(cacheMode);
+        if (cacheMode) {
+            when(cache.loadBasicInfo("reader", "host", "instance")).thenReturn(info);
+        } else {
+            AbstractAgentNode node = mock(AbstractAgentNode.class, withSettings().extraInterfaces(BasicInfoCapable.class));
+            when(node.getAgent()).thenReturn(host);
+            when(node.getCapabilitySet()).thenReturn(CapabilitySet.empty());
+            when(((BasicInfoCapable) node).getBasicInfo()).thenReturn(Map.of("BasicInfo", info));
+            session.setAgentNode(node);
+        }
+        var request = new MockHttpServletRequest("POST", "/agent-node/basic-info");
+        authenticate(request);
+
+        assertEquals(Map.of("BasicInfo", info), controller.basicInfo(body).get("data"));
+        verify(agents).findAgentById("host");
+        if (cacheMode) verify(cache).loadBasicInfo("reader", "host", "instance");
+        else verify(cache).saveBasicInfo("connection", "instance", info);
+
+        host.setPermission("private");
+        var next = new MockHttpServletRequest("POST", "/agent-node/basic-info");
+        next.setSession(request.getSession(false));
+        authenticate(next);
+        assertEquals(403, assertThrows(ApiException.class, () -> controller.basicInfo(body)).getCode());
+        verify(agents, times(2)).findAgentById("host");
+        verifyNoMoreInteractions(cache);
     }
 
     @Test

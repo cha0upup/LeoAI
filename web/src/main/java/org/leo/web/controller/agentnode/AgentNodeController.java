@@ -158,38 +158,28 @@ public class AgentNodeController {
     }
 
     /**
-     * 获取基础信息。
+     * 读取会话绑定实例的基础信息，缓存会话只读已有快照。
      */
     @RequestMapping(value = "/basic-info", method = RequestMethod.POST)
     public Map<String, Object> basicInfo(@RequestBody SessionIdRequest body) throws Exception {
         String sessionId = body != null ? body.sessionId() : null;
         AgentNodeSession session = ControllerUtil.getAgentNodeSession(sessionId);
 
-        // 缓存模式：直接从 agent 级持久化目录读取，不尝试实时连接
-        if (session != null && session.isCacheMode()) {
-            String pId = session.getAgentId();
+        if (session.isCacheMode()) {
             Map<String, Object> cached = cacheService.loadBasicInfo(
-                    session.getCreateByUser(), pId, session.getCurrentHostId());
-            if (cached != null) {
-                Map<String, Object> result = new HashMap<>();
-                result.put("BasicInfo", cached);
-                return ApiResponse.success(result);
-            }
-            return ApiResponse.success(new HashMap<>());
+                    session.getCreateByUser(), session.resolveAgentId(), session.getCurrentHostId());
+            return ApiResponse.success(cached == null ? Map.of() : Map.of("BasicInfo", cached));
         }
 
-        BasicInfoCapable node = ControllerUtil.requireCapability(sessionId, BasicInfoCapable.class);
+        BasicInfoCapable node = ControllerUtil.requireCapability(session, BasicInfoCapable.class);
         Map<String, Object> results = node.getBasicInfo();
 
-        if (session != null && results != null && results.containsKey("BasicInfo")) {
-            Object basicInfoObj = results.get("BasicInfo");
-            if (basicInfoObj instanceof Map<?, ?> basicInfoMap) {
+        if (results != null && results.get("BasicInfo") instanceof Map<?, ?> basicInfoMap) {
+            String hostId = session.getCurrentHostId();
+            if (hostId != null) {
                 Map<String, Object> basicInfo = copyStringKeyMap(basicInfoMap);
-                String hostId = session.getCurrentHostId();
-                if (hostId != null) {
-                    session.setBasicInfo(hostId, basicInfo);
-                    cacheService.saveBasicInfo(sessionId, hostId, basicInfo);
-                }
+                session.setBasicInfo(hostId, basicInfo);
+                cacheService.saveBasicInfo(sessionId, hostId, basicInfo);
             }
         }
         return ApiResponse.success(results != null ? results : new HashMap<>());
@@ -215,17 +205,6 @@ public class AgentNodeController {
             throw ApiException.badRequest("主机尚未加入当前项目");
         }
         return project.getProjectId();
-    }
-
-    /**
-     * 获取当前主机信息。
-     */
-    @RequestMapping(value = "/current-host", method = RequestMethod.POST)
-    public Map<String, Object> getCurrentHost(@RequestBody SessionIdRequest body) {
-        String sessionId = body != null ? body.sessionId() : null;
-        AbstractAgentNode node = ControllerUtil.getAbstractAgentNode(sessionId);
-        Agent currentAgent = node.getAgent();
-        return ApiResponse.success(currentAgent);
     }
 
     /**
