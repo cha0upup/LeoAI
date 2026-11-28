@@ -101,7 +101,7 @@ class ConfigurationPersistenceTest {
     }
 
     @Test
-    void profileListingReadsOnlyViewFieldsWhileIdLookupRetainsTheStoredPassword() {
+    void profileReadsLoadOnlyTheFieldsNeededByEachOperation() {
         assertTrue(agents.insertAgent(agent("node")));
         var crypto = new DatabaseCredentialCryptoService("profile-fixture-key", "unused");
         var persistence = new AgentDatabaseConnectionService(connections, crypto);
@@ -127,6 +127,19 @@ class ConfigurationPersistenceTest {
         assertEquals(List.of(expectedView), profiles.listByAgent("owner", "node"));
         assertTrue(profiles.listByAgent("owner", "other-node").isEmpty());
         assertEquals("fixture-secret", profiles.resolveActive("owner", "node", id).getPassword());
+
+        var identity = connections.selectIdentityById(id);
+        assertEquals(id, identity.getConnectionId());
+        assertEquals("node", identity.getAgentId());
+        assertNull(identity.getConnectionSpec());
+        assertNull(identity.getPassword());
+        assertEquals(Map.of("connectionId", id, "status", 0), profiles.setEnabled("owner", "node", id, false));
+        var disabled = connections.selectById(id);
+        assertEquals(0, disabled.getStatus());
+        assertEquals(stored.getConnectionSpec(), disabled.getConnectionSpec());
+        assertEquals(stored.getPassword(), disabled.getPassword());
+        profiles.delete("owner", "node", id);
+        assertNull(connections.selectIdentityById(id));
     }
 
     private Agent agent(String id) {

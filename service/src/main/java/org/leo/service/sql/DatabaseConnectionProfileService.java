@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 
 import static org.leo.service.sql.DatabaseConnectionProfileException.Kind.FORBIDDEN;
 import static org.leo.service.sql.DatabaseConnectionProfileException.Kind.NOT_FOUND;
@@ -75,8 +76,8 @@ public final class DatabaseConnectionProfileService {
 
     public void delete(String userId, String agentId, String connectionId) {
         requireContext(userId, agentId);
-        AgentDatabaseConnection connection = requireAgentConnection(connectionId, agentId);
-        if (!connectionService.deleteById(connection.getConnectionId(), agentId)) {
+        String id = requireAgentConnectionId(connectionId, agentId);
+        if (!connectionService.deleteById(id, agentId)) {
             throw failure(PERSISTENCE, "删除数据库连接失败");
         }
     }
@@ -86,11 +87,11 @@ public final class DatabaseConnectionProfileService {
                                           String connectionId,
                                           boolean enabled) {
         requireContext(userId, agentId);
-        AgentDatabaseConnection connection = requireAgentConnection(connectionId, agentId);
-        if (!connectionService.setEnabled(connection.getConnectionId(), agentId, enabled)) {
+        String id = requireAgentConnectionId(connectionId, agentId);
+        if (!connectionService.setEnabled(id, agentId, enabled)) {
             throw failure(PERSISTENCE, "更新数据库连接状态失败");
         }
-        return Map.of("connectionId", connection.getConnectionId(), "status", enabled ? 1 : 0);
+        return Map.of("connectionId", id, "status", enabled ? 1 : 0);
     }
 
     public DatabaseConnectionSpec resolveActive(String userId,
@@ -194,11 +195,19 @@ public final class DatabaseConnectionProfileService {
         }
     }
 
-    private AgentDatabaseConnection requireAgentConnection(String connectionId,
-                                                             String agentId) {
+    private AgentDatabaseConnection requireAgentConnection(String connectionId, String agentId) {
+        return requireAgentConnection(connectionId, agentId, connectionService::findById);
+    }
+
+    private String requireAgentConnectionId(String connectionId, String agentId) {
+        return requireAgentConnection(connectionId, agentId, connectionService::findIdentityById).getConnectionId();
+    }
+
+    private AgentDatabaseConnection requireAgentConnection(String connectionId, String agentId,
+                                                            Function<String, AgentDatabaseConnection> lookup) {
         String normalizedId = text(connectionId);
         if (normalizedId == null) throw failure(VALIDATION, "connectionId不能为空");
-        AgentDatabaseConnection connection = connectionService.findById(normalizedId);
+        AgentDatabaseConnection connection = lookup.apply(normalizedId);
         if (connection == null) throw failure(NOT_FOUND, "数据库连接不存在");
         if (!Objects.equals(connection.getAgentId(), agentId)) {
             throw failure(FORBIDDEN, "数据库连接配置与当前 Agent 不匹配");

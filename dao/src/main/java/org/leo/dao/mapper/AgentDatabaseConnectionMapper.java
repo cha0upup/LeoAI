@@ -40,6 +40,9 @@ public interface AgentDatabaseConnectionMapper {
     @Select("SELECT * FROM agent_database_connections WHERE connection_id=#{connectionId}")
     AgentDatabaseConnection selectById(@Param("connectionId") String connectionId);
 
+    @Select("SELECT connection_id, agent_id FROM agent_database_connections WHERE connection_id=#{connectionId}")
+    AgentDatabaseConnection selectIdentityById(@Param("connectionId") String connectionId);
+
     @Select("""
             SELECT connection_id, connection_name, agent_id, dialect, connection_spec, username,
                    status, test_status, last_test_time, last_test_message, timeout_seconds, description, remark

@@ -176,6 +176,7 @@ class DatabaseConnectionProfileServiceTest {
         Fixture fixture = fixture();
         AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
+        when(fixture.mapper().selectIdentityById("connection-1")).thenReturn(existing);
 
         DatabaseConnectionSpec resolved = fixture.profile().resolveActive(
                 "user-1", "agent-1", "connection-1");
@@ -200,18 +201,24 @@ class DatabaseConnectionProfileServiceTest {
     }
 
     @Test
-    void mutationsKeepAgentScopeAtTheMapperBoundary() {
+    void deleteAndSetEnabledUseOnlyIdentityAndKeepAgentScopeAtTheMapperBoundary() {
         Fixture fixture = fixture();
-        AgentDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
-        when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
+        var identity = new AgentDatabaseConnection();
+        identity.setConnectionId("connection-1");
+        identity.setAgentId("agent-1");
+        when(fixture.mapper().selectIdentityById("connection-1")).thenReturn(identity);
         when(fixture.mapper().deleteByIdAndAgent("connection-1", "agent-1"))
                 .thenReturn(1);
         when(fixture.mapper().updateStatusByAgent("connection-1", "agent-1", 0)).thenReturn(1);
 
         assertEquals(Map.of("connectionId", "connection-1", "status", 0),
-                fixture.profile().setEnabled("user-1", "agent-1", "connection-1", false));
-        fixture.profile().delete("user-1", "agent-1", "connection-1");
+                fixture.profile().setEnabled("user-1", "agent-1", " connection-1 ", false));
+        fixture.profile().delete("user-1", "agent-1", " connection-1 ");
+        assertEquals(DatabaseConnectionProfileException.Kind.NOT_FOUND,
+                assertThrows(DatabaseConnectionProfileException.class,
+                        () -> fixture.profile().delete("user-1", "agent-1", "missing")).getKind());
 
+        verify(fixture.mapper(), never()).selectById(any());
         verify(fixture.mapper()).updateStatusByAgent("connection-1", "agent-1", 0);
         verify(fixture.mapper()).deleteByIdAndAgent("connection-1", "agent-1");
     }
