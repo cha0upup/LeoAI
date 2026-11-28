@@ -31,13 +31,6 @@ public interface AiConversationMapper {
             FROM ai_threads
             """;
 
-    String MESSAGE_HISTORY_SELECT = "SELECT m.*, r.status AS run_status, "
-            + "t.protocol_status, t.dispatch_status, t.error_message AS protocol_error_message, "
-            + "t.answer_to_question_id FROM ai_messages m "
-            + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
-            + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
-            + "WHERE m.thread_id = #{threadId} ";
-
     String CONTEXT_MESSAGE_FIELDS = "SELECT m.message_id, m.message_seq, m.role, m.status, m.content, m.recovery_context ";
     String CONTEXT_MESSAGE_SCOPE = """
             FROM ai_messages m WHERE m.thread_id = #{threadId}
@@ -345,26 +338,38 @@ public interface AiConversationMapper {
                                 @Param("turnId") String turnId,
                                 @Param("runId") String runId);
 
-    @Select("SELECT * FROM (" + MESSAGE_HISTORY_SELECT
-            + "ORDER BY m.message_seq DESC, m.message_id DESC "
-            + "LIMIT #{limit} OFFSET #{offset}"
-            + ") recent ORDER BY message_seq ASC, message_id ASC")
-    List<AiMessageRecord> listMessages(@Param("threadId") String threadId,
-                                       @Param("offset") int offset,
-                                       @Param("limit") int limit);
+    /** 多取一个序号判断是否还有更早的消息，只为当前页读取正文和附件。 */
+    @Select("""
+            <script>
+            WITH candidates AS (
+                SELECT message_seq FROM ai_messages WHERE thread_id = #{threadId}
+                <if test="beforeSequence != null">AND message_seq &lt; #{beforeSequence}</if>
+                ORDER BY message_seq DESC LIMIT (#{pageSize} + 1) OFFSET #{offset}
+            ), page AS (
+                SELECT message_seq FROM candidates ORDER BY message_seq DESC LIMIT #{pageSize}
+            )
+            SELECT m.message_id, m.turn_id, m.run_id, m.message_seq, m.status, m.role, m.content, m.timestamp,
+                   m.attachments_json, m.nodes_json, m.review_json, m.plan_json, r.status AS run_status,
+                   t.protocol_status, t.dispatch_status, t.error_message AS protocol_error_message,
+                   t.answer_to_question_id, (SELECT COUNT(*) &gt; #{pageSize} FROM candidates) AS more_available
+            FROM page
+            JOIN ai_messages m ON m.thread_id = #{threadId} AND m.message_seq = page.message_seq
+            LEFT JOIN ai_runs r ON r.run_id = m.run_id
+            LEFT JOIN ai_turns t ON t.turn_id = m.turn_id
+            ORDER BY page.message_seq ASC
+            </script>
+            """)
+    List<HistoryRow> listMessageHistory(@Param("threadId") String threadId,
+                                        @Param("beforeSequence") Long beforeSequence,
+                                        @Param("offset") int offset,
+                                        @Param("pageSize") int pageSize);
 
-    @Select("SELECT * FROM (" + MESSAGE_HISTORY_SELECT
-            + "AND m.message_seq < #{beforeSequence} "
-            + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}) "
-            + "recent ORDER BY message_seq ASC, message_id ASC")
-    List<AiMessageRecord> listMessagesBefore(@Param("threadId") String threadId,
-                                            @Param("beforeSequence") long beforeSequence,
-                                            @Param("limit") int limit);
+    class HistoryRow extends AiMessageRecord {
+        private boolean moreAvailable;
 
-    @Select("SELECT EXISTS (SELECT 1 FROM ai_messages WHERE thread_id = #{threadId} "
-            + "AND message_seq < #{beforeSequence})")
-    boolean hasMessagesBefore(@Param("threadId") String threadId,
-                              @Param("beforeSequence") long beforeSequence);
+        public boolean isMoreAvailable() { return moreAvailable; }
+        public void setMoreAvailable(boolean moreAvailable) { this.moreAvailable = moreAvailable; }
+    }
 
     @Select("""
             SELECT thread_id, COUNT(*) AS message_count

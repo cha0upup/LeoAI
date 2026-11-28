@@ -45,15 +45,12 @@ public class AiMessageRepository {
     }
 
     public HistoryPage historyPage(String threadId, int offset, int limit, Long beforeSequence) {
-        int pageSize = historyLimit(limit);
-        List<AiMessageRecord> rows = beforeSequence == null
-                ? mapper.listMessages(threadId, Math.max(0, offset), pageSize)
-                : mapper.listMessagesBefore(threadId, beforeSequence, pageSize);
-        Long cursor = rows.isEmpty() ? null : rows.get(0).getMessageSeq();
-        // Only full pages above the first possible sequence need a probe; sequences may have gaps.
-        boolean hasMore = cursor != null && cursor > 1L && rows.size() == pageSize
-                && mapper.hasMessagesBefore(threadId, cursor);
-        return new HistoryPage(toMaps(rows), cursor, hasMore);
+        int pageOffset = beforeSequence == null ? Math.max(0, offset) : 0;
+        var rows = mapper.listMessageHistory(threadId, beforeSequence, pageOffset, historyLimit(limit));
+        if (rows.isEmpty()) return new HistoryPage(List.of(), null, false);
+
+        var oldest = rows.get(0);
+        return new HistoryPage(toMaps(rows), oldest.getMessageSeq(), oldest.isMoreAvailable());
     }
 
     public record HistoryPage(List<Map<String, Object>> messages, Long nextBeforeSequence, boolean hasMore) { }
@@ -100,7 +97,7 @@ public class AiMessageRepository {
         return new ConversationMessage(record.getMessageSeq(), record.getRole(), AiMessageContent.modelContext(record));
     }
 
-    private static List<Map<String, Object>> toMaps(List<AiMessageRecord> records) {
+    private static List<Map<String, Object>> toMaps(List<? extends AiMessageRecord> records) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (AiMessageRecord record : records) {
             Map<String, Object> item = new LinkedHashMap<>();

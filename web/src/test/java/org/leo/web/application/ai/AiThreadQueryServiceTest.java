@@ -14,12 +14,10 @@ import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.ai.thread.AiMessageRepository;
 import org.leo.ai.thread.AiMessageRepository.HistoryPage;
 import org.leo.core.ai.AiRuntimeState;
-import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AgentNodeSession;
-import org.leo.dao.mapper.AiConversationMapper;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -260,24 +258,6 @@ class AiThreadQueryServiceTest {
         assertNull(page.get("nextBeforeSequence"));
         assertEquals(false, page.get("hasMore"));
         verify(messageRepository).historyPage("thread", 0, 50, null);
-    }
-
-    @ParameterizedTest
-    @CsvSource({"12,20,false,false", "1,1,false,false", "12,1,true,true", "12,1,true,false"})
-    void historyOnlyProbesForOlderMessagesWhenThePageDoesNotAnswerIt(long firstSequence, int limit,
-                                                                     boolean probeOlder, boolean hasMore) {
-        var mapper = mock(AiConversationMapper.class);
-        var row = new AiMessageRecord();
-        row.setMessageSeq(firstSequence);
-        when(mapper.listMessages("thread", 0, limit)).thenReturn(List.of(row));
-        when(mapper.hasMessagesBefore("thread", firstSequence)).thenReturn(hasMore);
-        var query = new AiThreadQueryService(store, new AiMessageRepository(mapper), journal, protocol);
-
-        var page = query.messages("thread", 0, limit, null);
-
-        assertEquals(firstSequence, page.get("nextBeforeSequence"));
-        assertEquals(hasMore, page.get("hasMore"));
-        verify(mapper, times(probeOlder ? 1 : 0)).hasMessagesBefore("thread", firstSequence);
     }
 
     @ParameterizedTest

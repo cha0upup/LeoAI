@@ -732,6 +732,34 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(206, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE thread_id='thread-1'", Integer.class));
     }
 
+    @Test
+    void historyLookaheadUsesExistingSequencesInTheSameThread() {
+        var turn = reserve();
+        appendMessage(turn.id(), 12);
+        appendMessage(turn.id(), 30);
+        jdbc.update("DELETE FROM ai_messages WHERE thread_id = ? AND message_seq < 12", "thread-1");
+        store.createPlatformThread("fixture-user", "fixture-session", "other-thread", "other", 2L, null);
+        protocol.begin("other-thread", "client-other", "platform", "{}", "fixture", null, null);
+
+        var full = messages.historyPage("thread-1", 0, 2, null);
+        assertEquals(List.of(12L, 30L), full.messages().stream().map(item -> item.get("sequence")).toList());
+        assertEquals(12L, full.nextBeforeSequence());
+        assertFalse(full.hasMore());
+
+        var newest = messages.historyPage("thread-1", 0, 1, null);
+        assertEquals(30L, newest.nextBeforeSequence());
+        assertTrue(newest.hasMore());
+        var older = messages.historyPage("thread-1", 99, 1, newest.nextBeforeSequence());
+        assertEquals(12L, older.nextBeforeSequence());
+        assertFalse(older.hasMore());
+        assertEquals(older, messages.historyPage("thread-1", 1, 1, null));
+
+        var empty = messages.historyPage("thread-1", 0, 1, older.nextBeforeSequence());
+        assertEquals(List.of(), empty.messages());
+        assertNull(empty.nextBeforeSequence());
+        assertFalse(empty.hasMore());
+    }
+
     private AiTurnProtocolService.TurnSnapshot reserve() {
         return protocol.begin("thread-1", "client-1", "platform", "{}", "fixture", null, null).turn();
     }
