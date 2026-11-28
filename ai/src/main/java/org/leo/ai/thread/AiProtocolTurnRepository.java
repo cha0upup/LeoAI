@@ -1,10 +1,15 @@
 package org.leo.ai.thread;
 
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Persistence boundary for protocol Turn state transitions and dispatch queries. */
 @Repository
@@ -32,6 +37,17 @@ public class AiProtocolTurnRepository {
 
     public List<AiTurnRecord> listInProgress(String threadId) {
         return blank(threadId) ? List.of() : mapper.listInProgressTurns(threadId);
+    }
+
+    public Map<String, List<AiTurnRecord>> listInProgressSummaries(Collection<String> threadIds) {
+        List<String> ids = threadIds.stream().filter(id -> !blank(id)).toList();
+        if (ids.isEmpty()) return Map.of();
+
+        Map<String, List<AiTurnRecord>> byThread = new HashMap<>();
+        for (AiTurnRecord row : mapper.listInProgressTurnSummaries(JsonUtil.toJsonString(ids))) {
+            byThread.computeIfAbsent(row.getThreadId(), ignored -> new ArrayList<>()).add(row);
+        }
+        return byThread;
     }
 
     public List<String> listDispatchableThreadIds() {

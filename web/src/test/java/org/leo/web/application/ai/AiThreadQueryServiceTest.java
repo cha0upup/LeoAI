@@ -21,6 +21,7 @@ import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.dao.mapper.AiConversationMapper;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +44,16 @@ class AiThreadQueryServiceTest {
     void useFallbackProtocolStatus() {
         when(protocol.snapshotThread(anyString(), nullable(String.class))).thenAnswer(invocation ->
                 new AiTurnProtocolService.ThreadSnapshot(invocation.getArgument(1), false, null, List.of(), null));
+        when(protocol.snapshotThreadList(anyMap()))
+                .thenAnswer(invocation -> fallbackSnapshots(invocation.getArgument(0)));
+    }
+
+    private static Map<String, AiTurnProtocolService.ThreadSnapshot> fallbackSnapshots(
+            Map<String, String> fallbackStatuses) {
+        Map<String, AiTurnProtocolService.ThreadSnapshot> snapshots = new LinkedHashMap<>();
+        fallbackStatuses.forEach((threadId, status) -> snapshots.put(threadId,
+                new AiTurnProtocolService.ThreadSnapshot(status, false, null, List.of(), null)));
+        return snapshots;
     }
 
     @AfterEach
@@ -74,6 +85,8 @@ class AiThreadQueryServiceTest {
         assertEquals(activeThreadId, data.get("activeThreadId"));
         assertEquals(activeThreadId, session.getActiveThreadId());
         verify(messageRepository).countByThreadIds(Set.of("older", "newer"));
+        verify(protocol).snapshotThreadList(argThat(statuses -> statuses.keySet().equals(Set.of("older", "newer"))));
+        verify(protocol, never()).snapshotThread(anyString(), nullable(String.class));
         verifyNoMoreInteractions(messageRepository);
         verify(store, never()).listAgentThreads(anyString(), anyString(), anyString());
         verify(store, never()).attachEventJournal(anyString(), any());
@@ -158,8 +171,12 @@ class AiThreadQueryServiceTest {
                 ? List.of(record, stored, undated) : List.of(stored, record, undated));
         PlatformAiState state = PlatformAiStateStore.getOrCreate(PLATFORM_THREAD_ID);
         state.setAiConfigId(99);
-        when(protocol.snapshotThread(PLATFORM_THREAD_ID, state.getRunStatus()))
-                .thenReturn(new AiTurnProtocolService.ThreadSnapshot("queued", true, null, List.of(), null));
+        when(protocol.snapshotThreadList(anyMap())).thenAnswer(invocation -> {
+            var snapshots = fallbackSnapshots(invocation.getArgument(0));
+            snapshots.put(PLATFORM_THREAD_ID, new AiTurnProtocolService.ThreadSnapshot(
+                    "queued", true, null, List.of(), null));
+            return snapshots;
+        });
 
         List<Map<String, Object>> threads = queries.listPlatformThreads("user-1");
         assertEquals(List.of(PLATFORM_THREAD_ID, stored.getThreadId(), undated.getThreadId()),
@@ -178,6 +195,10 @@ class AiThreadQueryServiceTest {
         assertFalse(item.containsKey("inMemory"));
         assertFalse(item.containsKey("parentThreadId"));
         assertFalse(state.isExecuting());
+        verify(protocol).snapshotThreadList(argThat(statuses -> statuses.keySet().equals(
+                Set.of(PLATFORM_THREAD_ID, stored.getThreadId(), undated.getThreadId()))
+                && state.getRunStatus().equals(statuses.get(PLATFORM_THREAD_ID))));
+        verify(protocol, never()).snapshotThread(anyString(), nullable(String.class));
         verify(store, never()).attachEventJournal(anyString(), any());
     }
 
@@ -198,7 +219,19 @@ class AiThreadQueryServiceTest {
         assertEquals(false, item.get("executing"));
         assertEquals(100L, item.get("lastActiveAt"));
         assertNull(PlatformAiStateStore.get(PLATFORM_THREAD_ID));
-        verify(protocol).snapshotThread(PLATFORM_THREAD_ID, status);
+        Map<String, String> fallbackStatuses = new LinkedHashMap<>();
+        fallbackStatuses.put(PLATFORM_THREAD_ID, status);
+        verify(protocol).snapshotThreadList(fallbackStatuses);
+    }
+
+    @Test
+    void emptyDirectoriesDoNotReadProtocolStateOrMessageCounts() {
+        when(store.listPlatformThreads("user-1")).thenReturn(List.of());
+        var node = queries.listNodeThreads(new AgentNodeSession());
+
+        assertEquals(List.of(), node.get("threads"));
+        assertEquals(List.of(), queries.listPlatformThreads("user-1"));
+        verifyNoInteractions(protocol, messageRepository, journal);
     }
 
     @Test

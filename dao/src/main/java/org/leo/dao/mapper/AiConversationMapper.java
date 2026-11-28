@@ -70,6 +70,9 @@ public interface AiConversationMapper {
     String NEXT_QUEUED_TURN_ORDER = """
             ORDER BY queued.answer_to_question_id IS NULL, queued.created_at, queued.turn_id LIMIT 1
             """;
+    String IN_PROGRESS_TURN_ORDER = "CASE dispatch_status "
+            + "WHEN 'cancelling' THEN 0 WHEN 'running' THEN 1 ELSE 2 END, created_at, turn_id";
+    String PENDING_USER_INPUT = "status = 'PENDING' AND (expires_at IS NULL OR expires_at > #{now})";
     String EXPIRED_PENDING_USER_INPUT = "status = 'PENDING' AND expires_at IS NOT NULL AND expires_at <= #{now}";
 
     @Select(THREAD_METADATA_SELECT + "WHERE scope = #{scope} AND user_id = #{userId} AND agent_id = #{agentId} "
@@ -177,11 +180,20 @@ public interface AiConversationMapper {
                                 @Param("now") long now);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
-            + "AND protocol_status = 'inProgress' "
-            + "ORDER BY CASE dispatch_status "
-            + "WHEN 'cancelling' THEN 0 WHEN 'running' THEN 1 ELSE 2 END, "
-            + "created_at, turn_id")
+            + "AND protocol_status = 'inProgress' ORDER BY " + IN_PROGRESS_TURN_ORDER)
     List<AiTurnRecord> listInProgressTurns(@Param("threadId") String threadId);
+
+    /** 线程目录只读视图字段，避免批量加载命令正文和附件。 */
+    @Select("""
+            SELECT turn_id, thread_id, protocol_status, dispatch_status, client_user_message_id,
+                   user_item_id, assistant_item_id, created_at, started_at, completed_at,
+                   interrupt_requested, error_message, answer_to_question_id
+            FROM ai_turns
+            WHERE thread_id IN (SELECT value FROM json_each(#{threadIdsJson}))
+              AND protocol_status = 'inProgress'
+            ORDER BY thread_id,
+            """ + IN_PROGRESS_TURN_ORDER)
+    List<AiTurnRecord> listInProgressTurnSummaries(@Param("threadIdsJson") String threadIdsJson);
 
     @Select("SELECT DISTINCT queued.thread_id " + DISPATCHABLE_QUEUED_TURNS)
     List<String> listDispatchableThreadIds(@Param("now") long now);
@@ -264,10 +276,14 @@ public interface AiConversationMapper {
     @Select("SELECT * FROM ai_user_input_requests WHERE request_id = #{requestId}")
     AiUserInputRequest findUserInputRequest(@Param("requestId") String requestId);
 
-    @Select("SELECT * FROM ai_user_input_requests WHERE thread_id = #{threadId} "
-            + "AND status = 'PENDING' AND (expires_at IS NULL OR expires_at > #{now})")
+    @Select("SELECT * FROM ai_user_input_requests WHERE thread_id = #{threadId} AND " + PENDING_USER_INPUT)
     AiUserInputRequest findPendingUserInputRequest(@Param("threadId") String threadId,
                                                   @Param("now") long now);
+
+    @Select("SELECT * FROM ai_user_input_requests "
+            + "WHERE thread_id IN (SELECT value FROM json_each(#{threadIdsJson})) AND " + PENDING_USER_INPUT)
+    List<AiUserInputRequest> listPendingUserInputRequests(@Param("threadIdsJson") String threadIdsJson,
+                                                         @Param("now") long now);
 
     @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
             + "WHERE thread_id = #{threadId} AND " + EXPIRED_PENDING_USER_INPUT)

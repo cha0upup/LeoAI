@@ -27,6 +27,7 @@ import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -643,6 +644,50 @@ class AiConversationPersistenceIntegrationTest {
 
         assertEquals("running", jdbc.queryForObject("SELECT status FROM ai_runs", String.class));
         assertTrue(journal.listAfter("thread-1", 0L, 200).isEmpty());
+    }
+
+    @Test
+    void threadListBatchesDisplayStateWithoutLoadingCommandsOrExpiringQuestions() {
+        for (String id : List.of("waiting-thread", "expired-thread", "hidden-thread")) {
+            store.createPlatformThread("fixture-user", "fixture-session", id, id, 2L, null);
+        }
+        var active = reserve();
+        var queued1 = protocol.begin("thread-1", "queued-1", "platform", "{}", "fixture", null, null).turn();
+        var queued2 = protocol.begin("thread-1", "queued-2", "platform", "{}", "fixture", null, null).turn();
+        jdbc.update("UPDATE ai_turns SET dispatch_status = 'cancelling' WHERE turn_id = ?", active.id());
+        jdbc.update("UPDATE ai_turns SET created_at = 10 WHERE thread_id = ? AND dispatch_status = 'queued'", "thread-1");
+        protocol.begin("hidden-thread", "hidden", "platform", "{}", "fixture", null, null);
+
+        AiUserInputRequest pending = confirmation("pending-fixture");
+        pending.setThreadId("waiting-thread");
+        requests.create(pending);
+        AiUserInputRequest expired = confirmation("expired-fixture");
+        expired.setThreadId("expired-thread");
+        expired.setExpiresAt(1L);
+        requests.create(expired);
+
+        Map<String, String> fallbackStatuses = new LinkedHashMap<>();
+        fallbackStatuses.put("thread-1", "completed");
+        fallbackStatuses.put("waiting-thread", null);
+        fallbackStatuses.put("expired-thread", "waiting_for_user");
+        var snapshots = protocol.snapshotThreadList(fallbackStatuses);
+
+        assertEquals(fallbackStatuses.keySet(), snapshots.keySet());
+        for (var entry : fallbackStatuses.entrySet()) {
+            assertEquals(protocol.snapshotThread(entry.getKey(), entry.getValue()).toMap(),
+                    snapshots.get(entry.getKey()).toMap());
+        }
+        var working = snapshots.get("thread-1");
+        assertEquals("cancelling", working.status());
+        assertEquals(active.id(), working.activeTurn().id());
+        assertEquals(List.of(queued1.id(), queued2.id()).stream().sorted().toList(),
+                working.queuedTurns().stream().map(AiTurnProtocolService.TurnSnapshot::id).toList());
+        assertNull(working.activeTurn().commandJson());
+        assertEquals("waiting_for_user", snapshots.get("waiting-thread").status());
+        assertEquals(pending.getRequestId(), snapshots.get("waiting-thread").pendingUserInput().getRequestId());
+        assertEquals("completed", snapshots.get("expired-thread").status());
+        assertNull(snapshots.get("expired-thread").pendingUserInput());
+        assertEquals(AiUserInputRequest.STATUS_PENDING, requests.find(expired.getRequestId()).getStatus());
     }
 
     @Test

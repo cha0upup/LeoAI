@@ -1,9 +1,15 @@
 package org.leo.ai.thread;
 
 import org.leo.core.entity.AiUserInputRequest;
+import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /** Persistence boundary for agent user-input and confirmation requests. */
 @Repository
@@ -22,6 +28,19 @@ public class AiUserInputRepository {
     public AiUserInputRequest findPending(String threadId) {
         return blank(threadId) ? null
                 : mapper.findPendingUserInputRequest(threadId.trim(), System.currentTimeMillis());
+    }
+
+    /** 目录中的待回答问题，以数据库中的线程 ID 为键。 */
+    public Map<String, AiUserInputRequest> listPendingByThreadIds(Collection<String> threadIds) {
+        List<String> ids = threadIds.stream().filter(id -> !blank(id)).map(String::trim).distinct().toList();
+        if (ids.isEmpty()) return Map.of();
+
+        Map<String, AiUserInputRequest> byThread = new HashMap<>();
+        for (AiUserInputRequest row : mapper.listPendingUserInputRequests(
+                JsonUtil.toJsonString(ids), System.currentTimeMillis())) {
+            byThread.put(row.getThreadId(), row);
+        }
+        return byThread;
     }
 
     public AiUserInputRequest create(AiUserInputRequest request) {

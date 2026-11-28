@@ -6,6 +6,7 @@ import org.leo.ai.thread.AiUserInputRepository;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -94,7 +95,28 @@ public class AiTurnProtocolService {
     }
 
     public ThreadSnapshot snapshotThread(String threadId, String fallbackStatus) {
-        List<AiTurnRecord> inProgress = turns.listInProgress(threadId);
+        return buildSnapshot(turns.listInProgress(threadId), userInput.findPending(threadId), fallbackStatus);
+    }
+
+    /** 仅供目录展示：同一数据库快照批量装配 Turn 状态与待回答问题。 */
+    @Transactional(readOnly = true)
+    public Map<String, ThreadSnapshot> snapshotThreadList(Map<String, String> fallbackStatuses) {
+        if (fallbackStatuses.isEmpty()) return Map.of();
+
+        Map<String, List<AiTurnRecord>> inProgress = turns.listInProgressSummaries(fallbackStatuses.keySet());
+        Map<String, AiUserInputRequest> pending = userInput.listPendingByThreadIds(fallbackStatuses.keySet());
+        Map<String, ThreadSnapshot> snapshots = new LinkedHashMap<>();
+        for (var entry : fallbackStatuses.entrySet()) {
+            String threadId = entry.getKey();
+            AiUserInputRequest request = isBlank(threadId) ? null : pending.get(threadId.trim());
+            snapshots.put(threadId, buildSnapshot(inProgress.getOrDefault(threadId, List.of()),
+                    request, entry.getValue()));
+        }
+        return snapshots;
+    }
+
+    private static ThreadSnapshot buildSnapshot(List<AiTurnRecord> inProgress,
+                                                AiUserInputRequest pendingUserInput, String fallbackStatus) {
         TurnSnapshot active = null;
         List<TurnSnapshot> queued = new ArrayList<>();
         for (AiTurnRecord row : inProgress) {
@@ -103,7 +125,6 @@ public class AiTurnProtocolService {
             else if (active == null && (STATUS_RUNNING.equals(turn.status())
                     || STATUS_CANCELLING.equals(turn.status()))) active = turn;
         }
-        AiUserInputRequest pendingUserInput = userInput.findPending(threadId);
         String normalizedFallback = pendingUserInput == null
                 && STATUS_WAITING_FOR_USER.equals(fallbackStatus)
                 ? STATUS_COMPLETED : fallbackStatus;
@@ -194,7 +215,7 @@ public class AiTurnProtocolService {
         }
     }
 
-    private TurnSnapshot snapshot(AiTurnRecord row) {
+    private static TurnSnapshot snapshot(AiTurnRecord row) {
         if (row == null) return null;
         String status = STATUS_IN_PROGRESS.equals(row.getProtocolStatus())
                 ? row.getDispatchStatus() : row.getProtocolStatus();

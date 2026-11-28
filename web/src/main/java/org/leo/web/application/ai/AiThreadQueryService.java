@@ -46,26 +46,24 @@ public class AiThreadQueryService {
     }
 
     public Map<String, Object> listNodeThreads(AgentNodeSession session) {
-        List<Map<String, Object>> result = new ArrayList<>();
+        List<ThreadListItem> items = new ArrayList<>();
         Map<String, AiThread> memoryById = new LinkedHashMap<>();
         for (AiThread thread : session.listAiThreads()) memoryById.put(thread.getThreadId(), thread);
         String agentId = session.resolveAgentId();
         if (agentId != null) {
             for (AiThreadRecord record : conversationStore.listAgentThreads(
                     session.getCreateByUser(), agentId, session.getCurrentHostId())) {
-                result.add(nodeThread(memoryById.remove(record.getThreadId()), record, 0));
+                items.add(nodeThread(memoryById.remove(record.getThreadId()), record, 0));
             }
         }
         if (!memoryById.isEmpty()) {
             Map<String, Integer> counts = messages.countByThreadIds(memoryById.keySet());
             for (AiThread thread : memoryById.values()) {
-                result.add(nodeThread(thread, null, counts.getOrDefault(thread.getThreadId(), 0)));
+                items.add(nodeThread(thread, null, counts.getOrDefault(thread.getThreadId(), 0)));
             }
         }
-        result.sort(LAST_ACTIVE_FIRST);
-
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("threads", result);
+        data.put("threads", withProtocolSnapshots(items));
         data.put("activeThreadId", session.getActiveThreadId());
         return data;
     }
@@ -73,18 +71,37 @@ public class AiThreadQueryService {
     public List<Map<String, Object>> listPlatformThreads(String userId) {
         List<AiThreadRecord> records = conversationStore.listPlatformThreads(userId);
         if (records == null) return List.of();
-        return records.stream().map(record -> {
-            PlatformAiState runtime = PlatformAiStateStore.get(record.getThreadId());
-            Map<String, Object> item = recordSummary(record);
-            if (runtime != null) {
-                long persistedTime = record.getLastActiveAt() != null ? record.getLastActiveAt() : 0L;
-                item.put("lastActiveAt", Math.max(persistedTime, runtime.getLastActiveAt()));
-            }
-            applyProtocolSnapshot(item, record.getThreadId(),
-                    runtime != null ? runtime.getRunStatus() : record.getRunStatus());
-            return item;
-        }).sorted(LAST_ACTIVE_FIRST).toList();
+        return withProtocolSnapshots(records.stream().map(AiThreadQueryService::platformThread).toList());
     }
+
+    private static ThreadListItem platformThread(AiThreadRecord record) {
+        PlatformAiState runtime = PlatformAiStateStore.get(record.getThreadId());
+        Map<String, Object> item = recordSummary(record);
+        if (runtime != null) {
+            long persistedTime = record.getLastActiveAt() != null ? record.getLastActiveAt() : 0L;
+            item.put("lastActiveAt", Math.max(persistedTime, runtime.getLastActiveAt()));
+        }
+        String status = runtime != null ? runtime.getRunStatus() : record.getRunStatus();
+        return new ThreadListItem(record.getThreadId(), status, item);
+    }
+
+    private List<Map<String, Object>> withProtocolSnapshots(List<ThreadListItem> items) {
+        if (items.isEmpty()) return List.of();
+
+        Map<String, String> fallbackStatuses = new LinkedHashMap<>();
+        for (ThreadListItem item : items) fallbackStatuses.put(item.threadId(), item.fallbackStatus());
+        var snapshots = turnProtocolService.snapshotThreadList(fallbackStatuses);
+
+        List<Map<String, Object>> result = new ArrayList<>(items.size());
+        for (ThreadListItem item : items) {
+            item.fields().putAll(snapshots.get(item.threadId()).toMap());
+            result.add(item.fields());
+        }
+        result.sort(LAST_ACTIVE_FIRST);
+        return result;
+    }
+
+    private record ThreadListItem(String threadId, String fallbackStatus, Map<String, Object> fields) { }
 
     /** 游标按稳定消息序号向前翻页，新增消息不会使旧页偏移。 */
     public Map<String, Object> messages(String threadId, Integer requestedOffset,
@@ -112,7 +129,7 @@ public class AiThreadQueryService {
         data.put("lastSeq", Math.max(runtime != null ? runtime.getLastSseEventSeq() : 0L,
                 eventJournal.lastSequence(threadId)));
         data.put("stopReason", runtime != null ? runtime.getStopReason() : null);
-        applyProtocolSnapshot(data, threadId, runStatus);
+        data.putAll(turnProtocolService.snapshotThread(threadId, runStatus).toMap());
         return data;
     }
 
@@ -123,11 +140,7 @@ public class AiThreadQueryService {
                 eventJournal.latestTurnStartSequence(threadId));
     }
 
-    private void applyProtocolSnapshot(Map<String, Object> target, String threadId, String fallback) {
-        target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
-    }
-
-    private Map<String, Object> nodeThread(AiThread thread, AiThreadRecord record, int transientMessageCount) {
+    private static ThreadListItem nodeThread(AiThread thread, AiThreadRecord record, int transientMessageCount) {
         Map<String, Object> item = record != null ? recordSummary(record) : new LinkedHashMap<>();
         String threadId = thread != null ? thread.getThreadId() : record.getThreadId();
         if (thread != null) {
@@ -140,10 +153,9 @@ public class AiThreadQueryService {
         if (record == null) item.put("messageCount", transientMessageCount);
         String status = thread != null ? thread.getRunStatus()
                 : record.getRunStatus() != null ? record.getRunStatus() : AiRunStatus.IDLE;
-        applyProtocolSnapshot(item, threadId, status);
         item.put("parentThreadId", thread != null ? thread.getParentThreadId() : record.getParentThreadId());
         item.put("inMemory", thread != null);
-        return item;
+        return new ThreadListItem(threadId, status, item);
     }
 
     private static Map<String, Object> recordSummary(AiThreadRecord record) {
