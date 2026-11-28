@@ -116,6 +116,11 @@ public final class AgentNodeSessionContainer {
         return Map.copyOf(sessionMap);
     }
 
+    /** 仅遍历会话时使用；列表与后续注册表变更独立，不复制会话对象。 */
+    public static List<AgentNodeSession> snapshotSessions() {
+        return List.copyOf(sessionMap.values());
+    }
+
     /**
      * 清空所有会话
      */

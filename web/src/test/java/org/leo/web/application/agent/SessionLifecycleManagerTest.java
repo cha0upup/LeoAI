@@ -80,20 +80,21 @@ class SessionLifecycleManagerTest {
         user.setUserId("user");
         user.setPrivilege(admin ? "admin" : "normal");
         try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
-            sessions.when(AgentNodeSessionContainer::getAllSessions).thenReturn(Map.of(
-                    "own-live", projectSession("project-1", "user", false),
-                    "own-cache", projectSession("project-1", "user", true),
-                    "foreign", projectSession("project-1", "other", true),
-                    "no-owner", projectSession("project-2", null, false),
-                    "out-of-scope", projectSession("project-outside", "user", true),
-                    "unassigned", projectSession(null, "user", true)));
+            sessions.when(AgentNodeSessionContainer::snapshotSessions).thenReturn(List.of(
+                    projectSession("project-1", "user", false),
+                    projectSession("project-1", "user", true),
+                    projectSession("project-1", "other", true),
+                    projectSession("project-2", null, false),
+                    projectSession("project-outside", "user", true),
+                    projectSession(null, "user", true)));
 
             assertEquals(admin
                             ? Map.of("project-1", new ProjectSessionCounts(3, 2), "project-2", new ProjectSessionCounts(1, 0))
                             : Map.of("project-1", new ProjectSessionCounts(2, 1)),
                     lifecycle.countByProject(user, Set.of("project-1", "project-2")));
             assertEquals(Map.of(), lifecycle.countByProject(user, Set.of()));
-            sessions.verify(AgentNodeSessionContainer::getAllSessions);
+            sessions.verify(AgentNodeSessionContainer::snapshotSessions);
+            sessions.verifyNoMoreInteractions();
         }
     }
 

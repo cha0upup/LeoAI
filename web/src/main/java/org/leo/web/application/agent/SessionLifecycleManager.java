@@ -87,8 +87,7 @@ public final class SessionLifecycleManager {
     public Map<String, ProjectSessionCounts> countByProject(User user, Set<String> projectIds) {
         if (projectIds.isEmpty()) return Map.of();
         Map<String, ProjectSessionCounts> counts = new HashMap<>();
-        for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
-            if (session == null) continue;
+        for (AgentNodeSession session : AgentNodeSessionContainer.snapshotSessions()) {
             String projectId = session.getProjectId();
             if (projectId != null && projectIds.contains(projectId) && AccessPolicy.canAccessSession(session, user)) {
                 counts.compute(projectId, (id, previous) -> {

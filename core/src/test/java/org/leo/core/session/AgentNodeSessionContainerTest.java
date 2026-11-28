@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -28,11 +29,15 @@ class AgentNodeSessionContainerTest {
         AgentNodeSessionContainer.addSession("session-1", session);
 
         var snapshot = AgentNodeSessionContainer.getAllSessions();
+        var sessionList = AgentNodeSessionContainer.snapshotSessions();
 
         assertThrows(UnsupportedOperationException.class,
                 () -> snapshot.put("session-2", new AgentNodeSession()));
+        assertThrows(UnsupportedOperationException.class, sessionList::clear);
         assertTrue(AgentNodeSessionContainer.removeSession("session-1"));
         assertFalse(AgentNodeSessionContainer.removeSession("session-1"));
+        assertEquals(List.of(session), sessionList);
+        assertTrue(AgentNodeSessionContainer.snapshotSessions().isEmpty());
     }
 
     @Test
