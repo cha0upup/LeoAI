@@ -3,7 +3,8 @@ package org.leo.core.entity;
 import java.util.Objects;
 
 /**
- * Agent模型
+ * 平台登记的接入节点配置，使用 agentId 标识。
+ * 与运行时返回的 HostId 和一次操作的 sessionId 分开。
  * 
  * @author LeoSpring
  * @version 2.1

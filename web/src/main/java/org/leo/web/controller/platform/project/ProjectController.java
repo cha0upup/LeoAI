@@ -64,7 +64,7 @@ public class ProjectController {
         List<ProjectSummary> projects = new ArrayList<>(visibleProjects.size());
         for (ProjectListItem row : visibleProjects) {
             Project project = row.project();
-            projects.add(new ProjectSummary(project, row.hostCount(), sessionCounts.getOrDefault(row.projectId(), 0),
+            projects.add(new ProjectSummary(project, row.entryNodeCount(), sessionCounts.getOrDefault(row.projectId(), 0),
                     projectService.canManage(project, user), projectService.canEditContent(project, user)));
         }
         return ApiResponse.success(projects);

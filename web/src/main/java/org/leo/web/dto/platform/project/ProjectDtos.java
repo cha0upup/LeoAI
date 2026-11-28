@@ -7,7 +7,8 @@ import java.util.List;
 public final class ProjectDtos {
     private ProjectDtos() {}
 
-    public record ProjectSummary(Project project, int hostCount,
+    /** 入口节点数按项目归属关系计，与后端实例数和活动会话数无关。 */
+    public record ProjectSummary(Project project, int entryNodeCount,
                                  int activeSessionCount, boolean manageable,
                                  boolean contentEditable) {}
 

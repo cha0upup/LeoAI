@@ -29,7 +29,7 @@ public interface ProjectMapper {
 
     @Select("""
             <script>
-            SELECT p.*, (SELECT COUNT(*) FROM project_agents pa WHERE pa.project_id = p.project_id) AS host_count
+            SELECT p.*, (SELECT COUNT(*) FROM project_agents pa WHERE pa.project_id = p.project_id) AS entry_node_count
             FROM projects p
             <where>
             """ + VISIBLE_PROJECT_FILTER + """
@@ -39,7 +39,7 @@ public interface ProjectMapper {
             """)
     @ConstructorArgs({
             @Arg(column = "project_id", javaType = String.class, id = true),
-            @Arg(column = "host_count", javaType = int.class),
+            @Arg(column = "entry_node_count", javaType = int.class),
             @Arg(javaType = Project.class, resultMap = "projectRow")
     })
     List<ProjectListItem> findVisibleProjectCandidates(@Param("userId") String userId,

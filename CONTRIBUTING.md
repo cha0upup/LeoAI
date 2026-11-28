@@ -56,7 +56,7 @@
 - `tools/check_architecture.py` 只检查模块依赖、循环依赖和包级适配边界；具体类的实现细节交给行为测试与代码审查。
 - 架构检查按生产源码中类型的实际模块归属校验显式、静态、通配导入及全限定引用，包名不作为模块归属的唯一依据；共享包中的契约类型使用显式导入，通配导入会保守检查整个包的模块边界。可独立运行 `python3 tools/check_architecture.py`，该检查不替代 Java 编译器的类型解析。
 - 发布前执行 `python3 tools/verify_release.py --frontend ../LeoVueAi`；应用 JDK 使用 17，可通过 `JAVA8_HOME` 指定组件编译器
-- 命名区分执行节点与 AI：节点模型使用 `Agent`，执行对象使用 `AgentNode`，节点运行时使用 `AgentRuntime`，AI 接口使用 `NodeAiAgent` / `PlatformAiAgent`，AI 运行实例使用 `AiRuntime`；资产与连接上下文使用 `Host` / `Session`。
+- 命名区分接入配置、运行时和 AI：节点模型使用 `Agent`，平台侧运行时适配对象使用 `AgentNode`，运行时类型使用 `AgentRuntime`，AI 接口使用 `NodeAiAgent` / `PlatformAiAgent`。界面与项目统计用词见 [Agent 术语](docs/agent-terminology.md)。
 - 节点 HTTP API 使用 `/agent-node`，管理 API 使用 `/platform/agent-manage`，节点 Skills scope 使用 `agent-node`；历史数据不兼容，部署时使用全新数据库重建。
 - 集合查询使用复数；控制台视图使用 `AgentConsoleView`；父节点使用 `parentAgentId` / `parentAgentConfig`；连接测试使用 `AgentConnectionService` / `ConnectionTestService`。变量保留领域与单位，按职责命名，不机械替换词片段。
 - 内部命名调整保留 HTTP 路由、JSON/数据库字段、RPC Component ID 和配置绑定键；生成产物从源码重建，不直接修改压缩 JS 或已编译字节码。

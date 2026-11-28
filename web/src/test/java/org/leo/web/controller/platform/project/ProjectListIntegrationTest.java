@@ -336,7 +336,7 @@ class ProjectListIntegrationTest {
     }
 
     @Test
-    void listsVisibleProjectsWithHostAndSessionTotalsInOneProjectQuery() throws Exception {
+    void listsVisibleProjectsWithEntryNodeAndSessionTotalsInOneProjectQuery() throws Exception {
         project("owned", "user-1", "private", "active", "zebra");
         project("team", "user-2", "team", "active", "Alpha");
         project("hidden", "user-2", "private", "active", "Hidden");
@@ -358,7 +358,10 @@ class ProjectListIntegrationTest {
 
         assertEquals(List.of("team", "owned", "public"),
                 result.stream().map(item -> item.project().getProjectId()).toList());
-        assertEquals(List.of(1, 2, 0), result.stream().map(ProjectSummary::hostCount).toList());
+        assertEquals(List.of(1, 2, 0), result.stream().map(ProjectSummary::entryNodeCount).toList());
+        var summary = new ObjectMapper().valueToTree(result.get(1));
+        assertEquals(2, summary.path("entryNodeCount").asInt());
+        assertFalse(summary.has("hostCount"));
         assertEquals(List.of(1, 1, 0), result.stream().map(ProjectSummary::activeSessionCount).toList());
         assertEquals(List.of(false, true, false), result.stream().map(ProjectSummary::manageable).toList());
         assertEquals(List.of(true, true, false), result.stream().map(ProjectSummary::contentEditable).toList());
@@ -404,7 +407,7 @@ class ProjectListIntegrationTest {
         List<ProjectSummary> result = listAs("admin");
 
         assertEquals(1, result.size());
-        assertEquals(0, result.get(0).hostCount());
+        assertEquals(0, result.get(0).entryNodeCount());
         assertEquals(3, result.get(0).activeSessionCount());
         assertTrue(result.get(0).manageable());
         assertTrue(result.get(0).contentEditable());
@@ -587,7 +590,7 @@ class ProjectListIntegrationTest {
     }
 
     @Test
-    void largeListsKeepEveryProjectAndItsHostCountInOneQuery() throws Exception {
+    void largeListsKeepEveryProjectAndItsEntryNodeCountInOneQuery() throws Exception {
         host("shared");
         for (int index = 0; index < 600; index++) {
             String id = "project-" + index;
@@ -598,7 +601,7 @@ class ProjectListIntegrationTest {
         List<ProjectSummary> result = listAs("normal");
 
         assertEquals(600, result.size());
-        assertTrue(result.stream().allMatch(item -> item.hostCount() == 1));
+        assertTrue(result.stream().allMatch(item -> item.entryNodeCount() == 1));
         assertProjectListQuery();
     }
 
