@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -13,6 +14,8 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
+import org.leo.web.config.ApiResponseStatusAdvice;
+import org.leo.web.controller.platform.admin.AiModelConfigController;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -21,6 +24,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.sqlite.SQLiteConfig;
@@ -34,6 +38,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AiModelConfigurationIntegrationTest {
     private static final String DAMAGED_SECRET = "invalid-fixture-ciphertext";
@@ -272,6 +280,29 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(Map.of("api_key", DAMAGED_SECRET, "headers_json", DAMAGED_SECRET), jdbc.queryForMap(
                 "SELECT api_key, headers_json FROM ai_providers WHERE id=?", unrelated.getId()));
         assertNotNull(chat.getDelegate());
+    }
+
+    @Test
+    void activatingAModelReturnsTheFallbackNameWithoutDecryptingItsCredentials() throws Exception {
+        AiModelConfig previous = model(provider("previous"), "previous model");
+        AiModelConfig primary = model(provider("primary"), "primary model");
+        AiProvider fallbackProvider = provider("fallback");
+        AiModelConfig fallback = model(fallbackProvider, "fallback display name");
+        jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", fallback.getId(), primary.getId());
+        damageStoredProviderSecrets(fallbackProvider.getId());
+        assertEquals(previous.getId(), configs.getActive().getId());
+
+        var controller = new AiModelConfigController(configs, context.getBean(DynamicModelProvider.class),
+                mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
+                mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
+        var response = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiResponseStatusAdvice()).build()
+                .perform(post("/platform/admin/ai-models/{id}/activate", primary.getId()));
+
+        assertEquals(primary.getId(), configs.getActive().getId());
+        response.andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fallbackModelId").value(fallback.getId()))
+                .andExpect(jsonPath("$.data.fallbackModelName").value(fallback.getName()));
     }
 
     @Test

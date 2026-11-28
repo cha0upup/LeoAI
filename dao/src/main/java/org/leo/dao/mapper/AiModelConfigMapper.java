@@ -41,6 +41,9 @@ public interface AiModelConfigMapper {
     @Select(MODEL_WITH_PROVIDER + "WHERE m.id = #{id}")
     AiModelConfig findById(@Param("id") Integer id);
 
+    @Select("SELECT name FROM ai_model_configs WHERE id = #{id}")
+    String findNameById(@Param("id") Integer id);
+
     @Select(MODEL_WITH_PROVIDER + "WHERE m.is_active = 1 AND m.enabled = 1 LIMIT 1")
     AiModelConfig findActive();
 

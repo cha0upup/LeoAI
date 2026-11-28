@@ -265,6 +265,11 @@ public class AiModelConfigService {
         return id == null ? null : decryptModel(mapper.findById(id));
     }
 
+    /** Display metadata can be read independently of provider credentials. */
+    public String findModelName(Integer id) {
+        return id == null ? null : mapper.findNameById(id);
+    }
+
     public AiModelConfig getActive() {
         return decryptModel(mapper.findActive());
     }

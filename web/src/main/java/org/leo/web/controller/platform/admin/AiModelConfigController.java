@@ -331,9 +331,7 @@ public class AiModelConfigController {
     }
 
     private HashMap<String, Object> toView(AiModelConfig c) {
-        AiModelConfig fallback = c.getFallbackModelId() != null
-                ? configService.findById(c.getFallbackModelId()) : null;
-        return toView(c, fallback != null ? fallback.getName() : null,
+        return toView(c, configService.findModelName(c.getFallbackModelId()),
                 configService.capabilityModelName(c), configService.capabilitiesForModel(c));
     }
 
