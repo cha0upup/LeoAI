@@ -11,6 +11,8 @@
 项目列表（`GET /platform/projects`）的 `entryNodeCount` 表示入口节点归属数。
 `activeSessionCount` 是当前调用者可见的活动会话总数，`cacheSessionCount` 是其中的缓存会话数，两者之差为实时会话数。
 节点目录复用的会话来自 `GET /platform/session/sessions`，只列有运行时客户端的实时会话，不把缓存会话当作在线连接。
+控制台通过 `POST /agent-node/capabilities` 同时读取能力和会话绑定的 `currentHostId`；未绑定时该字段为 `null`。
+缓存会话的 `currentHostId` 表示缓存所属实例，不表示已连接。
 
 代码中，`AbstractAgentNode` 表示平台侧的运行时适配对象，不是 `agents` 表中的配置记录。
 

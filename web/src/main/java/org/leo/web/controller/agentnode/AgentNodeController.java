@@ -229,7 +229,7 @@ public class AgentNodeController {
     }
 
     /**
-     * 获取当前会话支持的能力清单。
+     * 获取当前会话支持的能力清单及其绑定的后端实例标识。
      */
     @RequestMapping(value = "/capabilities", method = RequestMethod.POST)
     public Map<String, Object> capabilities(@RequestBody SessionIdRequest body) {
@@ -240,6 +240,7 @@ public class AgentNodeController {
 
         Map<String, Object> result = new HashMap<>();
         result.put("sessionId", session.getSessionId());
+        result.put("currentHostId", session.getCurrentHostId());
         result.put("cacheMode", session.isCacheMode());
         result.put("capabilities", capabilities);
         result.put("capabilityDetails", session.getCapabilityStatuses());

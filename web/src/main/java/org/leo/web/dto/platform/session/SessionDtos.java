@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * 会话管理相关 DTO（Record 风格）。
  *
- * <p>保留会话管理、HostId 视图及摘要操作请求；摘要和报告结果由对应应用用例定义。
+ * <p>保留会话管理及摘要操作请求；摘要和报告结果由对应应用用例定义。
  */
 public final class SessionDtos {
 
@@ -39,10 +39,6 @@ public final class SessionDtos {
             String sessionId,
             List<ConnLinkItem> connLinkChain
     ) {}
-
-    // ─── HostId 管理 ──────────────────────────────────────────────────────────
-
-    public record CurrentHostIdResponse(String sessionId, String currentHostId) {}
 
     // ─── 侦察摘要 ─────────────────────────────────────────────────────────────
 

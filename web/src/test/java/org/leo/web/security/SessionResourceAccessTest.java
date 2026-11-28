@@ -11,6 +11,8 @@ import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.agentnode.AgentService;
 import org.leo.service.user.UserService;
+import org.leo.web.controller.agentnode.AgentNodeController;
+import org.leo.web.dto.SessionIdRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.util.ControllerUtil;
@@ -20,6 +22,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.method.HandlerMethod;
 
+import java.util.Map;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -58,13 +61,19 @@ class SessionResourceAccessTest {
 
     @Test
     void withdrawnSharingBlocksAnExistingHttpSessionAndAgentConnection() throws Exception {
-        authenticate(new MockHttpServletRequest("POST", "/agent-node/basic-info"));
+        session.bindHostId("cached-instance");
+        var controller = new AgentNodeController(null, permissions, null, null, null, null);
+        var body = new SessionIdRequest("connection");
+        authenticate(new MockHttpServletRequest("POST", "/agent-node/capabilities"));
         assertSame(session, ControllerUtil.getAgentNodeSession("connection"));
+        var data = (Map<?, ?>) controller.capabilities(body).get("data");
+        assertEquals("cached-instance", data.get("currentHostId"));
+        assertEquals(true, data.get("cacheMode"));
 
         host.setPermission("private");
 
         assertEquals(403, assertThrows(ApiException.class,
-                () -> ControllerUtil.getAgentNodeSession("connection")).getCode());
+                () -> controller.capabilities(body)).getCode());
     }
 
     @Test
