@@ -52,9 +52,17 @@ public interface AgentDatabaseConnectionMapper {
             """)
     List<AgentDatabaseConnection> selectViewFieldsByAgentId(@Param("agentId") String agentId);
 
-    @Select("<script>SELECT COUNT(*) > 0 FROM agent_database_connections "
-            + "WHERE agent_id=#{agentId} AND connection_name=#{connectionName} " +
-            "<if test='excludeConnectionId != null and excludeConnectionId != \"\"'>AND connection_id != #{excludeConnectionId}</if></script>")
+    @Select("""
+            <script>
+            SELECT EXISTS (
+                SELECT 1 FROM agent_database_connections
+                WHERE agent_id = #{agentId} AND connection_name = #{connectionName}
+                <if test="excludeConnectionId != null and excludeConnectionId != ''">
+                    AND connection_id != #{excludeConnectionId}
+                </if>
+            )
+            </script>
+            """)
     boolean existsByName(@Param("agentId") String agentId,
                          @Param("connectionName") String connectionName,
                          @Param("excludeConnectionId") String excludeConnectionId);

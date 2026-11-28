@@ -101,6 +101,25 @@ class ConfigurationPersistenceTest {
     }
 
     @Test
+    void profileNameConflictsAreScopedToTheNodeAndExcludeTheProfileBeingEdited() {
+        var persistence = new AgentDatabaseConnectionService(connections,
+                new DatabaseCredentialCryptoService("profile-fixture-key", "unused"));
+        var profiles = new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry());
+        var params = Map.<String, Object>of("connectionName", "inventory",
+                "connection", Map.of("dialect", "sqlite", "connectionMode", "standard", "file", "fixture.db"));
+        var original = profiles.create("owner", "node-a", params);
+        String id = (String) original.get("connectionId");
+        var otherNode = profiles.create("owner", "node-b", params);
+
+        assertEquals("inventory", otherNode.get("connectionName"));
+        var edited = profiles.update("owner", "node-a", id, Map.of("description", "edited"));
+        assertEquals("inventory", edited.get("connectionName"));
+
+        var sameNode = profiles.create("owner", "node-a", params);
+        assertTrue(((String) sameNode.get("connectionName")).startsWith("inventory_"));
+    }
+
+    @Test
     void profileReadsLoadOnlyTheFieldsNeededByEachOperation() {
         assertTrue(agents.insertAgent(agent("node")));
         var crypto = new DatabaseCredentialCryptoService("profile-fixture-key", "unused");
