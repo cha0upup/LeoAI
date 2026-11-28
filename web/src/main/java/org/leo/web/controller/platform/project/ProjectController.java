@@ -8,6 +8,7 @@ import org.leo.core.security.AccessPolicy;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
 import org.leo.web.application.agent.SessionLifecycleManager;
+import org.leo.web.application.agent.SessionLifecycleManager.ProjectSessionCounts;
 import org.leo.web.application.project.ProjectReadService;
 import org.leo.web.dto.platform.agent.AgentDirectoryEntry;
 import org.leo.web.dto.platform.project.ProjectDtos.AgentMembershipsRequest;
@@ -60,11 +61,12 @@ public class ProjectController {
         for (ProjectListItem row : visibleProjects) {
             visibleProjectIds.add(row.projectId());
         }
-        Map<String, Integer> sessionCounts = sessionLifecycle.countByProject(user, visibleProjectIds);
+        Map<String, ProjectSessionCounts> sessionCounts = sessionLifecycle.countByProject(user, visibleProjectIds);
         List<ProjectSummary> projects = new ArrayList<>(visibleProjects.size());
         for (ProjectListItem row : visibleProjects) {
             Project project = row.project();
-            projects.add(new ProjectSummary(project, row.entryNodeCount(), sessionCounts.getOrDefault(row.projectId(), 0),
+            var counts = sessionCounts.getOrDefault(row.projectId(), ProjectSessionCounts.EMPTY);
+            projects.add(new ProjectSummary(project, row.entryNodeCount(), counts.active(), counts.cached(),
                     projectService.canManage(project, user), projectService.canEditContent(project, user)));
         }
         return ApiResponse.success(projects);

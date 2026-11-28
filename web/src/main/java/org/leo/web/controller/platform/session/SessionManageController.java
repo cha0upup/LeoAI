@@ -43,7 +43,7 @@ public class SessionManageController {
     }
 
     /**
-     * 获取当前用户的所有会话连接。
+     * 获取当前用户可复用的实时会话；没有运行时客户端的缓存会话不在列表中。
      */
     @GetMapping("/sessions")
     public HashMap<String, Object> getAllSessions(

@@ -10,6 +10,7 @@ import org.leo.core.entity.User;
 import org.leo.core.session.AgentNodeSession;
 import org.leo.core.session.AgentNodeSessionContainer;
 import org.leo.service.discovery.NetworkProbeWorkflowService;
+import org.leo.web.application.agent.SessionLifecycleManager.ProjectSessionCounts;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -80,14 +81,16 @@ class SessionLifecycleManagerTest {
         user.setPrivilege(admin ? "admin" : "normal");
         try (var sessions = mockStatic(AgentNodeSessionContainer.class)) {
             sessions.when(AgentNodeSessionContainer::getAllSessions).thenReturn(Map.of(
-                    "own-1", projectSession("project-1", "user"),
-                    "own-2", projectSession("project-1", "user"),
-                    "foreign", projectSession("project-1", "other"),
-                    "no-owner", projectSession("project-2", null),
-                    "out-of-scope", projectSession("project-outside", "user"),
-                    "unassigned", projectSession(null, "user")));
+                    "own-live", projectSession("project-1", "user", false),
+                    "own-cache", projectSession("project-1", "user", true),
+                    "foreign", projectSession("project-1", "other", true),
+                    "no-owner", projectSession("project-2", null, false),
+                    "out-of-scope", projectSession("project-outside", "user", true),
+                    "unassigned", projectSession(null, "user", true)));
 
-            assertEquals(admin ? Map.of("project-1", 3, "project-2", 1) : Map.of("project-1", 2),
+            assertEquals(admin
+                            ? Map.of("project-1", new ProjectSessionCounts(3, 2), "project-2", new ProjectSessionCounts(1, 0))
+                            : Map.of("project-1", new ProjectSessionCounts(2, 1)),
                     lifecycle.countByProject(user, Set.of("project-1", "project-2")));
             assertEquals(Map.of(), lifecycle.countByProject(user, Set.of()));
             sessions.verify(AgentNodeSessionContainer::getAllSessions);
@@ -125,10 +128,11 @@ class SessionLifecycleManagerTest {
         assertEquals(0, lifecycle.detachProject("removed"));
     }
 
-    private AgentNodeSession projectSession(String projectId, String ownerId) {
+    private AgentNodeSession projectSession(String projectId, String ownerId, boolean cacheMode) {
         AgentNodeSession session = new AgentNodeSession();
         session.setProjectId(projectId);
         session.setCreateByUser(ownerId);
+        session.setCacheMode(cacheMode);
         return session;
     }
 

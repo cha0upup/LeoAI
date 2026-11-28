@@ -80,14 +80,22 @@ public final class SessionLifecycleManager {
         return expired;
     }
 
-    public Map<String, Integer> countByProject(User user, Set<String> projectIds) {
+    public record ProjectSessionCounts(int active, int cached) {
+        public static final ProjectSessionCounts EMPTY = new ProjectSessionCounts(0, 0);
+    }
+
+    public Map<String, ProjectSessionCounts> countByProject(User user, Set<String> projectIds) {
         if (projectIds.isEmpty()) return Map.of();
-        Map<String, Integer> counts = new HashMap<>();
+        Map<String, ProjectSessionCounts> counts = new HashMap<>();
         for (AgentNodeSession session : AgentNodeSessionContainer.getAllSessions().values()) {
             if (session == null) continue;
             String projectId = session.getProjectId();
             if (projectId != null && projectIds.contains(projectId) && AccessPolicy.canAccessSession(session, user)) {
-                counts.merge(projectId, 1, Integer::sum);
+                counts.compute(projectId, (id, previous) -> {
+                    var current = previous != null ? previous : ProjectSessionCounts.EMPTY;
+                    return new ProjectSessionCounts(current.active() + 1,
+                            current.cached() + (session.isCacheMode() ? 1 : 0));
+                });
             }
         }
         return counts;

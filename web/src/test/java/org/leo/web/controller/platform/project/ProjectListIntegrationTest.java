@@ -349,6 +349,8 @@ class ProjectListIntegrationTest {
         attach("hidden", "shared");
         session("own", "owned", "user-1");
         session("other", "owned", "user-2");
+        session("own-cache", "owned", "user-1").setCacheMode(true);
+        session("other-cache", "owned", "user-2").setCacheMode(true);
         session("team-own", "team", "user-1");
         session("team-other", "team", "user-2");
         session("unassigned", null, "user-1");
@@ -362,7 +364,8 @@ class ProjectListIntegrationTest {
         var summary = new ObjectMapper().valueToTree(result.get(1));
         assertEquals(2, summary.path("entryNodeCount").asInt());
         assertFalse(summary.has("hostCount"));
-        assertEquals(List.of(1, 1, 0), result.stream().map(ProjectSummary::activeSessionCount).toList());
+        assertEquals(1, summary.path("cacheSessionCount").asInt());
+        assertEquals(List.of(1, 2, 0), result.stream().map(ProjectSummary::activeSessionCount).toList());
         assertEquals(List.of(false, true, false), result.stream().map(ProjectSummary::manageable).toList());
         assertEquals(List.of(true, true, false), result.stream().map(ProjectSummary::contentEditable).toList());
         assertProjectListQuery();
@@ -658,11 +661,12 @@ class ProjectListIntegrationTest {
                 + "VALUES (?, ?, 'user-1', '2026-10-01')", projectId, agentId);
     }
 
-    private void session(String id, String projectId, String owner) {
+    private AgentNodeSession session(String id, String projectId, String owner) {
         AgentNodeSession session = new AgentNodeSession();
         session.setProjectId(projectId);
         session.setCreateByUser(owner);
         AgentNodeSessionContainer.addSession(id, session);
+        return session;
     }
 
     @Intercepts(@Signature(type = StatementHandler.class, method = "prepare", args = {Connection.class, Integer.class}))

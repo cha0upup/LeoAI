@@ -8,7 +8,8 @@
 | 操作会话 | `AgentNodeSession` / `sessionId` | 一次在线连接或缓存浏览。在线会话绑定一个后端实例；缓存会话可以没有实时客户端。 |
 | AI 助手 | `NodeAiAgent` / `PlatformAiAgent` | 节点侧和平台侧的 AI 角色。子对话的父子关系与接入节点的 `parentAgentId` 无关。 |
 
-项目列表（`GET /platform/projects`）用 `entryNodeCount` 表示该项目的入口节点归属数。
-`activeSessionCount` 单独表示对当前调用者可见的活动会话数。两个计数都不是后端实例数。
+项目列表（`GET /platform/projects`）的 `entryNodeCount` 表示入口节点归属数。
+`activeSessionCount` 是当前调用者可见的活动会话总数，`cacheSessionCount` 是其中的缓存会话数，两者之差为实时会话数。
+节点目录复用的会话来自 `GET /platform/session/sessions`，只列有运行时客户端的实时会话，不把缓存会话当作在线连接。
 
 代码中，`AbstractAgentNode` 表示平台侧的运行时适配对象，不是 `agents` 表中的配置记录。
