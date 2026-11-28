@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
  * <p>定期扫描上传、下载和 SQL 导出服务中的
  * 已完成、失败或取消超过 30 分钟的任务，将其从内存中移除；下载任务的
  * 断点元数据和残留临时文件也会同步清理，已提交的下载文件继续保留。
+ * SQL 导出任务的最新状态写入成功后才从内存移除。
  */
 @Component
 public class TransferEngineCleanup {

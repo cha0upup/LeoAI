@@ -14,6 +14,7 @@ import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.mockito.stubbing.Answer;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -256,6 +257,7 @@ class SqlExportServiceLifecycleTest {
             }
         });
         assertEquals("FAILED", service.pause(key.userId(), key.taskId()).get("status"));
+        clearInvocations(repository);
 
         var eviction = new FutureTask<>(service::evictFinished);
         var resume = new FutureTask<>(() -> service.resume(node, key.userId(), "new-session", key.taskId(), Map.of()));
@@ -280,6 +282,7 @@ class SqlExportServiceLifecycleTest {
 
         assertEquals(1, eviction.get(5, TimeUnit.SECONDS));
         assertEquals("PENDING", resume.get(5, TimeUnit.SECONDS).get("status"));
+        verify(repository, never()).save(eq(key), argThat(data -> "FAILED".equals(data.get("status"))));
         assertEquals(1, queued.size());
         queued.get(0).run();
         var saved = repository.load(key);
@@ -323,7 +326,7 @@ class SqlExportServiceLifecycleTest {
         doAnswer(call -> {
             Map<String, Object> saved = call.getArgument(1);
             if ("FAILED".equals(saved.get("status")) && failedFirstSave.compareAndSet(false, true)) {
-                throw new java.io.IOException("fixture save failure");
+                throw new IOException("fixture save failure");
             }
             return call.callRealMethod();
         }).when(repository).save(eq(key), anyMap());
@@ -333,6 +336,33 @@ class SqlExportServiceLifecycleTest {
         assertTrue(failedFirstSave.get());
         assertEquals("FAILED", stored.get("status"));
         assertEquals("fixture read failure", stored.get("error"));
+    }
+
+    @Test void evictionKeepsTheFailedStateUntilItCanBeSaved() throws Exception {
+        String id = id(start("table"));
+        var key = new SqlExportTaskKey("owner", id);
+        when(sql.getTableColumns(any(), anyMap(), any())).thenThrow(new IllegalStateException("fixture read failure"));
+        var canSaveFailure = new AtomicBoolean(false);
+        doAnswer(call -> {
+            Map<String, Object> saved = call.getArgument(1);
+            if ("FAILED".equals(saved.get("status")) && !canSaveFailure.get()) {
+                throw new IOException("fixture save failure");
+            }
+            return call.callRealMethod();
+        }).when(repository).save(eq(key), anyMap());
+
+        queued.get(0).run();
+        assertEquals("FAILED", service.progress("owner", id).get("status"));
+        assertEquals("RUNNING", repository.load(key).get("status"));
+
+        long afterRetention = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(1);
+        assertEquals(0, service.evictFinished(afterRetention));
+        assertEquals("FAILED", service.progress("owner", id).get("status"));
+
+        canSaveFailure.set(true);
+        assertEquals(1, service.evictFinished(afterRetention));
+        assertEquals("FAILED", repository.load(key).get("status"));
+        assertEquals("PENDING", service.resume(node, "owner", "new-session", id, Map.of()).get("status"));
     }
 
     private Map<String, Object> start(String kind) throws Exception {

@@ -50,7 +50,9 @@ final class SqlExportTask {
     }
 
     static SqlExportTask restore(SqlExportTaskRepository repository, SqlExportTaskKey key) throws Exception {
-        return new SqlExportTask(repository, key, repository.load(key));
+        SqlExportTask task = new SqlExportTask(repository, key, repository.load(key));
+        task.needsSave = false;
+        return task;
     }
 
     SqlExportTaskKey key() {
@@ -76,7 +78,7 @@ final class SqlExportTask {
 
     synchronized void finishAttempt(Attempt expected) {
         if (!isCurrent(expected)) return;
-        if (needsSave) persist();
+        tryPersistPendingChanges();
         if (isCurrent(expected)) attempt = null;
     }
 
@@ -240,6 +242,12 @@ final class SqlExportTask {
         } catch (Exception ignored) {
             needsSave = true;
         }
+    }
+
+    /** True when dropping the in-memory state would not reveal an older snapshot. */
+    synchronized boolean tryPersistPendingChanges() {
+        if (needsSave) persist();
+        return !needsSave;
     }
 
     private static Map<String, Object> copy(Map<String, Object> source) {

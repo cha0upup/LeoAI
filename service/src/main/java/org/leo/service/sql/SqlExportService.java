@@ -192,12 +192,16 @@ public class SqlExportService {
     }
 
     public int evictFinished() {
-        long now = System.currentTimeMillis();
+        return evictFinished(System.currentTimeMillis());
+    }
+
+    int evictFinished(long now) {
         int evicted = 0;
         for (Map.Entry<SqlExportTaskKey, SqlExportTask> entry : liveTasks.entrySet()) {
             SqlExportTask task = entry.getValue();
             synchronized (task) {
                 if (task.isExpired(now, FINISHED_TASK_RETAIN_MILLIS)
+                        && task.tryPersistPendingChanges()
                         && liveTasks.remove(entry.getKey(), task)) {
                     task.clearAttempt();
                     evicted++;
