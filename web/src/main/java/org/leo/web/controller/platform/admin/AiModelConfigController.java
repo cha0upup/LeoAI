@@ -60,18 +60,16 @@ public class AiModelConfigController {
 
     @RequestMapping(method = RequestMethod.GET)
     public HashMap<String, Object> list() {
-        List<HashMap<String, Object>> view = new ArrayList<>();
-        for (AiModelConfigService.CatalogEntry entry : configService.listCatalog()) {
-            view.add(toView(entry.config(), entry.fallbackModelName(), entry.capabilityModelName(), entry.capabilities()));
-        }
-        return ApiResponse.success(view);
+        return ApiResponse.success(configService.listCatalog().stream()
+                .map(AiModelConfigController::toView)
+                .toList());
     }
 
     @RequestMapping(method = RequestMethod.POST)
     public HashMap<String, Object> create(@RequestBody AiModelConfig body) {
         try {
             AiModelConfig saved = configService.create(body);
-            return ApiResponse.success(toView(saved));
+            return ApiResponse.success(toView(configService.describeModel(saved)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -95,7 +93,7 @@ public class AiModelConfigController {
             if (saved == null) {
                 return ApiResponse.notFound("模型配置不存在，id: " + id);
             }
-            return ApiResponse.success(toView(saved));
+            return ApiResponse.success(toView(configService.describeModel(saved)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -116,7 +114,7 @@ public class AiModelConfigController {
             if (saved == null) {
                 return ApiResponse.notFound("模型配置不存在，id: " + id);
             }
-            return ApiResponse.success(toView(saved));
+            return ApiResponse.success(toView(configService.describeModel(saved)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -299,14 +297,14 @@ public class AiModelConfigController {
      * 避免前端直接跨域请求第三方 API。
      */
     @RequestMapping(value = "/fetch-models", method = RequestMethod.POST)
-    public HashMap<String, Object> fetchModels(@RequestBody Map<String, String> body) {
+    public HashMap<String, Object> fetchModels(@RequestBody FetchModelsRequest body) {
         AiProvider provider = new AiProvider();
-        provider.setBaseUrl(body.get("baseUrl"));
-        provider.setApiKey(body.get("apiKey"));
-        provider.setProviderKey(body.get("providerKey"));
-        provider.setProtocol(body.get("protocol"));
-        provider.setCompletionsPath(body.get("completionsPath"));
-        provider.setHeadersJson(body.get("headersJson"));
+        provider.setBaseUrl(body.baseUrl());
+        provider.setApiKey(body.apiKey());
+        provider.setProviderKey(body.providerKey());
+        provider.setProtocol(body.protocol());
+        provider.setCompletionsPath(body.completionsPath());
+        provider.setHeadersJson(body.headersJson());
         return fetchModelIds(provider);
     }
 
@@ -330,13 +328,9 @@ public class AiModelConfigController {
         }
     }
 
-    private HashMap<String, Object> toView(AiModelConfig c) {
-        return toView(c, configService.findModelName(c.getFallbackModelId()),
-                configService.capabilityModelName(c), configService.capabilitiesForModel(c));
-    }
-
-    private HashMap<String, Object> toView(AiModelConfig c, String fallbackModelName, String capabilityModelName,
-                                           ProviderCapabilities capabilities) {
+    private static HashMap<String, Object> toView(AiModelConfigService.CatalogEntry entry) {
+        AiModelConfig c = entry.config();
+        ProviderCapabilities capabilities = entry.capabilities();
         HashMap<String, Object> m = new LinkedHashMap<>();
         m.put("id", c.getId());
         m.put("providerId", c.getProviderId());
@@ -350,7 +344,7 @@ public class AiModelConfigController {
         m.put("isActive", c.getIsActive());
         m.put("enabled", c.getEnabled());
         m.put("fallbackModelId", c.getFallbackModelId());
-        m.put("fallbackModelName", fallbackModelName);
+        m.put("fallbackModelName", entry.fallbackModelName());
         m.put("maxOutputTokens", c.getMaxOutputTokens());
         m.put("thinkingEnabled", c.getThinkingEnabled());
         m.put("reasoningEffort", c.getReasoningEffort());
@@ -360,7 +354,7 @@ public class AiModelConfigController {
         m.put("headersConfigured", headers != null && !headers.isBlank());
         m.put("capabilityRecognized", capabilities.recognized());
         m.put("capabilitySource", capabilities.source());
-        m.put("capabilityModelName", capabilityModelName);
+        m.put("capabilityModelName", entry.capabilityModelName());
         m.put("capabilityContextWindowTokens", capabilities.contextWindowTokens());
         m.put("capabilityMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("effectiveContextWindowTokens", ModelRequestOptions.effectiveInputWindow(c, capabilities));
@@ -403,5 +397,9 @@ public class AiModelConfigController {
 
     private static int clampPositive(Integer configured, int limit) {
         return configured != null && configured > 0 ? Math.min(configured, limit) : limit;
+    }
+
+    public record FetchModelsRequest(String baseUrl, String apiKey, String providerKey, String protocol,
+                                     String completionsPath, String headersJson) {
     }
 }

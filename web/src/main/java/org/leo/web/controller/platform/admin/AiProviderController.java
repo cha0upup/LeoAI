@@ -30,10 +30,7 @@ public class AiProviderController {
     @RequestMapping(method = RequestMethod.POST)
     public HashMap<String, Object> create(@RequestBody AiProvider body) {
         try {
-            AiProvider saved = body.getModels() == null || body.getModels().isEmpty()
-                    ? configService.createProvider(body)
-                    : configService.createProviderWithModels(body);
-            return ApiResponse.success(toView(saved));
+            return ApiResponse.success(toView(configService.createProvider(body)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }

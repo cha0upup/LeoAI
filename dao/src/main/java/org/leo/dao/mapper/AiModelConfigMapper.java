@@ -47,8 +47,8 @@ public interface AiModelConfigMapper {
     @Select(MODEL_WITH_PROVIDER + "WHERE m.is_active = 1 AND m.enabled = 1 LIMIT 1")
     AiModelConfig findActive();
 
-    @Select("SELECT COUNT(*) FROM ai_model_configs")
-    int countAll();
+    @Select("SELECT EXISTS (SELECT 1 FROM ai_model_configs)")
+    boolean hasModels();
 
     @Insert("""
             INSERT INTO ai_model_configs (
@@ -76,7 +76,7 @@ public interface AiModelConfigMapper {
             + "WHERE provider_id = #{providerId}")
     int disableByProviderId(@Param("providerId") Integer providerId, @Param("updateTime") String updateTime);
 
-    @Update("UPDATE ai_model_configs SET is_active = 0")
+    @Update("UPDATE ai_model_configs SET is_active = 0 WHERE is_active = 1")
     int clearActive();
 
     @Update("UPDATE ai_model_configs SET is_active = 1, enabled = 1, update_time = #{updateTime} WHERE id = #{id}")

@@ -12,9 +12,11 @@ import org.leo.ai.channel.ModelRequestPlan;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiProvider;
 import org.leo.core.entity.ProviderCapabilities;
 import org.leo.web.config.ApiResponseStatusAdvice;
 import org.leo.web.config.GlobalExceptionHandler;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -41,9 +43,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AiModelConfigControllerTest {
     private final AiModelConfigService configs = mock(AiModelConfigService.class);
     private final DynamicModelProvider runtime = mock(DynamicModelProvider.class);
+    private final AiModelDiscoveryService discovery = mock(AiModelDiscoveryService.class);
     private final AiModelConfigController controller = new AiModelConfigController(configs, runtime,
             mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
-            mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
+            mock(AiModelCapabilityProbeService.class), discovery);
 
     @Test
     void draftPreviewReturnsTypedFieldErrorsWithoutBuildingOrCallingARuntime() throws Exception {
@@ -155,8 +158,10 @@ class AiModelConfigControllerTest {
         AiModelConfig saved = model(7, "Saved");
         if ("PUT".equals(method)) {
             when(configs.update(eq(7), any())).thenReturn(found ? saved : null);
-            when(configs.capabilitiesForModel(any(AiModelConfig.class)))
-                    .thenReturn(ProviderCapabilities.conservativeDefault());
+            if (found) {
+                when(configs.describeModel(saved)).thenReturn(new AiModelConfigService.CatalogEntry(
+                        saved, null, saved.getModel(), ProviderCapabilities.conservativeDefault()));
+            }
         } else {
             when(configs.deleteById(7)).thenReturn(found);
         }
@@ -171,6 +176,7 @@ class AiModelConfigControllerTest {
                 .andExpect(jsonPath("$.msg").value(found ? "success" : "模型配置不存在，id: 7"));
         if ("PUT".equals(method)) {
             verify(configs).update(eq(7), any());
+            if (found) verify(configs).describeModel(saved);
             if (found) response.andExpect(jsonPath("$.data.id").value(7))
                     .andExpect(jsonPath("$.data.apiKeyConfigured").value(true))
                     .andExpect(jsonPath("$.data.headersConfigured").value(true))
@@ -181,6 +187,36 @@ class AiModelConfigControllerTest {
         }
         verify(configs, never()).findById(7);
         verifyNoInteractions(runtime);
+    }
+
+    @Test
+    void draftDiscoveryBindsTheSameConnectionFieldsWithoutEchoingThem() throws Exception {
+        when(discovery.fetch(any(AiProvider.class))).thenReturn(List.of("fixture-model"));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/admin/ai-models/fetch-models")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "baseUrl":"https://example.test/v1",
+                                  "apiKey":"fixture-key",
+                                  "providerKey":"custom",
+                                  "protocol":"chat_completions",
+                                  "completionsPath":"/chat/completions",
+                                  "headersJson":"{}"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0]").value("fixture-model"));
+
+        ArgumentCaptor<AiProvider> provider = ArgumentCaptor.forClass(AiProvider.class);
+        verify(discovery).fetch(provider.capture());
+        assertEquals("https://example.test/v1", provider.getValue().getBaseUrl());
+        assertEquals("fixture-key", provider.getValue().getApiKey());
+        assertEquals("custom", provider.getValue().getProviderKey());
+        assertEquals("chat_completions", provider.getValue().getProtocol());
+        assertEquals("/chat/completions", provider.getValue().getCompletionsPath());
+        assertEquals("{}", provider.getValue().getHeadersJson());
+        verifyNoInteractions(configs, runtime);
     }
 
     private static AiModelConfig model(int id, String name) {

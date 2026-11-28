@@ -233,27 +233,18 @@ public class SkillManifestService {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> parseSkillFrontmatter(
             String content, List<SkillValidationIssue> issues) {
-        if (content == null || !content.startsWith("---")) {
+        SkillFrontmatter frontmatter = SkillFrontmatter.split(content);
+        if (frontmatter == null) {
             issues.add(SkillValidationIssue.error("SKILL.md.frontmatter", "缺少 YAML frontmatter"));
             return new LinkedHashMap<>();
         }
-        String[] lines = content.split("\\n", -1);
-        int closeLine = -1;
-        for (int i = 1; i < lines.length; i++) {
-            if (lines[i].trim().equals("---")) {
-                closeLine = i;
-                break;
-            }
-        }
-        if (closeLine < 0) {
+        if (!frontmatter.hasClosingDelimiter()) {
             issues.add(SkillValidationIssue.error("SKILL.md.frontmatter", "缺少闭合分隔符 ---"));
             return new LinkedHashMap<>();
         }
-        String yamlText = String.join("\n", java.util.Arrays.copyOfRange(lines, 1, closeLine));
-        return parseYamlMap(yamlText, "SKILL.md", "SKILL.md.frontmatter", issues);
+        return parseYamlMap(frontmatter.yaml(), "SKILL.md", "SKILL.md.frontmatter", issues);
     }
 
     @SuppressWarnings("unchecked")

@@ -16,7 +16,8 @@ import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
 import org.leo.web.application.ai.PlatformAiThreadService.CreatedThread;
-import org.leo.web.dto.platform.ai.PlatformAiDtos;
+import org.leo.web.dto.ai.AiThreadRequests.CreateThreadRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadRequest;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
 import org.springframework.http.MediaType;
@@ -37,6 +38,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -63,7 +65,7 @@ class PlatformAiControllerTest {
         when(threads.initializeThread(session.getId(), "previous", user, 99))
                 .thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
         assertThrows(UseCaseException.class, () -> controller.initializeThread(
-                new PlatformAiDtos.InitializeThreadRequest(99), request));
+                new PlatformAiController.InitializeThreadRequest(99), request));
         assertEquals("previous", session.getAttribute("platformAiStateId"));
 
         PlatformAiState created = new PlatformAiState("created");
@@ -81,14 +83,14 @@ class PlatformAiControllerTest {
 
         when(threads.createThread(session.getId(), user, "new", 7))
                 .thenReturn(new CreatedThread("new", "new", 7));
-        controller.createThread(new PlatformAiDtos.CreateThreadRequest("new", 7), request);
+        controller.createThread(new CreateThreadRequest(null, "new", 7), request);
         assertEquals("new", session.getAttribute("platformAiStateId"));
 
         when(threads.activateThread(user, "created")).thenReturn(created);
-        controller.activateThread(new PlatformAiDtos.ThreadIdRequest("created"), request);
-        controller.deleteThread(new PlatformAiDtos.ThreadIdRequest("other"), request);
+        controller.activateThread(new ThreadRequest(null, "created"), request);
+        controller.deleteThread(new ThreadRequest(null, "other"), request);
         assertEquals("created", session.getAttribute("platformAiStateId"));
-        controller.deleteThread(new PlatformAiDtos.ThreadIdRequest("created"), request);
+        controller.deleteThread(new ThreadRequest(null, "created"), request);
         assertNull(session.getAttribute("platformAiStateId"));
     }
 
@@ -125,8 +127,11 @@ class PlatformAiControllerTest {
         AiModelConfig disabledThinking = config(4, "deepseek-flash");
         disabledThinking.setThinkingEnabled(0);
         List<AiModelConfig> models = List.of(glm, kimi, gemini, disabledThinking);
-        when(configs.listEnabled()).thenReturn(models);
-        when(configs.capabilitiesForModel(any())).thenReturn(capabilities(true, true, 128_000));
+        ProviderCapabilities caps = new ProviderCapabilities(true, "recognized", "system", 1_000_000, 128_000,
+                true, true, true, true, true, false, true);
+        when(configs.listAvailableModels()).thenReturn(models.stream()
+                .map(model -> new AiModelConfigService.CatalogEntry(model, null, model.getModel(), caps))
+                .toList());
         PermissionService permissions = mock(PermissionService.class);
         User user = new User();
         user.setPrivilege("normal");
@@ -151,23 +156,16 @@ class PlatformAiControllerTest {
                 .andExpect(jsonPath("$.data[0].baseUrl").doesNotExist())
                 .andExpect(jsonPath("$.data[0].headersJson").doesNotExist())
                 .andExpect(content().string(not(containsString("private-fixture"))));
-        for (AiModelConfig model : models) verify(configs).capabilitiesForModel(model);
+        verify(configs).listAvailableModels();
         verifyNoInteractions(threads, queries, queue);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"models", "availability"})
-    void catalogAndAvailabilityUseTheSameEligibilityRulesAndReadEachCapabilityOnce(String endpoint) {
+    void catalogAndAvailabilityUseTheSameServiceQuery(String endpoint) {
         AiModelConfig usable = config(1, "usable");
-        AiModelConfig noText = config(2, "no-text");
-        AiModelConfig noStream = config(3, "no-stream");
-        AiModelConfig noOutput = config(4, "no-output");
-        List<AiModelConfig> models = List.of(usable, noText, noStream, noOutput);
-        when(configs.listEnabled()).thenReturn(models);
-        when(configs.capabilitiesForModel(usable)).thenReturn(capabilities(true, true, 4096));
-        when(configs.capabilitiesForModel(noText)).thenReturn(capabilities(false, true, 4096));
-        when(configs.capabilitiesForModel(noStream)).thenReturn(capabilities(true, false, 4096));
-        when(configs.capabilitiesForModel(noOutput)).thenReturn(capabilities(true, true, 0));
+        when(configs.listAvailableModels()).thenReturn(List.of(new AiModelConfigService.CatalogEntry(
+                usable, null, "usable", ProviderCapabilities.conservativeDefault())));
 
         if ("models".equals(endpoint)) {
             List<?> items = (List<?>) controller.models().get("data");
@@ -176,12 +174,25 @@ class PlatformAiControllerTest {
         } else {
             assertEquals(Map.of("available", true, "enabledCount", 1), controller.availability().get("data"));
         }
-        for (AiModelConfig model : models) verify(configs).capabilitiesForModel(model);
+        verify(configs).listAvailableModels();
+        verifyNoMoreInteractions(configs);
     }
 
-    private static ProviderCapabilities capabilities(boolean text, boolean streaming, int outputLimit) {
-        return new ProviderCapabilities(true, "recognized", "system", 1_000_000, outputLimit,
-                text, true, streaming, true, true, false, true);
+    @Test
+    void platformHistoryCursorStillBindsWithoutANodeSessionId() throws Exception {
+        User user = new User();
+        user.setUserId("owner");
+        when(threads.messages(user, "thread", 2, 10, 7L))
+                .thenReturn(Map.of("messages", List.of(), "hasMore", false));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/ai/messages").sessionAttr("user", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"threadId":"thread","offset":2,"limit":10,"beforeSequence":7}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hasMore").value(false));
+        verify(threads).messages(user, "thread", 2, 10, 7L);
     }
 
     private static AiModelConfig config(int id, String model) {

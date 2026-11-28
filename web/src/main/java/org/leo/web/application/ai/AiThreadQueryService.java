@@ -53,10 +53,15 @@ public class AiThreadQueryService {
         if (agentId != null) {
             for (AiThreadRecord record : conversationStore.listAgentThreads(
                     session.getCreateByUser(), agentId, session.getCurrentHostId())) {
-                result.add(nodeThread(memoryById.remove(record.getThreadId()), record));
+                result.add(nodeThread(memoryById.remove(record.getThreadId()), record, 0));
             }
         }
-        for (AiThread thread : memoryById.values()) result.add(nodeThread(thread, null));
+        if (!memoryById.isEmpty()) {
+            Map<String, Integer> counts = messages.countByThreadIds(memoryById.keySet());
+            for (AiThread thread : memoryById.values()) {
+                result.add(nodeThread(thread, null, counts.getOrDefault(thread.getThreadId(), 0)));
+            }
+        }
         result.sort(LAST_ACTIVE_FIRST);
 
         Map<String, Object> data = new LinkedHashMap<>();
@@ -122,7 +127,7 @@ public class AiThreadQueryService {
         target.putAll(turnProtocolService.snapshotThread(threadId, fallback).toMap());
     }
 
-    private Map<String, Object> nodeThread(AiThread thread, AiThreadRecord record) {
+    private Map<String, Object> nodeThread(AiThread thread, AiThreadRecord record, int transientMessageCount) {
         Map<String, Object> item = record != null ? recordSummary(record) : new LinkedHashMap<>();
         String threadId = thread != null ? thread.getThreadId() : record.getThreadId();
         if (thread != null) {
@@ -132,7 +137,7 @@ public class AiThreadQueryService {
             item.put("lastActiveAt", thread.getLastActiveAt());
             item.put("configId", thread.getAiConfigId());
         }
-        if (record == null) item.put("messageCount", messages.count(threadId));
+        if (record == null) item.put("messageCount", transientMessageCount);
         String status = thread != null ? thread.getRunStatus()
                 : record.getRunStatus() != null ? record.getRunStatus() : AiRunStatus.IDLE;
         applyProtocolSnapshot(item, threadId, status);

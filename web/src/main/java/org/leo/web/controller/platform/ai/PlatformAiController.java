@@ -19,10 +19,14 @@ import org.leo.web.application.ai.AiTurnCommandPayload;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
-import org.leo.web.dto.platform.ai.PlatformAiDtos;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.ChatRequest;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
+import org.leo.web.dto.ai.AiThreadRequests.CreateThreadRequest;
+import org.leo.web.dto.ai.AiThreadRequests.InterruptTurnRequest;
+import org.leo.web.dto.ai.AiThreadRequests.RenameThreadRequest;
+import org.leo.web.dto.ai.AiThreadRequests.StartTurnRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadConfigRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadEventsRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadMessagesRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.util.ControllerUtil;
@@ -34,7 +38,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +77,7 @@ public class PlatformAiController {
      */
     @GetMapping("/availability")
     public Map<String, Object> availability() {
-        int enabledCount = availableModelCatalog().size();
+        int enabledCount = aiModelConfigService.listAvailableModels().size();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("available", enabledCount > 0);
         data.put("enabledCount", enabledCount);
@@ -86,7 +89,9 @@ public class PlatformAiController {
      */
     @GetMapping("/models")
     public Map<String, Object> models() {
-        return ApiResponse.success(availableModelCatalog());
+        return ApiResponse.success(aiModelConfigService.listAvailableModels().stream()
+                .map(PlatformAiController::toCatalogItem)
+                .toList());
     }
 
     /** 管理员查看当前进程的 Turn 终态聚合与最近 trace。 */
@@ -96,20 +101,9 @@ public class PlatformAiController {
         return ApiResponse.success(telemetryRegistry.snapshot());
     }
 
-    private List<Map<String, Object>> availableModelCatalog() {
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (AiModelConfig config : aiModelConfigService.listEnabled()) {
-            ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
-            if (capabilities.supportsTextGeneration()
-                    && capabilities.supportsStreaming()
-                    && capabilities.maxOutputTokens() > 0) {
-                items.add(toCatalogItem(config, capabilities));
-            }
-        }
-        return items;
-    }
-
-    private Map<String, Object> toCatalogItem(AiModelConfig config, ProviderCapabilities capabilities) {
+    private static Map<String, Object> toCatalogItem(AiModelConfigService.CatalogEntry entry) {
+        AiModelConfig config = entry.config();
+        ProviderCapabilities capabilities = entry.capabilities();
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", config.getId());
         item.put("name", config.getName());
@@ -136,7 +130,7 @@ public class PlatformAiController {
      * Codex 式 Turn 启动：命令接口立即返回稳定 Turn，后台执行和事件订阅彼此独立。
      */
     @PostMapping("/turn/start")
-    public Map<String, Object> startTurn(@RequestBody ChatRequest body,
+    public Map<String, Object> startTurn(@RequestBody StartTurnRequest body,
                                          HttpServletRequest request) {
         String message = body != null ? body.message() : null;
         if (message == null || message.isBlank()) {
@@ -171,7 +165,7 @@ public class PlatformAiController {
     /** 请求中断指定 Turn；最终状态由 turn/completed 通知确认。 */
     @PostMapping("/turn/interrupt")
     public Map<String, Object> interruptTurn(
-            @RequestBody PlatformAiDtos.TurnInterruptRequest body,
+            @RequestBody InterruptTurnRequest body,
             HttpServletRequest request) {
         PlatformAiState state = threadService.requireOwnedRuntime(
                 ControllerUtil.getCurrentUser(request),
@@ -193,7 +187,7 @@ public class PlatformAiController {
     /** 创建初始对话并将其绑定到当前 HTTP 会话，不登记接入节点。 */
     @PostMapping("/thread/initialize")
     public Map<String, Object> initializeThread(
-            @RequestBody(required = false) PlatformAiDtos.InitializeThreadRequest body, HttpServletRequest request) {
+            @RequestBody(required = false) InitializeThreadRequest body, HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         Integer configId = body != null ? body.configId() : null;
         HttpSession session = request.getSession();
@@ -208,7 +202,7 @@ public class PlatformAiController {
      * 热切换 AI 通道。
      */
     @PostMapping("/switchChannel")
-    public Map<String, Object> switchChannel(@RequestBody(required = false) PlatformAiDtos.SwitchChannelRequest body,
+    public Map<String, Object> switchChannel(@RequestBody(required = false) ThreadConfigRequest body,
                                              HttpServletRequest request) {
         Integer configId = body != null ? body.configId() : null;
         PlatformAiState state = threadService.requireOwnedRuntime(
@@ -232,7 +226,7 @@ public class PlatformAiController {
      * 创建新线程。
      */
     @PostMapping("/thread/create")
-    public Map<String, Object> createThread(@RequestBody(required = false) PlatformAiDtos.CreateThreadRequest body,
+    public Map<String, Object> createThread(@RequestBody(required = false) CreateThreadRequest body,
                                             HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         String title = body != null ? body.title() : null;
@@ -247,7 +241,7 @@ public class PlatformAiController {
      * 删除指定线程。
      */
     @PostMapping("/thread/delete")
-    public Map<String, Object> deleteThread(@RequestBody PlatformAiDtos.ThreadIdRequest body,
+    public Map<String, Object> deleteThread(@RequestBody ThreadRequest body,
                                             HttpServletRequest request) {
         threadService.deleteThread(ControllerUtil.getCurrentUser(request), body.threadId());
         HttpSession session = request.getSession();
@@ -262,7 +256,7 @@ public class PlatformAiController {
      * 重命名指定线程。
      */
     @PostMapping("/thread/rename")
-    public Map<String, Object> renameThread(@RequestBody PlatformAiDtos.ThreadRenameRequest body,
+    public Map<String, Object> renameThread(@RequestBody RenameThreadRequest body,
                                             HttpServletRequest request) {
         threadService.renameThread(
                 ControllerUtil.getCurrentUser(request), body.threadId(), body.title());
@@ -273,7 +267,7 @@ public class PlatformAiController {
      * 切换到指定线程（恢复 in-memory 状态）。
      */
     @PostMapping("/thread/activate")
-    public Map<String, Object> activateThread(@RequestBody PlatformAiDtos.ThreadIdRequest body,
+    public Map<String, Object> activateThread(@RequestBody ThreadRequest body,
                                                HttpServletRequest request) {
         PlatformAiState state = threadService.activateThread(
                 ControllerUtil.getCurrentUser(request), body.threadId());
@@ -283,7 +277,7 @@ public class PlatformAiController {
 
     /** 通过显式 threadId 重新附着运行中的平台 AI 事件流。 */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(@RequestBody EventsRequest body,
+    public SseEmitter stream(@RequestBody ThreadEventsRequest body,
                              HttpServletRequest request) {
         PlatformAiState state = threadService.requireOwnedRuntime(
                 ControllerUtil.getCurrentUser(request), body.threadId());
@@ -295,7 +289,7 @@ public class PlatformAiController {
      * 获取当前平台 AI 最近 SSE 事件，用于 SSE 中断后的补拉恢复。
      */
     @PostMapping("/events")
-    public Map<String, Object> events(@RequestBody EventsRequest body,
+    public Map<String, Object> events(@RequestBody ThreadEventsRequest body,
                                       HttpServletRequest request) {
         return ApiResponse.success(threadService.events(
                 ControllerUtil.getCurrentUser(request), body.threadId(),
@@ -306,7 +300,7 @@ public class PlatformAiController {
      * 加载当前平台 AI 会话的历史消息（分页）。
      */
     @PostMapping("/messages")
-    public Map<String, Object> messages(@RequestBody MessagesRequest body,
+    public Map<String, Object> messages(@RequestBody ThreadMessagesRequest body,
                                         HttpServletRequest request) {
         return ApiResponse.success(threadService.messages(
                 ControllerUtil.getCurrentUser(request), body.threadId(),
@@ -316,7 +310,7 @@ public class PlatformAiController {
     /** 加载当前平台 AI 线程派发过的 Node AI 子任务。 */
     @PostMapping("/subagents")
     public Map<String, Object> subagents(
-            @RequestBody PlatformAiDtos.ThreadIdRequest body,
+            @RequestBody ThreadRequest body,
             HttpServletRequest request) {
         return ApiResponse.success(threadService.subagentInvocations(
                 ControllerUtil.getCurrentUser(request), body.threadId()));
@@ -327,7 +321,7 @@ public class PlatformAiController {
      */
     @PostMapping("/plan")
     public Map<String, Object> plan(
-            @RequestBody PlatformAiDtos.ThreadIdRequest body,
+            @RequestBody ThreadRequest body,
             HttpServletRequest request) {
         PlatformAiState state = threadService.requireOwnedRuntime(
                 ControllerUtil.getCurrentUser(request), body.threadId());
@@ -340,7 +334,7 @@ public class PlatformAiController {
      */
     @PostMapping("/plans")
     public Map<String, Object> plans(
-            @RequestBody PlatformAiDtos.ThreadIdRequest body,
+            @RequestBody ThreadRequest body,
             HttpServletRequest request) {
         PlatformAiState state = threadService.requireOwnedRuntime(
                 ControllerUtil.getCurrentUser(request), body.threadId());
@@ -348,4 +342,6 @@ public class PlatformAiController {
         return ApiResponse.success(history);
     }
 
+    public record InitializeThreadRequest(Integer configId) {
+    }
 }

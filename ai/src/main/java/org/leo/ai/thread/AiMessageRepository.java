@@ -7,6 +7,8 @@ import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,8 +58,15 @@ public class AiMessageRepository {
 
     public record HistoryPage(List<Map<String, Object>> messages, Long nextBeforeSequence, boolean hasMore) { }
 
-    public int count(String threadId) {
-        return mapper.countMessages(threadId);
+    /** 返回有消息的线程计数；缺失的线程由调用方按零处理。 */
+    public Map<String, Integer> countByThreadIds(Collection<String> threadIds) {
+        if (threadIds.isEmpty()) return Map.of();
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (var row : mapper.countMessagesByThreadIds(JsonUtil.toJsonString(threadIds))) {
+            counts.put(row.threadId(), row.count());
+        }
+        return counts;
     }
 
     /** Model memory includes committed messages and interrupted turns with recoverable progress. */

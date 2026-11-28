@@ -16,6 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
@@ -89,6 +92,79 @@ class AiModelConfigServiceTest {
         assertEquals("stored-headers-1", first.getHeadersJson());
         verify(secretCryptoService).decrypt("stored-key-1");
         verify(secretCryptoService).decrypt("stored-headers-1");
+    }
+
+    @Test
+    void availableModelsResolveCapabilitiesInBatchesAndApplyTheServiceEligibilityRules() {
+        var usable = catalogRow(7, 1);
+        var noText = catalogRow(8, 1);
+        var noStream = catalogRow(9, 1);
+        var noOutput = catalogRow(10, 2);
+        when(mapper.listEnabled()).thenReturn(List.of(usable, noText, noStream, noOutput));
+        AiModelCapability textOff = baseline(noText.getModel());
+        textOff.setSupportsTextGeneration(0);
+        AiModelCapability outputOff = baseline(noOutput.getModel());
+        outputOff.setMaxOutputTokens(0);
+        when(capabilityMapper.findByModelNames(anyString())).thenReturn(List.of(textOff, outputOff));
+        AiModelCapability streamOff = new AiModelCapability();
+        streamOff.setSupportsStreaming(0);
+        when(capabilityMapper.findObservations(anyString())).thenReturn(List.of(
+                new AiModelCapabilityMapper.MatchedObservation(noStream.getId(), streamOff)));
+
+        assertEquals(List.of(usable.getId()), service.listAvailableModels().stream()
+                .map(entry -> entry.config().getId()).toList());
+
+        verify(mapper).listEnabled();
+        verify(mapper, never()).listAll();
+        verify(capabilityMapper).findByModelNames(anyString());
+        verify(capabilityMapper).findObservations(anyString());
+        verify(capabilityMapper, never()).findByModelName(anyString());
+        verify(capabilityMapper, never()).findObservation(any(), any(), any(), any());
+        verify(secretCryptoService).decrypt("stored-key-1");
+        verify(secretCryptoService).decrypt("stored-headers-1");
+    }
+
+    @Test
+    void providerImportReusesItsConnectionAndDoesNotReloadInsertedModels() {
+        AiProvider provider = new AiProvider();
+        provider.setName("Imported provider");
+        provider.setBaseUrl("https://example.test/v1");
+        provider.setApiKey("fixture-key");
+        AiModelConfig selected = catalogRow(7, 1);
+        selected.setName("selected");
+        selected.setIsActive(1);
+        AiModelConfig other = catalogRow(8, 1);
+        other.setName("other");
+        provider.setModels(List.of(selected, other));
+        when(providerMapper.insert(any(AiProvider.class))).thenAnswer(invocation -> {
+            invocation.<AiProvider>getArgument(0).setId(11);
+            return 1;
+        });
+
+        AiProvider saved = service.createProvider(provider);
+
+        assertEquals(11, saved.getId());
+        assertEquals("fixture-key", saved.getApiKey());
+        assertNull(saved.getModels());
+        assertEquals(11, selected.getProviderId());
+        assertEquals(11, other.getProviderId());
+        assertEquals("fixture-key", other.getApiKey());
+        verify(providerMapper, never()).findById(any());
+        verify(mapper, never()).findById(any());
+        verify(mapper, never()).hasModels();
+        verify(mapper).clearActive();
+        verify(mapper, times(2)).insert(any(AiModelConfig.class));
+        verify(capabilityMapper).findByModelName(selected.getModel());
+        verify(capabilityMapper).findByModelName(other.getModel());
+    }
+
+    private static AiModelCapability baseline(String model) {
+        AiModelCapability row = new AiModelCapability();
+        row.setModelName(model);
+        row.setSupportsTextGeneration(1);
+        row.setSupportsStreaming(1);
+        row.setMaxOutputTokens(4096);
+        return row;
     }
 
     private static AiModelConfig catalogRow(int id, int providerId) {

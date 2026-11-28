@@ -53,7 +53,18 @@ public class AiModelConfigService {
     /** 列表使用同一数据库快照批量读取基础能力与当前连接的探测结果。 */
     @Transactional(readOnly = true)
     public List<CatalogEntry> listCatalog() {
-        List<AiModelConfig> storedModels = mapper.listAll();
+        return loadCatalog(mapper.listAll());
+    }
+
+    /** 只载入启用候选；目录和入口可用性共用同一聊天能力判断。 */
+    @Transactional(readOnly = true)
+    public List<CatalogEntry> listAvailableModels() {
+        return loadCatalog(mapper.listEnabled()).stream()
+                .filter(entry -> supportsChat(entry.capabilities()))
+                .toList();
+    }
+
+    private List<CatalogEntry> loadCatalog(List<AiModelConfig> storedModels) {
         if (storedModels == null || storedModels.isEmpty()) return List.of();
         List<AiModelConfig> models = new ArrayList<>(storedModels.size());
         Map<Integer, CatalogConnection> connections = new HashMap<>();
@@ -137,10 +148,6 @@ public class AiModelConfigService {
         return id != null && mapper.existsById(id);
     }
 
-    public List<AiModelConfig> listEnabled() {
-        return decryptModels(mapper.listEnabled());
-    }
-
     public List<AiProviderSummary> listProviderSummaries() {
         return providerMapper.listSummaries();
     }
@@ -166,6 +173,12 @@ public class AiModelConfigService {
         return mergeCapabilities(baseline, findObservation(config));
     }
 
+    private static boolean supportsChat(ProviderCapabilities capabilities) {
+        return capabilities.supportsTextGeneration()
+                && capabilities.supportsStreaming()
+                && capabilities.maxOutputTokens() > 0;
+    }
+
     private static ProviderCapabilities mergeCapabilities(ProviderCapabilities baseline, AiModelCapability observed) {
         if (observed == null) return baseline;
         return new ProviderCapabilities(true, "recognized", "provider_probe",
@@ -188,8 +201,8 @@ public class AiModelConfigService {
         return value == null ? baseline : flag(value);
     }
 
-    public String capabilityModelName(AiModelConfig config) {
-        return config == null ? "" : normalizeCapabilityModelName(config.getProviderKey(), config.getModel());
+    private static String capabilityModelName(AiModelConfig config) {
+        return normalizeCapabilityModelName(config.getProviderKey(), config.getModel());
     }
 
     private static ProviderCapabilities capabilityFromRow(AiModelCapability row) {
@@ -212,51 +225,41 @@ public class AiModelConfigService {
     }
 
     @Transactional
-    public AiProvider createProvider(AiProvider row) {
-        validateProvider(row, true);
-        normalizeProvider(row, null);
+    public AiProvider createProvider(AiProvider provider) {
+        validateProvider(provider, true);
+        normalizeProvider(provider, null);
         String now = nowSqlite();
-        row.setCreateTime(now);
-        row.setUpdateTime(now);
-        withEncryptedProviderSecrets(row, () -> providerMapper.insert(row));
-        return findProviderById(row.getId());
+        provider.setCreateTime(now);
+        provider.setUpdateTime(now);
+        withEncryptedProviderSecrets(provider, () -> providerMapper.insert(provider));
+
+        List<AiModelConfig> models = provider.getModels();
+        if (models != null && !models.isEmpty()) {
+            insertProviderModels(provider, models);
+        }
+        AiProvider saved = copyProvider(provider);
+        saved.setModels(null);
+        return saved;
     }
 
-    @Transactional
-    public AiProvider createProviderWithModels(AiProvider row) {
-        AiProvider saved = createProvider(row);
-        List<AiModelConfig> models = row.getModels();
-        if (models == null || models.isEmpty()) {
-            return saved;
+    private void insertProviderModels(AiProvider provider, List<AiModelConfig> models) {
+        boolean enabled = flag(provider.getEnabled());
+        int defaultIndex = enabled ? defaultModelIndex(models) : -1;
+        for (int index = 0; index < models.size(); index++) {
+            AiModelConfig model = models.get(index);
+            model.setProviderId(provider.getId());
+            model.setEnabled(enabled ? 1 : 0);
+            model.setIsActive(index == defaultIndex ? 1 : 0);
+            insertModel(model, provider, false);
         }
+        if (defaultIndex >= 0) notifyModelRefresh();
+    }
 
-        boolean providerEnabled = Integer.valueOf(1).equals(saved.getEnabled());
-        boolean hasExistingModels = mapper.countAll() > 0;
-        int requestedDefaultIndex = -1;
-        for (int i = 0; i < models.size(); i++) {
-            if (Integer.valueOf(1).equals(models.get(i).getIsActive())) {
-                requestedDefaultIndex = i;
-                break;
-            }
+    private int defaultModelIndex(List<AiModelConfig> models) {
+        for (int index = 0; index < models.size(); index++) {
+            if (flag(models.get(index).getIsActive())) return index;
         }
-        int defaultIndex = providerEnabled
-                ? (requestedDefaultIndex >= 0 ? requestedDefaultIndex : (hasExistingModels ? -1 : 0))
-                : -1;
-        if (defaultIndex >= 0) {
-            mapper.clearActive();
-        }
-
-        for (int i = 0; i < models.size(); i++) {
-            AiModelConfig model = models.get(i);
-            model.setProviderId(saved.getId());
-            model.setIsActive(i == defaultIndex ? 1 : 0);
-            model.setEnabled(Integer.valueOf(1).equals(saved.getEnabled()) ? 1 : 0);
-            createModel(model, false, false);
-        }
-        if (defaultIndex >= 0) {
-            notifyModelRefresh();
-        }
-        return saved;
+        return mapper.hasModels() ? -1 : 0;
     }
 
     @Transactional
@@ -293,9 +296,12 @@ public class AiModelConfigService {
         return id == null ? null : decryptModel(mapper.findById(id));
     }
 
-    /** Display metadata can be read independently of provider credentials. */
-    public String findModelName(Integer id) {
-        return id == null ? null : mapper.findNameById(id);
+    /** 装配单个写入结果的目录字段；备用模型名称无需解密连接信息。 */
+    @Transactional(readOnly = true)
+    public CatalogEntry describeModel(AiModelConfig config) {
+        Integer fallbackId = config.getFallbackModelId();
+        String fallbackName = fallbackId != null ? mapper.findNameById(fallbackId) : null;
+        return new CatalogEntry(config, fallbackName, capabilityModelName(config), capabilitiesForModel(config));
     }
 
     public AiModelConfig getActive() {
@@ -304,7 +310,9 @@ public class AiModelConfigService {
 
     @Transactional
     public AiModelConfig create(AiModelConfig row) {
-        return createModel(row, true, true);
+        insertModel(row, null, true);
+        if (flag(row.getIsActive())) notifyModelRefresh();
+        return findById(row.getId());
     }
 
     @Transactional
@@ -408,34 +416,26 @@ public class AiModelConfigService {
         return deleted;
     }
 
-    private AiModelConfig createModel(AiModelConfig row, boolean autoActivateFirst, boolean notify) {
+    private void insertModel(AiModelConfig row, AiProvider importedProvider, boolean autoActivateFirst) {
         validateRequired(row);
         normalize(row);
-        applyProvider(row);
-        validateModelParameters(row);
+        if (importedProvider == null) {
+            applyProvider(row);
+        } else {
+            applyProviderConnection(row, importedProvider);
+        }
+        ProviderCapabilities capabilities = validateModelParameters(row);
         validateFallback(row, null);
         String now = nowSqlite();
         row.setCreateTime(now);
         row.setUpdateTime(now);
-        if (row.getIsActive() == null) {
-            row.setIsActive(0);
-        }
-        if (row.getEnabled() == null) {
-            row.setEnabled(1);
-        }
-        if (autoActivateFirst && mapper.countAll() == 0 && Integer.valueOf(1).equals(row.getEnabled())) {
-            row.setIsActive(1);
-            row.setEnabled(1);
-        }
-        if (Integer.valueOf(1).equals(row.getIsActive())) {
-            assertUsable(row);
+        if (row.getIsActive() == null) row.setIsActive(0);
+        if (autoActivateFirst && flag(row.getEnabled()) && !mapper.hasModels()) row.setIsActive(1);
+        if (flag(row.getIsActive())) {
+            assertUsable(row, capabilities);
             mapper.clearActive();
         }
         mapper.insert(row);
-        if (notify && Integer.valueOf(1).equals(row.getIsActive())) {
-            notifyModelRefresh();
-        }
-        return findById(row.getId());
     }
 
     @Transactional
@@ -472,15 +472,15 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         normalize(existing);
         applyProvider(existing);
-        validateModelParameters(existing);
+        ProviderCapabilities capabilities = validateModelParameters(existing);
         validateFallback(existing, id);
         if (activating && !Integer.valueOf(1).equals(existing.getIsActive())) {
             throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
         }
         if (Integer.valueOf(1).equals(existing.getIsActive())) {
-            assertUsable(existing);
+            assertUsable(existing, capabilities);
         }
-        if (activating) {
+        if (activating && !wasActive) {
             mapper.clearActive();
         }
         mapper.update(existing);
@@ -504,8 +504,9 @@ public class AiModelConfigService {
         AiModelConfig row = findById(id);
         if (row == null) return null;
         applyProvider(row);
-        assertUsable(row);
-        mapper.clearActive();
+        requireEnabledForActivation(row);
+        assertChatCapabilities(validateModelParameters(row));
+        if (!flag(row.getIsActive())) mapper.clearActive();
         mapper.setActiveById(id, nowSqlite());
         AiModelConfig activated = findById(id);
         notifyModelRefresh();
@@ -553,8 +554,10 @@ public class AiModelConfigService {
         return ModelRequestPlan.preview(candidate, capabilitiesForModel(candidate));
     }
 
-    private void validateModelParameters(AiModelConfig config) {
-        ModelRequestPlan.resolve(config, capabilitiesForModel(config), null, false, false);
+    private ProviderCapabilities validateModelParameters(AiModelConfig config) {
+        ProviderCapabilities capabilities = capabilitiesForModel(config);
+        ModelRequestPlan.resolve(config, capabilities, null, false, false);
+        return capabilities;
     }
 
     private void validateRequired(AiModelConfig row) {
@@ -594,12 +597,18 @@ public class AiModelConfigService {
         }
     }
 
-    private void assertUsable(AiModelConfig row) {
-        if (row == null || !Integer.valueOf(1).equals(row.getEnabled())) {
+    private static void assertUsable(AiModelConfig row, ProviderCapabilities capabilities) {
+        requireEnabledForActivation(row);
+        assertChatCapabilities(capabilities);
+    }
+
+    private static void requireEnabledForActivation(AiModelConfig row) {
+        if (!flag(row.getEnabled())) {
             throw new IllegalArgumentException("模型未启用，不能设为默认模型");
         }
-        ProviderCapabilities capabilities = capabilitiesForModel(row);
-        ModelRequestPlan.resolve(row, capabilities, null, false, false);
+    }
+
+    private static void assertChatCapabilities(ProviderCapabilities capabilities) {
         if (!capabilities.supportsTextGeneration()) {
             throw new IllegalArgumentException("模型不支持文本生成，不能设为默认聊天模型");
         }
@@ -608,13 +617,6 @@ public class AiModelConfigService {
         }
         if (capabilities.maxOutputTokens() <= 0) {
             throw new IllegalArgumentException("模型最大输出长度为 0，不能用于当前聊天通道");
-        }
-        AiProvider provider = findProviderById(row.getProviderId());
-        if (provider == null) {
-            throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
-        }
-        if (!Integer.valueOf(1).equals(provider.getEnabled())) {
-            throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
         }
     }
 
@@ -650,13 +652,6 @@ public class AiModelConfigService {
             cursor = findById(nextId);
             if (cursor == null) break;
         }
-    }
-
-    private List<AiModelConfig> decryptModels(List<AiModelConfig> rows) {
-        if (rows == null) return List.of();
-        List<AiModelConfig> decrypted = new ArrayList<>(rows.size());
-        rows.forEach(row -> decrypted.add(decryptModel(row)));
-        return decrypted;
     }
 
     private AiProvider decryptProvider(AiProvider row) {

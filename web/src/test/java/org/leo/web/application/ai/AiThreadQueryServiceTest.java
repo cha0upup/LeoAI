@@ -23,6 +23,7 @@ import org.leo.dao.mapper.AiConversationMapper;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -55,8 +56,8 @@ class AiThreadQueryServiceTest {
         session.restoreAiThread("older", "older", 1L, 10L);
         session.restoreAiThread("newer", "newer", 2L, 20L);
         String activeThreadId = session.getActiveThreadId();
-        when(messageRepository.count("older")).thenReturn(4);
-        when(messageRepository.count("newer")).thenReturn(7);
+        when(messageRepository.countByThreadIds(Set.of("older", "newer")))
+                .thenReturn(Map.of("older", 4, "newer", 7));
 
         Map<String, Object> data = queries.listNodeThreads(session);
         List<?> threads = (List<?>) data.get("threads");
@@ -72,6 +73,8 @@ class AiThreadQueryServiceTest {
         assertFalse(first.containsKey("configName"));
         assertEquals(activeThreadId, data.get("activeThreadId"));
         assertEquals(activeThreadId, session.getActiveThreadId());
+        verify(messageRepository).countByThreadIds(Set.of("older", "newer"));
+        verifyNoMoreInteractions(messageRepository);
         verify(store, never()).listAgentThreads(anyString(), anyString(), anyString());
         verify(store, never()).attachEventJournal(anyString(), any());
     }
@@ -123,12 +126,15 @@ class AiThreadQueryServiceTest {
         assertEquals(true, sharedItem.get("inMemory"));
         assertFalse(sharedItem.containsKey("hasCheckpoint"));
         assertFalse(storedItem.containsKey("hasCheckpoint"));
-        assertFalse(((Map<?, ?>) threads.get(2)).containsKey("hasCheckpoint"));
+        Map<?, ?> transientItem = (Map<?, ?>) threads.get(2);
+        assertFalse(transientItem.containsKey("hasCheckpoint"));
+        assertEquals(0, transientItem.get("messageCount"));
         assertEquals(8, sharedItem.get("messageCount"));
         assertEquals("channel", sharedItem.get("configName"));
         assertEquals("openai", sharedItem.get("configProtocol"));
         assertEquals("model", sharedItem.get("configModel"));
-        verify(messageRepository, never()).count("shared");
+        verify(messageRepository).countByThreadIds(Set.of("runtime-only"));
+        verifyNoMoreInteractions(messageRepository);
         verify(store, never()).attachEventJournal(anyString(), any());
     }
 
@@ -258,7 +264,7 @@ class AiThreadQueryServiceTest {
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),
                 queries.messages("thread", -8, 500, null));
-        verify(messageRepository, never()).count(anyString());
+        verify(messageRepository, never()).countByThreadIds(any());
     }
 
     @ParameterizedTest

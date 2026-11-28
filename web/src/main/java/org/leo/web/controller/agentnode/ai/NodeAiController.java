@@ -14,7 +14,14 @@ import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.NodeAiThreadService;
 import org.leo.web.dto.SessionIdRequest;
-import org.leo.web.dto.agentnode.ai.*;
+import org.leo.web.dto.ai.AiThreadRequests.CreateThreadRequest;
+import org.leo.web.dto.ai.AiThreadRequests.InterruptTurnRequest;
+import org.leo.web.dto.ai.AiThreadRequests.RenameThreadRequest;
+import org.leo.web.dto.ai.AiThreadRequests.StartTurnRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadConfigRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadEventsRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadMessagesRequest;
+import org.leo.web.dto.ai.AiThreadRequests.ThreadRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
@@ -55,7 +62,7 @@ public class NodeAiController {
     /** Codex 式 Turn 启动：立即返回 Turn，事件从独立订阅流获取。 */
     @PostMapping("/turn/start")
     public HashMap<String, Object> startTurn(
-            @RequestBody NodeAiChatRequest body,
+            @RequestBody StartTurnRequest body,
             HttpServletRequest request) {
         String sessionId = ControllerUtil.requireText(
                 body != null ? body.sessionId() : null, "缺少 sessionId");
@@ -105,7 +112,7 @@ public class NodeAiController {
     /** 请求中断指定 Turn；客户端继续订阅直到 turn/completed。 */
     @PostMapping("/turn/interrupt")
     public HashMap<String, Object> interruptTurn(
-            @RequestBody AiTurnInterruptRequest body) {
+            @RequestBody InterruptTurnRequest body) {
         String sessionId = ControllerUtil.requireText(
                 body != null ? body.sessionId() : null, "缺少 sessionId");
         String threadId = ControllerUtil.requireText(
@@ -141,11 +148,11 @@ public class NodeAiController {
     /**
      * 创建新的 AI 对话线程。
      *
-     * @param params {@code sessionId}, {@code title}（可选）
+     * @param body {@code sessionId}, {@code title}（可选）
      * @return {@code threadId}, {@code reconSummaryLoaded}
      */
     @RequestMapping("/thread/create")
-    public HashMap<String, Object> createThread(@RequestBody AiThreadCreateRequest body) {
+    public HashMap<String, Object> createThread(@RequestBody CreateThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String title = body != null ? body.title() : null;
         Integer configId = body != null ? body.configId() : null;
@@ -155,10 +162,10 @@ public class NodeAiController {
     /**
      * 删除指定 AI 对话线程（内存 + 持久化）。
      *
-     * @param params {@code sessionId}, {@code threadId}
+     * @param body {@code sessionId}, {@code threadId}
      */
     @RequestMapping("/thread/delete")
-    public HashMap<String, Object> deleteThread(@RequestBody AiThreadRequest body) {
+    public HashMap<String, Object> deleteThread(@RequestBody ThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         aiThreadService.deleteThread(session, threadId);
@@ -168,10 +175,10 @@ public class NodeAiController {
     /**
      * 重命名指定 AI 对话线程。
      *
-     * @param params {@code sessionId}, {@code threadId}, {@code title}
+     * @param body {@code sessionId}, {@code threadId}, {@code title}
      */
     @RequestMapping("/thread/rename")
-    public HashMap<String, Object> renameThread(@RequestBody AiThreadRenameRequest body) {
+    public HashMap<String, Object> renameThread(@RequestBody RenameThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         String title = ControllerUtil.requireText(body != null ? body.title() : null, "缺少 title");
@@ -182,11 +189,11 @@ public class NodeAiController {
     /**
      * 加载指定线程的历史消息（分页）。
      *
-     * @param params {@code sessionId}, {@code threadId}, {@code offset}(int, 默认0),
+     * @param body {@code sessionId}, {@code threadId}, {@code offset}(int, 默认0),
      *               {@code limit}(int, 默认50)
      */
     @RequestMapping("/thread/messages")
-    public HashMap<String, Object> threadMessages(@RequestBody AiThreadMessagesRequest body) {
+    public HashMap<String, Object> threadMessages(@RequestBody ThreadMessagesRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer offset = body != null ? body.offset() : null;
@@ -199,7 +206,7 @@ public class NodeAiController {
      * 获取指定线程最近 SSE 事件，用于切换会话或断线后补看执行过程。
      */
     @RequestMapping("/thread/events")
-    public HashMap<String, Object> threadEvents(@RequestBody AiThreadEventsRequest body) {
+    public HashMap<String, Object> threadEvents(@RequestBody ThreadEventsRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Long afterSeq = body != null ? body.afterSeq() : null;
@@ -209,7 +216,7 @@ public class NodeAiController {
 
     /** 通过显式 sessionId + threadId 重新附着运行中的节点 AI 事件流。 */
     @PostMapping(value = "/thread/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter threadStream(@RequestBody AiThreadEventsRequest body) {
+    public SseEmitter threadStream(@RequestBody ThreadEventsRequest body) {
         AgentNodeSession session =
                 requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(
@@ -223,10 +230,10 @@ public class NodeAiController {
     /**
      * 重置指定线程：清空 AI 状态（清除 LLM 上下文，保留持久化消息）。
      *
-     * @param params {@code sessionId}, {@code threadId}, {@code configId}（可选）
+     * @param body {@code sessionId}, {@code threadId}, {@code configId}（可选）
      */
     @RequestMapping("/reset")
-    public HashMap<String, Object> reset(@RequestBody AiThreadConfigRequest body) {
+    public HashMap<String, Object> reset(@RequestBody ThreadConfigRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer configId = body != null ? body.configId() : null;
@@ -236,10 +243,10 @@ public class NodeAiController {
     /**
      * 热切换 AI 通道。
      *
-     * @param params {@code sessionId}, {@code threadId}, {@code configId}
+     * @param body {@code sessionId}, {@code threadId}, {@code configId}
      */
     @RequestMapping("/switchChannel")
-    public HashMap<String, Object> switchChannel(@RequestBody AiThreadConfigRequest body) {
+    public HashMap<String, Object> switchChannel(@RequestBody ThreadConfigRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         Integer configId = body != null ? body.configId() : null;
@@ -252,10 +259,10 @@ public class NodeAiController {
     /**
      * 获取指定线程的当前活跃任务计划。
      *
-     * @param params {@code sessionId}, {@code threadId}
+     * @param body {@code sessionId}, {@code threadId}
      */
     @RequestMapping("/thread/plan")
-    public HashMap<String, Object> threadPlan(@RequestBody AiThreadRequest body) {
+    public HashMap<String, Object> threadPlan(@RequestBody ThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         AiThread thread = aiThreadService.requireThread(session, threadId);
@@ -266,10 +273,10 @@ public class NodeAiController {
     /**
      * 获取指定线程的所有历史任务计划（按创建时间升序）。
      *
-     * @param params {@code sessionId}, {@code threadId}
+     * @param body {@code sessionId}, {@code threadId}
      */
     @RequestMapping("/thread/plans")
-    public HashMap<String, Object> threadPlans(@RequestBody AiThreadRequest body) {
+    public HashMap<String, Object> threadPlans(@RequestBody ThreadRequest body) {
         AgentNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String threadId = ControllerUtil.requireText(body != null ? body.threadId() : null, "缺少 threadId");
         AiThread thread = aiThreadService.requireThread(session, threadId);

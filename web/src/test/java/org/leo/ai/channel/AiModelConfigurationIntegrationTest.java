@@ -211,7 +211,8 @@ class AiModelConfigurationIntegrationTest {
         assertSame(delegate, chat.getDelegate());
 
         AiProvider updated = configs.updateProvider(provider.getId(), patch);
-        var enabled = configs.listEnabled();
+        var enabled = configs.listAvailableModels().stream()
+                .map(AiModelConfigService.CatalogEntry::config).toList();
         assertEquals(Set.of(first.getId(), second.getId()),
                 enabled.stream().map(AiModelConfig::getId).collect(Collectors.toSet()));
         for (AiModelConfig row : enabled) {
@@ -243,8 +244,8 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(0, configs.findById(active.getId()).getIsActive());
         assertEquals(0, configs.findById(active.getId()).getEnabled());
         assertEquals(0, configs.findById(sibling.getId()).getEnabled());
-        assertEquals(Set.of(unrelated.getId()), configs.listEnabled().stream()
-                .map(AiModelConfig::getId).collect(Collectors.toSet()));
+        assertEquals(Set.of(unrelated.getId()), configs.listAvailableModels().stream()
+                .map(entry -> entry.config().getId()).collect(Collectors.toSet()));
     }
 
     @Test
@@ -349,6 +350,65 @@ class AiModelConfigurationIntegrationTest {
     }
 
     @Test
+    void availableCatalogPreservesProbeOverridesAndSkipsDisabledConnections() {
+        AiProvider enabled = provider("available");
+        AiModelConfig accepted = model(enabled, "accepted");
+        AiModelConfig noStream = draft(enabled, "no stream");
+        noStream.setModel("no-stream-fixture");
+        AiModelConfig savedNoStream = configs.create(noStream);
+        configs.applyProbeResult(savedNoStream, Map.of("streaming", false));
+
+        AiProvider disabled = provider("disabled");
+        model(disabled, "disabled");
+        AiProvider patch = new AiProvider();
+        patch.setEnabled(0);
+        configs.updateProvider(disabled.getId(), patch);
+        damageStoredProviderSecrets(disabled.getId());
+
+        List<AiModelConfigService.CatalogEntry> available = configs.listAvailableModels();
+        assertEquals(List.of(accepted.getId()), available.stream().map(entry -> entry.config().getId()).toList());
+        assertEquals(configs.capabilitiesForModel(accepted), available.get(0).capabilities());
+    }
+
+    @Test
+    void importingAndReactivatingDefaultTouchesOnlyThePreviousOrSelectedModel() {
+        AiProvider existing = provider("existing");
+        AiModelConfig previous = model(existing, "previous");
+        model(existing, "unchanged");
+        jdbc.execute("CREATE TABLE activation_writes (model_id INTEGER)");
+        jdbc.execute("""
+                CREATE TRIGGER count_activation_writes AFTER UPDATE OF is_active ON ai_model_configs
+                BEGIN INSERT INTO activation_writes VALUES (NEW.id); END
+                """);
+
+        AiProvider batch = new AiProvider();
+        batch.setName("batch");
+        batch.setBaseUrl("https://example.test/v1");
+        batch.setApiKey("fixture-key");
+        AiModelConfig ordinary = new AiModelConfig();
+        ordinary.setName("first in batch");
+        ordinary.setModel("first-fixture");
+        AiModelConfig selected = new AiModelConfig();
+        selected.setName("default in batch");
+        selected.setModel("default-fixture");
+        selected.setIsActive(1);
+        batch.setModels(List.of(ordinary, selected));
+
+        AiProvider saved = configs.createProvider(batch);
+        assertNull(saved.getModels());
+        assertEquals(saved.getId(), configs.findById(ordinary.getId()).getProviderId());
+        assertEquals(0, configs.findById(ordinary.getId()).getIsActive());
+        assertEquals(selected.getId(), configs.getActive().getId());
+        assertEquals(List.of(previous.getId()),
+                jdbc.queryForList("SELECT model_id FROM activation_writes", Integer.class));
+
+        jdbc.update("DELETE FROM activation_writes");
+        assertEquals(selected.getId(), configs.activate(selected.getId()).getId());
+        assertEquals(List.of(selected.getId()),
+                jdbc.queryForList("SELECT model_id FROM activation_writes", Integer.class));
+    }
+
+    @Test
     void disablingStreamingClearsRuntimeButDoesNotPreventARecoveryProbe() {
         AiModelConfig model = model(provider("primary"), "first");
         assertNotNull(chat.getDelegate());
@@ -434,7 +494,7 @@ class AiModelConfigurationIntegrationTest {
         imported.setIsActive(1);
         invalid.setModels(java.util.List.of(imported));
 
-        assertThrows(ModelRequestPlan.ValidationException.class, () -> configs.createProviderWithModels(invalid));
+        assertThrows(ModelRequestPlan.ValidationException.class, () -> configs.createProvider(invalid));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_providers", Integer.class));
         assertEquals(active.getId(), configs.getActive().getId());
         assertSame(delegate, chat.getDelegate());

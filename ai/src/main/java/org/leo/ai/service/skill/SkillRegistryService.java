@@ -144,20 +144,8 @@ public class SkillRegistryService {
     }
 
     public static String stripFrontmatter(String content) {
-        if (content == null || !content.startsWith("---")) return content;
-        String[] lines = content.split("\n", -1);
-        int closeLineIdx = -1;
-        for (int i = 1; i < lines.length; i++) {
-            if (lines[i].trim().equals("---")) {
-                closeLineIdx = i;
-                break;
-            }
-        }
-        if (closeLineIdx < 0) return content;
-        int bodyStart = closeLineIdx + 1;
-        while (bodyStart < lines.length && lines[bodyStart].isBlank()) bodyStart++;
-        return bodyStart >= lines.length ? "" : String.join("\n",
-                java.util.Arrays.copyOfRange(lines, bodyStart, lines.length));
+        SkillFrontmatter frontmatter = SkillFrontmatter.split(content);
+        return frontmatter != null && frontmatter.hasClosingDelimiter() ? frontmatter.body() : content;
     }
 
     private Catalog currentCatalog() {

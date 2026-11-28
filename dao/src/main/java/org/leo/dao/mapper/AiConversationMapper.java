@@ -1,5 +1,7 @@
 package org.leo.dao.mapper;
 
+import org.apache.ibatis.annotations.Arg;
+import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -348,8 +350,19 @@ public interface AiConversationMapper {
     boolean hasMessagesBefore(@Param("threadId") String threadId,
                               @Param("beforeSequence") long beforeSequence);
 
-    @Select("SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId}")
-    int countMessages(@Param("threadId") String threadId);
+    @Select("""
+            SELECT thread_id, COUNT(*) AS message_count
+            FROM ai_messages
+            WHERE thread_id IN (SELECT value FROM json_each(#{threadIdsJson}))
+            GROUP BY thread_id
+            """)
+    @ConstructorArgs({
+            @Arg(column = "thread_id", javaType = String.class),
+            @Arg(column = "message_count", javaType = int.class)
+    })
+    List<ThreadMessageCount> countMessagesByThreadIds(@Param("threadIdsJson") String threadIdsJson);
+
+    record ThreadMessageCount(String threadId, int count) { }
 
     /**
      * 模型上下文消息：成功 Turn，以及确实产生了可恢复 assistant 进度的中断 Turn。

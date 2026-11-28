@@ -646,6 +646,20 @@ class AiConversationPersistenceIntegrationTest {
     }
 
     @Test
+    void batchMessageCountsIncludeAllStatusesAndOnlyRequestedThreads() {
+        store.createPlatformThread("fixture-user", "fixture-session", "counted-thread", "fixture", 2L, null);
+        store.createPlatformThread("fixture-user", "fixture-session", "unlisted-thread", "fixture", 3L, null);
+        reserve();
+        jdbc.update("UPDATE ai_messages SET status = 'discarded' WHERE thread_id=? AND role='assistant'", "thread-1");
+        var counted = protocol.begin("counted-thread", "client-counted", "platform", "{}", "fixture", null, null).turn();
+        messages.appendPending(null, "counted-thread", counted.id(), null, "system", "fixture", null);
+        protocol.begin("unlisted-thread", "client-unlisted", "platform", "{}", "fixture", null, null);
+
+        assertEquals(Map.of("thread-1", 2, "counted-thread", 3),
+                messages.countByThreadIds(List.of("thread-1", "counted-thread", "missing-thread")));
+    }
+
+    @Test
     void historyCursorIsUnaffectedByNewMessagesAndRetainsProtocolMetadata() {
         var turn = reserve();
         for (int sequence = 3; sequence <= 205; sequence++) appendMessage(turn.id(), sequence);
