@@ -58,7 +58,7 @@ class PlatformAiThreadServiceTest {
         when(fixture.channels.optional(99)).thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
 
         assertThrows(UseCaseException.class, () -> {
-            if (recreate) fixture.service.createAgent(SESSION_ID, THREAD_ID, user("user-1"), 99);
+            if (recreate) fixture.service.initializeThread(SESSION_ID, THREAD_ID, user("user-1"), 99);
             else fixture.service.createThread(SESSION_ID, user("user-1"), "新对话", 99);
         });
 
@@ -85,15 +85,12 @@ class PlatformAiThreadServiceTest {
         }
         when(fixture.channels.optional(configId)).thenReturn(config);
 
-        String threadId;
-        if (recreate) {
-            threadId = fixture.service.createAgent(SESSION_ID, null, user("user-1"), configId).getStateId();
-        } else {
-            Map<String, Object> result = fixture.service.createThread(SESSION_ID, user("user-1"), title, configId);
-            assertEquals(expectedTitle, result.get("title"));
-            assertEquals(configId, result.get("configId"));
-            threadId = (String) result.get("threadId");
-        }
+        var result = recreate
+                ? fixture.service.initializeThread(SESSION_ID, null, user("user-1"), configId)
+                : fixture.service.createThread(SESSION_ID, user("user-1"), title, configId);
+        assertEquals(expectedTitle, result.title());
+        assertEquals(configId, result.configId());
+        String threadId = result.threadId();
         createdThreadId = threadId;
         PlatformAiState state = PlatformAiStateStore.get(threadId);
         assertNotNull(state);
@@ -113,10 +110,10 @@ class PlatformAiThreadServiceTest {
         previous.claimExecution();
 
         if (recreate) {
-            PlatformAiState replacement = fixture.service.createAgent(SESSION_ID, THREAD_ID, user("user-1"), null);
-            createdThreadId = replacement.getStateId();
+            var replacement = fixture.service.initializeThread(SESSION_ID, THREAD_ID, user("user-1"), null);
+            createdThreadId = replacement.threadId();
             assertNotEquals(THREAD_ID, createdThreadId);
-            assertSame(replacement, PlatformAiStateStore.get(createdThreadId));
+            assertNotNull(PlatformAiStateStore.get(createdThreadId));
             verify(fixture.conversationStore, never()).deleteThread(THREAD_ID);
         } else {
             fixture.service.deleteThread(user("user-1"), THREAD_ID);

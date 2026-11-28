@@ -12,7 +12,6 @@ import org.leo.web.application.UseCaseException;
 import org.leo.web.application.UseCaseException.Kind;
 import org.springframework.stereotype.Service;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -43,11 +42,13 @@ public class PlatformAiThreadService {
         this.threadQueries = threadQueries;
     }
 
-    public PlatformAiState createAgent(String sessionId, String previousStateId,
-                                       User user, Integer configId) {
+    public record CreatedThread(String threadId, String title, Integer configId) { }
+
+    public CreatedThread initializeThread(String sessionId, String previousStateId,
+                                          User user, Integer configId) {
         AiModelConfig config = channelResolver.optional(configId);
         removeRuntime(previousStateId, "平台 AI 会话已重建");
-        return createState(sessionId, user, "平台 AI", config);
+        return createThreadState(sessionId, user, "平台 AI", config);
     }
 
     public void switchChannel(PlatformAiState state, Integer configId) {
@@ -60,17 +61,10 @@ public class PlatformAiThreadService {
         agentRegistry.evict(state.getStateId());
     }
 
-    public Map<String, Object> createThread(String sessionId, User user,
-                                            String title, Integer configId) {
+    public CreatedThread createThread(String sessionId, User user, String title, Integer configId) {
         AiModelConfig config = channelResolver.optional(configId);
         String safeTitle = title != null && !title.isBlank() ? title : "新对话";
-        PlatformAiState state = createState(sessionId, user, safeTitle, config);
-
-        Map<String, Object> info = new LinkedHashMap<>();
-        info.put("threadId", state.getStateId());
-        info.put("title", safeTitle);
-        info.put("configId", state.getAiConfigId());
-        return info;
+        return createThreadState(sessionId, user, safeTitle, config);
     }
 
     public void deleteThread(User user, String threadId) {
@@ -139,13 +133,13 @@ public class PlatformAiThreadService {
         return state;
     }
 
-    private PlatformAiState createState(String sessionId, User user, String title, AiModelConfig config) {
+    private CreatedThread createThreadState(String sessionId, User user, String title, AiModelConfig config) {
         PlatformAiState state = PlatformAiStateStore.getOrCreate(
                 "platform-ai-" + UUID.randomUUID(), config != null ? config.getId() : null);
         conversationStore.createPlatformThread(
                 user.getUserId(), sessionId, state.getStateId(), title, state.getCreatedAt(), config);
         conversationStore.attachEventJournal(state.getStateId(), state);
-        return state;
+        return new CreatedThread(state.getStateId(), title, state.getAiConfigId());
     }
 
     private void removeRuntime(String stateId, String reason) {

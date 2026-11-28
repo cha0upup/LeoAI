@@ -18,7 +18,10 @@ public final class PlatformAiDtos {
                               String answerToQuestionId) {
     }
 
-    public record AiAgentConfigRequest(String threadId, Integer configId) {
+    public record InitializeThreadRequest(Integer configId) {
+    }
+
+    public record SwitchChannelRequest(String threadId, Integer configId) {
     }
 
     public record EventsRequest(String threadId, Long afterSeq, Integer limit) {

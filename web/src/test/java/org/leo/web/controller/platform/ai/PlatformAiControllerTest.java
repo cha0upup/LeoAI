@@ -15,10 +15,13 @@ import org.leo.web.application.ai.AiThreadQueryService;
 import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
+import org.leo.web.application.ai.PlatformAiThreadService.CreatedThread;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
 import org.leo.web.interceptor.LoginInterceptor;
 import org.leo.web.security.PermissionService;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
@@ -49,26 +52,35 @@ class PlatformAiControllerTest {
             mock(AiTurnProtocolService.class), queue);
 
     @Test
-    void ownsHttpSessionBindingAndPreservesItWhenTheUseCaseFails() {
+    void ownsHttpSessionBindingAndPreservesItWhenTheUseCaseFails() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest();
-        var session = request.getSession();
+        var session = new MockHttpSession();
+        request.setSession(session);
         User user = new User();
         session.setAttribute("user", user);
         session.setAttribute("platformAiStateId", "previous");
 
-        when(threads.createAgent(session.getId(), "previous", user, 99))
+        when(threads.initializeThread(session.getId(), "previous", user, 99))
                 .thenThrow(new UseCaseException(UseCaseException.Kind.NOT_FOUND, "模型已删除"));
-        assertThrows(UseCaseException.class, () -> controller.createAgent(
-                new PlatformAiDtos.AiAgentConfigRequest(null, 99), request));
+        assertThrows(UseCaseException.class, () -> controller.initializeThread(
+                new PlatformAiDtos.InitializeThreadRequest(99), request));
         assertEquals("previous", session.getAttribute("platformAiStateId"));
 
         PlatformAiState created = new PlatformAiState("created");
-        when(threads.createAgent(session.getId(), "previous", user, 7)).thenReturn(created);
-        controller.createAgent(new PlatformAiDtos.AiAgentConfigRequest(null, 7), request);
+        when(threads.initializeThread(session.getId(), "previous", user, 7))
+                .thenReturn(new CreatedThread("created", "平台 AI", 7));
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/platform/ai/thread/initialize").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"configId\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.threadId").value("created"))
+                .andExpect(jsonPath("$.data.title").value("平台 AI"))
+                .andExpect(jsonPath("$.data.configId").value(7));
         assertEquals("created", session.getAttribute("platformAiStateId"));
+        mvc.perform(post("/platform/ai/createAgent").session(session)).andExpect(status().isNotFound());
 
         when(threads.createThread(session.getId(), user, "new", 7))
-                .thenReturn(Map.of("threadId", "new"));
+                .thenReturn(new CreatedThread("new", "new", 7));
         controller.createThread(new PlatformAiDtos.CreateThreadRequest("new", 7), request);
         assertEquals("new", session.getAttribute("platformAiStateId"));
 

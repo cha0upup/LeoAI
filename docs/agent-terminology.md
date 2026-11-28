@@ -13,3 +13,6 @@
 节点目录复用的会话来自 `GET /platform/session/sessions`，只列有运行时客户端的实时会话，不把缓存会话当作在线连接。
 
 代码中，`AbstractAgentNode` 表示平台侧的运行时适配对象，不是 `agents` 表中的配置记录。
+
+平台 AI 面板在没有对话时调用 `POST /platform/ai/thread/initialize` 建立初始线程。
+该接口和手动新建对话共用 `threadId`、`title`、`configId` 返回结构；两者均不创建接入节点。

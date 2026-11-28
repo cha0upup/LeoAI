@@ -20,7 +20,6 @@ import org.leo.web.application.ai.AiTurnProtocolService;
 import org.leo.web.application.ai.AiTurnQueueService;
 import org.leo.web.application.ai.PlatformAiThreadService;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.AiAgentConfigRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.ChatRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
@@ -191,24 +190,25 @@ public class PlatformAiController {
         }
     }
 
-    @PostMapping("/createAgent")
-    public Map<String, Object> createAgent(@RequestBody(required = false) AiAgentConfigRequest body,
-                                           HttpServletRequest request) {
+    /** 创建初始对话并将其绑定到当前 HTTP 会话，不登记接入节点。 */
+    @PostMapping("/thread/initialize")
+    public Map<String, Object> initializeThread(
+            @RequestBody(required = false) PlatformAiDtos.InitializeThreadRequest body, HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         Integer configId = body != null ? body.configId() : null;
         HttpSession session = request.getSession();
         Object previous = session.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
-        PlatformAiState state = threadService.createAgent(session.getId(),
+        var thread = threadService.initializeThread(session.getId(),
                 previous instanceof String stateId ? stateId : null, user, configId);
-        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, state.getStateId());
-        return ApiResponse.success(true);
+        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, thread.threadId());
+        return ApiResponse.success(thread);
     }
 
     /**
      * 热切换 AI 通道。
      */
     @PostMapping("/switchChannel")
-    public Map<String, Object> switchChannel(@RequestBody(required = false) AiAgentConfigRequest body,
+    public Map<String, Object> switchChannel(@RequestBody(required = false) PlatformAiDtos.SwitchChannelRequest body,
                                              HttpServletRequest request) {
         Integer configId = body != null ? body.configId() : null;
         PlatformAiState state = threadService.requireOwnedRuntime(
@@ -238,8 +238,8 @@ public class PlatformAiController {
         String title = body != null ? body.title() : null;
         Integer configId = body != null ? body.configId() : null;
         HttpSession session = request.getSession();
-        Map<String, Object> thread = threadService.createThread(session.getId(), user, title, configId);
-        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, thread.get("threadId"));
+        var thread = threadService.createThread(session.getId(), user, title, configId);
+        session.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, thread.threadId());
         return ApiResponse.success(thread);
     }
 
