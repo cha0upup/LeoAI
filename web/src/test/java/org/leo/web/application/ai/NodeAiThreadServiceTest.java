@@ -323,8 +323,8 @@ class NodeAiThreadServiceTest {
         Fixture fixture = fixture();
         when(fixture.conversationStore.findThread("thread-1")).thenReturn(ownedRecord("thread-1"));
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L));
-        when(fixture.messageRepository.list("thread-1", 0, 50))
-                .thenReturn(messages);
+        when(fixture.messageRepository.historyPage("thread-1", 0, 50, null))
+                .thenReturn(new AiMessageRepository.HistoryPage(messages, 1L, false));
 
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),

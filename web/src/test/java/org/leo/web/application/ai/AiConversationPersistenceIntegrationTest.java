@@ -281,7 +281,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals("completed", protocol.completeFromRuntime(turn.id(), "completed", null, null).status());
         assertTrue(turns.listInProgress("thread-1").isEmpty());
         assertNull(protocol.findNextQueuedTurnId("thread-1"));
-        assertTrue(messages.list("thread-1", 0, 20).stream()
+        assertTrue(messages.historyPage("thread-1", 0, 20, null).messages().stream()
                 .allMatch(message -> "committed".equals(message.get("status"))));
     }
 
@@ -383,7 +383,7 @@ class AiConversationPersistenceIntegrationTest {
                 "SELECT context_summary, context_checkpoint_json FROM ai_threads WHERE thread_id='thread-1'");
         assertNull(cleared.get("context_summary"));
         assertNull(cleared.get("context_checkpoint_json"));
-        assertTrue(messages.list("thread-1", 0, 20).isEmpty());
+        assertTrue(messages.historyPage("thread-1", 0, 20, null).messages().isEmpty());
     }
 
     @Test
@@ -465,7 +465,7 @@ class AiConversationPersistenceIntegrationTest {
                 0, "", List.of(Map.of("kind", "plan", "seq", 1)), plan, recovery);
         protocol.completeFromRuntime(turn.id(), "failed", "fixture connection failed", null);
 
-        var history = messages.list("thread-1", 0, 20);
+        var history = messages.historyPage("thread-1", 0, 20, null).messages();
         var assistant = history.stream().filter(message -> "assistant".equals(message.get("role"))).findFirst().orElseThrow();
         assertEquals("", assistant.get("content"));
         assertEquals("discarded", assistant.get("status"));
@@ -497,8 +497,8 @@ class AiConversationPersistenceIntegrationTest {
                     review_json=?, nodes_json='not-json', plan_json='null' WHERE message_id=?
                 """, reply, recovery, "[{\"name\":\"a.txt\"}]", "{\"ok\":true}", turn.assistantItemId());
 
-        var history = messages.list("thread-1", 0, 20);
-        assertEquals(history, messages.listBefore("thread-1", 3, 20));
+        var history = messages.historyPage("thread-1", 0, 20, null).messages();
+        assertEquals(history, messages.historyPage("thread-1", 0, 20, 3L).messages());
         var assistant = history.get(1);
         assertEquals(turn.assistantItemId(), assistant.get("messageId"));
         assertEquals(turn.id(), assistant.get("turnId"));
@@ -515,7 +515,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(reply, jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         jdbc.update("UPDATE ai_messages SET recovery_context=NULL WHERE message_id=?", turn.assistantItemId());
         assertEquals(reply, messages.contextMessage("thread-1", 2).content());
-        assertEquals(reply, messages.listBefore("thread-1", 3, 20).get(1).get("content"));
+        assertEquals(reply, messages.historyPage("thread-1", 0, 20, 3L).messages().get(1).get("content"));
     }
 
     @Test
@@ -532,7 +532,7 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(nodes, jdbc.queryForObject("SELECT nodes_json FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         assertEquals("partial reply", jdbc.queryForObject("SELECT content FROM ai_messages WHERE message_id=?", String.class, turn.assistantItemId()));
         assertTrue(messages.contextMessage("thread-1", 2).content().contains("可用于继续任务"));
-        assertFalse(messages.list("thread-1", 0, 20).toString().contains("可用于继续任务"));
+        assertFalse(messages.historyPage("thread-1", 0, 20, null).messages().toString().contains("可用于继续任务"));
     }
 
     @Test
@@ -663,11 +663,13 @@ class AiConversationPersistenceIntegrationTest {
         assertEquals(true, older.get("hasMore"));
         assertEquals(106L, older.get("nextBeforeSequence"));
         assertEquals(java.util.Set.of("messages", "nextBeforeSequence", "hasMore"), older.keySet());
+        assertEquals(older, query.messages("thread-1", 51, 50, null));
         Map<String, Object> oldest = query.messages("thread-1", 0, 50, 3L);
         assertEquals(1L, oldest.get("nextBeforeSequence"));
         assertEquals(false, oldest.get("hasMore"));
+        assertEquals(oldest, query.messages("thread-1", 0, 2, 3L));
         assertEquals(false, query.messages("thread-1", 0, 50, 1L).get("hasMore"));
-        assertFalse(this.messages.hasBefore("missing-thread", 206L));
+        assertFalse(this.messages.historyPage("missing-thread", 0, 50, 206L).hasMore());
         assertEquals(206, jdbc.queryForObject("SELECT COUNT(*) FROM ai_messages WHERE thread_id='thread-1'", Integer.class));
     }
 

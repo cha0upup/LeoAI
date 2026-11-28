@@ -15,8 +15,8 @@ class AiMessageRepositoryTest {
     @CsvSource({"7,20,7,20,20", "-8,0,0,1,1", "0,201,0,200,200", "0,-1,0,200,1"})
     void boundsHistoryPagesConsistentlyWithoutChangingModelContextLimits(
             int offset, int limit, int expectedOffset, int historyLimit, int contextLimit) {
-        messages.list("thread", offset, limit);
-        messages.listBefore("thread", 10L, limit);
+        messages.historyPage("thread", offset, limit, null);
+        messages.historyPage("thread", offset, limit, 10L);
         messages.contextMessages("thread", limit);
 
         verify(mapper).listMessages("thread", expectedOffset, historyLimit);

@@ -42,17 +42,19 @@ public class AiMessageRepository {
         return row.getMessageId();
     }
 
-    public List<Map<String, Object>> list(String threadId, int offset, int limit) {
-        return toMaps(mapper.listMessages(threadId, Math.max(0, offset), historyLimit(limit)));
+    public HistoryPage historyPage(String threadId, int offset, int limit, Long beforeSequence) {
+        int pageSize = historyLimit(limit);
+        List<AiMessageRecord> rows = beforeSequence == null
+                ? mapper.listMessages(threadId, Math.max(0, offset), pageSize)
+                : mapper.listMessagesBefore(threadId, beforeSequence, pageSize);
+        Long cursor = rows.isEmpty() ? null : rows.get(0).getMessageSeq();
+        // Only full pages above the first possible sequence need a probe; sequences may have gaps.
+        boolean hasMore = cursor != null && cursor > 1L && rows.size() == pageSize
+                && mapper.hasMessagesBefore(threadId, cursor);
+        return new HistoryPage(toMaps(rows), cursor, hasMore);
     }
 
-    public List<Map<String, Object>> listBefore(String threadId, long beforeSequence, int limit) {
-        return toMaps(mapper.listMessagesBefore(threadId, beforeSequence, historyLimit(limit)));
-    }
-
-    public boolean hasBefore(String threadId, long beforeSequence) {
-        return mapper.hasMessagesBefore(threadId, beforeSequence);
-    }
+    public record HistoryPage(List<Map<String, Object>> messages, Long nextBeforeSequence, boolean hasMore) { }
 
     public int count(String threadId) {
         return mapper.countMessages(threadId);

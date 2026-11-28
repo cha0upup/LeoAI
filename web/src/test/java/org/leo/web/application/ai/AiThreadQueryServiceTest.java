@@ -12,11 +12,14 @@ import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.thread.AiEventJournalRepository;
 import org.leo.ai.thread.AiMessageRepository;
+import org.leo.ai.thread.AiMessageRepository.HistoryPage;
 import org.leo.core.ai.AiRuntimeState;
+import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AgentNodeSession;
+import org.leo.dao.mapper.AiConversationMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -193,32 +196,49 @@ class AiThreadQueryServiceTest {
     }
 
     @Test
-    void returnsStableCursorMetadataAndIgnoresOffset() {
+    void returnsStableCursorMetadata() {
         List<Map<String, Object>> messages = List.of(
                 Map.of("messageId", "m-10", "sequence", 10L),
                 Map.of("messageId", "m-11", "sequence", 11L));
-        when(messageRepository.listBefore("thread", 20L, -1)).thenReturn(messages);
-        when(messageRepository.hasBefore("thread", 10L)).thenReturn(true);
+        when(messageRepository.historyPage("thread", 7, -1, 20L))
+                .thenReturn(new HistoryPage(messages, 10L, true));
 
         Map<String, Object> page = queries.messages("thread", 7, -1, 20L);
 
         assertEquals(messages, page.get("messages"));
         assertEquals(10L, page.get("nextBeforeSequence"));
         assertEquals(true, page.get("hasMore"));
-        verify(messageRepository).listBefore("thread", 20L, -1);
-        verify(messageRepository, never()).count(anyString());
         assertEquals(java.util.Set.of("messages", "nextBeforeSequence", "hasMore"), page.keySet());
-        verify(messageRepository, never()).list(anyString(), anyInt(), anyInt());
+        verify(messageRepository).historyPage("thread", 7, -1, 20L);
     }
 
     @Test
     void initialAndEmptyHistoryPagesKeepCursorContract() {
+        when(messageRepository.historyPage("thread", 0, 50, null))
+                .thenReturn(new HistoryPage(List.of(), null, false));
         Map<String, Object> page = queries.messages("thread", null, null, null);
         assertEquals(List.of(), page.get("messages"));
         assertNull(page.get("nextBeforeSequence"));
         assertEquals(false, page.get("hasMore"));
-        verify(messageRepository).list("thread", 0, 50);
-        verify(messageRepository, never()).hasBefore(anyString(), anyLong());
+        verify(messageRepository).historyPage("thread", 0, 50, null);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"12,20,false,false", "1,1,false,false", "12,1,true,true", "12,1,true,false"})
+    void historyOnlyProbesForOlderMessagesWhenThePageDoesNotAnswerIt(long firstSequence, int limit,
+                                                                     boolean probeOlder, boolean hasMore) {
+        var mapper = mock(AiConversationMapper.class);
+        var row = new AiMessageRecord();
+        row.setMessageSeq(firstSequence);
+        when(mapper.listMessages("thread", 0, limit)).thenReturn(List.of(row));
+        when(mapper.hasMessagesBefore("thread", firstSequence)).thenReturn(hasMore);
+        var query = new AiThreadQueryService(store, new AiMessageRepository(mapper), journal, protocol);
+
+        var page = query.messages("thread", 0, limit, null);
+
+        assertEquals(firstSequence, page.get("nextBeforeSequence"));
+        assertEquals(hasMore, page.get("hasMore"));
+        verify(mapper, times(probeOlder ? 1 : 0)).hasMessagesBefore("thread", firstSequence);
     }
 
     @ParameterizedTest
@@ -232,7 +252,8 @@ class AiThreadQueryServiceTest {
     @Test
     void forwardsExplicitOffsetAndLimitToTheRepository() {
         List<Map<String, Object>> messages = List.of(Map.of("messageId", "message-1", "sequence", 1L, "content", "hello"));
-        when(messageRepository.list("thread", -8, 500)).thenReturn(messages);
+        when(messageRepository.historyPage("thread", -8, 500, null))
+                .thenReturn(new HistoryPage(messages, 1L, false));
 
         assertEquals(Map.of("messages", messages,
                         "nextBeforeSequence", 1L, "hasMore", false),

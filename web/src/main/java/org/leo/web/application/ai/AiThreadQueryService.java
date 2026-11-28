@@ -89,15 +89,11 @@ public class AiThreadQueryService {
         }
         int offset = requestedOffset != null ? requestedOffset : 0;
         int limit = requestedLimit != null ? requestedLimit : 50;
-        List<Map<String, Object>> page = beforeSequence == null
-                ? messages.list(threadId, offset, limit)
-                : messages.listBefore(threadId, beforeSequence, limit);
-        Long cursor = !page.isEmpty() && page.get(0).get("sequence") instanceof Number sequence
-                ? sequence.longValue() : null;
+        AiMessageRepository.HistoryPage page = messages.historyPage(threadId, offset, limit, beforeSequence);
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("messages", page);
-        data.put("nextBeforeSequence", cursor);
-        data.put("hasMore", cursor != null && messages.hasBefore(threadId, cursor));
+        data.put("messages", page.messages());
+        data.put("nextBeforeSequence", page.nextBeforeSequence());
+        data.put("hasMore", page.hasMore());
         return data;
     }
 
