@@ -4,10 +4,11 @@ import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.AuditLogCounts;
 import org.leo.core.entity.AuditLogListItem;
 import org.leo.core.entity.AuditLogQuery;
+import org.leo.dao.mapper.AuditLogMapper;
+import org.leo.dao.mapper.AuditLogMapper.SubjectStatistics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.leo.dao.mapper.AuditLogMapper;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 /**
  * 审计日志服务类
@@ -101,53 +103,33 @@ public class AuditLogService {
     }
 
     public Map<String, Object> getUserStatistics(String userId) {
-        if (!hasText(userId)) {
-            return new HashMap<>();
-        }
-        String normalizedUserId = userId.trim();
-        Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeUserAuditLogs(normalizedUserId, recentCutoff()));
-        statistics.put("userId", normalizedUserId);
-        return statistics;
+        return getSubjectStatistics("userId", userId, auditLogMapper::summarizeUserAuditLogs);
     }
 
     public Map<String, Object> getAgentStatistics(String agentId) {
-        if (!hasText(agentId)) {
-            return new HashMap<>();
-        }
-        String normalizedAgentId = agentId.trim();
-        Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeAgentAuditLogs(normalizedAgentId, recentCutoff()));
-        statistics.put("agentId", normalizedAgentId);
-        return statistics;
+        return getSubjectStatistics("agentId", agentId, auditLogMapper::summarizeAgentAuditLogs);
     }
 
     public Map<String, Object> getTeamStatistics(String teamId) {
-        if (!hasText(teamId)) {
-            return new HashMap<>();
-        }
-        String normalizedTeamId = teamId.trim();
-        Map<String, Object> statistics = toStatisticsResponse(
-                auditLogMapper.summarizeTeamAuditLogs(normalizedTeamId, recentCutoff()));
-        statistics.put("teamId", normalizedTeamId);
-        return statistics;
+        return getSubjectStatistics("teamId", teamId, auditLogMapper::summarizeTeamAuditLogs);
     }
 
-    private static String recentCutoff() {
-        return cutoffDaysAgo(RECENT_DAYS);
+    private Map<String, Object> getSubjectStatistics(String idField, String id,
+                                                    BiFunction<String, String, SubjectStatistics> query) {
+        Map<String, Object> statistics = new HashMap<>();
+        if (!hasText(id)) return statistics;
+        String normalizedId = id.trim();
+        SubjectStatistics result = query.apply(normalizedId, cutoffDaysAgo(RECENT_DAYS));
+        statistics.put("totalOperations", (int) result.totalOperations());
+        statistics.put("recentOperations", (int) result.recentOperations());
+        statistics.put("lastOperation", result.lastOperation());
+        statistics.put(idField, normalizedId);
+        return statistics;
     }
 
     private static String cutoffDaysAgo(int days) {
         // Audit timestamps are written in the application's local time, not SQLite's UTC time.
         return DATE_TIME_FORMAT.format(LocalDateTime.now().minusDays(days));
-    }
-
-    private Map<String, Object> toStatisticsResponse(Map<String, Object> summary) {
-        Map<String, Object> statistics = new HashMap<>();
-        statistics.put("totalOperations", toInt(summary.get("total_operations")));
-        statistics.put("recentOperations", toInt(summary.get("recent_operations")));
-        statistics.put("lastOperation", summary.get("last_operation"));
-        return statistics;
     }
 
     public List<Map<String, Object>> getOperationStatistics(Integer days) {

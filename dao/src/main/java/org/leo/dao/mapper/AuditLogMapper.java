@@ -138,13 +138,16 @@ public interface AuditLogMapper {
     AuditLogCounts countAuditLogsByStatus(@Param("query") AuditLogQuery query);
 
     @Select(AUDIT_STATISTICS_SELECT + "WHERE user_id = #{userId}")
-    Map<String, Object> summarizeUserAuditLogs(@Param("userId") String userId, @Param("recentSince") String recentSince);
+    SubjectStatistics summarizeUserAuditLogs(@Param("userId") String userId, @Param("recentSince") String recentSince);
 
     @Select(AUDIT_STATISTICS_SELECT + "WHERE agent_id = #{agentId}")
-    Map<String, Object> summarizeAgentAuditLogs(@Param("agentId") String agentId, @Param("recentSince") String recentSince);
+    SubjectStatistics summarizeAgentAuditLogs(@Param("agentId") String agentId, @Param("recentSince") String recentSince);
 
     @Select(AUDIT_STATISTICS_SELECT + "WHERE actor_team_id = #{teamId}")
-    Map<String, Object> summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("recentSince") String recentSince);
+    SubjectStatistics summarizeTeamAuditLogs(@Param("teamId") String teamId, @Param("recentSince") String recentSince);
+
+    record SubjectStatistics(long totalOperations, long recentOperations, String lastOperation) {
+    }
 
     @Select("""
             <script>
