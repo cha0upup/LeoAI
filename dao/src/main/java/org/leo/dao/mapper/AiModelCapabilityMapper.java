@@ -34,6 +34,9 @@ public interface AiModelCapabilityMapper {
     @Select("SELECT " + CATALOG_COLUMNS + " FROM ai_model_capabilities ORDER BY model_name")
     List<AiModelCapability> listAll();
 
+    @Select("SELECT model_name FROM ai_model_capabilities ORDER BY model_name")
+    List<String> listModelNames();
+
     @Select("SELECT " + CATALOG_COLUMNS + " FROM ai_model_capabilities WHERE model_name = #{modelName} LIMIT 1")
     AiModelCapability findByModelName(@Param("modelName") String modelName);
 
@@ -49,8 +52,8 @@ public interface AiModelCapabilityMapper {
             + "VALUES (#{modelName}, #{source}, #{contextWindowTokens}, #{maxOutputTokens}, "
             + "#{supportsTextGeneration}, #{supportsReasoning}, #{supportsStreaming}, #{supportsFunctionCalling}, "
             + "#{supportsStructuredOutput}, #{supportsWebSearch}, #{supportsParallelToolCalls}, "
-            + "#{createTime}, #{updateTime}, #{remark})")
-    int insert(AiModelCapability row);
+            + "#{createTime}, #{updateTime}, #{remark}) ON CONFLICT(model_name) DO NOTHING")
+    int insertIfAbsent(AiModelCapability row);
 
     @Update("UPDATE ai_model_capabilities SET source=#{source}, "
             + "context_window_tokens=#{contextWindowTokens}, max_output_tokens=#{maxOutputTokens}, "

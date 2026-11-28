@@ -156,6 +156,10 @@ public class AiModelConfigService {
         return capabilityMapper.listAll();
     }
 
+    public List<String> listCapabilityModelNames() {
+        return capabilityMapper.listModelNames();
+    }
+
     public ProviderCapabilities capabilitiesForModel(String providerKey, String modelName) {
         if (modelName == null || modelName.isBlank()) {
             return ProviderCapabilities.missing();
@@ -250,7 +254,7 @@ public class AiModelConfigService {
             model.setProviderId(provider.getId());
             model.setEnabled(enabled ? 1 : 0);
             model.setIsActive(index == defaultIndex ? 1 : 0);
-            insertModel(model, provider, false);
+            insertModel(model, provider);
         }
         if (defaultIndex >= 0) notifyModelRefresh();
     }
@@ -281,7 +285,7 @@ public class AiModelConfigService {
             mapper.disableByProviderId(existing.getId(), nowSqlite());
         }
         notifyModelRefresh();
-        return findProviderById(id);
+        return existing;
     }
 
     /** 模型、能力观测及备用引用由现有外键统一清理，无需读取供应商凭据。 */
@@ -296,38 +300,29 @@ public class AiModelConfigService {
         return id == null ? null : decryptModel(mapper.findById(id));
     }
 
-    /** 装配单个写入结果的目录字段；备用模型名称无需解密连接信息。 */
-    @Transactional(readOnly = true)
-    public CatalogEntry describeModel(AiModelConfig config) {
-        Integer fallbackId = config.getFallbackModelId();
-        String fallbackName = fallbackId != null ? mapper.findNameById(fallbackId) : null;
-        return new CatalogEntry(config, fallbackName, capabilityModelName(config), capabilitiesForModel(config));
-    }
-
     public AiModelConfig getActive() {
         return decryptModel(mapper.findActive());
     }
 
     @Transactional
-    public AiModelConfig create(AiModelConfig row) {
-        insertModel(row, null, true);
+    public CatalogEntry create(AiModelConfig row) {
+        ModelValidation validation = insertModel(row, null);
         if (flag(row.getIsActive())) notifyModelRefresh();
-        return findById(row.getId());
+        return savedModel(row.getId(), validation.capabilities(), validation.fallbackModelName());
     }
 
     @Transactional
     public AiModelCapability createCapability(AiModelCapability row) {
         validateCapability(row);
         normalizeCapability(row);
-        if (capabilityMapper.findByModelName(row.getModelName()) != null) {
-            throw new IllegalArgumentException("模型能力已存在: " + row.getModelName());
-        }
         String now = nowSqlite();
         row.setCreateTime(now);
         row.setUpdateTime(now);
-        capabilityMapper.insert(row);
+        if (capabilityMapper.insertIfAbsent(row) == 0) {
+            throw new IllegalArgumentException("模型能力已存在: " + row.getModelName());
+        }
         notifyModelRefresh();
-        return capabilityMapper.findByModelName(row.getModelName());
+        return row;
     }
 
     @Transactional
@@ -338,7 +333,6 @@ public class AiModelConfigService {
         if (patch == null) {
             throw new IllegalArgumentException("模型能力配置不能为空");
         }
-        existing.setSource("manual");
         existing.setContextWindowTokens(patch.getContextWindowTokens());
         existing.setMaxOutputTokens(patch.getMaxOutputTokens());
         existing.setSupportsTextGeneration(patch.getSupportsTextGeneration());
@@ -354,7 +348,7 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         capabilityMapper.update(existing);
         notifyModelRefresh();
-        return capabilityMapper.findByModelName(existing.getModelName());
+        return existing;
     }
 
     /**
@@ -416,7 +410,7 @@ public class AiModelConfigService {
         return deleted;
     }
 
-    private void insertModel(AiModelConfig row, AiProvider importedProvider, boolean autoActivateFirst) {
+    private ModelValidation insertModel(AiModelConfig row, AiProvider importedProvider) {
         validateRequired(row);
         normalize(row);
         if (importedProvider == null) {
@@ -424,22 +418,22 @@ public class AiModelConfigService {
         } else {
             applyProviderConnection(row, importedProvider);
         }
-        ProviderCapabilities capabilities = validateModelParameters(row);
-        validateFallback(row, null);
+        ModelValidation validation = validateModel(row, null);
         String now = nowSqlite();
         row.setCreateTime(now);
         row.setUpdateTime(now);
         if (row.getIsActive() == null) row.setIsActive(0);
-        if (autoActivateFirst && flag(row.getEnabled()) && !mapper.hasModels()) row.setIsActive(1);
+        if (importedProvider == null && flag(row.getEnabled()) && !mapper.hasModels()) row.setIsActive(1);
         if (flag(row.getIsActive())) {
-            assertUsable(row, capabilities);
+            assertUsable(row, validation.capabilities());
             mapper.clearActive();
         }
         mapper.insert(row);
+        return validation;
     }
 
     @Transactional
-    public AiModelConfig update(Integer id, AiModelConfig patch) {
+    public CatalogEntry update(Integer id, AiModelConfig patch) {
         AiModelConfig existing = findById(id);
         if (existing == null) return null;
         boolean wasActive = Integer.valueOf(1).equals(existing.getIsActive());
@@ -472,13 +466,12 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         normalize(existing);
         applyProvider(existing);
-        ProviderCapabilities capabilities = validateModelParameters(existing);
-        validateFallback(existing, id);
+        ModelValidation validation = validateModel(existing, id);
         if (activating && !Integer.valueOf(1).equals(existing.getIsActive())) {
             throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
         }
         if (Integer.valueOf(1).equals(existing.getIsActive())) {
-            assertUsable(existing, capabilities);
+            assertUsable(existing, validation.capabilities());
         }
         if (activating && !wasActive) {
             mapper.clearActive();
@@ -488,7 +481,7 @@ public class AiModelConfigService {
         if (wasActive || isActiveNow) {
             notifyModelRefresh();
         }
-        return findById(id);
+        return savedModel(id, validation.capabilities(), validation.fallbackModelName());
     }
 
     /** 删除按受影响行数判断，不要求解密待删除的凭据。 */
@@ -500,17 +493,26 @@ public class AiModelConfigService {
     }
 
     @Transactional
-    public AiModelConfig activate(Integer id) {
+    public CatalogEntry activate(Integer id) {
         AiModelConfig row = findById(id);
         if (row == null) return null;
         applyProvider(row);
         requireEnabledForActivation(row);
-        assertChatCapabilities(validateModelParameters(row));
+        ProviderCapabilities capabilities = validateModelParameters(row);
+        assertChatCapabilities(capabilities);
         if (!flag(row.getIsActive())) mapper.clearActive();
         mapper.setActiveById(id, nowSqlite());
-        AiModelConfig activated = findById(id);
+        Integer fallbackId = row.getFallbackModelId();
+        String fallbackName = fallbackId != null ? mapper.findNameById(fallbackId) : null;
+        CatalogEntry activated = savedModel(id, capabilities, fallbackName);
         notifyModelRefresh();
         return activated;
+    }
+
+    private CatalogEntry savedModel(Integer id, ProviderCapabilities capabilities, String fallbackName) {
+        // 保留数据库生成的 ID 和模型/供应商合并的更新时间，能力与备用名称复用已有结果。
+        AiModelConfig saved = findById(id);
+        return new CatalogEntry(saved, fallbackName, capabilityModelName(saved), capabilities);
     }
 
     /** 解析"要使用的模型"。requested 可为空，空则取激活记录。 */
@@ -558,6 +560,14 @@ public class AiModelConfigService {
         ProviderCapabilities capabilities = capabilitiesForModel(config);
         ModelRequestPlan.resolve(config, capabilities, null, false, false);
         return capabilities;
+    }
+
+    private ModelValidation validateModel(AiModelConfig config, Integer currentId) {
+        ProviderCapabilities capabilities = validateModelParameters(config);
+        return new ModelValidation(capabilities, validateFallback(config, currentId));
+    }
+
+    private record ModelValidation(ProviderCapabilities capabilities, String fallbackModelName) {
     }
 
     private void validateRequired(AiModelConfig row) {
@@ -624,9 +634,9 @@ public class AiModelConfigService {
      * 备用模型只允许指向已启用、可用于当前流式对话的模型；同时拒绝配置环路。
      * 这样运行时的熔断选择始终是确定且安全的。
      */
-    private void validateFallback(AiModelConfig row, Integer currentId) {
+    private String validateFallback(AiModelConfig row, Integer currentId) {
         Integer fallbackId = row.getFallbackModelId();
-        if (fallbackId == null) return;
+        if (fallbackId == null) return null;
         if (currentId != null && currentId.equals(fallbackId)) {
             throw new IllegalArgumentException("备用模型不能指向自身");
         }
@@ -639,19 +649,10 @@ public class AiModelConfigService {
             throw new IllegalArgumentException("备用模型必须支持文本生成和流式输出");
         }
 
-        Set<Integer> visited = new HashSet<>();
-        if (currentId != null) visited.add(currentId);
-        AiModelConfig cursor = fallback;
-        while (cursor != null) {
-            Integer cursorId = cursor.getId();
-            if (cursorId != null && !visited.add(cursorId)) {
-                throw new IllegalArgumentException("备用模型链不能形成循环");
-            }
-            Integer nextId = cursor.getFallbackModelId();
-            if (nextId == null) break;
-            cursor = findById(nextId);
-            if (cursor == null) break;
+        if (fallback.getFallbackModelId() != null && mapper.hasFallbackCycle(fallbackId, currentId)) {
+            throw new IllegalArgumentException("备用模型链不能形成循环");
         }
+        return fallback.getName();
     }
 
     private AiProvider decryptProvider(AiProvider row) {

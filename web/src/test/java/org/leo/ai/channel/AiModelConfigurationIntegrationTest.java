@@ -5,7 +5,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -255,7 +254,7 @@ class AiModelConfigurationIntegrationTest {
         AiProvider unrelated = provider("unrelated");
         AiModelConfig unrelatedDraft = draft(unrelated, "unrelated");
         unrelatedDraft.setEnabled(0);
-        AiModelConfig unrelatedModel = configs.create(unrelatedDraft);
+        AiModelConfig unrelatedModel = configs.create(unrelatedDraft).config();
         damageStoredProviderSecrets(unrelated.getId());
 
         assertEquals(List.of(active.getId(), unrelatedModel.getId()), configs.listModelIds());
@@ -293,8 +292,8 @@ class AiModelConfigurationIntegrationTest {
         damageStoredProviderSecrets(fallbackProvider.getId());
         assertEquals(previous.getId(), configs.getActive().getId());
 
-        var controller = new AiModelConfigController(configs, context.getBean(DynamicModelProvider.class),
-                mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
+        var controller = new AiModelConfigController(configs, mock(AiModelConnectionTestService.class),
+                mock(AiModelFailoverService.class),
                 mock(AiModelCapabilityProbeService.class), mock(AiModelDiscoveryService.class));
         var response = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiResponseStatusAdvice()).build()
@@ -304,6 +303,110 @@ class AiModelConfigurationIntegrationTest {
         response.andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.fallbackModelId").value(fallback.getId()))
                 .andExpect(jsonPath("$.data.fallbackModelName").value(fallback.getName()));
+    }
+
+    @Test
+    void modelWritesReturnTheSameCatalogFieldsAsTheList() {
+        AiProvider primary = provider("primary");
+        AiModelConfig fallback = model(provider("fallback"), "fallback name");
+        String providerTime = "2099-01-01 00:00:00";
+        jdbc.update("UPDATE ai_providers SET update_time=? WHERE id=?", providerTime, primary.getId());
+
+        AiModelConfig draft = draft(primary, "primary model");
+        draft.setFallbackModelId(fallback.getId());
+        var created = configs.create(draft);
+        assertNotNull(created.config().getId());
+        assertEquals(fallback.getName(), created.fallbackModelName());
+        assertEquals(providerTime, created.config().getUpdateTime());
+
+        configs.applyProbeResult(created.config(), Map.of("structuredOutput", true));
+        var patch = new AiModelConfig();
+        patch.setName("renamed");
+        patch.setFallbackModelId(fallback.getId());
+        var updated = configs.update(created.config().getId(), patch);
+        var active = configs.activate(created.config().getId());
+        var listed = configs.listCatalog().stream()
+                .filter(entry -> entry.config().getId().equals(created.config().getId()))
+                .findFirst().orElseThrow();
+
+        assertEquals("renamed", updated.config().getName());
+        assertEquals(1, active.config().getIsActive());
+        assertTrue(listed.capabilities().supportsStructuredOutput());
+        for (var saved : List.of(updated, active)) {
+            assertEquals(listed.capabilities(), saved.capabilities());
+            assertEquals(listed.capabilityModelName(), saved.capabilityModelName());
+            assertEquals(listed.fallbackModelName(), saved.fallbackModelName());
+            assertEquals(listed.config().getUpdateTime(), saved.config().getUpdateTime());
+        }
+    }
+
+    @Test
+    void savingFallbackRejectsSelfReferencesNewCyclesAndExistingCycles() {
+        AiProvider provider = provider("primary");
+        AiModelConfig source = model(provider, "source");
+        AiModelConfig middle = model(provider, "middle");
+        AiModelConfig tail = model(provider, "tail");
+
+        var self = assertThrows(IllegalArgumentException.class,
+                () -> configs.update(tail.getId(), fallbackPatch(tail)));
+        assertTrue(self.getMessage().contains("指向自身"));
+        configs.update(middle.getId(), fallbackPatch(tail));
+        configs.update(source.getId(), fallbackPatch(middle));
+
+        var newCycle = assertThrows(IllegalArgumentException.class,
+                () -> configs.update(tail.getId(), fallbackPatch(source)));
+        assertTrue(newCycle.getMessage().contains("循环"));
+        assertNull(configs.findById(tail.getId()).getFallbackModelId());
+
+        jdbc.update("UPDATE ai_model_configs SET fallback_model_id=? WHERE id=?", middle.getId(), tail.getId());
+        AiModelConfig draft = draft(provider, "new source");
+        draft.setFallbackModelId(source.getId());
+        var existingCycle = assertThrows(IllegalArgumentException.class, () -> configs.create(draft));
+        assertEquals(newCycle.getMessage(), existingCycle.getMessage());
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM ai_model_configs", Integer.class));
+    }
+
+    @Test
+    void savingFallbackDoesNotDecryptLaterLinksInTheChain() {
+        AiProvider primary = provider("primary");
+        AiProvider tailProvider = provider("tail provider");
+        AiModelConfig direct = model(primary, "direct fallback");
+        AiModelConfig source = model(primary, "source");
+        AiModelConfig tail = model(tailProvider, "tail");
+        configs.update(direct.getId(), fallbackPatch(tail));
+        damageStoredProviderSecrets(tailProvider.getId());
+
+        var saved = configs.update(source.getId(), fallbackPatch(direct));
+
+        assertEquals(direct.getId(), saved.config().getFallbackModelId());
+        assertEquals(direct.getName(), saved.fallbackModelName());
+        assertEquals(tail.getId(), configs.findById(direct.getId()).getFallbackModelId());
+    }
+
+    @Test
+    void duplicateManualCapabilityKeepsTheSavedValuesAndErrorMessage() {
+        AiModelCapability draft = new AiModelCapability();
+        draft.setModelName(" Fixture-Capability ");
+        draft.setContextWindowTokens(8192);
+        draft.setMaxOutputTokens(2048);
+        var saved = configs.createCapability(draft);
+        assertEquals("fixture-capability", saved.getModelName());
+        assertEquals("manual", saved.getSource());
+        assertEquals(1, saved.getSupportsStreaming());
+        assertNotNull(saved.getCreateTime());
+
+        var duplicate = new AiModelCapability();
+        duplicate.setModelName("FIXTURE-CAPABILITY");
+        duplicate.setContextWindowTokens(16384);
+        duplicate.setMaxOutputTokens(4096);
+        var conflict = assertThrows(IllegalArgumentException.class, () -> configs.createCapability(duplicate));
+        assertEquals("模型能力已存在: fixture-capability", conflict.getMessage());
+        assertEquals(8192, configs.capabilitiesForModel(null, "fixture-capability").contextWindowTokens());
+
+        var updated = configs.updateCapability("FIXTURE-CAPABILITY", duplicate);
+        assertEquals(saved.getCreateTime(), updated.getCreateTime());
+        assertEquals(16384, updated.getContextWindowTokens());
+        assertEquals(16384, configs.capabilitiesForModel(null, "fixture-capability").contextWindowTokens());
     }
 
     @Test
@@ -355,7 +458,7 @@ class AiModelConfigurationIntegrationTest {
         AiModelConfig accepted = model(enabled, "accepted");
         AiModelConfig noStream = draft(enabled, "no stream");
         noStream.setModel("no-stream-fixture");
-        AiModelConfig savedNoStream = configs.create(noStream);
+        AiModelConfig savedNoStream = configs.create(noStream).config();
         configs.applyProbeResult(savedNoStream, Map.of("streaming", false));
 
         AiProvider disabled = provider("disabled");
@@ -403,7 +506,7 @@ class AiModelConfigurationIntegrationTest {
                 jdbc.queryForList("SELECT model_id FROM activation_writes", Integer.class));
 
         jdbc.update("DELETE FROM activation_writes");
-        assertEquals(selected.getId(), configs.activate(selected.getId()).getId());
+        assertEquals(selected.getId(), configs.activate(selected.getId()).config().getId());
         assertEquals(List.of(selected.getId()),
                 jdbc.queryForList("SELECT model_id FROM activation_writes", Integer.class));
     }
@@ -444,6 +547,14 @@ class AiModelConfigurationIntegrationTest {
         assertEquals(65_536, configs.capabilitiesForModel(null, "mimo-v2.6-pro").contextWindowTokens());
         assertEquals("manual", configs.capabilitiesForModel(null, "mimo-v2.6-pro").source());
         assertFalse(configs.capabilitiesForModel(null, "gpt5.5").recognized());
+    }
+
+    @Test
+    void capabilityNamesUseTheSameOrderAsTheFullCatalog() {
+        List<String> names = configs.listCapabilityModelNames();
+
+        assertFalse(names.isEmpty());
+        assertEquals(configs.listModelCapabilities().stream().map(AiModelCapability::getModelName).toList(), names);
     }
 
     private void initializeSchema() {
@@ -520,7 +631,7 @@ class AiModelConfigurationIntegrationTest {
         provider = configs.updateProvider(provider.getId(), connection);
         AiModelConfig model = draft(provider, "GPT");
         model.setModel("gpt-6.1-sol");
-        AiModelConfig active = configs.create(model);
+        AiModelConfig active = configs.create(model).config();
         Object delegate = chat.getDelegate();
         AiProvider invalidConnection = new AiProvider();
         invalidConnection.setProtocol("chat_completions");
@@ -586,7 +697,7 @@ class AiModelConfigurationIntegrationTest {
         provider = configs.createProvider(provider);
         AiModelConfig draft = draft(provider, "Kimi K3.1 Pro");
         draft.setModel("kimi-k3.1-pro");
-        AiModelConfig saved = configs.create(draft);
+        AiModelConfig saved = configs.create(draft).config();
 
         assertEquals(saved.getId(), configs.getActive().getId());
         assertEquals("kimi", saved.getProviderKey());
@@ -609,7 +720,7 @@ class AiModelConfigurationIntegrationTest {
     }
 
     private AiModelConfig model(AiProvider provider, String name) {
-        return configs.create(draft(provider, name));
+        return configs.create(draft(provider, name)).config();
     }
 
     private AiModelConfig draft(AiProvider provider, String name) {
@@ -618,6 +729,12 @@ class AiModelConfigurationIntegrationTest {
         model.setName(name);
         model.setModel("test-model");
         return model;
+    }
+
+    private static AiModelConfig fallbackPatch(AiModelConfig fallback) {
+        var patch = new AiModelConfig();
+        patch.setFallbackModelId(fallback.getId());
+        return patch;
     }
 
     @Configuration

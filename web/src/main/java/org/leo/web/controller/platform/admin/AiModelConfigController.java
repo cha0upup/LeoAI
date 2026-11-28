@@ -1,16 +1,12 @@
 package org.leo.web.controller.platform.admin;
 
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelConnectionTestService;
 import org.leo.ai.channel.AiModelDiscoveryService;
 import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
-import org.leo.ai.channel.ModelEndpoint;
 import org.leo.ai.channel.ModelRequestOptions;
-import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -22,11 +18,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * AI 供应商模型配置管理。
@@ -38,21 +32,18 @@ import java.util.Map;
 public class AiModelConfigController {
 
     private final AiModelConfigService configService;
-    private final DynamicModelProvider dynamicModelProvider;
-    private final AiErrorClassifier aiErrorClassifier;
+    private final AiModelConnectionTestService connectionTestService;
     private final AiModelFailoverService failoverService;
     private final AiModelCapabilityProbeService capabilityProbeService;
     private final AiModelDiscoveryService discoveryService;
 
     public AiModelConfigController(AiModelConfigService configService,
-                                   DynamicModelProvider dynamicModelProvider,
-                                   AiErrorClassifier aiErrorClassifier,
+                                   AiModelConnectionTestService connectionTestService,
                                    AiModelFailoverService failoverService,
                                    AiModelCapabilityProbeService capabilityProbeService,
                                    AiModelDiscoveryService discoveryService) {
         this.configService = configService;
-        this.dynamicModelProvider = dynamicModelProvider;
-        this.aiErrorClassifier = aiErrorClassifier;
+        this.connectionTestService = connectionTestService;
         this.failoverService = failoverService;
         this.capabilityProbeService = capabilityProbeService;
         this.discoveryService = discoveryService;
@@ -68,8 +59,7 @@ public class AiModelConfigController {
     @RequestMapping(method = RequestMethod.POST)
     public HashMap<String, Object> create(@RequestBody AiModelConfig body) {
         try {
-            AiModelConfig saved = configService.create(body);
-            return ApiResponse.success(toView(configService.describeModel(saved)));
+            return ApiResponse.success(toView(configService.create(body)));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -89,11 +79,11 @@ public class AiModelConfigController {
     public HashMap<String, Object> update(@PathVariable("id") Integer id,
                                           @RequestBody AiModelConfig patch) {
         try {
-            AiModelConfig saved = configService.update(id, patch);
+            AiModelConfigService.CatalogEntry saved = configService.update(id, patch);
             if (saved == null) {
                 return ApiResponse.notFound("模型配置不存在，id: " + id);
             }
-            return ApiResponse.success(toView(configService.describeModel(saved)));
+            return ApiResponse.success(toView(saved));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -110,11 +100,11 @@ public class AiModelConfigController {
     @RequestMapping(value = "/{id}/activate", method = RequestMethod.POST)
     public HashMap<String, Object> activate(@PathVariable("id") Integer id) {
         try {
-            AiModelConfig saved = configService.activate(id);
+            AiModelConfigService.CatalogEntry saved = configService.activate(id);
             if (saved == null) {
                 return ApiResponse.notFound("模型配置不存在，id: " + id);
             }
-            return ApiResponse.success(toView(configService.describeModel(saved)));
+            return ApiResponse.success(toView(saved));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -125,44 +115,24 @@ public class AiModelConfigController {
      */
     @RequestMapping(value = "/{id}/test-connection", method = RequestMethod.POST)
     public HashMap<String, Object> testConnection(@PathVariable("id") Integer id) {
-        AiModelConfig config = configService.findById(id);
-        if (config == null) {
+        var tested = connectionTestService.testConnection(id);
+        if (tested == null) {
             return ApiResponse.notFound("模型配置不存在，id: " + id);
         }
-        long start = System.currentTimeMillis();
-        String protocol = DynamicModelProvider.resolveProtocol(config);
-        String effectiveBaseUrl = ModelEndpoint.apiRoot(config);
-        try {
-            ChatResponse response = testConnectionWithRuntime(config);
-            failoverService.recordSuccess(config.getId());
-            long latency = System.currentTimeMillis() - start;
-            String text = response != null && response.aiMessage() != null
-                    ? response.aiMessage().text() : null;
-            LinkedHashMap<String, Object> result = new LinkedHashMap<>();
-            result.put("success", true);
-            result.put("latencyMs", latency);
-            result.put("model", config.getModel());
-            result.put("providerKey", config.getProviderKey());
-            result.put("protocol", protocol);
-            result.put("effectiveBaseUrl", effectiveBaseUrl);
-            result.put("responsePreview", text != null && text.length() > 100
-                    ? text.substring(0, 100) + "..." : text);
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            long latency = System.currentTimeMillis() - start;
-            AiErrorClassifier.Classification classification = aiErrorClassifier.classify(e);
-            failoverService.recordFailure(config.getId(), classification);
-            LinkedHashMap<String, Object> result = new LinkedHashMap<>();
-            result.put("success", false);
-            result.put("latencyMs", latency);
-            result.put("model", config.getModel());
-            result.put("providerKey", config.getProviderKey());
-            result.put("protocol", protocol);
-            result.put("effectiveBaseUrl", effectiveBaseUrl);
-            result.put("category", classification.category());
-            result.put("message", classification.message());
-            return ApiResponse.success(result);
+        var result = new LinkedHashMap<String, Object>();
+        result.put("success", tested.success());
+        result.put("latencyMs", tested.latencyMs());
+        result.put("model", tested.model());
+        result.put("providerKey", tested.providerKey());
+        result.put("protocol", tested.protocol());
+        result.put("effectiveBaseUrl", tested.effectiveBaseUrl());
+        if (tested.success()) {
+            result.put("responsePreview", tested.responsePreview());
+        } else {
+            result.put("category", tested.failure().category());
+            result.put("message", tested.failure().message());
         }
+        return ApiResponse.success(result);
     }
 
     /**
@@ -201,39 +171,27 @@ public class AiModelConfigController {
         return ApiResponse.success(failoverService.snapshot(id).toMap());
     }
 
-    private ChatResponse testConnectionWithRuntime(AiModelConfig config) {
-        return dynamicModelProvider.buildProbeRuntime(config, false).chatModel().chat(ChatRequest.builder()
-                .messages(List.of(new UserMessage("请只回复 OK。")))
-                .build());
-    }
-
     /**
      * 返回内置服务商预设列表，前端用于快速填充 baseUrl 和推荐模型。
      */
     @RequestMapping(value = "/providers", method = RequestMethod.GET)
     public HashMap<String, Object> providers() {
-        List<AiModelCapability> catalog = configService.listModelCapabilities();
-        List<Map<String, Object>> list = new ArrayList<>();
-        list.add(provider("OpenAI (Responses API)", "openai", "https://api.openai.com/v1",
-                DynamicModelProvider.PROTOCOL_RESPONSES, models(catalog, "gpt-")));
-        list.add(provider("DeepSeek", "deepseek", "https://api.deepseek.com",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "deepseek-")));
-        list.add(provider("Kimi (Moonshot)", "kimi", "https://api.moonshot.cn/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "kimi-")));
-        list.add(provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "qwen")));
-        list.add(provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas/v4",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "glm-")));
-        list.add(provider("Gemini (OpenAI compat)", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "gemini-")));
-        list.add(provider("小米 MiMo", "mimo", "https://api.xiaomimimo.com/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, models(catalog, "mimo-")));
-        list.add(provider("OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
-        list.add(provider("Ollama (本地)", "ollama", "http://localhost:11434/v1",
-                DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
-        list.add(provider("自定义", "custom", "", DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS, List.of()));
-        return ApiResponse.success(list);
+        List<String> catalog = configService.listCapabilityModelNames();
+        String chat = DynamicModelProvider.PROTOCOL_CHAT_COMPLETIONS;
+        return ApiResponse.success(List.of(
+                provider("OpenAI (Responses API)", "openai", "https://api.openai.com/v1",
+                        DynamicModelProvider.PROTOCOL_RESPONSES, models(catalog, "gpt-")),
+                provider("DeepSeek", "deepseek", "https://api.deepseek.com", chat, models(catalog, "deepseek-")),
+                provider("Kimi (Moonshot)", "kimi", "https://api.moonshot.cn/v1", chat, models(catalog, "kimi-")),
+                provider("通义千问 (Qwen)", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        chat, models(catalog, "qwen")),
+                provider("智谱 (GLM)", "zhipu", "https://open.bigmodel.cn/api/paas/v4", chat, models(catalog, "glm-")),
+                provider("Gemini (OpenAI compat)", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
+                        chat, models(catalog, "gemini-")),
+                provider("小米 MiMo", "mimo", "https://api.xiaomimimo.com/v1", chat, models(catalog, "mimo-")),
+                provider("OpenRouter", "openrouter", "https://openrouter.ai/api/v1", chat, List.of()),
+                provider("Ollama (本地)", "ollama", "http://localhost:11434/v1", chat, List.of()),
+                provider("自定义", "custom", "", chat, List.of())));
     }
 
     @RequestMapping(value = "/capabilities", method = RequestMethod.GET)
@@ -275,21 +233,18 @@ public class AiModelConfigController {
         return ApiResponse.success();
     }
 
-    private static List<String> models(List<AiModelCapability> catalog, String prefix) {
-        return catalog.stream().map(AiModelCapability::getModelName)
-                .filter(name -> name.startsWith(prefix)).toList();
+    private static List<String> models(List<String> catalog, String prefix) {
+        return catalog.stream().filter(name -> name.startsWith(prefix)).toList();
     }
 
-    private static Map<String, Object> provider(String label, String key, String baseUrl,
-                                                String protocol, List<String> models) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("label", label);
-        m.put("key", key);
-        m.put("baseUrl", baseUrl);
-        m.put("protocol", protocol);
-        m.put("completionsPath", DynamicModelProvider.defaultPathForProtocol(protocol));
-        m.put("popularModels", models);
-        return m;
+    private static ProviderPreset provider(String label, String key, String baseUrl,
+                                           String protocol, List<String> models) {
+        return new ProviderPreset(label, key, baseUrl, protocol,
+                DynamicModelProvider.defaultPathForProtocol(protocol), models);
+    }
+
+    private record ProviderPreset(String label, String key, String baseUrl, String protocol,
+                                  String completionsPath, List<String> popularModels) {
     }
 
     /**

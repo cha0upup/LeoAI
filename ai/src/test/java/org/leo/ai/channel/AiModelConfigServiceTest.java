@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
@@ -221,14 +222,58 @@ class AiModelConfigServiceTest {
         patch.setBaseUrl("https://example.test/v2");
         patch.setApiKey("replacement-key");
 
-        service.updateProvider(1, patch);
+        AiProvider saved = service.updateProvider(1, patch);
 
+        assertEquals("updated-provider", saved.getName());
+        assertEquals("replacement-key", saved.getApiKey());
         assertNull(stored.getProviderName());
         assertNull(stored.getBaseUrl());
         assertNull(stored.getApiKey());
         assertNull(stored.getHeadersJson());
+        verify(providerMapper).findById(1);
         verify(mapper).listSettingsByProviderId(1);
         verify(mapper, never()).listAll();
+    }
+
+    @Test
+    void updateReturnsTheValidatedCapabilitiesAndFallbackNameWithoutASecondLookup() {
+        var existing = catalogRow(7, 1);
+        existing.setName("old name");
+        var stored = catalogRow(7, 1);
+        stored.setName("new name");
+        stored.setFallbackModelId(8);
+        var fallback = catalogRow(8, 1);
+        fallback.setName("fallback name");
+        fallback.setEnabled(1);
+        fallback.setFallbackModelId(9);
+        var provider = new AiProvider();
+        provider.setId(1);
+        provider.setEnabled(1);
+        provider.setProviderKey("custom");
+        provider.setBaseUrl("https://example.test/v1");
+        when(providerMapper.findById(1)).thenReturn(provider);
+        when(mapper.findById(7)).thenReturn(existing, stored);
+        when(mapper.findById(8)).thenReturn(fallback);
+        var observed = new AiModelCapability();
+        observed.setSupportsStructuredOutput(1);
+        when(capabilityMapper.findObservation(eq(1), anyString(), eq(existing.getModel()), anyString()))
+                .thenReturn(observed);
+        var patch = new AiModelConfig();
+        patch.setName("new name");
+        patch.setFallbackModelId(8);
+
+        var saved = service.update(7, patch);
+
+        assertEquals("new name", saved.config().getName());
+        assertEquals("fallback name", saved.fallbackModelName());
+        assertEquals(existing.getModel(), saved.capabilityModelName());
+        assertTrue(saved.capabilities().supportsStructuredOutput());
+        verify(mapper).findById(8);
+        verify(mapper).hasFallbackCycle(8, 7);
+        verify(mapper, never()).findById(9);
+        verify(mapper, never()).findNameById(any());
+        verify(capabilityMapper).findByModelName(existing.getModel());
+        verify(capabilityMapper).findObservation(eq(1), anyString(), eq(existing.getModel()), anyString());
     }
 
     @Test
@@ -257,7 +302,7 @@ class AiModelConfigServiceTest {
         assertNull(row.getSupportsStructuredOutput());
         assertEquals(0, report.getSupportsReasoning());
         assertEquals(0, report.getSupportsStructuredOutput());
-        verify(capabilityMapper, org.mockito.Mockito.never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(capabilityMapper, org.mockito.Mockito.never()).insertIfAbsent(org.mockito.ArgumentMatchers.any());
         verify(capabilityMapper, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.any());
     }
 }

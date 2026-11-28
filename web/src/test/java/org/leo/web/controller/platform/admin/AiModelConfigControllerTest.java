@@ -1,15 +1,16 @@
 package org.leo.web.controller.platform.admin;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.leo.ai.channel.AiModelCapabilityProbeService;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelConnectionTestService;
 import org.leo.ai.channel.AiModelDiscoveryService;
 import org.leo.ai.channel.AiModelFailoverService;
-import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.channel.ModelRequestPlan;
-import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiProvider;
@@ -42,10 +43,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AiModelConfigControllerTest {
     private final AiModelConfigService configs = mock(AiModelConfigService.class);
-    private final DynamicModelProvider runtime = mock(DynamicModelProvider.class);
+    private final AiModelConnectionTestService connectionTest = mock(AiModelConnectionTestService.class);
     private final AiModelDiscoveryService discovery = mock(AiModelDiscoveryService.class);
-    private final AiModelConfigController controller = new AiModelConfigController(configs, runtime,
-            mock(AiErrorClassifier.class), mock(AiModelFailoverService.class),
+    private final AiModelConfigController controller = new AiModelConfigController(configs, connectionTest,
+            mock(AiModelFailoverService.class),
             mock(AiModelCapabilityProbeService.class), discovery);
 
     @Test
@@ -64,7 +65,7 @@ class AiModelConfigControllerTest {
                 .andExpect(jsonPath("$.data.errors[0].field").value("thinkingEnabled"))
                 .andExpect(jsonPath("$.data.contract.parameters.temperature.maximum").value(1.5))
                 .andExpect(jsonPath("$.data.requestParameters").isEmpty());
-        verifyNoInteractions(runtime);
+        verifyNoInteractions(connectionTest);
     }
 
     @Test
@@ -81,13 +82,15 @@ class AiModelConfigControllerTest {
     }
 
     @Test
-    void presetsUseOneApiRootAndOnlyRecommendModelsFromTheirCatalog() {
-        when(configs.listModelCapabilities()).thenReturn(List.of("gpt-6-astra", "deepseek-flash", "kimi-k3.1-pro", "kimi-k2.6",
-                "qwen3.8-flash", "glm-5.3-flashx-legal", "gemini-4-argon", "mimo-v2.6-pro")
-                .stream().map(AiModelConfigControllerTest::capability).toList());
-        var response = controller.providers();
-        assertEquals(200, response.get("code"));
-        List<?> presets = (List<?>) response.get("data");
+    void presetsUseOneApiRootAndReadOnlyModelNamesFromTheirCatalog() throws Exception {
+        when(configs.listCapabilityModelNames()).thenReturn(List.of("gpt-6-astra", "deepseek-flash", "kimi-k3.1-pro",
+                "kimi-k2.6", "qwen3.8-flash", "glm-5.3-flashx-legal", "gemini-4-argon", "mimo-v2.6-pro"));
+        String body = MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(get("/platform/admin/ai-models/providers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].label").value("OpenAI (Responses API)"))
+                .andReturn().getResponse().getContentAsString();
+        List<Map<String, Object>> presets = JsonPath.read(body, "$.data");
         assertEquals(10, presets.size());
 
         String chat = "chat_completions";
@@ -101,11 +104,14 @@ class AiModelConfigControllerTest {
         assertPreset(presets, "openrouter", "https://openrouter.ai/api/v1", chat);
         assertPreset(presets, "ollama", "http://localhost:11434/v1", chat);
         assertPreset(presets, "custom", "", chat);
+        verify(configs).listCapabilityModelNames();
+        verify(configs, never()).listModelCapabilities();
     }
 
-    private static void assertPreset(List<?> presets, String key, String base, String protocol, String... models) {
-        Map<?, ?> preset = (Map<?, ?>) presets.stream()
-                .filter(row -> key.equals(((Map<?, ?>) row).get("key"))).findFirst().orElseThrow(() -> new AssertionError(key));
+    private static void assertPreset(List<Map<String, Object>> presets, String key, String base, String protocol,
+                                     String... models) {
+        var preset = presets.stream().filter(row -> key.equals(row.get("key")))
+                .findFirst().orElseThrow(() -> new AssertionError(key));
         assertEquals(base, preset.get("baseUrl"), key);
         assertEquals(protocol, preset.get("protocol"), key);
         assertEquals(protocol.equals("responses") ? "/responses" : "/chat/completions", preset.get("completionsPath"), key);
@@ -137,7 +143,7 @@ class AiModelConfigControllerTest {
                 .andExpect(jsonPath("$.data[*].headersJson").doesNotHaveJsonPath());
         verify(configs, never()).findById(any());
         verify(configs, never()).capabilitiesForModel(any(AiModelConfig.class));
-        verifyNoInteractions(runtime);
+        verifyNoInteractions(connectionTest);
     }
 
     @Test
@@ -149,7 +155,7 @@ class AiModelConfigControllerTest {
                 .andExpect(jsonPath("$.code").value(405))
                 .andExpect(result -> assertEquals(Set.of("PUT", "DELETE"),
                         Set.of(result.getResponse().getHeader(HttpHeaders.ALLOW).split(",\\s*"))));
-        verifyNoInteractions(configs, runtime);
+        verifyNoInteractions(configs, connectionTest);
     }
 
     @ParameterizedTest
@@ -157,11 +163,8 @@ class AiModelConfigControllerTest {
     void writesUseTheServiceOutcomeAndPreserveHttpStatusAndSecretRedaction(String method, boolean found) throws Exception {
         AiModelConfig saved = model(7, "Saved");
         if ("PUT".equals(method)) {
-            when(configs.update(eq(7), any())).thenReturn(found ? saved : null);
-            if (found) {
-                when(configs.describeModel(saved)).thenReturn(new AiModelConfigService.CatalogEntry(
-                        saved, null, saved.getModel(), ProviderCapabilities.conservativeDefault()));
-            }
+            when(configs.update(eq(7), any())).thenReturn(found ? new AiModelConfigService.CatalogEntry(
+                    saved, null, saved.getModel(), ProviderCapabilities.conservativeDefault()) : null);
         } else {
             when(configs.deleteById(7)).thenReturn(found);
         }
@@ -176,7 +179,6 @@ class AiModelConfigControllerTest {
                 .andExpect(jsonPath("$.msg").value(found ? "success" : "模型配置不存在，id: 7"));
         if ("PUT".equals(method)) {
             verify(configs).update(eq(7), any());
-            if (found) verify(configs).describeModel(saved);
             if (found) response.andExpect(jsonPath("$.data.id").value(7))
                     .andExpect(jsonPath("$.data.apiKeyConfigured").value(true))
                     .andExpect(jsonPath("$.data.headersConfigured").value(true))
@@ -186,7 +188,8 @@ class AiModelConfigControllerTest {
             verify(configs).deleteById(7);
         }
         verify(configs, never()).findById(7);
-        verifyNoInteractions(runtime);
+        verify(configs, never()).capabilitiesForModel(any(AiModelConfig.class));
+        verifyNoInteractions(connectionTest);
     }
 
     @Test
@@ -216,7 +219,47 @@ class AiModelConfigControllerTest {
         assertEquals("chat_completions", provider.getValue().getProtocol());
         assertEquals("/chat/completions", provider.getValue().getCompletionsPath());
         assertEquals("{}", provider.getValue().getHeadersJson());
-        verifyNoInteractions(configs, runtime);
+        verifyNoInteractions(configs, connectionTest);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void connectionTestPreservesTheSuccessAndFailureResponseFields(boolean success) throws Exception {
+        var failure = success ? null : new AiModelConnectionTestService.Failure("network", "request failed");
+        when(connectionTest.testConnection(7)).thenReturn(new AiModelConnectionTestService.Result(25L,
+                "fixture-model", "custom", "responses", "https://example.test/v1", null, failure));
+
+        var response = MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(post("/platform/admin/ai-models/7/test-connection"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(success))
+                .andExpect(jsonPath("$.data.latencyMs").value(25))
+                .andExpect(jsonPath("$.data.model").value("fixture-model"))
+                .andExpect(jsonPath("$.data.providerKey").value("custom"))
+                .andExpect(jsonPath("$.data.protocol").value("responses"))
+                .andExpect(jsonPath("$.data.effectiveBaseUrl").value("https://example.test/v1"));
+        if (success) {
+            response.andExpect(jsonPath("$.data.responsePreview").hasJsonPath())
+                    .andExpect(jsonPath("$.data.category").doesNotHaveJsonPath())
+                    .andExpect(jsonPath("$.data.message").doesNotHaveJsonPath());
+        } else {
+            response.andExpect(jsonPath("$.data.category").value("network"))
+                    .andExpect(jsonPath("$.data.message").value("request failed"))
+                    .andExpect(jsonPath("$.data.responsePreview").doesNotHaveJsonPath())
+                    .andExpect(jsonPath("$.data.rawMessage").doesNotHaveJsonPath());
+        }
+        verify(connectionTest).testConnection(7);
+        verifyNoInteractions(configs);
+    }
+
+    @Test
+    void connectionTestForMissingModelReturnsTheSameNotFoundResponse() throws Exception {
+        MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiResponseStatusAdvice()).build()
+                .perform(post("/platform/admin/ai-models/7/test-connection"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.msg").value("模型配置不存在，id: 7"));
+        verify(connectionTest).testConnection(7);
+        verifyNoInteractions(configs);
     }
 
     private static AiModelConfig model(int id, String name) {

@@ -44,6 +44,24 @@ public interface AiModelConfigMapper {
     @Select("SELECT name FROM ai_model_configs WHERE id = #{id}")
     String findNameById(@Param("id") Integer id);
 
+    /** 命中正在编辑的模型会形成新环；没有终点则表示备用链已有环。UNION 负责在重复 ID 处终止。 */
+    @Select("""
+            WITH RECURSIVE fallback_chain(id) AS (
+                VALUES (#{fallbackId})
+                UNION
+                SELECT model.fallback_model_id
+                FROM fallback_chain chain JOIN ai_model_configs model ON model.id = chain.id
+                WHERE model.fallback_model_id IS NOT NULL
+            )
+            SELECT EXISTS (SELECT 1 FROM fallback_chain WHERE id = #{currentId,jdbcType=INTEGER})
+                OR NOT EXISTS (
+                    SELECT 1 FROM fallback_chain chain
+                    LEFT JOIN ai_model_configs model ON model.id = chain.id
+                    WHERE model.fallback_model_id IS NULL
+                )
+            """)
+    boolean hasFallbackCycle(@Param("fallbackId") Integer fallbackId, @Param("currentId") Integer currentId);
+
     @Select(MODEL_WITH_PROVIDER + "WHERE m.is_active = 1 AND m.enabled = 1 LIMIT 1")
     AiModelConfig findActive();
 
