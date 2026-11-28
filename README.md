@@ -23,8 +23,10 @@ LeoAI 是一个用于主机管理、项目协作和团队管理的 Web 工作台
 - [技术栈](#技术栈)
 - [环境要求](#环境要求)
 - [快速开始](#快速开始)
+- [源码构建与验证](#源码构建与验证)
 - [配置说明](#配置说明)
 - [使用指南](#使用指南)
+- [接入节点与会话术语](docs/agent-terminology.md)
 - [常见问题](#常见问题)
 - [安全建议](#安全建议)
 - [License](#license)
@@ -103,9 +105,10 @@ LeoAI 是一个用于主机管理、项目协作和团队管理的 Web 工作台
 
 | 层级 | 技术选型 |
 |------|--------|
-| **Web 框架** | Spring Boot 3.5 |
-| **AI 框架** | LangChain4j 1.16 |
-| **LLM 支持** | OpenAI、通义千问、DeepSeek 及所有 OpenAI 兼容接口 |
+| **Web 框架** | Spring Boot 3.5.13 |
+| **前端** | Vue 3、Vite |
+| **AI 框架** | LangChain4j 1.23.0 |
+| **LLM 接口** | Chat Completions / Responses；可用功能取决于供应商和模型 |
 | **数据库** | SQLite（内嵌，无需额外部署）|
 | **ORM** | MyBatis 3 |
 | **HTTP 客户端** | OkHttp 4 |
@@ -139,15 +142,11 @@ LeoAI 是一个用于主机管理、项目协作和团队管理的 Web 工作台
 
 > 当前版本按全新部署验证。使用新的运行目录或 SQLite 路径启动，系统直接创建当前表结构，不执行旧库补列或迁移。
 >
-> 历史数据库、旧配置包及旧会话缓存不兼容。重新部署前先备份数据库与 VFS，同步部署当前前后端，并重新创建节点配置；节点脚本、引用旧 Java 包名的插件及缓存制品需要重新构建。回滚时同时恢复旧版本和对应数据目录。
+> 历史数据库、旧配置包及旧会话缓存不兼容。重新部署前先[备份数据与密钥](#备份与恢复)，同步部署当前前后端，并重新创建节点配置；节点脚本、引用旧 Java 包名的插件及缓存制品需要重新构建。回滚时同时恢复旧版本和对应数据目录。
 >
 > Docker 部署请使用新的持久化数据卷或数据目录。仅重启、重新构建容器仍会复用旧数据卷，不会重建数据库。
 
-从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
-
-```
-LeoAi-3.0.1.jar
-```
+若 [Releases](https://github.com/cha0upup/LeoAI/releases) 已提供对应版本，可直接下载 JAR。尚无对应制品时，请参照[源码构建与验证](#源码构建与验证)。下文以 `LeoAi-3.0.1.jar` 为例。
 
 ### 第二步：启动
 
@@ -280,13 +279,9 @@ docker compose up -d --build
 
 #### 数据持久化
 
-SQLite 数据库和 VFS 运行目录都会保存在名为 `leoai-data` 的 Docker volume 里。容器删了重建数据不会丢，除非显式 `docker compose down -v`。
+Compose 将 `leoai-data` 卷挂载到 `/app/data`。默认数据库、VFS 和本地密钥文件都在这个目录下。重建容器会复用该卷；`docker compose down -v` 会删除该卷。
 
-查看 volume 实际位置：
-
-```bash
-docker volume inspect leoai_leoai-data
-```
+卷的实际名称通常为 `<Compose 项目名>_leoai-data`，可用 `docker volume ls` 查询。备份时见[备份与恢复](#备份与恢复)。
 
 #### 自定义配置
 
@@ -320,10 +315,30 @@ LEOAI_PORT=9090 docker compose up -d
 - 多半是 GitHub 网络不通。挂代理后重新 `docker compose build`，或先手动把 JAR 下载到本地，改 Dockerfile 的 `JAR_URL` 指向局域网镜像
 
 **忘记 admin 密码**
-- 重建数据卷会清除其中的业务数据。先完整备份数据库与 VFS，再通过 Web 初始化页面为新卷设置管理员密码；常规改密使用用户管理。
+- 重建数据卷会清除其中的业务数据。先[备份数据与密钥](#备份与恢复)，再通过 Web 初始化页面为新卷设置管理员密码；常规改密使用用户管理。
 
 **查看容器内文件**
 - `docker compose exec leoai sh` 进入容器，数据目录在 `/app/data`
+
+---
+
+## 源码构建与验证
+
+在后端仓库根目录使用 **JDK 17** 和仓库自带的 Maven Wrapper 打包：
+
+```bash
+./mvnw -pl web -am -DskipTests package
+```
+
+制品位于 `web/target/LeoAi-3.0.1.jar`，使用后端仓库已同步的前端静态资源。修改前端源码后，应先构建并同步产物，再验证打包结果。
+
+全量验证需要另行检出匹配的前端源码到 `../LeoVueAi`（或传入实际位置）、按前端 `.nvmrc` 配置 Node.js，并准备 Python 3 和用于组件检查的 JDK 8（可用 `JAVA8_HOME` 指定）。若需运行 PHP 集成用例，还要安装 PHP CLI 和 `pdo_sqlite`。
+
+```bash
+python3 tools/verify_release.py --frontend ../LeoVueAi
+```
+
+脚本安装前端锁定依赖，运行 lint、测试与构建，校验静态资源一致性，编译打包后端，并用临时数据库验证首次启动、登录和重启。已安装锁定依赖时可加 `--skip-install`。更多说明见[贡献指南](CONTRIBUTING.md)。
 
 ---
 
@@ -347,6 +362,12 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
   LeoAi-3.0.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
+
+### 备份与恢复
+
+- 默认 SQLite 数据库为运行目录下的 `data.db`，文件工作区（VFS）为 `root/`；改过数据源或 `VfsPath` 时，以实际配置为准。
+- SQLite 启用了 WAL。做文件级备份前先停止服务，不要在服务运行时只复制 `data.db`；若停机后仍有 `-wal` 文件，应随数据库文件一并备份。
+- 同批备份 VFS 和用于解密已存凭据的本地密钥（默认位于 `.leo/`）；使用外部主密钥时，单独妥善保管原值。恢复时使用同一批次的数据、对应应用版本和原密钥，先在独立目录验证。
 
 ### 配置 AI 模型
 
@@ -432,7 +453,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 
 **Q：如何重置管理员密码**
 
-由另一位管理员在用户管理中重置。若已失去全部管理员凭据，先停止服务并完整备份数据库与 VFS，再按独立新库部署流程恢复管理入口。Web 初始化页面仅适用于全新部署，不用于重置已有账号。
+由另一位管理员在用户管理中重置。若已失去全部管理员凭据，先停止服务并[备份数据与密钥](#备份与恢复)，再按独立新库部署流程恢复管理入口。Web 初始化页面仅适用于全新部署，不用于重置已有账号。
 
 ---
 
@@ -458,7 +479,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 
 - 在受信任的内网或 VPN 环境中部署，不要将管理端口暴露至公网
 - 首次部署时通过 Web 初始化页面设置独立的管理员密码
-- 定期备份 `data.db` 文件
+- 定期[备份数据与密钥](#备份与恢复)，并验证备份可恢复
 - 使用防火墙或 IP 白名单限制访问来源
 
 **操作安全**

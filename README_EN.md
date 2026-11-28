@@ -23,8 +23,10 @@ LeoAI is a web workspace for host management, project collaboration, and team ad
 - [Tech Stack](#tech-stack)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [Build and Verify from Source](#build-and-verify-from-source)
 - [Configuration](#configuration)
 - [Usage Guide](#usage-guide)
+- [Node and session terminology (Chinese)](docs/agent-terminology.md)
 - [FAQ](#faq)
 - [Security Recommendations](#security-recommendations)
 - [License](#license)
@@ -105,9 +107,10 @@ These screenshots show earlier versions of the interface. Some menus and layouts
 
 | Layer | Technology |
 |-------|-----------|
-| **Web Framework** | Spring Boot 3.5 |
-| **AI Framework** | LangChain4j 1.16 |
-| **LLM Support** | OpenAI, Qwen, DeepSeek, and all OpenAI-compatible interfaces |
+| **Web Framework** | Spring Boot 3.5.13 |
+| **Frontend** | Vue 3, Vite |
+| **AI Framework** | LangChain4j 1.23.0 |
+| **LLM APIs** | Chat Completions / Responses; available features depend on the provider and model |
 | **Database** | SQLite (embedded, no separate deployment needed) |
 | **ORM** | MyBatis 3 |
 | **HTTP Client** | OkHttp 4 |
@@ -141,15 +144,11 @@ These screenshots show earlier versions of the interface. Some menus and layouts
 
 > Validate this development version as a fresh installation. Use a new working directory or SQLite path; startup creates the current schema directly without adding columns to old databases or migrating them.
 >
-> Historical databases, old configuration packages, and old session caches are incompatible. Back up the database and VFS before redeployment, deploy matching frontend and backend versions, and recreate node configurations. Rebuild node scripts, plugins referencing old Java package names, and cached artifacts. For rollback, restore the old version together with its matching data directory.
+> Historical databases, old configuration packages, and old session caches are incompatible. [Back up your data and keys](#backup-and-restore) before redeployment, deploy matching frontend and backend versions, and recreate node configurations. Rebuild node scripts, plugins referencing old Java package names, and cached artifacts. For rollback, restore the old version together with its matching data directory.
 >
 > For Docker, use a fresh persistent data volume or data directory. Restarting or rebuilding a container still reuses its existing data volume and does not rebuild the database.
 
-Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
-
-```
-LeoAi-3.0.1.jar
-```
+If the matching JAR is available in [Releases](https://github.com/cha0upup/LeoAI/releases), download it there. Otherwise, see [Build and Verify from Source](#build-and-verify-from-source). The following examples use `LeoAi-3.0.1.jar`.
 
 ### Step 2: Launch
 
@@ -280,13 +279,9 @@ docker compose up -d --build
 
 #### Data Persistence
 
-The SQLite database and VFS working directory are stored in a Docker volume named `leoai-data`. Deleting and recreating the container does not lose data — unless you explicitly run `docker compose down -v`.
+Compose mounts the `leoai-data` volume at `/app/data`. The default database, VFS, and local key files are all stored there. Recreating the container reuses the volume; `docker compose down -v` deletes it.
 
-To find the volume's physical location:
-
-```bash
-docker volume inspect leoai_leoai-data
-```
+The actual volume name is usually `<Compose project name>_leoai-data`. Use `docker volume ls` to find it. See [Backup and Restore](#backup-and-restore) before moving or deleting a volume.
 
 #### Custom Configuration
 
@@ -320,10 +315,30 @@ LEOAI_PORT=9090 docker compose up -d
 - Usually a GitHub connectivity issue. Use a proxy and retry `docker compose build`, or download the JAR manually and update the `JAR_URL` in the Dockerfile to point to a local mirror
 
 **Forgot the admin password**
-- Recreating the data volume removes its business data. Back up the database and VFS first, then use the web initialization page when provisioning a fresh volume; normal password changes use user management.
+- Recreating the data volume removes its business data. [Back up your data and keys](#backup-and-restore) first, then use the web initialization page when provisioning a fresh volume; normal password changes use user management.
 
 **Inspect files inside the container**
 - Run `docker compose exec leoai sh` to enter the container; data is in `/app/data`
+
+---
+
+## Build and Verify from Source
+
+From the backend repository root, package the application with **JDK 17** and the included Maven Wrapper:
+
+```bash
+./mvnw -pl web -am -DskipTests package
+```
+
+The JAR is written to `web/target/LeoAi-3.0.1.jar` and uses the frontend assets already bundled in the backend repository. If you change the frontend source, rebuild and synchronize the assets before verifying the package.
+
+For full verification, check out the matching frontend into `../LeoVueAi` or pass its actual path. Use the Node.js version in its `.nvmrc`, and have Python 3 and JDK 8 available for component checks (set `JAVA8_HOME` if needed). To run the PHP integration tests, install PHP CLI and `pdo_sqlite`.
+
+```bash
+python3 tools/verify_release.py --frontend ../LeoVueAi
+```
+
+The script installs locked frontend dependencies, runs lint, tests and builds, compares bundled assets, packages the backend, and checks initial setup, sign-in, and restart with a temporary database. If the locked dependencies are already installed, add `--skip-install`. See the [contribution guide](CONTRIBUTING.md) for details.
 
 ---
 
@@ -347,6 +362,12 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
   LeoAi-3.0.1.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
+
+### Backup and Restore
+
+- By default, the working directory contains the SQLite database (`data.db`) and the file workspace (VFS, `root/`). If you changed the datasource or `VfsPath`, use the configured paths.
+- SQLite runs in WAL mode. Stop the service before taking a file-level backup. Do not copy just `data.db` while the service is running; include the `-wal` file if it remains after shutdown.
+- Include the VFS and the local keys used to decrypt stored credentials (under `.leo/` by default). If you use external master keys, retain their original values separately in secure storage. Restore the matching data, application version, and keys, then verify the restore in an isolated directory first.
 
 ### Configuring AI Models
 
@@ -430,7 +451,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-3.0.1.jar
 
 **Q: How to reset the admin password**
 
-Use another administrator account to reset the password in user management. If all administrator credentials are lost, stop the service and back up the database and VFS before provisioning a separate fresh database. The web setup wizard only initializes fresh installations; it does not reset existing accounts.
+Use another administrator account to reset the password in user management. If all administrator credentials are lost, stop the service and [back up your data and keys](#backup-and-restore) before provisioning a separate fresh database. The web setup wizard only initializes fresh installations; it does not reset existing accounts.
 
 ---
 
@@ -456,7 +477,7 @@ By default it's in the JAR's working directory. Specify a custom path via a star
 
 - Deploy in a trusted intranet or VPN environment; do not expose the management port to the public internet
 - Set a unique administrator password through web setup on a fresh deployment
-- Back up the `data.db` file regularly
+- [Back up data and keys](#backup-and-restore) regularly and verify that the backup can be restored
 - Restrict access sources using a firewall or IP allowlist
 
 **Operational Security**
