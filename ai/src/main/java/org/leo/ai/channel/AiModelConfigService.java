@@ -53,21 +53,27 @@ public class AiModelConfigService {
     /** 列表使用同一数据库快照批量读取基础能力与当前连接的探测结果。 */
     @Transactional(readOnly = true)
     public List<CatalogEntry> listCatalog() {
-        List<AiModelConfig> models = decryptModels(mapper.listAll());
+        List<AiModelConfig> storedModels = mapper.listAll();
+        if (storedModels == null || storedModels.isEmpty()) return List.of();
+        List<AiModelConfig> models = new ArrayList<>(storedModels.size());
+        Map<Integer, CatalogConnection> connections = new HashMap<>();
         Map<Integer, String> displayNames = new HashMap<>();
         Set<String> catalogNames = new HashSet<>();
         List<Map<String, Object>> lookups = new ArrayList<>();
-        for (AiModelConfig config : models) {
+        for (AiModelConfig row : storedModels) {
+            AiModelConfig config = decryptCatalogModel(row, connections);
+            models.add(config);
             displayNames.put(config.getId(), config.getName());
             if (!isBlank(config.getModel())) {
                 catalogNames.add(capabilityModelName(config));
-                if (config.getProviderId() != null) {
+                Integer providerId = config.getProviderId();
+                if (providerId != null) {
                     lookups.add(Map.of(
                             "configId", config.getId(),
-                            "providerId", config.getProviderId(),
+                            "providerId", providerId,
                             "protocol", DynamicModelProvider.resolveProtocol(config),
                             "modelName", config.getModel(),
-                            "connectionKey", ModelConfigurationKey.connection(config)));
+                            "connectionKey", connections.get(providerId).fingerprint()));
                 }
             }
         }
@@ -95,6 +101,28 @@ public class AiModelConfigService {
                     mergeCapabilities(baseline, observations.get(config.getId()))));
         }
         return entries;
+    }
+
+    private AiModelConfig decryptCatalogModel(AiModelConfig row, Map<Integer, CatalogConnection> connections) {
+        Integer providerId = row.getProviderId();
+        CatalogConnection connection = connections.get(providerId);
+        if (connection != null) {
+            AiModelConfig model = copyModel(row);
+            model.setApiKey(connection.apiKey());
+            model.setHeadersJson(connection.headersJson());
+            return model;
+        }
+
+        // listAll joins provider fields, so all rows for this ID use the same connection in this read.
+        AiModelConfig model = decryptModel(row);
+        if (providerId != null) {
+            connections.put(providerId, new CatalogConnection(model.getApiKey(), model.getHeadersJson(),
+                    ModelConfigurationKey.connection(model)));
+        }
+        return model;
+    }
+
+    private record CatalogConnection(String apiKey, String headersJson, String fingerprint) {
     }
 
     public record CatalogEntry(AiModelConfig config, String fallbackModelName, String capabilityModelName,

@@ -70,6 +70,38 @@ class AiModelConfigServiceTest {
     }
 
     @Test
+    void catalogDecryptsSharedProviderCredentialsOnceWithoutChangingTheStoredRows() {
+        AiModelConfig first = catalogRow(7, 1);
+        AiModelConfig sibling = catalogRow(8, 1);
+        AiModelConfig other = catalogRow(9, 2);
+        when(mapper.listAll()).thenReturn(List.of(first, sibling, other));
+        when(secretCryptoService.decrypt("stored-key-1")).thenReturn("fixture-key-1");
+        when(secretCryptoService.decrypt("stored-headers-1")).thenReturn("fixture-headers-1");
+        when(secretCryptoService.decrypt("stored-key-2")).thenReturn("fixture-key-2");
+        when(secretCryptoService.decrypt("stored-headers-2")).thenReturn("fixture-headers-2");
+
+        var models = service.listCatalog().stream().map(AiModelConfigService.CatalogEntry::config).toList();
+
+        assertEquals(List.of(7, 8, 9), models.stream().map(AiModelConfig::getId).toList());
+        assertEquals(List.of("fixture-key-1", "fixture-key-1", "fixture-key-2"),
+                models.stream().map(AiModelConfig::getApiKey).toList());
+        assertEquals("stored-key-1", sibling.getApiKey());
+        assertEquals("stored-headers-1", first.getHeadersJson());
+        verify(secretCryptoService).decrypt("stored-key-1");
+        verify(secretCryptoService).decrypt("stored-headers-1");
+    }
+
+    private static AiModelConfig catalogRow(int id, int providerId) {
+        AiModelConfig row = new AiModelConfig();
+        row.setId(id);
+        row.setProviderId(providerId);
+        row.setModel("fixture-model-" + id);
+        row.setApiKey("stored-key-" + providerId);
+        row.setHeadersJson("stored-headers-" + providerId);
+        return row;
+    }
+
+    @Test
     void repeatedProviderReadsDoNotDecryptTheMyBatisCachedEntityInPlace() {
         AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
         service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto, events);
